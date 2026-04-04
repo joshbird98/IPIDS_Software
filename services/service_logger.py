@@ -8,7 +8,7 @@ import threading
 import numpy as np
 from datetime import datetime
 
-from network_config import ZMQ_PORT_PLC_PUB, ZMQ_PORT_LOGGER_CMD, TOPIC_PLC_DATA
+from network_config import ZMQ_PORT_PLC_PUB, ZMQ_PORT_SERIAL_PUB, ZMQ_PORT_LOGGER_CMD, TOPIC_PLC_DATA, TOPIC_SERIAL_DATA
 from hmi_config import DEFAULT_LOG_DIRECTORY
 
 
@@ -19,7 +19,12 @@ class LoggerMicroservice:
 
         self.sub_socket = self.context.socket(zmq.SUB)
         self.sub_socket.connect(ZMQ_PORT_PLC_PUB)
+        self.sub_socket.connect(ZMQ_PORT_SERIAL_PUB)
+
         self.sub_socket.setsockopt(zmq.SUBSCRIBE, TOPIC_PLC_DATA)
+        self.sub_socket.setsockopt(zmq.SUBSCRIBE, TOPIC_SERIAL_DATA)
+
+        self.current_state = {}
 
         self.cmd_socket = self.context.socket(zmq.PULL)
         self.cmd_socket.bind(ZMQ_PORT_LOGGER_CMD)
@@ -68,6 +73,10 @@ class LoggerMicroservice:
         self.burst_new_data = []
         self.burst_metadata = []
 
+        # --- Internal Clock ---
+        self.tick_rate = 0.100  # 10Hz target
+        self.next_tick = time.time() + self.tick_rate
+
     def _init_buffers(self, data):
         # 1. Filter out non-numeric tags (like STRING or formatted TIME)
         valid_keys = []
@@ -90,16 +99,22 @@ class LoggerMicroservice:
         self.low_res_buffer = np.zeros((self.low_res_max, self.num_keys), dtype=np.float32)
         print(f"[Logger] Buffers initialized for {self.num_keys} numeric tags.")
 
-    def _process_data(self, payload_bytes):
+    def _update_state_cache(self, payload_bytes):
+        """Merges incoming network data into the RAM cache immediately."""
         data = json.loads(payload_bytes.decode('utf-8'))
-        current_ts = time.time()
+        self.current_state.update(data)
 
+        # Initialize Numpy arrays on the very first payload we ever receive
         if self.keys is None:
-            # Pass the entire dictionary so it can evaluate the data types
-            self._init_buffers(data)
+            self._init_buffers(self.current_state)
 
-        # Map only the valid numeric keys, converting booleans to 1.0/0.0
-        row = np.array([float(data.get(k, 0.0)) for k in self.keys], dtype=np.float32)
+    def _log_current_state(self):
+        """Writes the current RAM cache to Numpy. Triggered by the Internal Clock."""
+        if self.keys is None:
+            return  # Don't log if we haven't received any data yet
+
+        current_ts = time.time()
+        row = np.array([float(self.current_state.get(k, 0.0)) for k in self.keys], dtype=np.float32)
 
         # 1. Update High-Res Ring Buffer (10Hz)
         self.high_res_ts[self.high_res_ptr] = current_ts
@@ -128,7 +143,6 @@ class LoggerMicroservice:
             self.burst_new_ts.append(current_ts)
             self.burst_new_data.append(row)
 
-            # Check if the post-fault timer has expired (5 minutes of quiet)
             if current_ts > self.burst_end_time:
                 self._finalize_burst()
 
@@ -241,18 +255,29 @@ class LoggerMicroservice:
         print("[Logger] Service started.")
         while True:
             try:
-                socks = dict(self.poller.poll(100))  # 100ms timeout
+                # Calculate time remaining until the next 10Hz tick
+                current_time = time.time()
+                time_to_next_tick = max(0, self.next_tick - current_time)
+                timeout_ms = int(time_to_next_tick * 1000)
 
-                # Process Data Stream
+                socks = dict(self.poller.poll(timeout_ms))
+
+                # 1. Process Network Data (Updates the cache instantly)
                 if self.sub_socket in socks and socks[self.sub_socket] == zmq.POLLIN:
                     _, payload = self.sub_socket.recv_multipart()
-                    self._process_data(payload)
+                    self._update_state_cache(payload)
 
-                # Process Command Stream (Fault Triggers)
+                # 2. Process Command Stream (Triggers)
                 if self.cmd_socket in socks and socks[self.cmd_socket] == zmq.POLLIN:
                     cmd_msg = self.cmd_socket.recv_json()
                     if cmd_msg.get("action") == "TRIGGER_BURST":
                         self._trigger_burst(cmd_msg)
+
+                # 3. Process the Internal Clock Tick
+                current_time = time.time()
+                if current_time >= self.next_tick:
+                    self._log_current_state()
+                    self.next_tick = current_time + self.tick_rate
 
             except KeyboardInterrupt:
                 break

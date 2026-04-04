@@ -6,7 +6,7 @@
         "scale": "linear",
         "favorite": false,
         "selected": false,
-        "color": "#ffbc37"
+        "color": "#7f7f7f"
     },
     "system.beamline.drop_in_cup.hmiSetpointVEntry": {
         "dataSource": "system.beamline.drop_in_cup.hmiSetpointVEntry",
@@ -15,7 +15,7 @@
         "scale": "linear",
         "favorite": false,
         "selected": false,
-        "color": "#3776ff"
+        "color": "#c49c94"
     },
     "system.beamline.drop_in_cup.hmiSetpointVEntryMax": {
         "dataSource": "system.beamline.drop_in_cup.hmiSetpointVEntryMax",
@@ -24,7 +24,7 @@
         "scale": "linear",
         "favorite": false,
         "selected": false,
-        "color": "#37ff3a"
+        "color": "#c5b0d5"
     },
     "system.beamline.drop_in_cup.hmiSetpointVEntryMin": {
         "dataSource": "system.beamline.drop_in_cup.hmiSetpointVEntryMin",
@@ -33,16 +33,16 @@
         "scale": "linear",
         "favorite": false,
         "selected": false,
-        "color": "#3798ff"
+        "color": "#ffbb78"
     },
     "system.beamline.drop_in_cup.readbackA": {
         "dataSource": "system.beamline.drop_in_cup.readbackA",
         "label": "Drop In Cup (A)",
         "multiplier": 1.0,
         "scale": "linear",
-        "favorite": true,
+        "favorite": false,
         "selected": false,
-        "color": "#37ff4e"
+        "color": "#dbdb8d"
     },
     "system.beamline.drop_in_cup.readbackV": {
         "dataSource": "system.beamline.drop_in_cup.readbackV",
@@ -51,7 +51,7 @@
         "scale": "linear",
         "favorite": false,
         "selected": false,
-        "color": "#ff4837"
+        "color": "#7f7f7f"
     },
     "system.beamline.drop_in_cup.requestEngaged": {
         "dataSource": "system.beamline.drop_in_cup.requestEngaged",
@@ -60,7 +60,7 @@
         "scale": "linear",
         "favorite": false,
         "selected": false,
-        "color": "#8037ff"
+        "color": "#9edae5"
     },
     "system.beamline.einzels.lens1.fault": {
         "dataSource": "system.beamline.einzels.lens1.fault",
@@ -69,7 +69,7 @@
         "scale": "linear",
         "favorite": false,
         "selected": false,
-        "color": "#afff37"
+        "color": "#bcbd22"
     },
     "system.beamline.einzels.lens1.hmiSetpointVEnabled": {
         "dataSource": "system.beamline.einzels.lens1.hmiSetpointVEnabled",
@@ -78,7 +78,7 @@
         "scale": "linear",
         "favorite": false,
         "selected": false,
-        "color": "#ff37fc"
+        "color": "#98df8a"
     },
     "system.beamline.einzels.lens1.hmiSetpointVEntry": {
         "dataSource": "system.beamline.einzels.lens1.hmiSetpointVEntry",
@@ -87,7 +87,7 @@
         "scale": "linear",
         "favorite": false,
         "selected": false,
-        "color": "#ffff37"
+        "color": "#1f77b4"
     },
     "system.beamline.einzels.lens1.hmiSetpointVEntryMax": {
         "dataSource": "system.beamline.einzels.lens1.hmiSetpointVEntryMax",
@@ -96,7 +96,7 @@
         "scale": "linear",
         "favorite": false,
         "selected": false,
-        "color": "#37fcff"
+        "color": "#d62728"
     },
     "system.beamline.einzels.lens1.hmiSetpointVEntryMin": {
         "dataSource": "system.beamline.einzels.lens1.hmiSetpointVEntryMin",
@@ -105,7 +105,7 @@
         "scale": "linear",
         "favorite": false,
         "selected": false,
-        "color": "#ff377d"
+        "color": "#1f77b4"
     },
     "system.beamline.einzels.lens1.outputEnabled": {
         "dataSource": "system.beamline.einzels.lens1.outputEnabled",
@@ -114,7 +114,7 @@
         "scale": "linear",
         "favorite": false,
         "selected": false,
-        "color": "#3776ff"
+        "color": "#2ca02c"
     },
     "system.beamline.einzels.lens1.readbackA": {
         "dataSource": "system.beamline.einzels.lens1.readbackA",
@@ -123,7 +123,7 @@
         "scale": "linear",
         "favorite": false,
         "selected": false,
-        "color": "#4837ff"
+        "color": "#17becf"
     },
     "system.beamline.einzels.lens1.readbackV": {
         "dataSource": "system.beamline.einzels.lens1.readbackV",
@@ -132,7 +132,7 @@
         "scale": "linear",
         "favorite": false,
         "selected": false,
-        "color": "#6937ff"
+        "color": "#c7c7c7"
     },
     "system.beamline.einzels.lens1.status": {
         "dataSource": "system.beamline.einzels.lens1.status",
@@ -141,7 +141,7 @@
         "scale": "linear",
         "favorite": false,
         "selected": false,
-        "color": "#37fcff"
+        "color": "#bcbd22"
     },
     "system.beamline.einzels.lens2.fault": {
         "dataSource": "system.beamline.einzels.lens2.fault",
@@ -150,7 +150,7 @@
         "scale": "linear",
         "favorite": false,
         "selected": false,
-        "color": "#37e4ff"
+        "color": "#c5b0d5"
     },
     "system.beamline.einzels.lens2.hmiSetpointVEnabled": {
         "dataSource": "system.beamline.einzels.lens2.hmiSetpointVEnabled",
@@ -159,7 +159,7 @@
         "scale": "linear",
         "favorite": false,
         "selected": false,
-        "color": "#ffa537"
+        "color": "#ff7f0e"
     },
     "system.beamline.einzels.lens2.hmiSetpointVEntry": {
         "dataSource": "system.beamline.einzels.lens2.hmiSetpointVEntry",
@@ -168,7 +168,7 @@
         "scale": "linear",
         "favorite": false,
         "selected": false,
-        "color": "#ff3780"
+        "color": "#98df8a"
     },
     "system.beamline.einzels.lens2.hmiSetpointVEntryMax": {
         "dataSource": "system.beamline.einzels.lens2.hmiSetpointVEntryMax",
@@ -177,7 +177,7 @@
         "scale": "linear",
         "favorite": false,
         "selected": false,
-        "color": "#ff375c"
+        "color": "#9edae5"
     },
     "system.beamline.einzels.lens2.hmiSetpointVEntryMin": {
         "dataSource": "system.beamline.einzels.lens2.hmiSetpointVEntryMin",
@@ -186,7 +186,7 @@
         "scale": "linear",
         "favorite": false,
         "selected": false,
-        "color": "#ffc337"
+        "color": "#f7b6d2"
     },
     "system.beamline.einzels.lens2.outputEnabled": {
         "dataSource": "system.beamline.einzels.lens2.outputEnabled",
@@ -195,7 +195,7 @@
         "scale": "linear",
         "favorite": false,
         "selected": false,
-        "color": "#ffc637"
+        "color": "#98df8a"
     },
     "system.beamline.einzels.lens2.readbackA": {
         "dataSource": "system.beamline.einzels.lens2.readbackA",
@@ -204,7 +204,7 @@
         "scale": "linear",
         "favorite": false,
         "selected": false,
-        "color": "#7d37ff"
+        "color": "#c7c7c7"
     },
     "system.beamline.einzels.lens2.readbackV": {
         "dataSource": "system.beamline.einzels.lens2.readbackV",
@@ -213,7 +213,7 @@
         "scale": "linear",
         "favorite": false,
         "selected": false,
-        "color": "#5fff37"
+        "color": "#e377c2"
     },
     "system.beamline.einzels.lens2.status": {
         "dataSource": "system.beamline.einzels.lens2.status",
@@ -222,7 +222,7 @@
         "scale": "linear",
         "favorite": false,
         "selected": false,
-        "color": "#7637ff"
+        "color": "#98df8a"
     },
     "system.beamline.einzels.lens3.fault": {
         "dataSource": "system.beamline.einzels.lens3.fault",
@@ -231,7 +231,7 @@
         "scale": "linear",
         "favorite": false,
         "selected": false,
-        "color": "#ff3787"
+        "color": "#ff7f0e"
     },
     "system.beamline.einzels.lens3.hmiSetpointVEnabled": {
         "dataSource": "system.beamline.einzels.lens3.hmiSetpointVEnabled",
@@ -240,7 +240,7 @@
         "scale": "linear",
         "favorite": false,
         "selected": false,
-        "color": "#5fff37"
+        "color": "#9edae5"
     },
     "system.beamline.einzels.lens3.hmiSetpointVEntry": {
         "dataSource": "system.beamline.einzels.lens3.hmiSetpointVEntry",
@@ -249,7 +249,7 @@
         "scale": "linear",
         "favorite": false,
         "selected": false,
-        "color": "#8a37ff"
+        "color": "#8c564b"
     },
     "system.beamline.einzels.lens3.hmiSetpointVEntryMax": {
         "dataSource": "system.beamline.einzels.lens3.hmiSetpointVEntryMax",
@@ -258,7 +258,7 @@
         "scale": "linear",
         "favorite": false,
         "selected": false,
-        "color": "#3737ff"
+        "color": "#e377c2"
     },
     "system.beamline.einzels.lens3.hmiSetpointVEntryMin": {
         "dataSource": "system.beamline.einzels.lens3.hmiSetpointVEntryMin",
@@ -267,7 +267,7 @@
         "scale": "linear",
         "favorite": false,
         "selected": false,
-        "color": "#ffbc37"
+        "color": "#d62728"
     },
     "system.beamline.einzels.lens3.outputEnabled": {
         "dataSource": "system.beamline.einzels.lens3.outputEnabled",
@@ -276,7 +276,7 @@
         "scale": "linear",
         "favorite": false,
         "selected": false,
-        "color": "#ffac37"
+        "color": "#d62728"
     },
     "system.beamline.einzels.lens3.readbackA": {
         "dataSource": "system.beamline.einzels.lens3.readbackA",
@@ -285,7 +285,7 @@
         "scale": "linear",
         "favorite": false,
         "selected": false,
-        "color": "#374bff"
+        "color": "#e377c2"
     },
     "system.beamline.einzels.lens3.readbackV": {
         "dataSource": "system.beamline.einzels.lens3.readbackV",
@@ -294,7 +294,7 @@
         "scale": "linear",
         "favorite": false,
         "selected": false,
-        "color": "#ff3752"
+        "color": "#c5b0d5"
     },
     "system.beamline.einzels.lens3.status": {
         "dataSource": "system.beamline.einzels.lens3.status",
@@ -303,7 +303,7 @@
         "scale": "linear",
         "favorite": false,
         "selected": false,
-        "color": "#eb37ff"
+        "color": "#7f7f7f"
     },
     "system.beamline.magnet.fault": {
         "dataSource": "system.beamline.magnet.fault",
@@ -312,7 +312,7 @@
         "scale": "linear",
         "favorite": false,
         "selected": false,
-        "color": "#ff5837"
+        "color": "#dbdb8d"
     },
     "system.beamline.magnet.hmiSetpointAEnabled": {
         "dataSource": "system.beamline.magnet.hmiSetpointAEnabled",
@@ -321,7 +321,7 @@
         "scale": "linear",
         "favorite": false,
         "selected": false,
-        "color": "#ff3744"
+        "color": "#dbdb8d"
     },
     "system.beamline.magnet.hmiSetpointAEntry": {
         "dataSource": "system.beamline.magnet.hmiSetpointAEntry",
@@ -330,7 +330,7 @@
         "scale": "linear",
         "favorite": false,
         "selected": false,
-        "color": "#afff37"
+        "color": "#2ca02c"
     },
     "system.beamline.magnet.hmiSetpointAEntryMax": {
         "dataSource": "system.beamline.magnet.hmiSetpointAEntryMax",
@@ -339,7 +339,7 @@
         "scale": "linear",
         "favorite": false,
         "selected": false,
-        "color": "#6c37ff"
+        "color": "#ff7f0e"
     },
     "system.beamline.magnet.hmiSetpointAEntryMin": {
         "dataSource": "system.beamline.magnet.hmiSetpointAEntryMin",
@@ -348,7 +348,7 @@
         "scale": "linear",
         "favorite": false,
         "selected": false,
-        "color": "#37ff8a"
+        "color": "#bcbd22"
     },
     "system.beamline.magnet.outputEnabled": {
         "dataSource": "system.beamline.magnet.outputEnabled",
@@ -357,16 +357,16 @@
         "scale": "linear",
         "favorite": false,
         "selected": false,
-        "color": "#ffe837"
+        "color": "#98df8a"
     },
     "system.beamline.magnet.readbackA": {
         "dataSource": "system.beamline.magnet.readbackA",
         "label": "Magnet (A)",
         "multiplier": 1.0,
         "scale": "linear",
-        "favorite": true,
+        "favorite": false,
         "selected": false,
-        "color": "#ff37a2"
+        "color": "#c7c7c7"
     },
     "system.beamline.magnet.readbackV": {
         "dataSource": "system.beamline.magnet.readbackV",
@@ -375,7 +375,7 @@
         "scale": "linear",
         "favorite": false,
         "selected": false,
-        "color": "#ff9e37"
+        "color": "#e377c2"
     },
     "system.beamline.magnet.static_active": {
         "dataSource": "system.beamline.magnet.static_active",
@@ -384,7 +384,7 @@
         "scale": "linear",
         "favorite": false,
         "selected": false,
-        "color": "#ff379e"
+        "color": "#bcbd22"
     },
     "system.beamline.magnet.status": {
         "dataSource": "system.beamline.magnet.status",
@@ -393,7 +393,7 @@
         "scale": "linear",
         "favorite": false,
         "selected": false,
-        "color": "#3798ff"
+        "color": "#f7b6d2"
     },
     "system.beamline.massScan.feedback.currentStep": {
         "dataSource": "system.beamline.massScan.feedback.currentStep",
@@ -402,7 +402,7 @@
         "scale": "linear",
         "favorite": false,
         "selected": false,
-        "color": "#ffca37"
+        "color": "#e377c2"
     },
     "system.beamline.massScan.feedback.remainingTime_m": {
         "dataSource": "system.beamline.massScan.feedback.remainingTime_m",
@@ -411,7 +411,7 @@
         "scale": "linear",
         "favorite": false,
         "selected": false,
-        "color": "#d037ff"
+        "color": "#8c564b"
     },
     "system.beamline.massScan.feedback.remainingTime_s": {
         "dataSource": "system.beamline.massScan.feedback.remainingTime_s",
@@ -420,7 +420,7 @@
         "scale": "linear",
         "favorite": false,
         "selected": false,
-        "color": "#37a2ff"
+        "color": "#e377c2"
     },
     "system.beamline.massScan.feedback.resultsReady": {
         "dataSource": "system.beamline.massScan.feedback.resultsReady",
@@ -429,7 +429,7 @@
         "scale": "linear",
         "favorite": false,
         "selected": false,
-        "color": "#55ff37"
+        "color": "#9467bd"
     },
     "system.beamline.massScan.feedback.status": {
         "dataSource": "system.beamline.massScan.feedback.status",
@@ -438,7 +438,7 @@
         "scale": "linear",
         "favorite": false,
         "selected": false,
-        "color": "#ffc637"
+        "color": "#dbdb8d"
     },
     "system.beamline.massScan.feedback.sweepActive": {
         "dataSource": "system.beamline.massScan.feedback.sweepActive",
@@ -447,7 +447,7 @@
         "scale": "linear",
         "favorite": false,
         "selected": false,
-        "color": "#37ffd4"
+        "color": "#98df8a"
     },
     "system.beamline.massScan.requestStart": {
         "dataSource": "system.beamline.massScan.requestStart",
@@ -456,7 +456,7 @@
         "scale": "linear",
         "favorite": false,
         "selected": false,
-        "color": "#ffff37"
+        "color": "#c5b0d5"
     },
     "system.beamline.massScan.requestStop": {
         "dataSource": "system.beamline.massScan.requestStop",
@@ -465,16 +465,7 @@
         "scale": "linear",
         "favorite": false,
         "selected": false,
-        "color": "#6937ff"
-    },
-    "system.beamline.massScan.settings.hystersisWait": {
-        "dataSource": "system.beamline.massScan.settings.hystersisWait",
-        "label": "Hystersis Wait",
-        "multiplier": 1.0,
-        "scale": "linear",
-        "favorite": false,
-        "selected": false,
-        "color": "#37d0ff"
+        "color": "#f7b6d2"
     },
     "system.beamline.massScan.settings.startCurrent": {
         "dataSource": "system.beamline.massScan.settings.startCurrent",
@@ -483,16 +474,7 @@
         "scale": "linear",
         "favorite": false,
         "selected": false,
-        "color": "#3784ff"
-    },
-    "system.beamline.massScan.settings.stepTime": {
-        "dataSource": "system.beamline.massScan.settings.stepTime",
-        "label": "Step Time",
-        "multiplier": 1.0,
-        "scale": "linear",
-        "favorite": false,
-        "selected": false,
-        "color": "#378aff"
+        "color": "#d62728"
     },
     "system.beamline.massScan.settings.stopCurrent": {
         "dataSource": "system.beamline.massScan.settings.stopCurrent",
@@ -501,7 +483,7 @@
         "scale": "linear",
         "favorite": false,
         "selected": false,
-        "color": "#ff374e"
+        "color": "#8c564b"
     },
     "system.beamline.massScan.settings.totalSteps": {
         "dataSource": "system.beamline.massScan.settings.totalSteps",
@@ -510,7 +492,7 @@
         "scale": "linear",
         "favorite": false,
         "selected": false,
-        "color": "#ff3752"
+        "color": "#2ca02c"
     },
     "system.beamline.mass_slits.bias_voltage": {
         "dataSource": "system.beamline.mass_slits.bias_voltage",
@@ -519,7 +501,7 @@
         "scale": "linear",
         "favorite": false,
         "selected": false,
-        "color": "#37ff6c"
+        "color": "#c49c94"
     },
     "system.beamline.mass_slits.gap_offset_mm": {
         "dataSource": "system.beamline.mass_slits.gap_offset_mm",
@@ -528,7 +510,7 @@
         "scale": "linear",
         "favorite": false,
         "selected": false,
-        "color": "#377aff"
+        "color": "#7f7f7f"
     },
     "system.beamline.mass_slits.gap_width_mm": {
         "dataSource": "system.beamline.mass_slits.gap_width_mm",
@@ -537,7 +519,7 @@
         "scale": "linear",
         "favorite": false,
         "selected": false,
-        "color": "#375cff"
+        "color": "#9edae5"
     },
     "system.beamline.mass_slits.left_position": {
         "dataSource": "system.beamline.mass_slits.left_position",
@@ -546,7 +528,7 @@
         "scale": "linear",
         "favorite": false,
         "selected": false,
-        "color": "#caff37"
+        "color": "#d62728"
     },
     "system.beamline.mass_slits.right_position": {
         "dataSource": "system.beamline.mass_slits.right_position",
@@ -555,7 +537,7 @@
         "scale": "linear",
         "favorite": false,
         "selected": false,
-        "color": "#9b37ff"
+        "color": "#c5b0d5"
     },
     "system.beamline.steerers.x.fault": {
         "dataSource": "system.beamline.steerers.x.fault",
@@ -564,7 +546,7 @@
         "scale": "linear",
         "favorite": false,
         "selected": false,
-        "color": "#9837ff"
+        "color": "#2ca02c"
     },
     "system.beamline.steerers.x.hmiSetpointVEnabled": {
         "dataSource": "system.beamline.steerers.x.hmiSetpointVEnabled",
@@ -573,7 +555,7 @@
         "scale": "linear",
         "favorite": false,
         "selected": false,
-        "color": "#ffa837"
+        "color": "#aec7e8"
     },
     "system.beamline.steerers.x.hmiSetpointVEntry": {
         "dataSource": "system.beamline.steerers.x.hmiSetpointVEntry",
@@ -582,7 +564,7 @@
         "scale": "linear",
         "favorite": false,
         "selected": false,
-        "color": "#ff37bc"
+        "color": "#e377c2"
     },
     "system.beamline.steerers.x.hmiSetpointVEntryMax": {
         "dataSource": "system.beamline.steerers.x.hmiSetpointVEntryMax",
@@ -591,7 +573,7 @@
         "scale": "linear",
         "favorite": false,
         "selected": false,
-        "color": "#bc37ff"
+        "color": "#7f7f7f"
     },
     "system.beamline.steerers.x.hmiSetpointVEntryMin": {
         "dataSource": "system.beamline.steerers.x.hmiSetpointVEntryMin",
@@ -600,7 +582,7 @@
         "scale": "linear",
         "favorite": false,
         "selected": false,
-        "color": "#c637ff"
+        "color": "#9467bd"
     },
     "system.beamline.steerers.x.outputEnabled": {
         "dataSource": "system.beamline.steerers.x.outputEnabled",
@@ -609,7 +591,7 @@
         "scale": "linear",
         "favorite": false,
         "selected": false,
-        "color": "#d0ff37"
+        "color": "#9467bd"
     },
     "system.beamline.steerers.x.readbackA": {
         "dataSource": "system.beamline.steerers.x.readbackA",
@@ -618,7 +600,7 @@
         "scale": "linear",
         "favorite": false,
         "selected": false,
-        "color": "#3741ff"
+        "color": "#7f7f7f"
     },
     "system.beamline.steerers.x.readbackV": {
         "dataSource": "system.beamline.steerers.x.readbackV",
@@ -627,7 +609,7 @@
         "scale": "linear",
         "favorite": false,
         "selected": false,
-        "color": "#ff6c37"
+        "color": "#c49c94"
     },
     "system.beamline.steerers.x.status": {
         "dataSource": "system.beamline.steerers.x.status",
@@ -636,7 +618,7 @@
         "scale": "linear",
         "favorite": false,
         "selected": false,
-        "color": "#ff374e"
+        "color": "#e377c2"
     },
     "system.beamline.steerers.y.fault": {
         "dataSource": "system.beamline.steerers.y.fault",
@@ -645,7 +627,7 @@
         "scale": "linear",
         "favorite": false,
         "selected": false,
-        "color": "#ff7337"
+        "color": "#dbdb8d"
     },
     "system.beamline.steerers.y.hmiSetpointVEnabled": {
         "dataSource": "system.beamline.steerers.y.hmiSetpointVEnabled",
@@ -654,7 +636,7 @@
         "scale": "linear",
         "favorite": false,
         "selected": false,
-        "color": "#37ff7a"
+        "color": "#17becf"
     },
     "system.beamline.steerers.y.hmiSetpointVEntry": {
         "dataSource": "system.beamline.steerers.y.hmiSetpointVEntry",
@@ -663,7 +645,7 @@
         "scale": "linear",
         "favorite": false,
         "selected": false,
-        "color": "#37ff84"
+        "color": "#dbdb8d"
     },
     "system.beamline.steerers.y.hmiSetpointVEntryMax": {
         "dataSource": "system.beamline.steerers.y.hmiSetpointVEntryMax",
@@ -672,7 +654,7 @@
         "scale": "linear",
         "favorite": false,
         "selected": false,
-        "color": "#3780ff"
+        "color": "#ff9896"
     },
     "system.beamline.steerers.y.hmiSetpointVEntryMin": {
         "dataSource": "system.beamline.steerers.y.hmiSetpointVEntryMin",
@@ -681,7 +663,7 @@
         "scale": "linear",
         "favorite": false,
         "selected": false,
-        "color": "#c0ff37"
+        "color": "#aec7e8"
     },
     "system.beamline.steerers.y.outputEnabled": {
         "dataSource": "system.beamline.steerers.y.outputEnabled",
@@ -690,7 +672,7 @@
         "scale": "linear",
         "favorite": false,
         "selected": false,
-        "color": "#3787ff"
+        "color": "#c5b0d5"
     },
     "system.beamline.steerers.y.readbackA": {
         "dataSource": "system.beamline.steerers.y.readbackA",
@@ -699,7 +681,7 @@
         "scale": "linear",
         "favorite": false,
         "selected": false,
-        "color": "#37ffde"
+        "color": "#c49c94"
     },
     "system.beamline.steerers.y.readbackV": {
         "dataSource": "system.beamline.steerers.y.readbackV",
@@ -708,7 +690,7 @@
         "scale": "linear",
         "favorite": false,
         "selected": false,
-        "color": "#6937ff"
+        "color": "#9467bd"
     },
     "system.beamline.steerers.y.status": {
         "dataSource": "system.beamline.steerers.y.status",
@@ -717,7 +699,7 @@
         "scale": "linear",
         "favorite": false,
         "selected": false,
-        "color": "#37ffac"
+        "color": "#aec7e8"
     },
     "system.beamline.straight_thru_cup.readbackA": {
         "dataSource": "system.beamline.straight_thru_cup.readbackA",
@@ -726,7 +708,7 @@
         "scale": "linear",
         "favorite": false,
         "selected": false,
-        "color": "#3784ff"
+        "color": "#7f7f7f"
     },
     "system.endstation.neutral_trap.fault": {
         "dataSource": "system.endstation.neutral_trap.fault",
@@ -735,7 +717,7 @@
         "scale": "linear",
         "favorite": false,
         "selected": false,
-        "color": "#ffcd37"
+        "color": "#17becf"
     },
     "system.endstation.neutral_trap.hmiSetpointLeftVEnabled": {
         "dataSource": "system.endstation.neutral_trap.hmiSetpointLeftVEnabled",
@@ -744,7 +726,7 @@
         "scale": "linear",
         "favorite": false,
         "selected": false,
-        "color": "#37ff3e"
+        "color": "#8c564b"
     },
     "system.endstation.neutral_trap.hmiSetpointLeftVEntry": {
         "dataSource": "system.endstation.neutral_trap.hmiSetpointLeftVEntry",
@@ -753,7 +735,7 @@
         "scale": "linear",
         "favorite": false,
         "selected": false,
-        "color": "#37ffd0"
+        "color": "#c5b0d5"
     },
     "system.endstation.neutral_trap.hmiSetpointLeftVEntryMax": {
         "dataSource": "system.endstation.neutral_trap.hmiSetpointLeftVEntryMax",
@@ -762,7 +744,7 @@
         "scale": "linear",
         "favorite": false,
         "selected": false,
-        "color": "#d7ff37"
+        "color": "#9edae5"
     },
     "system.endstation.neutral_trap.hmiSetpointLeftVEntryMin": {
         "dataSource": "system.endstation.neutral_trap.hmiSetpointLeftVEntryMin",
@@ -771,7 +753,7 @@
         "scale": "linear",
         "favorite": false,
         "selected": false,
-        "color": "#d7ff37"
+        "color": "#f7b6d2"
     },
     "system.endstation.neutral_trap.hmiSetpointRightVEnabled": {
         "dataSource": "system.endstation.neutral_trap.hmiSetpointRightVEnabled",
@@ -780,7 +762,7 @@
         "scale": "linear",
         "favorite": false,
         "selected": false,
-        "color": "#37ffd7"
+        "color": "#dbdb8d"
     },
     "system.endstation.neutral_trap.hmiSetpointRightVEntry": {
         "dataSource": "system.endstation.neutral_trap.hmiSetpointRightVEntry",
@@ -789,7 +771,7 @@
         "scale": "linear",
         "favorite": false,
         "selected": false,
-        "color": "#94ff37"
+        "color": "#bcbd22"
     },
     "system.endstation.neutral_trap.hmiSetpointRightVEntryMax": {
         "dataSource": "system.endstation.neutral_trap.hmiSetpointRightVEntryMax",
@@ -798,7 +780,7 @@
         "scale": "linear",
         "favorite": false,
         "selected": false,
-        "color": "#3e37ff"
+        "color": "#d62728"
     },
     "system.endstation.neutral_trap.hmiSetpointRightVEntryMin": {
         "dataSource": "system.endstation.neutral_trap.hmiSetpointRightVEntryMin",
@@ -807,7 +789,7 @@
         "scale": "linear",
         "favorite": false,
         "selected": false,
-        "color": "#7a37ff"
+        "color": "#1f77b4"
     },
     "system.endstation.neutral_trap.readbackLeftA": {
         "dataSource": "system.endstation.neutral_trap.readbackLeftA",
@@ -816,7 +798,7 @@
         "scale": "linear",
         "favorite": false,
         "selected": false,
-        "color": "#ff37da"
+        "color": "#ffbb78"
     },
     "system.endstation.neutral_trap.readbackLeftV": {
         "dataSource": "system.endstation.neutral_trap.readbackLeftV",
@@ -825,7 +807,7 @@
         "scale": "linear",
         "favorite": false,
         "selected": false,
-        "color": "#37f5ff"
+        "color": "#1f77b4"
     },
     "system.endstation.neutral_trap.readbackRightA": {
         "dataSource": "system.endstation.neutral_trap.readbackRightA",
@@ -834,7 +816,7 @@
         "scale": "linear",
         "favorite": false,
         "selected": false,
-        "color": "#ff4837"
+        "color": "#d62728"
     },
     "system.endstation.neutral_trap.readbackRightV": {
         "dataSource": "system.endstation.neutral_trap.readbackRightV",
@@ -843,7 +825,7 @@
         "scale": "linear",
         "favorite": false,
         "selected": false,
-        "color": "#ff37c6"
+        "color": "#ffbb78"
     },
     "system.endstation.neutral_trap.status": {
         "dataSource": "system.endstation.neutral_trap.status",
@@ -852,7 +834,7 @@
         "scale": "linear",
         "favorite": false,
         "selected": false,
-        "color": "#37ff4b"
+        "color": "#ff7f0e"
     },
     "system.endstation.sample.measured_fluence_ions_cm2": {
         "dataSource": "system.endstation.sample.measured_fluence_ions_cm2",
@@ -861,7 +843,7 @@
         "scale": "linear",
         "favorite": false,
         "selected": false,
-        "color": "#ff3770"
+        "color": "#9edae5"
     },
     "system.endstation.sample.measured_temp_C": {
         "dataSource": "system.endstation.sample.measured_temp_C",
@@ -870,7 +852,7 @@
         "scale": "linear",
         "favorite": false,
         "selected": false,
-        "color": "#ff3780"
+        "color": "#2ca02c"
     },
     "system.endstation.sample.reference_number": {
         "dataSource": "system.endstation.sample.reference_number",
@@ -879,7 +861,7 @@
         "scale": "linear",
         "favorite": false,
         "selected": false,
-        "color": "#37ff55"
+        "color": "#7f7f7f"
     },
     "system.endstation.sample.requested_fluence_ions_cm2": {
         "dataSource": "system.endstation.sample.requested_fluence_ions_cm2",
@@ -888,7 +870,7 @@
         "scale": "linear",
         "favorite": false,
         "selected": false,
-        "color": "#9437ff"
+        "color": "#9edae5"
     },
     "system.endstation.sample.requested_temp_C": {
         "dataSource": "system.endstation.sample.requested_temp_C",
@@ -897,7 +879,7 @@
         "scale": "linear",
         "favorite": false,
         "selected": false,
-        "color": "#ffc037"
+        "color": "#2ca02c"
     },
     "system.endstation.sample.status": {
         "dataSource": "system.endstation.sample.status",
@@ -906,7 +888,7 @@
         "scale": "linear",
         "favorite": false,
         "selected": false,
-        "color": "#b9ff37"
+        "color": "#c7c7c7"
     },
     "system.endstation.stage.electrical.bias": {
         "dataSource": "system.endstation.stage.electrical.bias",
@@ -915,7 +897,7 @@
         "scale": "linear",
         "favorite": false,
         "selected": false,
-        "color": "#7aff37"
+        "color": "#7f7f7f"
     },
     "system.endstation.stage.electrical.measured_current_A": {
         "dataSource": "system.endstation.stage.electrical.measured_current_A",
@@ -924,7 +906,7 @@
         "scale": "linear",
         "favorite": false,
         "selected": false,
-        "color": "#37fff2"
+        "color": "#9edae5"
     },
     "system.endstation.stage.motion.readback_angle_deg": {
         "dataSource": "system.endstation.stage.motion.readback_angle_deg",
@@ -933,7 +915,7 @@
         "scale": "linear",
         "favorite": false,
         "selected": false,
-        "color": "#3794ff"
+        "color": "#ffbb78"
     },
     "system.endstation.stage.motion.readback_x_mm": {
         "dataSource": "system.endstation.stage.motion.readback_x_mm",
@@ -942,7 +924,7 @@
         "scale": "linear",
         "favorite": false,
         "selected": false,
-        "color": "#c6ff37"
+        "color": "#17becf"
     },
     "system.endstation.stage.motion.readback_y_mm": {
         "dataSource": "system.endstation.stage.motion.readback_y_mm",
@@ -951,7 +933,7 @@
         "scale": "linear",
         "favorite": false,
         "selected": false,
-        "color": "#ebff37"
+        "color": "#ffbb78"
     },
     "system.endstation.stage.motion.readback_z_mm": {
         "dataSource": "system.endstation.stage.motion.readback_z_mm",
@@ -960,7 +942,7 @@
         "scale": "linear",
         "favorite": false,
         "selected": false,
-        "color": "#fff837"
+        "color": "#9467bd"
     },
     "system.endstation.stage.motion.setpoint_angle_deg": {
         "dataSource": "system.endstation.stage.motion.setpoint_angle_deg",
@@ -969,7 +951,7 @@
         "scale": "linear",
         "favorite": false,
         "selected": false,
-        "color": "#37ffa8"
+        "color": "#1f77b4"
     },
     "system.endstation.stage.motion.setpoint_x_mm": {
         "dataSource": "system.endstation.stage.motion.setpoint_x_mm",
@@ -978,7 +960,7 @@
         "scale": "linear",
         "favorite": false,
         "selected": false,
-        "color": "#c337ff"
+        "color": "#c7c7c7"
     },
     "system.endstation.stage.motion.setpoint_y_mm": {
         "dataSource": "system.endstation.stage.motion.setpoint_y_mm",
@@ -987,7 +969,7 @@
         "scale": "linear",
         "favorite": false,
         "selected": false,
-        "color": "#37ffd4"
+        "color": "#1f77b4"
     },
     "system.endstation.stage.motion.setpoint_z_mm": {
         "dataSource": "system.endstation.stage.motion.setpoint_z_mm",
@@ -996,7 +978,7 @@
         "scale": "linear",
         "favorite": false,
         "selected": false,
-        "color": "#a837ff"
+        "color": "#98df8a"
     },
     "system.endstation.stage.motion.status": {
         "dataSource": "system.endstation.stage.motion.status",
@@ -1005,7 +987,7 @@
         "scale": "linear",
         "favorite": false,
         "selected": false,
-        "color": "#e4ff37"
+        "color": "#f7b6d2"
     },
     "system.general.bufferIndex": {
         "dataSource": "system.general.bufferIndex",
@@ -1014,7 +996,7 @@
         "scale": "linear",
         "favorite": false,
         "selected": false,
-        "color": "#37ff4e"
+        "color": "#ff7f0e"
     },
     "system.general.coolantStatus": {
         "dataSource": "system.general.coolantStatus",
@@ -1023,7 +1005,7 @@
         "scale": "linear",
         "favorite": false,
         "selected": false,
-        "color": "#ff374e"
+        "color": "#bcbd22"
     },
     "system.general.errorPLC": {
         "dataSource": "system.general.errorPLC",
@@ -1032,7 +1014,7 @@
         "scale": "linear",
         "favorite": false,
         "selected": false,
-        "color": "#ffd037"
+        "color": "#c5b0d5"
     },
     "system.general.faultArray[0]": {
         "dataSource": "system.general.faultArray[0]",
@@ -1041,7 +1023,7 @@
         "scale": "linear",
         "favorite": false,
         "selected": false,
-        "color": "#e437ff"
+        "color": "#9edae5"
     },
     "system.general.faultArray[100]": {
         "dataSource": "system.general.faultArray[100]",
@@ -1050,7 +1032,7 @@
         "scale": "linear",
         "favorite": false,
         "selected": false,
-        "color": "#5237ff"
+        "color": "#9467bd"
     },
     "system.general.faultArray[10]": {
         "dataSource": "system.general.faultArray[10]",
@@ -1059,7 +1041,7 @@
         "scale": "linear",
         "favorite": false,
         "selected": false,
-        "color": "#37ff3a"
+        "color": "#bcbd22"
     },
     "system.general.faultArray[11]": {
         "dataSource": "system.general.faultArray[11]",
@@ -1068,7 +1050,7 @@
         "scale": "linear",
         "favorite": false,
         "selected": false,
-        "color": "#37c6ff"
+        "color": "#c5b0d5"
     },
     "system.general.faultArray[12]": {
         "dataSource": "system.general.faultArray[12]",
@@ -1077,7 +1059,7 @@
         "scale": "linear",
         "favorite": false,
         "selected": false,
-        "color": "#ca37ff"
+        "color": "#ff7f0e"
     },
     "system.general.faultArray[13]": {
         "dataSource": "system.general.faultArray[13]",
@@ -1086,7 +1068,7 @@
         "scale": "linear",
         "favorite": false,
         "selected": false,
-        "color": "#ff37fc"
+        "color": "#c7c7c7"
     },
     "system.general.faultArray[14]": {
         "dataSource": "system.general.faultArray[14]",
@@ -1095,7 +1077,7 @@
         "scale": "linear",
         "favorite": false,
         "selected": false,
-        "color": "#c037ff"
+        "color": "#9467bd"
     },
     "system.general.faultArray[15]": {
         "dataSource": "system.general.faultArray[15]",
@@ -1104,7 +1086,7 @@
         "scale": "linear",
         "favorite": false,
         "selected": false,
-        "color": "#ff5837"
+        "color": "#aec7e8"
     },
     "system.general.faultArray[16]": {
         "dataSource": "system.general.faultArray[16]",
@@ -1113,7 +1095,7 @@
         "scale": "linear",
         "favorite": false,
         "selected": false,
-        "color": "#ff373a"
+        "color": "#7f7f7f"
     },
     "system.general.faultArray[17]": {
         "dataSource": "system.general.faultArray[17]",
@@ -1122,7 +1104,7 @@
         "scale": "linear",
         "favorite": false,
         "selected": false,
-        "color": "#ffc637"
+        "color": "#ff9896"
     },
     "system.general.faultArray[18]": {
         "dataSource": "system.general.faultArray[18]",
@@ -1131,7 +1113,7 @@
         "scale": "linear",
         "favorite": false,
         "selected": false,
-        "color": "#37ff87"
+        "color": "#1f77b4"
     },
     "system.general.faultArray[19]": {
         "dataSource": "system.general.faultArray[19]",
@@ -1140,7 +1122,7 @@
         "scale": "linear",
         "favorite": false,
         "selected": false,
-        "color": "#4bff37"
+        "color": "#f7b6d2"
     },
     "system.general.faultArray[1]": {
         "dataSource": "system.general.faultArray[1]",
@@ -1149,7 +1131,7 @@
         "scale": "linear",
         "favorite": false,
         "selected": false,
-        "color": "#bc37ff"
+        "color": "#e377c2"
     },
     "system.general.faultArray[20]": {
         "dataSource": "system.general.faultArray[20]",
@@ -1158,7 +1140,7 @@
         "scale": "linear",
         "favorite": false,
         "selected": false,
-        "color": "#6237ff"
+        "color": "#98df8a"
     },
     "system.general.faultArray[21]": {
         "dataSource": "system.general.faultArray[21]",
@@ -1167,7 +1149,7 @@
         "scale": "linear",
         "favorite": false,
         "selected": false,
-        "color": "#37c3ff"
+        "color": "#17becf"
     },
     "system.general.faultArray[22]": {
         "dataSource": "system.general.faultArray[22]",
@@ -1176,7 +1158,7 @@
         "scale": "linear",
         "favorite": false,
         "selected": false,
-        "color": "#376cff"
+        "color": "#c49c94"
     },
     "system.general.faultArray[23]": {
         "dataSource": "system.general.faultArray[23]",
@@ -1185,7 +1167,7 @@
         "scale": "linear",
         "favorite": false,
         "selected": false,
-        "color": "#4bff37"
+        "color": "#2ca02c"
     },
     "system.general.faultArray[24]": {
         "dataSource": "system.general.faultArray[24]",
@@ -1194,7 +1176,7 @@
         "scale": "linear",
         "favorite": false,
         "selected": false,
-        "color": "#377dff"
+        "color": "#dbdb8d"
     },
     "system.general.faultArray[25]": {
         "dataSource": "system.general.faultArray[25]",
@@ -1203,7 +1185,7 @@
         "scale": "linear",
         "favorite": false,
         "selected": false,
-        "color": "#70ff37"
+        "color": "#8c564b"
     },
     "system.general.faultArray[26]": {
         "dataSource": "system.general.faultArray[26]",
@@ -1212,7 +1194,7 @@
         "scale": "linear",
         "favorite": false,
         "selected": false,
-        "color": "#3794ff"
+        "color": "#ffbb78"
     },
     "system.general.faultArray[27]": {
         "dataSource": "system.general.faultArray[27]",
@@ -1221,7 +1203,7 @@
         "scale": "linear",
         "favorite": false,
         "selected": false,
-        "color": "#ff3762"
+        "color": "#bcbd22"
     },
     "system.general.faultArray[28]": {
         "dataSource": "system.general.faultArray[28]",
@@ -1230,7 +1212,7 @@
         "scale": "linear",
         "favorite": false,
         "selected": false,
-        "color": "#ff375c"
+        "color": "#c5b0d5"
     },
     "system.general.faultArray[29]": {
         "dataSource": "system.general.faultArray[29]",
@@ -1239,7 +1221,7 @@
         "scale": "linear",
         "favorite": false,
         "selected": false,
-        "color": "#ff5f37"
+        "color": "#ff7f0e"
     },
     "system.general.faultArray[2]": {
         "dataSource": "system.general.faultArray[2]",
@@ -1248,7 +1230,7 @@
         "scale": "linear",
         "favorite": false,
         "selected": false,
-        "color": "#37ff44"
+        "color": "#98df8a"
     },
     "system.general.faultArray[30]": {
         "dataSource": "system.general.faultArray[30]",
@@ -1257,7 +1239,7 @@
         "scale": "linear",
         "favorite": false,
         "selected": false,
-        "color": "#ff3787"
+        "color": "#7f7f7f"
     },
     "system.general.faultArray[31]": {
         "dataSource": "system.general.faultArray[31]",
@@ -1266,7 +1248,7 @@
         "scale": "linear",
         "favorite": false,
         "selected": false,
-        "color": "#ff3780"
+        "color": "#ff9896"
     },
     "system.general.faultArray[32]": {
         "dataSource": "system.general.faultArray[32]",
@@ -1275,7 +1257,7 @@
         "scale": "linear",
         "favorite": false,
         "selected": false,
-        "color": "#37ff41"
+        "color": "#1f77b4"
     },
     "system.general.faultArray[33]": {
         "dataSource": "system.general.faultArray[33]",
@@ -1284,7 +1266,7 @@
         "scale": "linear",
         "favorite": false,
         "selected": false,
-        "color": "#37ff8a"
+        "color": "#f7b6d2"
     },
     "system.general.faultArray[34]": {
         "dataSource": "system.general.faultArray[34]",
@@ -1293,7 +1275,7 @@
         "scale": "linear",
         "favorite": false,
         "selected": false,
-        "color": "#ffe437"
+        "color": "#d62728"
     },
     "system.general.faultArray[35]": {
         "dataSource": "system.general.faultArray[35]",
@@ -1302,7 +1284,7 @@
         "scale": "linear",
         "favorite": false,
         "selected": false,
-        "color": "#c6ff37"
+        "color": "#9edae5"
     },
     "system.general.faultArray[36]": {
         "dataSource": "system.general.faultArray[36]",
@@ -1311,7 +1293,7 @@
         "scale": "linear",
         "favorite": false,
         "selected": false,
-        "color": "#e4ff37"
+        "color": "#e377c2"
     },
     "system.general.faultArray[37]": {
         "dataSource": "system.general.faultArray[37]",
@@ -1320,7 +1302,7 @@
         "scale": "linear",
         "favorite": false,
         "selected": false,
-        "color": "#a237ff"
+        "color": "#98df8a"
     },
     "system.general.faultArray[38]": {
         "dataSource": "system.general.faultArray[38]",
@@ -1329,7 +1311,7 @@
         "scale": "linear",
         "favorite": false,
         "selected": false,
-        "color": "#ffe137"
+        "color": "#17becf"
     },
     "system.general.faultArray[39]": {
         "dataSource": "system.general.faultArray[39]",
@@ -1338,7 +1320,7 @@
         "scale": "linear",
         "favorite": false,
         "selected": false,
-        "color": "#37ffde"
+        "color": "#c49c94"
     },
     "system.general.faultArray[3]": {
         "dataSource": "system.general.faultArray[3]",
@@ -1347,7 +1329,7 @@
         "scale": "linear",
         "favorite": false,
         "selected": false,
-        "color": "#37ffb2"
+        "color": "#17becf"
     },
     "system.general.faultArray[40]": {
         "dataSource": "system.general.faultArray[40]",
@@ -1356,7 +1338,7 @@
         "scale": "linear",
         "favorite": false,
         "selected": false,
-        "color": "#87ff37"
+        "color": "#ffbb78"
     },
     "system.general.faultArray[41]": {
         "dataSource": "system.general.faultArray[41]",
@@ -1365,7 +1347,7 @@
         "scale": "linear",
         "favorite": false,
         "selected": false,
-        "color": "#91ff37"
+        "color": "#bcbd22"
     },
     "system.general.faultArray[42]": {
         "dataSource": "system.general.faultArray[42]",
@@ -1374,7 +1356,7 @@
         "scale": "linear",
         "favorite": false,
         "selected": false,
-        "color": "#70ff37"
+        "color": "#c5b0d5"
     },
     "system.general.faultArray[43]": {
         "dataSource": "system.general.faultArray[43]",
@@ -1383,7 +1365,7 @@
         "scale": "linear",
         "favorite": false,
         "selected": false,
-        "color": "#76ff37"
+        "color": "#ff7f0e"
     },
     "system.general.faultArray[44]": {
         "dataSource": "system.general.faultArray[44]",
@@ -1392,7 +1374,7 @@
         "scale": "linear",
         "favorite": false,
         "selected": false,
-        "color": "#fff537"
+        "color": "#c7c7c7"
     },
     "system.general.faultArray[45]": {
         "dataSource": "system.general.faultArray[45]",
@@ -1401,7 +1383,7 @@
         "scale": "linear",
         "favorite": false,
         "selected": false,
-        "color": "#37ff62"
+        "color": "#9467bd"
     },
     "system.general.faultArray[46]": {
         "dataSource": "system.general.faultArray[46]",
@@ -1410,7 +1392,7 @@
         "scale": "linear",
         "favorite": false,
         "selected": false,
-        "color": "#fff237"
+        "color": "#aec7e8"
     },
     "system.general.faultArray[47]": {
         "dataSource": "system.general.faultArray[47]",
@@ -1419,7 +1401,7 @@
         "scale": "linear",
         "favorite": false,
         "selected": false,
-        "color": "#ff3780"
+        "color": "#7f7f7f"
     },
     "system.general.faultArray[48]": {
         "dataSource": "system.general.faultArray[48]",
@@ -1428,7 +1410,7 @@
         "scale": "linear",
         "favorite": false,
         "selected": false,
-        "color": "#37ff6c"
+        "color": "#ff9896"
     },
     "system.general.faultArray[49]": {
         "dataSource": "system.general.faultArray[49]",
@@ -1437,7 +1419,7 @@
         "scale": "linear",
         "favorite": false,
         "selected": false,
-        "color": "#ff4137"
+        "color": "#1f77b4"
     },
     "system.general.faultArray[4]": {
         "dataSource": "system.general.faultArray[4]",
@@ -1446,7 +1428,7 @@
         "scale": "linear",
         "favorite": false,
         "selected": false,
-        "color": "#ff3791"
+        "color": "#c49c94"
     },
     "system.general.faultArray[50]": {
         "dataSource": "system.general.faultArray[50]",
@@ -1455,7 +1437,7 @@
         "scale": "linear",
         "favorite": false,
         "selected": false,
-        "color": "#379eff"
+        "color": "#e377c2"
     },
     "system.general.faultArray[51]": {
         "dataSource": "system.general.faultArray[51]",
@@ -1464,7 +1446,7 @@
         "scale": "linear",
         "favorite": false,
         "selected": false,
-        "color": "#37ffcd"
+        "color": "#98df8a"
     },
     "system.general.faultArray[52]": {
         "dataSource": "system.general.faultArray[52]",
@@ -1473,7 +1455,7 @@
         "scale": "linear",
         "favorite": false,
         "selected": false,
-        "color": "#ff37ee"
+        "color": "#17becf"
     },
     "system.general.faultArray[53]": {
         "dataSource": "system.general.faultArray[53]",
@@ -1482,7 +1464,7 @@
         "scale": "linear",
         "favorite": false,
         "selected": false,
-        "color": "#ff373a"
+        "color": "#c49c94"
     },
     "system.general.faultArray[54]": {
         "dataSource": "system.general.faultArray[54]",
@@ -1491,7 +1473,7 @@
         "scale": "linear",
         "favorite": false,
         "selected": false,
-        "color": "#af37ff"
+        "color": "#2ca02c"
     },
     "system.general.faultArray[55]": {
         "dataSource": "system.general.faultArray[55]",
@@ -1500,7 +1482,7 @@
         "scale": "linear",
         "favorite": false,
         "selected": false,
-        "color": "#c0ff37"
+        "color": "#dbdb8d"
     },
     "system.general.faultArray[56]": {
         "dataSource": "system.general.faultArray[56]",
@@ -1509,7 +1491,7 @@
         "scale": "linear",
         "favorite": false,
         "selected": false,
-        "color": "#ff3748"
+        "color": "#8c564b"
     },
     "system.general.faultArray[57]": {
         "dataSource": "system.general.faultArray[57]",
@@ -1518,7 +1500,7 @@
         "scale": "linear",
         "favorite": false,
         "selected": false,
-        "color": "#37c6ff"
+        "color": "#ffbb78"
     },
     "system.general.faultArray[58]": {
         "dataSource": "system.general.faultArray[58]",
@@ -1527,7 +1509,7 @@
         "scale": "linear",
         "favorite": false,
         "selected": false,
-        "color": "#ff3784"
+        "color": "#bcbd22"
     },
     "system.general.faultArray[59]": {
         "dataSource": "system.general.faultArray[59]",
@@ -1536,7 +1518,7 @@
         "scale": "linear",
         "favorite": false,
         "selected": false,
-        "color": "#fff837"
+        "color": "#c5b0d5"
     },
     "system.general.faultArray[5]": {
         "dataSource": "system.general.faultArray[5]",
@@ -1545,7 +1527,7 @@
         "scale": "linear",
         "favorite": false,
         "selected": false,
-        "color": "#3758ff"
+        "color": "#2ca02c"
     },
     "system.general.faultArray[60]": {
         "dataSource": "system.general.faultArray[60]",
@@ -1554,7 +1536,7 @@
         "scale": "linear",
         "favorite": false,
         "selected": false,
-        "color": "#ff3776"
+        "color": "#aec7e8"
     },
     "system.general.faultArray[61]": {
         "dataSource": "system.general.faultArray[61]",
@@ -1563,7 +1545,7 @@
         "scale": "linear",
         "favorite": false,
         "selected": false,
-        "color": "#d7ff37"
+        "color": "#7f7f7f"
     },
     "system.general.faultArray[62]": {
         "dataSource": "system.general.faultArray[62]",
@@ -1572,7 +1554,7 @@
         "scale": "linear",
         "favorite": false,
         "selected": false,
-        "color": "#37ff76"
+        "color": "#ff9896"
     },
     "system.general.faultArray[63]": {
         "dataSource": "system.general.faultArray[63]",
@@ -1581,7 +1563,7 @@
         "scale": "linear",
         "favorite": false,
         "selected": false,
-        "color": "#4e37ff"
+        "color": "#1f77b4"
     },
     "system.general.faultArray[64]": {
         "dataSource": "system.general.faultArray[64]",
@@ -1590,7 +1572,7 @@
         "scale": "linear",
         "favorite": false,
         "selected": false,
-        "color": "#37fffc"
+        "color": "#f7b6d2"
     },
     "system.general.faultArray[65]": {
         "dataSource": "system.general.faultArray[65]",
@@ -1599,7 +1581,7 @@
         "scale": "linear",
         "favorite": false,
         "selected": false,
-        "color": "#ff3762"
+        "color": "#d62728"
     },
     "system.general.faultArray[66]": {
         "dataSource": "system.general.faultArray[66]",
@@ -1608,7 +1590,7 @@
         "scale": "linear",
         "favorite": false,
         "selected": false,
-        "color": "#ff7337"
+        "color": "#9edae5"
     },
     "system.general.faultArray[67]": {
         "dataSource": "system.general.faultArray[67]",
@@ -1617,7 +1599,7 @@
         "scale": "linear",
         "favorite": false,
         "selected": false,
-        "color": "#ff6937"
+        "color": "#e377c2"
     },
     "system.general.faultArray[68]": {
         "dataSource": "system.general.faultArray[68]",
@@ -1626,7 +1608,7 @@
         "scale": "linear",
         "favorite": false,
         "selected": false,
-        "color": "#ff3773"
+        "color": "#98df8a"
     },
     "system.general.faultArray[69]": {
         "dataSource": "system.general.faultArray[69]",
@@ -1635,7 +1617,7 @@
         "scale": "linear",
         "favorite": false,
         "selected": false,
-        "color": "#37ff76"
+        "color": "#17becf"
     },
     "system.general.faultArray[6]": {
         "dataSource": "system.general.faultArray[6]",
@@ -1644,7 +1626,7 @@
         "scale": "linear",
         "favorite": false,
         "selected": false,
-        "color": "#37deff"
+        "color": "#dbdb8d"
     },
     "system.general.faultArray[70]": {
         "dataSource": "system.general.faultArray[70]",
@@ -1653,7 +1635,7 @@
         "scale": "linear",
         "favorite": false,
         "selected": false,
-        "color": "#69ff37"
+        "color": "#8c564b"
     },
     "system.general.faultArray[71]": {
         "dataSource": "system.general.faultArray[71]",
@@ -1662,7 +1644,7 @@
         "scale": "linear",
         "favorite": false,
         "selected": false,
-        "color": "#b2ff37"
+        "color": "#ffbb78"
     },
     "system.general.faultArray[72]": {
         "dataSource": "system.general.faultArray[72]",
@@ -1671,7 +1653,7 @@
         "scale": "linear",
         "favorite": false,
         "selected": false,
-        "color": "#37ffb6"
+        "color": "#bcbd22"
     },
     "system.general.faultArray[73]": {
         "dataSource": "system.general.faultArray[73]",
@@ -1680,7 +1662,7 @@
         "scale": "linear",
         "favorite": false,
         "selected": false,
-        "color": "#bc37ff"
+        "color": "#c5b0d5"
     },
     "system.general.faultArray[74]": {
         "dataSource": "system.general.faultArray[74]",
@@ -1689,7 +1671,7 @@
         "scale": "linear",
         "favorite": false,
         "selected": false,
-        "color": "#37f2ff"
+        "color": "#ff7f0e"
     },
     "system.general.faultArray[75]": {
         "dataSource": "system.general.faultArray[75]",
@@ -1698,7 +1680,7 @@
         "scale": "linear",
         "favorite": false,
         "selected": false,
-        "color": "#ff378a"
+        "color": "#c7c7c7"
     },
     "system.general.faultArray[76]": {
         "dataSource": "system.general.faultArray[76]",
@@ -1707,7 +1689,7 @@
         "scale": "linear",
         "favorite": false,
         "selected": false,
-        "color": "#ff3770"
+        "color": "#9467bd"
     },
     "system.general.faultArray[77]": {
         "dataSource": "system.general.faultArray[77]",
@@ -1716,7 +1698,7 @@
         "scale": "linear",
         "favorite": false,
         "selected": false,
-        "color": "#7dff37"
+        "color": "#aec7e8"
     },
     "system.general.faultArray[78]": {
         "dataSource": "system.general.faultArray[78]",
@@ -1725,7 +1707,7 @@
         "scale": "linear",
         "favorite": false,
         "selected": false,
-        "color": "#ff6637"
+        "color": "#7f7f7f"
     },
     "system.general.faultArray[79]": {
         "dataSource": "system.general.faultArray[79]",
@@ -1734,7 +1716,7 @@
         "scale": "linear",
         "favorite": false,
         "selected": false,
-        "color": "#37ff84"
+        "color": "#ff9896"
     },
     "system.general.faultArray[7]": {
         "dataSource": "system.general.faultArray[7]",
@@ -1743,7 +1725,7 @@
         "scale": "linear",
         "favorite": false,
         "selected": false,
-        "color": "#b6ff37"
+        "color": "#8c564b"
     },
     "system.general.faultArray[80]": {
         "dataSource": "system.general.faultArray[80]",
@@ -1752,7 +1734,7 @@
         "scale": "linear",
         "favorite": false,
         "selected": false,
-        "color": "#52ff37"
+        "color": "#9edae5"
     },
     "system.general.faultArray[81]": {
         "dataSource": "system.general.faultArray[81]",
@@ -1761,7 +1743,7 @@
         "scale": "linear",
         "favorite": false,
         "selected": false,
-        "color": "#37ff7a"
+        "color": "#e377c2"
     },
     "system.general.faultArray[82]": {
         "dataSource": "system.general.faultArray[82]",
@@ -1770,7 +1752,7 @@
         "scale": "linear",
         "favorite": false,
         "selected": false,
-        "color": "#8eff37"
+        "color": "#98df8a"
     },
     "system.general.faultArray[83]": {
         "dataSource": "system.general.faultArray[83]",
@@ -1779,7 +1761,7 @@
         "scale": "linear",
         "favorite": false,
         "selected": false,
-        "color": "#ff379b"
+        "color": "#17becf"
     },
     "system.general.faultArray[84]": {
         "dataSource": "system.general.faultArray[84]",
@@ -1788,7 +1770,7 @@
         "scale": "linear",
         "favorite": false,
         "selected": false,
-        "color": "#8037ff"
+        "color": "#c49c94"
     },
     "system.general.faultArray[85]": {
         "dataSource": "system.general.faultArray[85]",
@@ -1797,7 +1779,7 @@
         "scale": "linear",
         "favorite": false,
         "selected": false,
-        "color": "#44ff37"
+        "color": "#2ca02c"
     },
     "system.general.faultArray[86]": {
         "dataSource": "system.general.faultArray[86]",
@@ -1806,7 +1788,7 @@
         "scale": "linear",
         "favorite": false,
         "selected": false,
-        "color": "#ff7d37"
+        "color": "#dbdb8d"
     },
     "system.general.faultArray[87]": {
         "dataSource": "system.general.faultArray[87]",
@@ -1815,7 +1797,7 @@
         "scale": "linear",
         "favorite": false,
         "selected": false,
-        "color": "#ffee37"
+        "color": "#8c564b"
     },
     "system.general.faultArray[88]": {
         "dataSource": "system.general.faultArray[88]",
@@ -1824,7 +1806,7 @@
         "scale": "linear",
         "favorite": false,
         "selected": false,
-        "color": "#8e37ff"
+        "color": "#ffbb78"
     },
     "system.general.faultArray[89]": {
         "dataSource": "system.general.faultArray[89]",
@@ -1833,7 +1815,7 @@
         "scale": "linear",
         "favorite": false,
         "selected": false,
-        "color": "#ff3737"
+        "color": "#bcbd22"
     },
     "system.general.faultArray[8]": {
         "dataSource": "system.general.faultArray[8]",
@@ -1842,7 +1824,7 @@
         "scale": "linear",
         "favorite": false,
         "selected": false,
-        "color": "#ffde37"
+        "color": "#ffbb78"
     },
     "system.general.faultArray[90]": {
         "dataSource": "system.general.faultArray[90]",
@@ -1851,7 +1833,7 @@
         "scale": "linear",
         "favorite": false,
         "selected": false,
-        "color": "#37b2ff"
+        "color": "#9467bd"
     },
     "system.general.faultArray[91]": {
         "dataSource": "system.general.faultArray[91]",
@@ -1860,7 +1842,7 @@
         "scale": "linear",
         "favorite": false,
         "selected": false,
-        "color": "#ffaf37"
+        "color": "#aec7e8"
     },
     "system.general.faultArray[92]": {
         "dataSource": "system.general.faultArray[92]",
@@ -1869,7 +1851,7 @@
         "scale": "linear",
         "favorite": false,
         "selected": false,
-        "color": "#ffe437"
+        "color": "#7f7f7f"
     },
     "system.general.faultArray[93]": {
         "dataSource": "system.general.faultArray[93]",
@@ -1878,7 +1860,7 @@
         "scale": "linear",
         "favorite": false,
         "selected": false,
-        "color": "#ff378a"
+        "color": "#ff9896"
     },
     "system.general.faultArray[94]": {
         "dataSource": "system.general.faultArray[94]",
@@ -1887,7 +1869,7 @@
         "scale": "linear",
         "favorite": false,
         "selected": false,
-        "color": "#ff9437"
+        "color": "#1f77b4"
     },
     "system.general.faultArray[95]": {
         "dataSource": "system.general.faultArray[95]",
@@ -1896,7 +1878,7 @@
         "scale": "linear",
         "favorite": false,
         "selected": false,
-        "color": "#ff375c"
+        "color": "#f7b6d2"
     },
     "system.general.faultArray[96]": {
         "dataSource": "system.general.faultArray[96]",
@@ -1905,7 +1887,7 @@
         "scale": "linear",
         "favorite": false,
         "selected": false,
-        "color": "#37ffb6"
+        "color": "#d62728"
     },
     "system.general.faultArray[97]": {
         "dataSource": "system.general.faultArray[97]",
@@ -1914,7 +1896,7 @@
         "scale": "linear",
         "favorite": false,
         "selected": false,
-        "color": "#37afff"
+        "color": "#9edae5"
     },
     "system.general.faultArray[98]": {
         "dataSource": "system.general.faultArray[98]",
@@ -1923,7 +1905,7 @@
         "scale": "linear",
         "favorite": false,
         "selected": false,
-        "color": "#6937ff"
+        "color": "#e377c2"
     },
     "system.general.faultArray[99]": {
         "dataSource": "system.general.faultArray[99]",
@@ -1932,7 +1914,7 @@
         "scale": "linear",
         "favorite": false,
         "selected": false,
-        "color": "#3762ff"
+        "color": "#98df8a"
     },
     "system.general.faultArray[9]": {
         "dataSource": "system.general.faultArray[9]",
@@ -1941,7 +1923,7 @@
         "scale": "linear",
         "favorite": false,
         "selected": false,
-        "color": "#b6ff37"
+        "color": "#bcbd22"
     },
     "system.general.faultCount": {
         "dataSource": "system.general.faultCount",
@@ -1950,7 +1932,7 @@
         "scale": "linear",
         "favorite": false,
         "selected": false,
-        "color": "#ffa837"
+        "color": "#f7b6d2"
     },
     "system.general.messageBuffer[0]": {
         "dataSource": "system.general.messageBuffer[0]",
@@ -1959,7 +1941,7 @@
         "scale": "linear",
         "favorite": false,
         "selected": false,
-        "color": "#ff3737"
+        "color": "#9edae5"
     },
     "system.general.messageBuffer[10]": {
         "dataSource": "system.general.messageBuffer[10]",
@@ -1968,7 +1950,7 @@
         "scale": "linear",
         "favorite": false,
         "selected": false,
-        "color": "#3a37ff"
+        "color": "#9467bd"
     },
     "system.general.messageBuffer[11]": {
         "dataSource": "system.general.messageBuffer[11]",
@@ -1977,7 +1959,7 @@
         "scale": "linear",
         "favorite": false,
         "selected": false,
-        "color": "#ff373a"
+        "color": "#aec7e8"
     },
     "system.general.messageBuffer[12]": {
         "dataSource": "system.general.messageBuffer[12]",
@@ -1986,7 +1968,7 @@
         "scale": "linear",
         "favorite": false,
         "selected": false,
-        "color": "#e1ff37"
+        "color": "#7f7f7f"
     },
     "system.general.messageBuffer[13]": {
         "dataSource": "system.general.messageBuffer[13]",
@@ -1995,7 +1977,7 @@
         "scale": "linear",
         "favorite": false,
         "selected": false,
-        "color": "#f2ff37"
+        "color": "#ff9896"
     },
     "system.general.messageBuffer[14]": {
         "dataSource": "system.general.messageBuffer[14]",
@@ -2004,7 +1986,7 @@
         "scale": "linear",
         "favorite": false,
         "selected": false,
-        "color": "#ff3762"
+        "color": "#1f77b4"
     },
     "system.general.messageBuffer[15]": {
         "dataSource": "system.general.messageBuffer[15]",
@@ -2013,7 +1995,7 @@
         "scale": "linear",
         "favorite": false,
         "selected": false,
-        "color": "#9bff37"
+        "color": "#f7b6d2"
     },
     "system.general.messageBuffer[16]": {
         "dataSource": "system.general.messageBuffer[16]",
@@ -2022,7 +2004,7 @@
         "scale": "linear",
         "favorite": false,
         "selected": false,
-        "color": "#37ff37"
+        "color": "#d62728"
     },
     "system.general.messageBuffer[17]": {
         "dataSource": "system.general.messageBuffer[17]",
@@ -2031,7 +2013,7 @@
         "scale": "linear",
         "favorite": false,
         "selected": false,
-        "color": "#ff379e"
+        "color": "#9edae5"
     },
     "system.general.messageBuffer[18]": {
         "dataSource": "system.general.messageBuffer[18]",
@@ -2040,7 +2022,7 @@
         "scale": "linear",
         "favorite": false,
         "selected": false,
-        "color": "#7aff37"
+        "color": "#e377c2"
     },
     "system.general.messageBuffer[19]": {
         "dataSource": "system.general.messageBuffer[19]",
@@ -2049,7 +2031,7 @@
         "scale": "linear",
         "favorite": false,
         "selected": false,
-        "color": "#fff237"
+        "color": "#98df8a"
     },
     "system.general.messageBuffer[1]": {
         "dataSource": "system.general.messageBuffer[1]",
@@ -2058,7 +2040,7 @@
         "scale": "linear",
         "favorite": false,
         "selected": false,
-        "color": "#37ff41"
+        "color": "#e377c2"
     },
     "system.general.messageBuffer[20]": {
         "dataSource": "system.general.messageBuffer[20]",
@@ -2067,7 +2049,7 @@
         "scale": "linear",
         "favorite": false,
         "selected": false,
-        "color": "#ff5237"
+        "color": "#dbdb8d"
     },
     "system.general.messageBuffer[21]": {
         "dataSource": "system.general.messageBuffer[21]",
@@ -2076,7 +2058,7 @@
         "scale": "linear",
         "favorite": false,
         "selected": false,
-        "color": "#37ffd7"
+        "color": "#8c564b"
     },
     "system.general.messageBuffer[22]": {
         "dataSource": "system.general.messageBuffer[22]",
@@ -2085,7 +2067,7 @@
         "scale": "linear",
         "favorite": false,
         "selected": false,
-        "color": "#37caff"
+        "color": "#ffbb78"
     },
     "system.general.messageBuffer[23]": {
         "dataSource": "system.general.messageBuffer[23]",
@@ -2094,7 +2076,7 @@
         "scale": "linear",
         "favorite": false,
         "selected": false,
-        "color": "#376cff"
+        "color": "#bcbd22"
     },
     "system.general.messageBuffer[24]": {
         "dataSource": "system.general.messageBuffer[24]",
@@ -2103,7 +2085,7 @@
         "scale": "linear",
         "favorite": false,
         "selected": false,
-        "color": "#ff9837"
+        "color": "#c5b0d5"
     },
     "system.general.messageBuffer[25]": {
         "dataSource": "system.general.messageBuffer[25]",
@@ -2112,7 +2094,7 @@
         "scale": "linear",
         "favorite": false,
         "selected": false,
-        "color": "#ffe137"
+        "color": "#ff7f0e"
     },
     "system.general.messageBuffer[26]": {
         "dataSource": "system.general.messageBuffer[26]",
@@ -2121,7 +2103,7 @@
         "scale": "linear",
         "favorite": false,
         "selected": false,
-        "color": "#8e37ff"
+        "color": "#c7c7c7"
     },
     "system.general.messageBuffer[27]": {
         "dataSource": "system.general.messageBuffer[27]",
@@ -2130,7 +2112,7 @@
         "scale": "linear",
         "favorite": false,
         "selected": false,
-        "color": "#ff37b2"
+        "color": "#9467bd"
     },
     "system.general.messageBuffer[28]": {
         "dataSource": "system.general.messageBuffer[28]",
@@ -2139,7 +2121,7 @@
         "scale": "linear",
         "favorite": false,
         "selected": false,
-        "color": "#55ff37"
+        "color": "#aec7e8"
     },
     "system.general.messageBuffer[29]": {
         "dataSource": "system.general.messageBuffer[29]",
@@ -2148,7 +2130,7 @@
         "scale": "linear",
         "favorite": false,
         "selected": false,
-        "color": "#37e8ff"
+        "color": "#7f7f7f"
     },
     "system.general.messageBuffer[2]": {
         "dataSource": "system.general.messageBuffer[2]",
@@ -2157,7 +2139,7 @@
         "scale": "linear",
         "favorite": false,
         "selected": false,
-        "color": "#6937ff"
+        "color": "#98df8a"
     },
     "system.general.messageBuffer[3]": {
         "dataSource": "system.general.messageBuffer[3]",
@@ -2166,7 +2148,7 @@
         "scale": "linear",
         "favorite": false,
         "selected": false,
-        "color": "#37ff5f"
+        "color": "#17becf"
     },
     "system.general.messageBuffer[4]": {
         "dataSource": "system.general.messageBuffer[4]",
@@ -2175,7 +2157,7 @@
         "scale": "linear",
         "favorite": false,
         "selected": false,
-        "color": "#ff3798"
+        "color": "#c49c94"
     },
     "system.general.messageBuffer[5]": {
         "dataSource": "system.general.messageBuffer[5]",
@@ -2184,7 +2166,7 @@
         "scale": "linear",
         "favorite": false,
         "selected": false,
-        "color": "#37ffa2"
+        "color": "#2ca02c"
     },
     "system.general.messageBuffer[6]": {
         "dataSource": "system.general.messageBuffer[6]",
@@ -2193,7 +2175,7 @@
         "scale": "linear",
         "favorite": false,
         "selected": false,
-        "color": "#ffaf37"
+        "color": "#dbdb8d"
     },
     "system.general.messageBuffer[7]": {
         "dataSource": "system.general.messageBuffer[7]",
@@ -2202,7 +2184,7 @@
         "scale": "linear",
         "favorite": false,
         "selected": false,
-        "color": "#ff377d"
+        "color": "#8c564b"
     },
     "system.general.messageBuffer[8]": {
         "dataSource": "system.general.messageBuffer[8]",
@@ -2211,7 +2193,7 @@
         "scale": "linear",
         "favorite": false,
         "selected": false,
-        "color": "#37eeff"
+        "color": "#ffbb78"
     },
     "system.general.messageBuffer[9]": {
         "dataSource": "system.general.messageBuffer[9]",
@@ -2220,7 +2202,7 @@
         "scale": "linear",
         "favorite": false,
         "selected": false,
-        "color": "#37f2ff"
+        "color": "#bcbd22"
     },
     "system.general.requestClearFaults": {
         "dataSource": "system.general.requestClearFaults",
@@ -2229,7 +2211,7 @@
         "scale": "linear",
         "favorite": false,
         "selected": false,
-        "color": "#ebff37"
+        "color": "#c49c94"
     },
     "system.general.systemFault": {
         "dataSource": "system.general.systemFault",
@@ -2238,7 +2220,7 @@
         "scale": "linear",
         "favorite": false,
         "selected": false,
-        "color": "#ff3769"
+        "color": "#c5b0d5"
     },
     "system.ionSource.cesium.coolantOn": {
         "dataSource": "system.ionSource.cesium.coolantOn",
@@ -2247,7 +2229,7 @@
         "scale": "linear",
         "favorite": false,
         "selected": false,
-        "color": "#da37ff"
+        "color": "#17becf"
     },
     "system.ionSource.cesium.heaterOn": {
         "dataSource": "system.ionSource.cesium.heaterOn",
@@ -2256,7 +2238,7 @@
         "scale": "linear",
         "favorite": false,
         "selected": false,
-        "color": "#37ff87"
+        "color": "#c49c94"
     },
     "system.ionSource.cesium.hmiSetpointCEnabled": {
         "dataSource": "system.ionSource.cesium.hmiSetpointCEnabled",
@@ -2265,7 +2247,7 @@
         "scale": "linear",
         "favorite": false,
         "selected": false,
-        "color": "#91ff37"
+        "color": "#ff9896"
     },
     "system.ionSource.cesium.hmiSetpointCEntry": {
         "dataSource": "system.ionSource.cesium.hmiSetpointCEntry",
@@ -2274,7 +2256,7 @@
         "scale": "linear",
         "favorite": false,
         "selected": false,
-        "color": "#3eff37"
+        "color": "#d62728"
     },
     "system.ionSource.cesium.hmiSetpointCEntryMax": {
         "dataSource": "system.ionSource.cesium.hmiSetpointCEntryMax",
@@ -2283,7 +2265,7 @@
         "scale": "linear",
         "favorite": false,
         "selected": false,
-        "color": "#c037ff"
+        "color": "#bcbd22"
     },
     "system.ionSource.cesium.hmiSetpointCEntryMin": {
         "dataSource": "system.ionSource.cesium.hmiSetpointCEntryMin",
@@ -2292,7 +2274,7 @@
         "scale": "linear",
         "favorite": false,
         "selected": false,
-        "color": "#37ff48"
+        "color": "#8c564b"
     },
     "system.ionSource.cesium.readbackC": {
         "dataSource": "system.ionSource.cesium.readbackC",
@@ -2301,7 +2283,7 @@
         "scale": "linear",
         "favorite": true,
         "selected": true,
-        "color": "#ff3791"
+        "color": "#aec7e8"
     },
     "system.ionSource.cesium.status": {
         "dataSource": "system.ionSource.cesium.status",
@@ -2310,7 +2292,7 @@
         "scale": "linear",
         "favorite": false,
         "selected": false,
-        "color": "#ffde37"
+        "color": "#c5b0d5"
     },
     "system.ionSource.extraction.hmiSetpointVEnabled": {
         "dataSource": "system.ionSource.extraction.hmiSetpointVEnabled",
@@ -2319,7 +2301,7 @@
         "scale": "linear",
         "favorite": false,
         "selected": false,
-        "color": "#ff377a"
+        "color": "#dbdb8d"
     },
     "system.ionSource.extraction.hmiSetpointVEntry": {
         "dataSource": "system.ionSource.extraction.hmiSetpointVEntry",
@@ -2328,7 +2310,7 @@
         "scale": "linear",
         "favorite": false,
         "selected": false,
-        "color": "#ff3737"
+        "color": "#e377c2"
     },
     "system.ionSource.extraction.hmiSetpointVEntryMax": {
         "dataSource": "system.ionSource.extraction.hmiSetpointVEntryMax",
@@ -2337,7 +2319,7 @@
         "scale": "linear",
         "favorite": false,
         "selected": false,
-        "color": "#9837ff"
+        "color": "#17becf"
     },
     "system.ionSource.extraction.hmiSetpointVEntryMin": {
         "dataSource": "system.ionSource.extraction.hmiSetpointVEntryMin",
@@ -2346,7 +2328,7 @@
         "scale": "linear",
         "favorite": false,
         "selected": false,
-        "color": "#37ffca"
+        "color": "#e377c2"
     },
     "system.ionSource.extraction.readbackA": {
         "dataSource": "system.ionSource.extraction.readbackA",
@@ -2355,16 +2337,16 @@
         "scale": "linear",
         "favorite": true,
         "selected": true,
-        "color": "#ff379e"
+        "color": "#8c564b"
     },
     "system.ionSource.extraction.readbackV": {
         "dataSource": "system.ionSource.extraction.readbackV",
         "label": "Extraction (V)",
         "multiplier": 1.0,
         "scale": "linear",
-        "favorite": true,
+        "favorite": false,
         "selected": false,
-        "color": "#4e37ff"
+        "color": "#ff9896"
     },
     "system.ionSource.extraction.readbackW": {
         "dataSource": "system.ionSource.extraction.readbackW",
@@ -2373,7 +2355,7 @@
         "scale": "linear",
         "favorite": false,
         "selected": false,
-        "color": "#37ffda"
+        "color": "#2ca02c"
     },
     "system.ionSource.extraction.status": {
         "dataSource": "system.ionSource.extraction.status",
@@ -2382,7 +2364,7 @@
         "scale": "linear",
         "favorite": false,
         "selected": false,
-        "color": "#37ffff"
+        "color": "#2ca02c"
     },
     "system.ionSource.general.beamVoltage": {
         "dataSource": "system.ionSource.general.beamVoltage",
@@ -2391,16 +2373,16 @@
         "scale": "linear",
         "favorite": false,
         "selected": false,
-        "color": "#4e37ff"
+        "color": "#1f77b4"
     },
     "system.ionSource.general.bodyTempC": {
         "dataSource": "system.ionSource.general.bodyTempC",
-        "label": "Body Temp (\u00b0C)",
+        "label": "Body Temp C (\u00b0C)",
         "multiplier": 1.0,
         "scale": "linear",
-        "favorite": true,
+        "favorite": false,
         "selected": false,
-        "color": "#37ffe8"
+        "color": "#1f77b4"
     },
     "system.ionSource.general.bodyTempOkay": {
         "dataSource": "system.ionSource.general.bodyTempOkay",
@@ -2409,7 +2391,7 @@
         "scale": "linear",
         "favorite": false,
         "selected": false,
-        "color": "#37ffe4"
+        "color": "#dbdb8d"
     },
     "system.ionSource.general.conditioningPaused": {
         "dataSource": "system.ionSource.general.conditioningPaused",
@@ -2418,7 +2400,7 @@
         "scale": "linear",
         "favorite": false,
         "selected": false,
-        "color": "#374bff"
+        "color": "#bcbd22"
     },
     "system.ionSource.general.doorStatus": {
         "dataSource": "system.ionSource.general.doorStatus",
@@ -2427,7 +2409,7 @@
         "scale": "linear",
         "favorite": false,
         "selected": false,
-        "color": "#ffac37"
+        "color": "#f7b6d2"
     },
     "system.ionSource.general.modeCurrent": {
         "dataSource": "system.ionSource.general.modeCurrent",
@@ -2436,7 +2418,7 @@
         "scale": "linear",
         "favorite": false,
         "selected": false,
-        "color": "#37c0ff"
+        "color": "#f7b6d2"
     },
     "system.ionSource.general.requestCondition": {
         "dataSource": "system.ionSource.general.requestCondition",
@@ -2445,7 +2427,7 @@
         "scale": "linear",
         "favorite": false,
         "selected": false,
-        "color": "#ff374b"
+        "color": "#f7b6d2"
     },
     "system.ionSource.general.requestPause": {
         "dataSource": "system.ionSource.general.requestPause",
@@ -2454,7 +2436,7 @@
         "scale": "linear",
         "favorite": false,
         "selected": false,
-        "color": "#94ff37"
+        "color": "#2ca02c"
     },
     "system.ionSource.general.requestResume": {
         "dataSource": "system.ionSource.general.requestResume",
@@ -2463,7 +2445,7 @@
         "scale": "linear",
         "favorite": false,
         "selected": false,
-        "color": "#69ff37"
+        "color": "#9edae5"
     },
     "system.ionSource.general.requestStart": {
         "dataSource": "system.ionSource.general.requestStart",
@@ -2472,7 +2454,7 @@
         "scale": "linear",
         "favorite": false,
         "selected": false,
-        "color": "#91ff37"
+        "color": "#2ca02c"
     },
     "system.ionSource.general.requestStop": {
         "dataSource": "system.ionSource.general.requestStop",
@@ -2481,7 +2463,7 @@
         "scale": "linear",
         "favorite": false,
         "selected": false,
-        "color": "#37f2ff"
+        "color": "#e377c2"
     },
     "system.ionSource.general.status": {
         "dataSource": "system.ionSource.general.status",
@@ -2490,7 +2472,7 @@
         "scale": "linear",
         "favorite": false,
         "selected": false,
-        "color": "#d437ff"
+        "color": "#dbdb8d"
     },
     "system.ionSource.ioniser.filament.readbackA": {
         "dataSource": "system.ionSource.ioniser.filament.readbackA",
@@ -2499,7 +2481,7 @@
         "scale": "linear",
         "favorite": false,
         "selected": false,
-        "color": "#37ff62"
+        "color": "#e377c2"
     },
     "system.ionSource.ioniser.filament.readbackV": {
         "dataSource": "system.ionSource.ioniser.filament.readbackV",
@@ -2508,7 +2490,7 @@
         "scale": "linear",
         "favorite": false,
         "selected": false,
-        "color": "#ff7637"
+        "color": "#c5b0d5"
     },
     "system.ionSource.ioniser.filament.readbackW": {
         "dataSource": "system.ionSource.ioniser.filament.readbackW",
@@ -2516,8 +2498,8 @@
         "multiplier": 1.0,
         "scale": "linear",
         "favorite": true,
-        "selected": false,
-        "color": "#f8ff37"
+        "selected": true,
+        "color": "#d62728"
     },
     "system.ionSource.ioniser.filament.status": {
         "dataSource": "system.ionSource.ioniser.filament.status",
@@ -2526,7 +2508,7 @@
         "scale": "linear",
         "favorite": false,
         "selected": false,
-        "color": "#ffd037"
+        "color": "#ff7f0e"
     },
     "system.ionSource.ioniser.hmiSetpointWEnabled": {
         "dataSource": "system.ionSource.ioniser.hmiSetpointWEnabled",
@@ -2535,7 +2517,7 @@
         "scale": "linear",
         "favorite": false,
         "selected": false,
-        "color": "#ff7337"
+        "color": "#17becf"
     },
     "system.ionSource.ioniser.hmiSetpointWEntry": {
         "dataSource": "system.ionSource.ioniser.hmiSetpointWEntry",
@@ -2544,7 +2526,7 @@
         "scale": "linear",
         "favorite": false,
         "selected": false,
-        "color": "#62ff37"
+        "color": "#dbdb8d"
     },
     "system.ionSource.ioniser.hmiSetpointWEntryMax": {
         "dataSource": "system.ionSource.ioniser.hmiSetpointWEntryMax",
@@ -2553,7 +2535,7 @@
         "scale": "linear",
         "favorite": false,
         "selected": false,
-        "color": "#ff6237"
+        "color": "#ff9896"
     },
     "system.ionSource.ioniser.hmiSetpointWEntryMin": {
         "dataSource": "system.ionSource.ioniser.hmiSetpointWEntryMin",
@@ -2562,7 +2544,7 @@
         "scale": "linear",
         "favorite": false,
         "selected": false,
-        "color": "#ffb937"
+        "color": "#aec7e8"
     },
     "system.ionSource.ioniser.powerRatio": {
         "dataSource": "system.ionSource.ioniser.powerRatio",
@@ -2571,7 +2553,7 @@
         "scale": "linear",
         "favorite": false,
         "selected": false,
-        "color": "#ff3766"
+        "color": "#9467bd"
     },
     "system.ionSource.ioniser.readbackW": {
         "dataSource": "system.ionSource.ioniser.readbackW",
@@ -2579,8 +2561,8 @@
         "multiplier": 1.0,
         "scale": "linear",
         "favorite": true,
-        "selected": false,
-        "color": "#ebff37"
+        "selected": true,
+        "color": "#e377c2"
     },
     "system.ionSource.ioniser.status": {
         "dataSource": "system.ionSource.ioniser.status",
@@ -2589,16 +2571,16 @@
         "scale": "linear",
         "favorite": false,
         "selected": false,
-        "color": "#b6ff37"
+        "color": "#1f77b4"
     },
     "system.ionSource.ioniser.thermionic.readbackA": {
         "dataSource": "system.ionSource.ioniser.thermionic.readbackA",
         "label": "Thermionic (A)",
         "multiplier": 1.0,
         "scale": "linear",
-        "favorite": true,
+        "favorite": false,
         "selected": false,
-        "color": "#ff6637"
+        "color": "#7f7f7f"
     },
     "system.ionSource.ioniser.thermionic.readbackV": {
         "dataSource": "system.ionSource.ioniser.thermionic.readbackV",
@@ -2607,7 +2589,7 @@
         "scale": "linear",
         "favorite": false,
         "selected": false,
-        "color": "#f837ff"
+        "color": "#c49c94"
     },
     "system.ionSource.ioniser.thermionic.readbackW": {
         "dataSource": "system.ionSource.ioniser.thermionic.readbackW",
@@ -2616,7 +2598,7 @@
         "scale": "linear",
         "favorite": false,
         "selected": false,
-        "color": "#6637ff"
+        "color": "#9467bd"
     },
     "system.ionSource.ioniser.thermionic.status": {
         "dataSource": "system.ionSource.ioniser.thermionic.status",
@@ -2625,7 +2607,7 @@
         "scale": "linear",
         "favorite": false,
         "selected": false,
-        "color": "#a8ff37"
+        "color": "#bcbd22"
     },
     "system.ionSource.target.hmiSetpointVEnabled": {
         "dataSource": "system.ionSource.target.hmiSetpointVEnabled",
@@ -2634,7 +2616,7 @@
         "scale": "linear",
         "favorite": false,
         "selected": false,
-        "color": "#70ff37"
+        "color": "#c49c94"
     },
     "system.ionSource.target.hmiSetpointVEntry": {
         "dataSource": "system.ionSource.target.hmiSetpointVEntry",
@@ -2643,7 +2625,7 @@
         "scale": "linear",
         "favorite": false,
         "selected": false,
-        "color": "#ff37d4"
+        "color": "#8c564b"
     },
     "system.ionSource.target.hmiSetpointVEntryMax": {
         "dataSource": "system.ionSource.target.hmiSetpointVEntryMax",
@@ -2652,7 +2634,7 @@
         "scale": "linear",
         "favorite": false,
         "selected": false,
-        "color": "#37ff7d"
+        "color": "#1f77b4"
     },
     "system.ionSource.target.hmiSetpointVEntryMin": {
         "dataSource": "system.ionSource.target.hmiSetpointVEntryMin",
@@ -2661,25 +2643,25 @@
         "scale": "linear",
         "favorite": false,
         "selected": false,
-        "color": "#376cff"
+        "color": "#7f7f7f"
     },
     "system.ionSource.target.readbackA": {
         "dataSource": "system.ionSource.target.readbackA",
         "label": "Target (A)",
         "multiplier": 1.0,
         "scale": "linear",
-        "favorite": true,
+        "favorite": false,
         "selected": false,
-        "color": "#37e4ff"
+        "color": "#1f77b4"
     },
     "system.ionSource.target.readbackV": {
         "dataSource": "system.ionSource.target.readbackV",
         "label": "Target (V)",
         "multiplier": 1.0,
         "scale": "linear",
-        "favorite": true,
+        "favorite": false,
         "selected": false,
-        "color": "#5537ff"
+        "color": "#dbdb8d"
     },
     "system.ionSource.target.readbackW": {
         "dataSource": "system.ionSource.target.readbackW",
@@ -2688,7 +2670,7 @@
         "scale": "linear",
         "favorite": false,
         "selected": false,
-        "color": "#3769ff"
+        "color": "#7f7f7f"
     },
     "system.ionSource.target.status": {
         "dataSource": "system.ionSource.target.status",
@@ -2697,7 +2679,7 @@
         "scale": "linear",
         "favorite": false,
         "selected": false,
-        "color": "#ff7a37"
+        "color": "#7f7f7f"
     },
     "system.vacuumSystem.gauges.beamline.readback_mB": {
         "dataSource": "system.vacuumSystem.gauges.beamline.readback_mB",
@@ -2706,7 +2688,7 @@
         "scale": "log",
         "favorite": false,
         "selected": false,
-        "color": "#ff37d4"
+        "color": "#9467bd"
     },
     "system.vacuumSystem.gauges.beamline.status": {
         "dataSource": "system.vacuumSystem.gauges.beamline.status",
@@ -2715,7 +2697,7 @@
         "scale": "log",
         "favorite": false,
         "selected": false,
-        "color": "#37ff84"
+        "color": "#c5b0d5"
     },
     "system.vacuumSystem.gauges.chamber_UHV_gauge.readback_mB": {
         "dataSource": "system.vacuumSystem.gauges.chamber_UHV_gauge.readback_mB",
@@ -2724,7 +2706,7 @@
         "scale": "log",
         "favorite": false,
         "selected": false,
-        "color": "#4b37ff"
+        "color": "#c7c7c7"
     },
     "system.vacuumSystem.gauges.chamber_UHV_gauge.status": {
         "dataSource": "system.vacuumSystem.gauges.chamber_UHV_gauge.status",
@@ -2733,7 +2715,7 @@
         "scale": "log",
         "favorite": false,
         "selected": false,
-        "color": "#ff8437"
+        "color": "#bcbd22"
     },
     "system.vacuumSystem.gauges.chamber_reg_gauge.readback_mB": {
         "dataSource": "system.vacuumSystem.gauges.chamber_reg_gauge.readback_mB",
@@ -2742,7 +2724,7 @@
         "scale": "log",
         "favorite": false,
         "selected": false,
-        "color": "#37eeff"
+        "color": "#ff7f0e"
     },
     "system.vacuumSystem.gauges.chamber_reg_gauge.status": {
         "dataSource": "system.vacuumSystem.gauges.chamber_reg_gauge.status",
@@ -2751,16 +2733,16 @@
         "scale": "log",
         "favorite": false,
         "selected": false,
-        "color": "#ca37ff"
+        "color": "#ffbb78"
     },
     "system.vacuumSystem.gauges.source.readback_mB": {
         "dataSource": "system.vacuumSystem.gauges.source.readback_mB",
         "label": "Source (mB)",
         "multiplier": 1.0,
         "scale": "log",
-        "favorite": true,
+        "favorite": false,
         "selected": false,
-        "color": "#ff6937"
+        "color": "#e377c2"
     },
     "system.vacuumSystem.gauges.source.status": {
         "dataSource": "system.vacuumSystem.gauges.source.status",
@@ -2769,7 +2751,7 @@
         "scale": "log",
         "favorite": false,
         "selected": false,
-        "color": "#37caff"
+        "color": "#f7b6d2"
     },
     "system.vacuumSystem.pumps.ion.chamber_1.current_readback_A": {
         "dataSource": "system.vacuumSystem.pumps.ion.chamber_1.current_readback_A",
@@ -2778,7 +2760,7 @@
         "scale": "log",
         "favorite": false,
         "selected": false,
-        "color": "#ff5237"
+        "color": "#17becf"
     },
     "system.vacuumSystem.pumps.ion.chamber_1.on_hours": {
         "dataSource": "system.vacuumSystem.pumps.ion.chamber_1.on_hours",
@@ -2787,7 +2769,7 @@
         "scale": "log",
         "favorite": false,
         "selected": false,
-        "color": "#ff375f"
+        "color": "#e377c2"
     },
     "system.vacuumSystem.pumps.ion.chamber_1.voltage_readback_V": {
         "dataSource": "system.vacuumSystem.pumps.ion.chamber_1.voltage_readback_V",
@@ -2796,7 +2778,7 @@
         "scale": "log",
         "favorite": false,
         "selected": false,
-        "color": "#ff378e"
+        "color": "#8c564b"
     },
     "system.vacuumSystem.pumps.roughing.beamline.status": {
         "dataSource": "system.vacuumSystem.pumps.roughing.beamline.status",
@@ -2805,7 +2787,7 @@
         "scale": "log",
         "favorite": false,
         "selected": false,
-        "color": "#58ff37"
+        "color": "#9edae5"
     },
     "system.vacuumSystem.pumps.roughing.loadlock.status": {
         "dataSource": "system.vacuumSystem.pumps.roughing.loadlock.status",
@@ -2814,7 +2796,7 @@
         "scale": "log",
         "favorite": false,
         "selected": false,
-        "color": "#ff3744"
+        "color": "#ff9896"
     },
     "system.vacuumSystem.pumps.roughing.source.status": {
         "dataSource": "system.vacuumSystem.pumps.roughing.source.status",
@@ -2823,7 +2805,7 @@
         "scale": "log",
         "favorite": false,
         "selected": false,
-        "color": "#37ffd4"
+        "color": "#c7c7c7"
     },
     "system.vacuumSystem.pumps.titanium.chamber_1.filament_1.cycles": {
         "dataSource": "system.vacuumSystem.pumps.titanium.chamber_1.filament_1.cycles",
@@ -2832,7 +2814,7 @@
         "scale": "log",
         "favorite": false,
         "selected": false,
-        "color": "#ff9137"
+        "color": "#f7b6d2"
     },
     "system.vacuumSystem.pumps.titanium.chamber_1.filament_1.on_hours": {
         "dataSource": "system.vacuumSystem.pumps.titanium.chamber_1.filament_1.on_hours",
@@ -2841,7 +2823,7 @@
         "scale": "log",
         "favorite": false,
         "selected": false,
-        "color": "#3791ff"
+        "color": "#c7c7c7"
     },
     "system.vacuumSystem.pumps.titanium.chamber_1.filament_1.status": {
         "dataSource": "system.vacuumSystem.pumps.titanium.chamber_1.filament_1.status",
@@ -2850,7 +2832,7 @@
         "scale": "log",
         "favorite": false,
         "selected": false,
-        "color": "#c3ff37"
+        "color": "#8c564b"
     },
     "system.vacuumSystem.pumps.titanium.chamber_1.nominal_current_A": {
         "dataSource": "system.vacuumSystem.pumps.titanium.chamber_1.nominal_current_A",
@@ -2859,7 +2841,7 @@
         "scale": "log",
         "favorite": false,
         "selected": false,
-        "color": "#3776ff"
+        "color": "#e377c2"
     },
     "system.vacuumSystem.pumps.titanium.chamber_1.off_time_s": {
         "dataSource": "system.vacuumSystem.pumps.titanium.chamber_1.off_time_s",
@@ -2868,7 +2850,7 @@
         "scale": "log",
         "favorite": false,
         "selected": false,
-        "color": "#69ff37"
+        "color": "#c7c7c7"
     },
     "system.vacuumSystem.pumps.titanium.chamber_1.on_time_s": {
         "dataSource": "system.vacuumSystem.pumps.titanium.chamber_1.on_time_s",
@@ -2877,7 +2859,7 @@
         "scale": "log",
         "favorite": false,
         "selected": false,
-        "color": "#37ffda"
+        "color": "#98df8a"
     },
     "system.vacuumSystem.pumps.turbo.beamline.on_hours": {
         "dataSource": "system.vacuumSystem.pumps.turbo.beamline.on_hours",
@@ -2886,7 +2868,7 @@
         "scale": "log",
         "favorite": false,
         "selected": false,
-        "color": "#ff373a"
+        "color": "#f7b6d2"
     },
     "system.vacuumSystem.pumps.turbo.beamline.speed": {
         "dataSource": "system.vacuumSystem.pumps.turbo.beamline.speed",
@@ -2895,7 +2877,7 @@
         "scale": "log",
         "favorite": false,
         "selected": false,
-        "color": "#37ff5c"
+        "color": "#dbdb8d"
     },
     "system.vacuumSystem.pumps.turbo.beamline.status": {
         "dataSource": "system.vacuumSystem.pumps.turbo.beamline.status",
@@ -2904,7 +2886,7 @@
         "scale": "log",
         "favorite": false,
         "selected": false,
-        "color": "#37ffb6"
+        "color": "#bcbd22"
     },
     "system.vacuumSystem.pumps.turbo.chamber.on_hours": {
         "dataSource": "system.vacuumSystem.pumps.turbo.chamber.on_hours",
@@ -2913,7 +2895,7 @@
         "scale": "log",
         "favorite": false,
         "selected": false,
-        "color": "#eeff37"
+        "color": "#8c564b"
     },
     "system.vacuumSystem.pumps.turbo.chamber.speed": {
         "dataSource": "system.vacuumSystem.pumps.turbo.chamber.speed",
@@ -2922,7 +2904,7 @@
         "scale": "log",
         "favorite": false,
         "selected": false,
-        "color": "#37ff3e"
+        "color": "#8c564b"
     },
     "system.vacuumSystem.pumps.turbo.chamber.status": {
         "dataSource": "system.vacuumSystem.pumps.turbo.chamber.status",
@@ -2931,7 +2913,7 @@
         "scale": "log",
         "favorite": false,
         "selected": false,
-        "color": "#ff375f"
+        "color": "#dbdb8d"
     },
     "system.vacuumSystem.pumps.turbo.loadlock.on_hours": {
         "dataSource": "system.vacuumSystem.pumps.turbo.loadlock.on_hours",
@@ -2940,7 +2922,7 @@
         "scale": "log",
         "favorite": false,
         "selected": false,
-        "color": "#6c37ff"
+        "color": "#98df8a"
     },
     "system.vacuumSystem.pumps.turbo.loadlock.speed": {
         "dataSource": "system.vacuumSystem.pumps.turbo.loadlock.speed",
@@ -2949,7 +2931,7 @@
         "scale": "log",
         "favorite": false,
         "selected": false,
-        "color": "#b937ff"
+        "color": "#f7b6d2"
     },
     "system.vacuumSystem.pumps.turbo.loadlock.status": {
         "dataSource": "system.vacuumSystem.pumps.turbo.loadlock.status",
@@ -2958,7 +2940,7 @@
         "scale": "log",
         "favorite": false,
         "selected": false,
-        "color": "#ff37de"
+        "color": "#2ca02c"
     },
     "system.vacuumSystem.pumps.turbo.source_1.on_hours": {
         "dataSource": "system.vacuumSystem.pumps.turbo.source_1.on_hours",
@@ -2967,7 +2949,7 @@
         "scale": "log",
         "favorite": false,
         "selected": false,
-        "color": "#ff37d4"
+        "color": "#c5b0d5"
     },
     "system.vacuumSystem.pumps.turbo.source_1.speed": {
         "dataSource": "system.vacuumSystem.pumps.turbo.source_1.speed",
@@ -2976,7 +2958,7 @@
         "scale": "log",
         "favorite": false,
         "selected": false,
-        "color": "#bc37ff"
+        "color": "#dbdb8d"
     },
     "system.vacuumSystem.pumps.turbo.source_1.status": {
         "dataSource": "system.vacuumSystem.pumps.turbo.source_1.status",
@@ -2985,7 +2967,7 @@
         "scale": "log",
         "favorite": false,
         "selected": false,
-        "color": "#fcff37"
+        "color": "#9467bd"
     },
     "system.vacuumSystem.pumps.turbo.source_2.on_hours": {
         "dataSource": "system.vacuumSystem.pumps.turbo.source_2.on_hours",
@@ -2994,7 +2976,7 @@
         "scale": "log",
         "favorite": false,
         "selected": false,
-        "color": "#ff37c3"
+        "color": "#8c564b"
     },
     "system.vacuumSystem.pumps.turbo.source_2.speed": {
         "dataSource": "system.vacuumSystem.pumps.turbo.source_2.speed",
@@ -3003,7 +2985,7 @@
         "scale": "log",
         "favorite": false,
         "selected": false,
-        "color": "#44ff37"
+        "color": "#8c564b"
     },
     "system.vacuumSystem.pumps.turbo.source_2.status": {
         "dataSource": "system.vacuumSystem.pumps.turbo.source_2.status",
@@ -3012,7 +2994,7 @@
         "scale": "log",
         "favorite": false,
         "selected": false,
-        "color": "#37caff"
+        "color": "#dbdb8d"
     },
     "system.vacuumSystem.valves.gate.beamline-chamber.cycles": {
         "dataSource": "system.vacuumSystem.valves.gate.beamline-chamber.cycles",
@@ -3021,7 +3003,7 @@
         "scale": "log",
         "favorite": false,
         "selected": false,
-        "color": "#afff37"
+        "color": "#9edae5"
     },
     "system.vacuumSystem.valves.gate.beamline-chamber.open": {
         "dataSource": "system.vacuumSystem.valves.gate.beamline-chamber.open",
@@ -3030,7 +3012,7 @@
         "scale": "log",
         "favorite": false,
         "selected": false,
-        "color": "#ff37f8"
+        "color": "#d62728"
     },
     "system.vacuumSystem.valves.gate.beamline-chamber.requestOpen": {
         "dataSource": "system.vacuumSystem.valves.gate.beamline-chamber.requestOpen",
@@ -3039,7 +3021,7 @@
         "scale": "log",
         "favorite": false,
         "selected": false,
-        "color": "#b6ff37"
+        "color": "#ff9896"
     },
     "system.vacuumSystem.valves.gate.chamber-loadlock.cycles": {
         "dataSource": "system.vacuumSystem.valves.gate.chamber-loadlock.cycles",
@@ -3048,7 +3030,7 @@
         "scale": "log",
         "favorite": false,
         "selected": false,
-        "color": "#37ffd7"
+        "color": "#ffbb78"
     },
     "system.vacuumSystem.valves.gate.chamber-loadlock.open": {
         "dataSource": "system.vacuumSystem.valves.gate.chamber-loadlock.open",
@@ -3057,7 +3039,7 @@
         "scale": "log",
         "favorite": false,
         "selected": false,
-        "color": "#3758ff"
+        "color": "#d62728"
     },
     "system.vacuumSystem.valves.gate.source-beamline.cycles": {
         "dataSource": "system.vacuumSystem.valves.gate.source-beamline.cycles",
@@ -3066,7 +3048,7 @@
         "scale": "log",
         "favorite": false,
         "selected": false,
-        "color": "#ff3791"
+        "color": "#17becf"
     },
     "system.vacuumSystem.valves.gate.source-beamline.open": {
         "dataSource": "system.vacuumSystem.valves.gate.source-beamline.open",
@@ -3075,7 +3057,7 @@
         "scale": "log",
         "favorite": false,
         "selected": false,
-        "color": "#ff37b2"
+        "color": "#98df8a"
     },
     "system.vacuumSystem.valves.gate.source-beamline.requestOpen": {
         "dataSource": "system.vacuumSystem.valves.gate.source-beamline.requestOpen",
@@ -3084,7 +3066,7 @@
         "scale": "log",
         "favorite": false,
         "selected": false,
-        "color": "#ff375c"
+        "color": "#d62728"
     },
     "system.vacuumSystem.valves.pneumatic.placeholder": {
         "dataSource": "system.vacuumSystem.valves.pneumatic.placeholder",
@@ -3093,33 +3075,6 @@
         "scale": "log",
         "favorite": false,
         "selected": false,
-        "color": "#d4ff37"
-    },
-    "virtual.plcStatus": {
-        "dataSource": "virtual.plcStatus",
-        "label": "Plc Status",
-        "multiplier": 1.0,
-        "scale": "linear",
-        "favorite": false,
-        "selected": false,
-        "color": "#ffee37"
-    },
-    "virtual.targetForm": {
-        "dataSource": "virtual.targetForm",
-        "label": "Target Form",
-        "multiplier": 1.0,
-        "scale": "linear",
-        "favorite": false,
-        "selected": false,
-        "color": "#ffb937"
-    },
-    "virtual.targetMaterial": {
-        "dataSource": "virtual.targetMaterial",
-        "label": "Target Material",
-        "multiplier": 1.0,
-        "scale": "linear",
-        "favorite": false,
-        "selected": false,
-        "color": "#ffd037"
+        "color": "#ff7f0e"
     }
 }
