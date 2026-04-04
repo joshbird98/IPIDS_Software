@@ -1,0 +1,3125 @@
+{
+    "system.beamline.drop_in_cup.engaged": {
+        "dataSource": "system.beamline.drop_in_cup.engaged",
+        "label": "Engaged",
+        "multiplier": 1.0,
+        "scale": "linear",
+        "favorite": false,
+        "selected": false,
+        "color": "#ffbc37"
+    },
+    "system.beamline.drop_in_cup.hmiSetpointVEntry": {
+        "dataSource": "system.beamline.drop_in_cup.hmiSetpointVEntry",
+        "label": "Hmi Setpoint Ventry",
+        "multiplier": 1.0,
+        "scale": "linear",
+        "favorite": false,
+        "selected": false,
+        "color": "#3776ff"
+    },
+    "system.beamline.drop_in_cup.hmiSetpointVEntryMax": {
+        "dataSource": "system.beamline.drop_in_cup.hmiSetpointVEntryMax",
+        "label": "Hmi Setpoint Ventry Max",
+        "multiplier": 1.0,
+        "scale": "linear",
+        "favorite": false,
+        "selected": false,
+        "color": "#37ff3a"
+    },
+    "system.beamline.drop_in_cup.hmiSetpointVEntryMin": {
+        "dataSource": "system.beamline.drop_in_cup.hmiSetpointVEntryMin",
+        "label": "Hmi Setpoint Ventry Min",
+        "multiplier": 1.0,
+        "scale": "linear",
+        "favorite": false,
+        "selected": false,
+        "color": "#3798ff"
+    },
+    "system.beamline.drop_in_cup.readbackA": {
+        "dataSource": "system.beamline.drop_in_cup.readbackA",
+        "label": "Drop In Cup (A)",
+        "multiplier": 1.0,
+        "scale": "linear",
+        "favorite": true,
+        "selected": false,
+        "color": "#37ff4e"
+    },
+    "system.beamline.drop_in_cup.readbackV": {
+        "dataSource": "system.beamline.drop_in_cup.readbackV",
+        "label": "Drop In Cup (V)",
+        "multiplier": 1.0,
+        "scale": "linear",
+        "favorite": false,
+        "selected": false,
+        "color": "#ff4837"
+    },
+    "system.beamline.drop_in_cup.requestEngaged": {
+        "dataSource": "system.beamline.drop_in_cup.requestEngaged",
+        "label": "Request Engaged",
+        "multiplier": 1.0,
+        "scale": "linear",
+        "favorite": false,
+        "selected": false,
+        "color": "#8037ff"
+    },
+    "system.beamline.einzels.lens1.fault": {
+        "dataSource": "system.beamline.einzels.lens1.fault",
+        "label": "Fault",
+        "multiplier": 1.0,
+        "scale": "linear",
+        "favorite": false,
+        "selected": false,
+        "color": "#afff37"
+    },
+    "system.beamline.einzels.lens1.hmiSetpointVEnabled": {
+        "dataSource": "system.beamline.einzels.lens1.hmiSetpointVEnabled",
+        "label": "Hmi Setpoint Venabled",
+        "multiplier": 1.0,
+        "scale": "linear",
+        "favorite": false,
+        "selected": false,
+        "color": "#ff37fc"
+    },
+    "system.beamline.einzels.lens1.hmiSetpointVEntry": {
+        "dataSource": "system.beamline.einzels.lens1.hmiSetpointVEntry",
+        "label": "Hmi Setpoint Ventry",
+        "multiplier": 1.0,
+        "scale": "linear",
+        "favorite": false,
+        "selected": false,
+        "color": "#ffff37"
+    },
+    "system.beamline.einzels.lens1.hmiSetpointVEntryMax": {
+        "dataSource": "system.beamline.einzels.lens1.hmiSetpointVEntryMax",
+        "label": "Hmi Setpoint Ventry Max",
+        "multiplier": 1.0,
+        "scale": "linear",
+        "favorite": false,
+        "selected": false,
+        "color": "#37fcff"
+    },
+    "system.beamline.einzels.lens1.hmiSetpointVEntryMin": {
+        "dataSource": "system.beamline.einzels.lens1.hmiSetpointVEntryMin",
+        "label": "Hmi Setpoint Ventry Min",
+        "multiplier": 1.0,
+        "scale": "linear",
+        "favorite": false,
+        "selected": false,
+        "color": "#ff377d"
+    },
+    "system.beamline.einzels.lens1.outputEnabled": {
+        "dataSource": "system.beamline.einzels.lens1.outputEnabled",
+        "label": "Output Enabled",
+        "multiplier": 1.0,
+        "scale": "linear",
+        "favorite": false,
+        "selected": false,
+        "color": "#3776ff"
+    },
+    "system.beamline.einzels.lens1.readbackA": {
+        "dataSource": "system.beamline.einzels.lens1.readbackA",
+        "label": "Lens1 (A)",
+        "multiplier": 1.0,
+        "scale": "linear",
+        "favorite": false,
+        "selected": false,
+        "color": "#4837ff"
+    },
+    "system.beamline.einzels.lens1.readbackV": {
+        "dataSource": "system.beamline.einzels.lens1.readbackV",
+        "label": "Lens1 (V)",
+        "multiplier": 1.0,
+        "scale": "linear",
+        "favorite": false,
+        "selected": false,
+        "color": "#6937ff"
+    },
+    "system.beamline.einzels.lens1.status": {
+        "dataSource": "system.beamline.einzels.lens1.status",
+        "label": "Status",
+        "multiplier": 1.0,
+        "scale": "linear",
+        "favorite": false,
+        "selected": false,
+        "color": "#37fcff"
+    },
+    "system.beamline.einzels.lens2.fault": {
+        "dataSource": "system.beamline.einzels.lens2.fault",
+        "label": "Fault",
+        "multiplier": 1.0,
+        "scale": "linear",
+        "favorite": false,
+        "selected": false,
+        "color": "#37e4ff"
+    },
+    "system.beamline.einzels.lens2.hmiSetpointVEnabled": {
+        "dataSource": "system.beamline.einzels.lens2.hmiSetpointVEnabled",
+        "label": "Hmi Setpoint Venabled",
+        "multiplier": 1.0,
+        "scale": "linear",
+        "favorite": false,
+        "selected": false,
+        "color": "#ffa537"
+    },
+    "system.beamline.einzels.lens2.hmiSetpointVEntry": {
+        "dataSource": "system.beamline.einzels.lens2.hmiSetpointVEntry",
+        "label": "Hmi Setpoint Ventry",
+        "multiplier": 1.0,
+        "scale": "linear",
+        "favorite": false,
+        "selected": false,
+        "color": "#ff3780"
+    },
+    "system.beamline.einzels.lens2.hmiSetpointVEntryMax": {
+        "dataSource": "system.beamline.einzels.lens2.hmiSetpointVEntryMax",
+        "label": "Hmi Setpoint Ventry Max",
+        "multiplier": 1.0,
+        "scale": "linear",
+        "favorite": false,
+        "selected": false,
+        "color": "#ff375c"
+    },
+    "system.beamline.einzels.lens2.hmiSetpointVEntryMin": {
+        "dataSource": "system.beamline.einzels.lens2.hmiSetpointVEntryMin",
+        "label": "Hmi Setpoint Ventry Min",
+        "multiplier": 1.0,
+        "scale": "linear",
+        "favorite": false,
+        "selected": false,
+        "color": "#ffc337"
+    },
+    "system.beamline.einzels.lens2.outputEnabled": {
+        "dataSource": "system.beamline.einzels.lens2.outputEnabled",
+        "label": "Output Enabled",
+        "multiplier": 1.0,
+        "scale": "linear",
+        "favorite": false,
+        "selected": false,
+        "color": "#ffc637"
+    },
+    "system.beamline.einzels.lens2.readbackA": {
+        "dataSource": "system.beamline.einzels.lens2.readbackA",
+        "label": "Lens2 (A)",
+        "multiplier": 1.0,
+        "scale": "linear",
+        "favorite": false,
+        "selected": false,
+        "color": "#7d37ff"
+    },
+    "system.beamline.einzels.lens2.readbackV": {
+        "dataSource": "system.beamline.einzels.lens2.readbackV",
+        "label": "Lens2 (V)",
+        "multiplier": 1.0,
+        "scale": "linear",
+        "favorite": false,
+        "selected": false,
+        "color": "#5fff37"
+    },
+    "system.beamline.einzels.lens2.status": {
+        "dataSource": "system.beamline.einzels.lens2.status",
+        "label": "Status",
+        "multiplier": 1.0,
+        "scale": "linear",
+        "favorite": false,
+        "selected": false,
+        "color": "#7637ff"
+    },
+    "system.beamline.einzels.lens3.fault": {
+        "dataSource": "system.beamline.einzels.lens3.fault",
+        "label": "Fault",
+        "multiplier": 1.0,
+        "scale": "linear",
+        "favorite": false,
+        "selected": false,
+        "color": "#ff3787"
+    },
+    "system.beamline.einzels.lens3.hmiSetpointVEnabled": {
+        "dataSource": "system.beamline.einzels.lens3.hmiSetpointVEnabled",
+        "label": "Hmi Setpoint Venabled",
+        "multiplier": 1.0,
+        "scale": "linear",
+        "favorite": false,
+        "selected": false,
+        "color": "#5fff37"
+    },
+    "system.beamline.einzels.lens3.hmiSetpointVEntry": {
+        "dataSource": "system.beamline.einzels.lens3.hmiSetpointVEntry",
+        "label": "Hmi Setpoint Ventry",
+        "multiplier": 1.0,
+        "scale": "linear",
+        "favorite": false,
+        "selected": false,
+        "color": "#8a37ff"
+    },
+    "system.beamline.einzels.lens3.hmiSetpointVEntryMax": {
+        "dataSource": "system.beamline.einzels.lens3.hmiSetpointVEntryMax",
+        "label": "Hmi Setpoint Ventry Max",
+        "multiplier": 1.0,
+        "scale": "linear",
+        "favorite": false,
+        "selected": false,
+        "color": "#3737ff"
+    },
+    "system.beamline.einzels.lens3.hmiSetpointVEntryMin": {
+        "dataSource": "system.beamline.einzels.lens3.hmiSetpointVEntryMin",
+        "label": "Hmi Setpoint Ventry Min",
+        "multiplier": 1.0,
+        "scale": "linear",
+        "favorite": false,
+        "selected": false,
+        "color": "#ffbc37"
+    },
+    "system.beamline.einzels.lens3.outputEnabled": {
+        "dataSource": "system.beamline.einzels.lens3.outputEnabled",
+        "label": "Output Enabled",
+        "multiplier": 1.0,
+        "scale": "linear",
+        "favorite": false,
+        "selected": false,
+        "color": "#ffac37"
+    },
+    "system.beamline.einzels.lens3.readbackA": {
+        "dataSource": "system.beamline.einzels.lens3.readbackA",
+        "label": "Lens3 (A)",
+        "multiplier": 1.0,
+        "scale": "linear",
+        "favorite": false,
+        "selected": false,
+        "color": "#374bff"
+    },
+    "system.beamline.einzels.lens3.readbackV": {
+        "dataSource": "system.beamline.einzels.lens3.readbackV",
+        "label": "Lens3 (V)",
+        "multiplier": 1.0,
+        "scale": "linear",
+        "favorite": false,
+        "selected": false,
+        "color": "#ff3752"
+    },
+    "system.beamline.einzels.lens3.status": {
+        "dataSource": "system.beamline.einzels.lens3.status",
+        "label": "Status",
+        "multiplier": 1.0,
+        "scale": "linear",
+        "favorite": false,
+        "selected": false,
+        "color": "#eb37ff"
+    },
+    "system.beamline.magnet.fault": {
+        "dataSource": "system.beamline.magnet.fault",
+        "label": "Fault",
+        "multiplier": 1.0,
+        "scale": "linear",
+        "favorite": false,
+        "selected": false,
+        "color": "#ff5837"
+    },
+    "system.beamline.magnet.hmiSetpointAEnabled": {
+        "dataSource": "system.beamline.magnet.hmiSetpointAEnabled",
+        "label": "Hmi Setpoint Aenabled",
+        "multiplier": 1.0,
+        "scale": "linear",
+        "favorite": false,
+        "selected": false,
+        "color": "#ff3744"
+    },
+    "system.beamline.magnet.hmiSetpointAEntry": {
+        "dataSource": "system.beamline.magnet.hmiSetpointAEntry",
+        "label": "Hmi Setpoint Aentry",
+        "multiplier": 1.0,
+        "scale": "linear",
+        "favorite": false,
+        "selected": false,
+        "color": "#afff37"
+    },
+    "system.beamline.magnet.hmiSetpointAEntryMax": {
+        "dataSource": "system.beamline.magnet.hmiSetpointAEntryMax",
+        "label": "Hmi Setpoint Aentry Max",
+        "multiplier": 1.0,
+        "scale": "linear",
+        "favorite": false,
+        "selected": false,
+        "color": "#6c37ff"
+    },
+    "system.beamline.magnet.hmiSetpointAEntryMin": {
+        "dataSource": "system.beamline.magnet.hmiSetpointAEntryMin",
+        "label": "Hmi Setpoint Aentry Min",
+        "multiplier": 1.0,
+        "scale": "linear",
+        "favorite": false,
+        "selected": false,
+        "color": "#37ff8a"
+    },
+    "system.beamline.magnet.outputEnabled": {
+        "dataSource": "system.beamline.magnet.outputEnabled",
+        "label": "Output Enabled",
+        "multiplier": 1.0,
+        "scale": "linear",
+        "favorite": false,
+        "selected": false,
+        "color": "#ffe837"
+    },
+    "system.beamline.magnet.readbackA": {
+        "dataSource": "system.beamline.magnet.readbackA",
+        "label": "Magnet (A)",
+        "multiplier": 1.0,
+        "scale": "linear",
+        "favorite": true,
+        "selected": false,
+        "color": "#ff37a2"
+    },
+    "system.beamline.magnet.readbackV": {
+        "dataSource": "system.beamline.magnet.readbackV",
+        "label": "Magnet (V)",
+        "multiplier": 1.0,
+        "scale": "linear",
+        "favorite": false,
+        "selected": false,
+        "color": "#ff9e37"
+    },
+    "system.beamline.magnet.static_active": {
+        "dataSource": "system.beamline.magnet.static_active",
+        "label": "Static Active",
+        "multiplier": 1.0,
+        "scale": "linear",
+        "favorite": false,
+        "selected": false,
+        "color": "#ff379e"
+    },
+    "system.beamline.magnet.status": {
+        "dataSource": "system.beamline.magnet.status",
+        "label": "Status",
+        "multiplier": 1.0,
+        "scale": "linear",
+        "favorite": false,
+        "selected": false,
+        "color": "#3798ff"
+    },
+    "system.beamline.massScan.feedback.currentStep": {
+        "dataSource": "system.beamline.massScan.feedback.currentStep",
+        "label": "Current Step",
+        "multiplier": 1.0,
+        "scale": "linear",
+        "favorite": false,
+        "selected": false,
+        "color": "#ffca37"
+    },
+    "system.beamline.massScan.feedback.remainingTime_m": {
+        "dataSource": "system.beamline.massScan.feedback.remainingTime_m",
+        "label": "Remaining Time M",
+        "multiplier": 1.0,
+        "scale": "linear",
+        "favorite": false,
+        "selected": false,
+        "color": "#d037ff"
+    },
+    "system.beamline.massScan.feedback.remainingTime_s": {
+        "dataSource": "system.beamline.massScan.feedback.remainingTime_s",
+        "label": "Remaining Time S",
+        "multiplier": 1.0,
+        "scale": "linear",
+        "favorite": false,
+        "selected": false,
+        "color": "#37a2ff"
+    },
+    "system.beamline.massScan.feedback.resultsReady": {
+        "dataSource": "system.beamline.massScan.feedback.resultsReady",
+        "label": "Results Ready",
+        "multiplier": 1.0,
+        "scale": "linear",
+        "favorite": false,
+        "selected": false,
+        "color": "#55ff37"
+    },
+    "system.beamline.massScan.feedback.status": {
+        "dataSource": "system.beamline.massScan.feedback.status",
+        "label": "Status",
+        "multiplier": 1.0,
+        "scale": "linear",
+        "favorite": false,
+        "selected": false,
+        "color": "#ffc637"
+    },
+    "system.beamline.massScan.feedback.sweepActive": {
+        "dataSource": "system.beamline.massScan.feedback.sweepActive",
+        "label": "Sweep Active",
+        "multiplier": 1.0,
+        "scale": "linear",
+        "favorite": false,
+        "selected": false,
+        "color": "#37ffd4"
+    },
+    "system.beamline.massScan.requestStart": {
+        "dataSource": "system.beamline.massScan.requestStart",
+        "label": "Request Start",
+        "multiplier": 1.0,
+        "scale": "linear",
+        "favorite": false,
+        "selected": false,
+        "color": "#ffff37"
+    },
+    "system.beamline.massScan.requestStop": {
+        "dataSource": "system.beamline.massScan.requestStop",
+        "label": "Request Stop",
+        "multiplier": 1.0,
+        "scale": "linear",
+        "favorite": false,
+        "selected": false,
+        "color": "#6937ff"
+    },
+    "system.beamline.massScan.settings.hystersisWait": {
+        "dataSource": "system.beamline.massScan.settings.hystersisWait",
+        "label": "Hystersis Wait",
+        "multiplier": 1.0,
+        "scale": "linear",
+        "favorite": false,
+        "selected": false,
+        "color": "#37d0ff"
+    },
+    "system.beamline.massScan.settings.startCurrent": {
+        "dataSource": "system.beamline.massScan.settings.startCurrent",
+        "label": "Start Current",
+        "multiplier": 1.0,
+        "scale": "linear",
+        "favorite": false,
+        "selected": false,
+        "color": "#3784ff"
+    },
+    "system.beamline.massScan.settings.stepTime": {
+        "dataSource": "system.beamline.massScan.settings.stepTime",
+        "label": "Step Time",
+        "multiplier": 1.0,
+        "scale": "linear",
+        "favorite": false,
+        "selected": false,
+        "color": "#378aff"
+    },
+    "system.beamline.massScan.settings.stopCurrent": {
+        "dataSource": "system.beamline.massScan.settings.stopCurrent",
+        "label": "Stop Current",
+        "multiplier": 1.0,
+        "scale": "linear",
+        "favorite": false,
+        "selected": false,
+        "color": "#ff374e"
+    },
+    "system.beamline.massScan.settings.totalSteps": {
+        "dataSource": "system.beamline.massScan.settings.totalSteps",
+        "label": "Total Steps",
+        "multiplier": 1.0,
+        "scale": "linear",
+        "favorite": false,
+        "selected": false,
+        "color": "#ff3752"
+    },
+    "system.beamline.mass_slits.bias_voltage": {
+        "dataSource": "system.beamline.mass_slits.bias_voltage",
+        "label": "Bias Voltage",
+        "multiplier": 1.0,
+        "scale": "linear",
+        "favorite": false,
+        "selected": false,
+        "color": "#37ff6c"
+    },
+    "system.beamline.mass_slits.gap_offset_mm": {
+        "dataSource": "system.beamline.mass_slits.gap_offset_mm",
+        "label": "Gap Offset Mm",
+        "multiplier": 1.0,
+        "scale": "linear",
+        "favorite": false,
+        "selected": false,
+        "color": "#377aff"
+    },
+    "system.beamline.mass_slits.gap_width_mm": {
+        "dataSource": "system.beamline.mass_slits.gap_width_mm",
+        "label": "Gap Width Mm",
+        "multiplier": 1.0,
+        "scale": "linear",
+        "favorite": false,
+        "selected": false,
+        "color": "#375cff"
+    },
+    "system.beamline.mass_slits.left_position": {
+        "dataSource": "system.beamline.mass_slits.left_position",
+        "label": "Left Position",
+        "multiplier": 1.0,
+        "scale": "linear",
+        "favorite": false,
+        "selected": false,
+        "color": "#caff37"
+    },
+    "system.beamline.mass_slits.right_position": {
+        "dataSource": "system.beamline.mass_slits.right_position",
+        "label": "Right Position",
+        "multiplier": 1.0,
+        "scale": "linear",
+        "favorite": false,
+        "selected": false,
+        "color": "#9b37ff"
+    },
+    "system.beamline.steerers.x.fault": {
+        "dataSource": "system.beamline.steerers.x.fault",
+        "label": "Fault",
+        "multiplier": 1.0,
+        "scale": "linear",
+        "favorite": false,
+        "selected": false,
+        "color": "#9837ff"
+    },
+    "system.beamline.steerers.x.hmiSetpointVEnabled": {
+        "dataSource": "system.beamline.steerers.x.hmiSetpointVEnabled",
+        "label": "Hmi Setpoint Venabled",
+        "multiplier": 1.0,
+        "scale": "linear",
+        "favorite": false,
+        "selected": false,
+        "color": "#ffa837"
+    },
+    "system.beamline.steerers.x.hmiSetpointVEntry": {
+        "dataSource": "system.beamline.steerers.x.hmiSetpointVEntry",
+        "label": "Hmi Setpoint Ventry",
+        "multiplier": 1.0,
+        "scale": "linear",
+        "favorite": false,
+        "selected": false,
+        "color": "#ff37bc"
+    },
+    "system.beamline.steerers.x.hmiSetpointVEntryMax": {
+        "dataSource": "system.beamline.steerers.x.hmiSetpointVEntryMax",
+        "label": "Hmi Setpoint Ventry Max",
+        "multiplier": 1.0,
+        "scale": "linear",
+        "favorite": false,
+        "selected": false,
+        "color": "#bc37ff"
+    },
+    "system.beamline.steerers.x.hmiSetpointVEntryMin": {
+        "dataSource": "system.beamline.steerers.x.hmiSetpointVEntryMin",
+        "label": "Hmi Setpoint Ventry Min",
+        "multiplier": 1.0,
+        "scale": "linear",
+        "favorite": false,
+        "selected": false,
+        "color": "#c637ff"
+    },
+    "system.beamline.steerers.x.outputEnabled": {
+        "dataSource": "system.beamline.steerers.x.outputEnabled",
+        "label": "Output Enabled",
+        "multiplier": 1.0,
+        "scale": "linear",
+        "favorite": false,
+        "selected": false,
+        "color": "#d0ff37"
+    },
+    "system.beamline.steerers.x.readbackA": {
+        "dataSource": "system.beamline.steerers.x.readbackA",
+        "label": "X (A)",
+        "multiplier": 1.0,
+        "scale": "linear",
+        "favorite": false,
+        "selected": false,
+        "color": "#3741ff"
+    },
+    "system.beamline.steerers.x.readbackV": {
+        "dataSource": "system.beamline.steerers.x.readbackV",
+        "label": "X (V)",
+        "multiplier": 1.0,
+        "scale": "linear",
+        "favorite": false,
+        "selected": false,
+        "color": "#ff6c37"
+    },
+    "system.beamline.steerers.x.status": {
+        "dataSource": "system.beamline.steerers.x.status",
+        "label": "Status",
+        "multiplier": 1.0,
+        "scale": "linear",
+        "favorite": false,
+        "selected": false,
+        "color": "#ff374e"
+    },
+    "system.beamline.steerers.y.fault": {
+        "dataSource": "system.beamline.steerers.y.fault",
+        "label": "Fault",
+        "multiplier": 1.0,
+        "scale": "linear",
+        "favorite": false,
+        "selected": false,
+        "color": "#ff7337"
+    },
+    "system.beamline.steerers.y.hmiSetpointVEnabled": {
+        "dataSource": "system.beamline.steerers.y.hmiSetpointVEnabled",
+        "label": "Hmi Setpoint Venabled",
+        "multiplier": 1.0,
+        "scale": "linear",
+        "favorite": false,
+        "selected": false,
+        "color": "#37ff7a"
+    },
+    "system.beamline.steerers.y.hmiSetpointVEntry": {
+        "dataSource": "system.beamline.steerers.y.hmiSetpointVEntry",
+        "label": "Hmi Setpoint Ventry",
+        "multiplier": 1.0,
+        "scale": "linear",
+        "favorite": false,
+        "selected": false,
+        "color": "#37ff84"
+    },
+    "system.beamline.steerers.y.hmiSetpointVEntryMax": {
+        "dataSource": "system.beamline.steerers.y.hmiSetpointVEntryMax",
+        "label": "Hmi Setpoint Ventry Max",
+        "multiplier": 1.0,
+        "scale": "linear",
+        "favorite": false,
+        "selected": false,
+        "color": "#3780ff"
+    },
+    "system.beamline.steerers.y.hmiSetpointVEntryMin": {
+        "dataSource": "system.beamline.steerers.y.hmiSetpointVEntryMin",
+        "label": "Hmi Setpoint Ventry Min",
+        "multiplier": 1.0,
+        "scale": "linear",
+        "favorite": false,
+        "selected": false,
+        "color": "#c0ff37"
+    },
+    "system.beamline.steerers.y.outputEnabled": {
+        "dataSource": "system.beamline.steerers.y.outputEnabled",
+        "label": "Output Enabled",
+        "multiplier": 1.0,
+        "scale": "linear",
+        "favorite": false,
+        "selected": false,
+        "color": "#3787ff"
+    },
+    "system.beamline.steerers.y.readbackA": {
+        "dataSource": "system.beamline.steerers.y.readbackA",
+        "label": "Y (A)",
+        "multiplier": 1.0,
+        "scale": "linear",
+        "favorite": false,
+        "selected": false,
+        "color": "#37ffde"
+    },
+    "system.beamline.steerers.y.readbackV": {
+        "dataSource": "system.beamline.steerers.y.readbackV",
+        "label": "Y (V)",
+        "multiplier": 1.0,
+        "scale": "linear",
+        "favorite": false,
+        "selected": false,
+        "color": "#6937ff"
+    },
+    "system.beamline.steerers.y.status": {
+        "dataSource": "system.beamline.steerers.y.status",
+        "label": "Status",
+        "multiplier": 1.0,
+        "scale": "linear",
+        "favorite": false,
+        "selected": false,
+        "color": "#37ffac"
+    },
+    "system.beamline.straight_thru_cup.readbackA": {
+        "dataSource": "system.beamline.straight_thru_cup.readbackA",
+        "label": "Straight Thru Cup (A)",
+        "multiplier": 1.0,
+        "scale": "linear",
+        "favorite": false,
+        "selected": false,
+        "color": "#3784ff"
+    },
+    "system.endstation.neutral_trap.fault": {
+        "dataSource": "system.endstation.neutral_trap.fault",
+        "label": "Fault",
+        "multiplier": 1.0,
+        "scale": "linear",
+        "favorite": false,
+        "selected": false,
+        "color": "#ffcd37"
+    },
+    "system.endstation.neutral_trap.hmiSetpointLeftVEnabled": {
+        "dataSource": "system.endstation.neutral_trap.hmiSetpointLeftVEnabled",
+        "label": "Hmi Setpoint Left Venabled",
+        "multiplier": 1.0,
+        "scale": "linear",
+        "favorite": false,
+        "selected": false,
+        "color": "#37ff3e"
+    },
+    "system.endstation.neutral_trap.hmiSetpointLeftVEntry": {
+        "dataSource": "system.endstation.neutral_trap.hmiSetpointLeftVEntry",
+        "label": "Hmi Setpoint Left Ventry",
+        "multiplier": 1.0,
+        "scale": "linear",
+        "favorite": false,
+        "selected": false,
+        "color": "#37ffd0"
+    },
+    "system.endstation.neutral_trap.hmiSetpointLeftVEntryMax": {
+        "dataSource": "system.endstation.neutral_trap.hmiSetpointLeftVEntryMax",
+        "label": "Hmi Setpoint Left Ventry Max",
+        "multiplier": 1.0,
+        "scale": "linear",
+        "favorite": false,
+        "selected": false,
+        "color": "#d7ff37"
+    },
+    "system.endstation.neutral_trap.hmiSetpointLeftVEntryMin": {
+        "dataSource": "system.endstation.neutral_trap.hmiSetpointLeftVEntryMin",
+        "label": "Hmi Setpoint Left Ventry Min",
+        "multiplier": 1.0,
+        "scale": "linear",
+        "favorite": false,
+        "selected": false,
+        "color": "#d7ff37"
+    },
+    "system.endstation.neutral_trap.hmiSetpointRightVEnabled": {
+        "dataSource": "system.endstation.neutral_trap.hmiSetpointRightVEnabled",
+        "label": "Hmi Setpoint Right Venabled",
+        "multiplier": 1.0,
+        "scale": "linear",
+        "favorite": false,
+        "selected": false,
+        "color": "#37ffd7"
+    },
+    "system.endstation.neutral_trap.hmiSetpointRightVEntry": {
+        "dataSource": "system.endstation.neutral_trap.hmiSetpointRightVEntry",
+        "label": "Hmi Setpoint Right Ventry",
+        "multiplier": 1.0,
+        "scale": "linear",
+        "favorite": false,
+        "selected": false,
+        "color": "#94ff37"
+    },
+    "system.endstation.neutral_trap.hmiSetpointRightVEntryMax": {
+        "dataSource": "system.endstation.neutral_trap.hmiSetpointRightVEntryMax",
+        "label": "Hmi Setpoint Right Ventry Max",
+        "multiplier": 1.0,
+        "scale": "linear",
+        "favorite": false,
+        "selected": false,
+        "color": "#3e37ff"
+    },
+    "system.endstation.neutral_trap.hmiSetpointRightVEntryMin": {
+        "dataSource": "system.endstation.neutral_trap.hmiSetpointRightVEntryMin",
+        "label": "Hmi Setpoint Right Ventry Min",
+        "multiplier": 1.0,
+        "scale": "linear",
+        "favorite": false,
+        "selected": false,
+        "color": "#7a37ff"
+    },
+    "system.endstation.neutral_trap.readbackLeftA": {
+        "dataSource": "system.endstation.neutral_trap.readbackLeftA",
+        "label": "Neutral Trap (A)",
+        "multiplier": 1.0,
+        "scale": "linear",
+        "favorite": false,
+        "selected": false,
+        "color": "#ff37da"
+    },
+    "system.endstation.neutral_trap.readbackLeftV": {
+        "dataSource": "system.endstation.neutral_trap.readbackLeftV",
+        "label": "Neutral Trap (V)",
+        "multiplier": 1.0,
+        "scale": "linear",
+        "favorite": false,
+        "selected": false,
+        "color": "#37f5ff"
+    },
+    "system.endstation.neutral_trap.readbackRightA": {
+        "dataSource": "system.endstation.neutral_trap.readbackRightA",
+        "label": "Neutral Trap (A)",
+        "multiplier": 1.0,
+        "scale": "linear",
+        "favorite": false,
+        "selected": false,
+        "color": "#ff4837"
+    },
+    "system.endstation.neutral_trap.readbackRightV": {
+        "dataSource": "system.endstation.neutral_trap.readbackRightV",
+        "label": "Neutral Trap (V)",
+        "multiplier": 1.0,
+        "scale": "linear",
+        "favorite": false,
+        "selected": false,
+        "color": "#ff37c6"
+    },
+    "system.endstation.neutral_trap.status": {
+        "dataSource": "system.endstation.neutral_trap.status",
+        "label": "Status",
+        "multiplier": 1.0,
+        "scale": "linear",
+        "favorite": false,
+        "selected": false,
+        "color": "#37ff4b"
+    },
+    "system.endstation.sample.measured_fluence_ions_cm2": {
+        "dataSource": "system.endstation.sample.measured_fluence_ions_cm2",
+        "label": "Measured Fluence Ions Cm2",
+        "multiplier": 1.0,
+        "scale": "linear",
+        "favorite": false,
+        "selected": false,
+        "color": "#ff3770"
+    },
+    "system.endstation.sample.measured_temp_C": {
+        "dataSource": "system.endstation.sample.measured_temp_C",
+        "label": "Measured Temp C (\u00b0C)",
+        "multiplier": 1.0,
+        "scale": "linear",
+        "favorite": false,
+        "selected": false,
+        "color": "#ff3780"
+    },
+    "system.endstation.sample.reference_number": {
+        "dataSource": "system.endstation.sample.reference_number",
+        "label": "Reference Number",
+        "multiplier": 1.0,
+        "scale": "linear",
+        "favorite": false,
+        "selected": false,
+        "color": "#37ff55"
+    },
+    "system.endstation.sample.requested_fluence_ions_cm2": {
+        "dataSource": "system.endstation.sample.requested_fluence_ions_cm2",
+        "label": "Requested Fluence Ions Cm2",
+        "multiplier": 1.0,
+        "scale": "linear",
+        "favorite": false,
+        "selected": false,
+        "color": "#9437ff"
+    },
+    "system.endstation.sample.requested_temp_C": {
+        "dataSource": "system.endstation.sample.requested_temp_C",
+        "label": "Requested Temp C (\u00b0C)",
+        "multiplier": 1.0,
+        "scale": "linear",
+        "favorite": false,
+        "selected": false,
+        "color": "#ffc037"
+    },
+    "system.endstation.sample.status": {
+        "dataSource": "system.endstation.sample.status",
+        "label": "Status",
+        "multiplier": 1.0,
+        "scale": "linear",
+        "favorite": false,
+        "selected": false,
+        "color": "#b9ff37"
+    },
+    "system.endstation.stage.electrical.bias": {
+        "dataSource": "system.endstation.stage.electrical.bias",
+        "label": "Bias",
+        "multiplier": 1.0,
+        "scale": "linear",
+        "favorite": false,
+        "selected": false,
+        "color": "#7aff37"
+    },
+    "system.endstation.stage.electrical.measured_current_A": {
+        "dataSource": "system.endstation.stage.electrical.measured_current_A",
+        "label": "Measured Current A (A)",
+        "multiplier": 1.0,
+        "scale": "linear",
+        "favorite": false,
+        "selected": false,
+        "color": "#37fff2"
+    },
+    "system.endstation.stage.motion.readback_angle_deg": {
+        "dataSource": "system.endstation.stage.motion.readback_angle_deg",
+        "label": "Motion",
+        "multiplier": 1.0,
+        "scale": "linear",
+        "favorite": false,
+        "selected": false,
+        "color": "#3794ff"
+    },
+    "system.endstation.stage.motion.readback_x_mm": {
+        "dataSource": "system.endstation.stage.motion.readback_x_mm",
+        "label": "Motion",
+        "multiplier": 1.0,
+        "scale": "linear",
+        "favorite": false,
+        "selected": false,
+        "color": "#c6ff37"
+    },
+    "system.endstation.stage.motion.readback_y_mm": {
+        "dataSource": "system.endstation.stage.motion.readback_y_mm",
+        "label": "Motion",
+        "multiplier": 1.0,
+        "scale": "linear",
+        "favorite": false,
+        "selected": false,
+        "color": "#ebff37"
+    },
+    "system.endstation.stage.motion.readback_z_mm": {
+        "dataSource": "system.endstation.stage.motion.readback_z_mm",
+        "label": "Motion",
+        "multiplier": 1.0,
+        "scale": "linear",
+        "favorite": false,
+        "selected": false,
+        "color": "#fff837"
+    },
+    "system.endstation.stage.motion.setpoint_angle_deg": {
+        "dataSource": "system.endstation.stage.motion.setpoint_angle_deg",
+        "label": "Setpoint Angle Deg",
+        "multiplier": 1.0,
+        "scale": "linear",
+        "favorite": false,
+        "selected": false,
+        "color": "#37ffa8"
+    },
+    "system.endstation.stage.motion.setpoint_x_mm": {
+        "dataSource": "system.endstation.stage.motion.setpoint_x_mm",
+        "label": "Setpoint X Mm",
+        "multiplier": 1.0,
+        "scale": "linear",
+        "favorite": false,
+        "selected": false,
+        "color": "#c337ff"
+    },
+    "system.endstation.stage.motion.setpoint_y_mm": {
+        "dataSource": "system.endstation.stage.motion.setpoint_y_mm",
+        "label": "Setpoint Y Mm",
+        "multiplier": 1.0,
+        "scale": "linear",
+        "favorite": false,
+        "selected": false,
+        "color": "#37ffd4"
+    },
+    "system.endstation.stage.motion.setpoint_z_mm": {
+        "dataSource": "system.endstation.stage.motion.setpoint_z_mm",
+        "label": "Setpoint Z Mm",
+        "multiplier": 1.0,
+        "scale": "linear",
+        "favorite": false,
+        "selected": false,
+        "color": "#a837ff"
+    },
+    "system.endstation.stage.motion.status": {
+        "dataSource": "system.endstation.stage.motion.status",
+        "label": "Status",
+        "multiplier": 1.0,
+        "scale": "linear",
+        "favorite": false,
+        "selected": false,
+        "color": "#e4ff37"
+    },
+    "system.general.bufferIndex": {
+        "dataSource": "system.general.bufferIndex",
+        "label": "Buffer Index",
+        "multiplier": 1.0,
+        "scale": "linear",
+        "favorite": false,
+        "selected": false,
+        "color": "#37ff4e"
+    },
+    "system.general.coolantStatus": {
+        "dataSource": "system.general.coolantStatus",
+        "label": "Coolant Status",
+        "multiplier": 1.0,
+        "scale": "linear",
+        "favorite": false,
+        "selected": false,
+        "color": "#ff374e"
+    },
+    "system.general.errorPLC": {
+        "dataSource": "system.general.errorPLC",
+        "label": "Error Pl C (\u00b0C)",
+        "multiplier": 1.0,
+        "scale": "linear",
+        "favorite": false,
+        "selected": false,
+        "color": "#ffd037"
+    },
+    "system.general.faultArray[0]": {
+        "dataSource": "system.general.faultArray[0]",
+        "label": "Fault Array[0]",
+        "multiplier": 1.0,
+        "scale": "linear",
+        "favorite": false,
+        "selected": false,
+        "color": "#e437ff"
+    },
+    "system.general.faultArray[100]": {
+        "dataSource": "system.general.faultArray[100]",
+        "label": "Fault Array[100]",
+        "multiplier": 1.0,
+        "scale": "linear",
+        "favorite": false,
+        "selected": false,
+        "color": "#5237ff"
+    },
+    "system.general.faultArray[10]": {
+        "dataSource": "system.general.faultArray[10]",
+        "label": "Fault Array[10]",
+        "multiplier": 1.0,
+        "scale": "linear",
+        "favorite": false,
+        "selected": false,
+        "color": "#37ff3a"
+    },
+    "system.general.faultArray[11]": {
+        "dataSource": "system.general.faultArray[11]",
+        "label": "Fault Array[11]",
+        "multiplier": 1.0,
+        "scale": "linear",
+        "favorite": false,
+        "selected": false,
+        "color": "#37c6ff"
+    },
+    "system.general.faultArray[12]": {
+        "dataSource": "system.general.faultArray[12]",
+        "label": "Fault Array[12]",
+        "multiplier": 1.0,
+        "scale": "linear",
+        "favorite": false,
+        "selected": false,
+        "color": "#ca37ff"
+    },
+    "system.general.faultArray[13]": {
+        "dataSource": "system.general.faultArray[13]",
+        "label": "Fault Array[13]",
+        "multiplier": 1.0,
+        "scale": "linear",
+        "favorite": false,
+        "selected": false,
+        "color": "#ff37fc"
+    },
+    "system.general.faultArray[14]": {
+        "dataSource": "system.general.faultArray[14]",
+        "label": "Fault Array[14]",
+        "multiplier": 1.0,
+        "scale": "linear",
+        "favorite": false,
+        "selected": false,
+        "color": "#c037ff"
+    },
+    "system.general.faultArray[15]": {
+        "dataSource": "system.general.faultArray[15]",
+        "label": "Fault Array[15]",
+        "multiplier": 1.0,
+        "scale": "linear",
+        "favorite": false,
+        "selected": false,
+        "color": "#ff5837"
+    },
+    "system.general.faultArray[16]": {
+        "dataSource": "system.general.faultArray[16]",
+        "label": "Fault Array[16]",
+        "multiplier": 1.0,
+        "scale": "linear",
+        "favorite": false,
+        "selected": false,
+        "color": "#ff373a"
+    },
+    "system.general.faultArray[17]": {
+        "dataSource": "system.general.faultArray[17]",
+        "label": "Fault Array[17]",
+        "multiplier": 1.0,
+        "scale": "linear",
+        "favorite": false,
+        "selected": false,
+        "color": "#ffc637"
+    },
+    "system.general.faultArray[18]": {
+        "dataSource": "system.general.faultArray[18]",
+        "label": "Fault Array[18]",
+        "multiplier": 1.0,
+        "scale": "linear",
+        "favorite": false,
+        "selected": false,
+        "color": "#37ff87"
+    },
+    "system.general.faultArray[19]": {
+        "dataSource": "system.general.faultArray[19]",
+        "label": "Fault Array[19]",
+        "multiplier": 1.0,
+        "scale": "linear",
+        "favorite": false,
+        "selected": false,
+        "color": "#4bff37"
+    },
+    "system.general.faultArray[1]": {
+        "dataSource": "system.general.faultArray[1]",
+        "label": "Fault Array[1]",
+        "multiplier": 1.0,
+        "scale": "linear",
+        "favorite": false,
+        "selected": false,
+        "color": "#bc37ff"
+    },
+    "system.general.faultArray[20]": {
+        "dataSource": "system.general.faultArray[20]",
+        "label": "Fault Array[20]",
+        "multiplier": 1.0,
+        "scale": "linear",
+        "favorite": false,
+        "selected": false,
+        "color": "#6237ff"
+    },
+    "system.general.faultArray[21]": {
+        "dataSource": "system.general.faultArray[21]",
+        "label": "Fault Array[21]",
+        "multiplier": 1.0,
+        "scale": "linear",
+        "favorite": false,
+        "selected": false,
+        "color": "#37c3ff"
+    },
+    "system.general.faultArray[22]": {
+        "dataSource": "system.general.faultArray[22]",
+        "label": "Fault Array[22]",
+        "multiplier": 1.0,
+        "scale": "linear",
+        "favorite": false,
+        "selected": false,
+        "color": "#376cff"
+    },
+    "system.general.faultArray[23]": {
+        "dataSource": "system.general.faultArray[23]",
+        "label": "Fault Array[23]",
+        "multiplier": 1.0,
+        "scale": "linear",
+        "favorite": false,
+        "selected": false,
+        "color": "#4bff37"
+    },
+    "system.general.faultArray[24]": {
+        "dataSource": "system.general.faultArray[24]",
+        "label": "Fault Array[24]",
+        "multiplier": 1.0,
+        "scale": "linear",
+        "favorite": false,
+        "selected": false,
+        "color": "#377dff"
+    },
+    "system.general.faultArray[25]": {
+        "dataSource": "system.general.faultArray[25]",
+        "label": "Fault Array[25]",
+        "multiplier": 1.0,
+        "scale": "linear",
+        "favorite": false,
+        "selected": false,
+        "color": "#70ff37"
+    },
+    "system.general.faultArray[26]": {
+        "dataSource": "system.general.faultArray[26]",
+        "label": "Fault Array[26]",
+        "multiplier": 1.0,
+        "scale": "linear",
+        "favorite": false,
+        "selected": false,
+        "color": "#3794ff"
+    },
+    "system.general.faultArray[27]": {
+        "dataSource": "system.general.faultArray[27]",
+        "label": "Fault Array[27]",
+        "multiplier": 1.0,
+        "scale": "linear",
+        "favorite": false,
+        "selected": false,
+        "color": "#ff3762"
+    },
+    "system.general.faultArray[28]": {
+        "dataSource": "system.general.faultArray[28]",
+        "label": "Fault Array[28]",
+        "multiplier": 1.0,
+        "scale": "linear",
+        "favorite": false,
+        "selected": false,
+        "color": "#ff375c"
+    },
+    "system.general.faultArray[29]": {
+        "dataSource": "system.general.faultArray[29]",
+        "label": "Fault Array[29]",
+        "multiplier": 1.0,
+        "scale": "linear",
+        "favorite": false,
+        "selected": false,
+        "color": "#ff5f37"
+    },
+    "system.general.faultArray[2]": {
+        "dataSource": "system.general.faultArray[2]",
+        "label": "Fault Array[2]",
+        "multiplier": 1.0,
+        "scale": "linear",
+        "favorite": false,
+        "selected": false,
+        "color": "#37ff44"
+    },
+    "system.general.faultArray[30]": {
+        "dataSource": "system.general.faultArray[30]",
+        "label": "Fault Array[30]",
+        "multiplier": 1.0,
+        "scale": "linear",
+        "favorite": false,
+        "selected": false,
+        "color": "#ff3787"
+    },
+    "system.general.faultArray[31]": {
+        "dataSource": "system.general.faultArray[31]",
+        "label": "Fault Array[31]",
+        "multiplier": 1.0,
+        "scale": "linear",
+        "favorite": false,
+        "selected": false,
+        "color": "#ff3780"
+    },
+    "system.general.faultArray[32]": {
+        "dataSource": "system.general.faultArray[32]",
+        "label": "Fault Array[32]",
+        "multiplier": 1.0,
+        "scale": "linear",
+        "favorite": false,
+        "selected": false,
+        "color": "#37ff41"
+    },
+    "system.general.faultArray[33]": {
+        "dataSource": "system.general.faultArray[33]",
+        "label": "Fault Array[33]",
+        "multiplier": 1.0,
+        "scale": "linear",
+        "favorite": false,
+        "selected": false,
+        "color": "#37ff8a"
+    },
+    "system.general.faultArray[34]": {
+        "dataSource": "system.general.faultArray[34]",
+        "label": "Fault Array[34]",
+        "multiplier": 1.0,
+        "scale": "linear",
+        "favorite": false,
+        "selected": false,
+        "color": "#ffe437"
+    },
+    "system.general.faultArray[35]": {
+        "dataSource": "system.general.faultArray[35]",
+        "label": "Fault Array[35]",
+        "multiplier": 1.0,
+        "scale": "linear",
+        "favorite": false,
+        "selected": false,
+        "color": "#c6ff37"
+    },
+    "system.general.faultArray[36]": {
+        "dataSource": "system.general.faultArray[36]",
+        "label": "Fault Array[36]",
+        "multiplier": 1.0,
+        "scale": "linear",
+        "favorite": false,
+        "selected": false,
+        "color": "#e4ff37"
+    },
+    "system.general.faultArray[37]": {
+        "dataSource": "system.general.faultArray[37]",
+        "label": "Fault Array[37]",
+        "multiplier": 1.0,
+        "scale": "linear",
+        "favorite": false,
+        "selected": false,
+        "color": "#a237ff"
+    },
+    "system.general.faultArray[38]": {
+        "dataSource": "system.general.faultArray[38]",
+        "label": "Fault Array[38]",
+        "multiplier": 1.0,
+        "scale": "linear",
+        "favorite": false,
+        "selected": false,
+        "color": "#ffe137"
+    },
+    "system.general.faultArray[39]": {
+        "dataSource": "system.general.faultArray[39]",
+        "label": "Fault Array[39]",
+        "multiplier": 1.0,
+        "scale": "linear",
+        "favorite": false,
+        "selected": false,
+        "color": "#37ffde"
+    },
+    "system.general.faultArray[3]": {
+        "dataSource": "system.general.faultArray[3]",
+        "label": "Fault Array[3]",
+        "multiplier": 1.0,
+        "scale": "linear",
+        "favorite": false,
+        "selected": false,
+        "color": "#37ffb2"
+    },
+    "system.general.faultArray[40]": {
+        "dataSource": "system.general.faultArray[40]",
+        "label": "Fault Array[40]",
+        "multiplier": 1.0,
+        "scale": "linear",
+        "favorite": false,
+        "selected": false,
+        "color": "#87ff37"
+    },
+    "system.general.faultArray[41]": {
+        "dataSource": "system.general.faultArray[41]",
+        "label": "Fault Array[41]",
+        "multiplier": 1.0,
+        "scale": "linear",
+        "favorite": false,
+        "selected": false,
+        "color": "#91ff37"
+    },
+    "system.general.faultArray[42]": {
+        "dataSource": "system.general.faultArray[42]",
+        "label": "Fault Array[42]",
+        "multiplier": 1.0,
+        "scale": "linear",
+        "favorite": false,
+        "selected": false,
+        "color": "#70ff37"
+    },
+    "system.general.faultArray[43]": {
+        "dataSource": "system.general.faultArray[43]",
+        "label": "Fault Array[43]",
+        "multiplier": 1.0,
+        "scale": "linear",
+        "favorite": false,
+        "selected": false,
+        "color": "#76ff37"
+    },
+    "system.general.faultArray[44]": {
+        "dataSource": "system.general.faultArray[44]",
+        "label": "Fault Array[44]",
+        "multiplier": 1.0,
+        "scale": "linear",
+        "favorite": false,
+        "selected": false,
+        "color": "#fff537"
+    },
+    "system.general.faultArray[45]": {
+        "dataSource": "system.general.faultArray[45]",
+        "label": "Fault Array[45]",
+        "multiplier": 1.0,
+        "scale": "linear",
+        "favorite": false,
+        "selected": false,
+        "color": "#37ff62"
+    },
+    "system.general.faultArray[46]": {
+        "dataSource": "system.general.faultArray[46]",
+        "label": "Fault Array[46]",
+        "multiplier": 1.0,
+        "scale": "linear",
+        "favorite": false,
+        "selected": false,
+        "color": "#fff237"
+    },
+    "system.general.faultArray[47]": {
+        "dataSource": "system.general.faultArray[47]",
+        "label": "Fault Array[47]",
+        "multiplier": 1.0,
+        "scale": "linear",
+        "favorite": false,
+        "selected": false,
+        "color": "#ff3780"
+    },
+    "system.general.faultArray[48]": {
+        "dataSource": "system.general.faultArray[48]",
+        "label": "Fault Array[48]",
+        "multiplier": 1.0,
+        "scale": "linear",
+        "favorite": false,
+        "selected": false,
+        "color": "#37ff6c"
+    },
+    "system.general.faultArray[49]": {
+        "dataSource": "system.general.faultArray[49]",
+        "label": "Fault Array[49]",
+        "multiplier": 1.0,
+        "scale": "linear",
+        "favorite": false,
+        "selected": false,
+        "color": "#ff4137"
+    },
+    "system.general.faultArray[4]": {
+        "dataSource": "system.general.faultArray[4]",
+        "label": "Fault Array[4]",
+        "multiplier": 1.0,
+        "scale": "linear",
+        "favorite": false,
+        "selected": false,
+        "color": "#ff3791"
+    },
+    "system.general.faultArray[50]": {
+        "dataSource": "system.general.faultArray[50]",
+        "label": "Fault Array[50]",
+        "multiplier": 1.0,
+        "scale": "linear",
+        "favorite": false,
+        "selected": false,
+        "color": "#379eff"
+    },
+    "system.general.faultArray[51]": {
+        "dataSource": "system.general.faultArray[51]",
+        "label": "Fault Array[51]",
+        "multiplier": 1.0,
+        "scale": "linear",
+        "favorite": false,
+        "selected": false,
+        "color": "#37ffcd"
+    },
+    "system.general.faultArray[52]": {
+        "dataSource": "system.general.faultArray[52]",
+        "label": "Fault Array[52]",
+        "multiplier": 1.0,
+        "scale": "linear",
+        "favorite": false,
+        "selected": false,
+        "color": "#ff37ee"
+    },
+    "system.general.faultArray[53]": {
+        "dataSource": "system.general.faultArray[53]",
+        "label": "Fault Array[53]",
+        "multiplier": 1.0,
+        "scale": "linear",
+        "favorite": false,
+        "selected": false,
+        "color": "#ff373a"
+    },
+    "system.general.faultArray[54]": {
+        "dataSource": "system.general.faultArray[54]",
+        "label": "Fault Array[54]",
+        "multiplier": 1.0,
+        "scale": "linear",
+        "favorite": false,
+        "selected": false,
+        "color": "#af37ff"
+    },
+    "system.general.faultArray[55]": {
+        "dataSource": "system.general.faultArray[55]",
+        "label": "Fault Array[55]",
+        "multiplier": 1.0,
+        "scale": "linear",
+        "favorite": false,
+        "selected": false,
+        "color": "#c0ff37"
+    },
+    "system.general.faultArray[56]": {
+        "dataSource": "system.general.faultArray[56]",
+        "label": "Fault Array[56]",
+        "multiplier": 1.0,
+        "scale": "linear",
+        "favorite": false,
+        "selected": false,
+        "color": "#ff3748"
+    },
+    "system.general.faultArray[57]": {
+        "dataSource": "system.general.faultArray[57]",
+        "label": "Fault Array[57]",
+        "multiplier": 1.0,
+        "scale": "linear",
+        "favorite": false,
+        "selected": false,
+        "color": "#37c6ff"
+    },
+    "system.general.faultArray[58]": {
+        "dataSource": "system.general.faultArray[58]",
+        "label": "Fault Array[58]",
+        "multiplier": 1.0,
+        "scale": "linear",
+        "favorite": false,
+        "selected": false,
+        "color": "#ff3784"
+    },
+    "system.general.faultArray[59]": {
+        "dataSource": "system.general.faultArray[59]",
+        "label": "Fault Array[59]",
+        "multiplier": 1.0,
+        "scale": "linear",
+        "favorite": false,
+        "selected": false,
+        "color": "#fff837"
+    },
+    "system.general.faultArray[5]": {
+        "dataSource": "system.general.faultArray[5]",
+        "label": "Fault Array[5]",
+        "multiplier": 1.0,
+        "scale": "linear",
+        "favorite": false,
+        "selected": false,
+        "color": "#3758ff"
+    },
+    "system.general.faultArray[60]": {
+        "dataSource": "system.general.faultArray[60]",
+        "label": "Fault Array[60]",
+        "multiplier": 1.0,
+        "scale": "linear",
+        "favorite": false,
+        "selected": false,
+        "color": "#ff3776"
+    },
+    "system.general.faultArray[61]": {
+        "dataSource": "system.general.faultArray[61]",
+        "label": "Fault Array[61]",
+        "multiplier": 1.0,
+        "scale": "linear",
+        "favorite": false,
+        "selected": false,
+        "color": "#d7ff37"
+    },
+    "system.general.faultArray[62]": {
+        "dataSource": "system.general.faultArray[62]",
+        "label": "Fault Array[62]",
+        "multiplier": 1.0,
+        "scale": "linear",
+        "favorite": false,
+        "selected": false,
+        "color": "#37ff76"
+    },
+    "system.general.faultArray[63]": {
+        "dataSource": "system.general.faultArray[63]",
+        "label": "Fault Array[63]",
+        "multiplier": 1.0,
+        "scale": "linear",
+        "favorite": false,
+        "selected": false,
+        "color": "#4e37ff"
+    },
+    "system.general.faultArray[64]": {
+        "dataSource": "system.general.faultArray[64]",
+        "label": "Fault Array[64]",
+        "multiplier": 1.0,
+        "scale": "linear",
+        "favorite": false,
+        "selected": false,
+        "color": "#37fffc"
+    },
+    "system.general.faultArray[65]": {
+        "dataSource": "system.general.faultArray[65]",
+        "label": "Fault Array[65]",
+        "multiplier": 1.0,
+        "scale": "linear",
+        "favorite": false,
+        "selected": false,
+        "color": "#ff3762"
+    },
+    "system.general.faultArray[66]": {
+        "dataSource": "system.general.faultArray[66]",
+        "label": "Fault Array[66]",
+        "multiplier": 1.0,
+        "scale": "linear",
+        "favorite": false,
+        "selected": false,
+        "color": "#ff7337"
+    },
+    "system.general.faultArray[67]": {
+        "dataSource": "system.general.faultArray[67]",
+        "label": "Fault Array[67]",
+        "multiplier": 1.0,
+        "scale": "linear",
+        "favorite": false,
+        "selected": false,
+        "color": "#ff6937"
+    },
+    "system.general.faultArray[68]": {
+        "dataSource": "system.general.faultArray[68]",
+        "label": "Fault Array[68]",
+        "multiplier": 1.0,
+        "scale": "linear",
+        "favorite": false,
+        "selected": false,
+        "color": "#ff3773"
+    },
+    "system.general.faultArray[69]": {
+        "dataSource": "system.general.faultArray[69]",
+        "label": "Fault Array[69]",
+        "multiplier": 1.0,
+        "scale": "linear",
+        "favorite": false,
+        "selected": false,
+        "color": "#37ff76"
+    },
+    "system.general.faultArray[6]": {
+        "dataSource": "system.general.faultArray[6]",
+        "label": "Fault Array[6]",
+        "multiplier": 1.0,
+        "scale": "linear",
+        "favorite": false,
+        "selected": false,
+        "color": "#37deff"
+    },
+    "system.general.faultArray[70]": {
+        "dataSource": "system.general.faultArray[70]",
+        "label": "Fault Array[70]",
+        "multiplier": 1.0,
+        "scale": "linear",
+        "favorite": false,
+        "selected": false,
+        "color": "#69ff37"
+    },
+    "system.general.faultArray[71]": {
+        "dataSource": "system.general.faultArray[71]",
+        "label": "Fault Array[71]",
+        "multiplier": 1.0,
+        "scale": "linear",
+        "favorite": false,
+        "selected": false,
+        "color": "#b2ff37"
+    },
+    "system.general.faultArray[72]": {
+        "dataSource": "system.general.faultArray[72]",
+        "label": "Fault Array[72]",
+        "multiplier": 1.0,
+        "scale": "linear",
+        "favorite": false,
+        "selected": false,
+        "color": "#37ffb6"
+    },
+    "system.general.faultArray[73]": {
+        "dataSource": "system.general.faultArray[73]",
+        "label": "Fault Array[73]",
+        "multiplier": 1.0,
+        "scale": "linear",
+        "favorite": false,
+        "selected": false,
+        "color": "#bc37ff"
+    },
+    "system.general.faultArray[74]": {
+        "dataSource": "system.general.faultArray[74]",
+        "label": "Fault Array[74]",
+        "multiplier": 1.0,
+        "scale": "linear",
+        "favorite": false,
+        "selected": false,
+        "color": "#37f2ff"
+    },
+    "system.general.faultArray[75]": {
+        "dataSource": "system.general.faultArray[75]",
+        "label": "Fault Array[75]",
+        "multiplier": 1.0,
+        "scale": "linear",
+        "favorite": false,
+        "selected": false,
+        "color": "#ff378a"
+    },
+    "system.general.faultArray[76]": {
+        "dataSource": "system.general.faultArray[76]",
+        "label": "Fault Array[76]",
+        "multiplier": 1.0,
+        "scale": "linear",
+        "favorite": false,
+        "selected": false,
+        "color": "#ff3770"
+    },
+    "system.general.faultArray[77]": {
+        "dataSource": "system.general.faultArray[77]",
+        "label": "Fault Array[77]",
+        "multiplier": 1.0,
+        "scale": "linear",
+        "favorite": false,
+        "selected": false,
+        "color": "#7dff37"
+    },
+    "system.general.faultArray[78]": {
+        "dataSource": "system.general.faultArray[78]",
+        "label": "Fault Array[78]",
+        "multiplier": 1.0,
+        "scale": "linear",
+        "favorite": false,
+        "selected": false,
+        "color": "#ff6637"
+    },
+    "system.general.faultArray[79]": {
+        "dataSource": "system.general.faultArray[79]",
+        "label": "Fault Array[79]",
+        "multiplier": 1.0,
+        "scale": "linear",
+        "favorite": false,
+        "selected": false,
+        "color": "#37ff84"
+    },
+    "system.general.faultArray[7]": {
+        "dataSource": "system.general.faultArray[7]",
+        "label": "Fault Array[7]",
+        "multiplier": 1.0,
+        "scale": "linear",
+        "favorite": false,
+        "selected": false,
+        "color": "#b6ff37"
+    },
+    "system.general.faultArray[80]": {
+        "dataSource": "system.general.faultArray[80]",
+        "label": "Fault Array[80]",
+        "multiplier": 1.0,
+        "scale": "linear",
+        "favorite": false,
+        "selected": false,
+        "color": "#52ff37"
+    },
+    "system.general.faultArray[81]": {
+        "dataSource": "system.general.faultArray[81]",
+        "label": "Fault Array[81]",
+        "multiplier": 1.0,
+        "scale": "linear",
+        "favorite": false,
+        "selected": false,
+        "color": "#37ff7a"
+    },
+    "system.general.faultArray[82]": {
+        "dataSource": "system.general.faultArray[82]",
+        "label": "Fault Array[82]",
+        "multiplier": 1.0,
+        "scale": "linear",
+        "favorite": false,
+        "selected": false,
+        "color": "#8eff37"
+    },
+    "system.general.faultArray[83]": {
+        "dataSource": "system.general.faultArray[83]",
+        "label": "Fault Array[83]",
+        "multiplier": 1.0,
+        "scale": "linear",
+        "favorite": false,
+        "selected": false,
+        "color": "#ff379b"
+    },
+    "system.general.faultArray[84]": {
+        "dataSource": "system.general.faultArray[84]",
+        "label": "Fault Array[84]",
+        "multiplier": 1.0,
+        "scale": "linear",
+        "favorite": false,
+        "selected": false,
+        "color": "#8037ff"
+    },
+    "system.general.faultArray[85]": {
+        "dataSource": "system.general.faultArray[85]",
+        "label": "Fault Array[85]",
+        "multiplier": 1.0,
+        "scale": "linear",
+        "favorite": false,
+        "selected": false,
+        "color": "#44ff37"
+    },
+    "system.general.faultArray[86]": {
+        "dataSource": "system.general.faultArray[86]",
+        "label": "Fault Array[86]",
+        "multiplier": 1.0,
+        "scale": "linear",
+        "favorite": false,
+        "selected": false,
+        "color": "#ff7d37"
+    },
+    "system.general.faultArray[87]": {
+        "dataSource": "system.general.faultArray[87]",
+        "label": "Fault Array[87]",
+        "multiplier": 1.0,
+        "scale": "linear",
+        "favorite": false,
+        "selected": false,
+        "color": "#ffee37"
+    },
+    "system.general.faultArray[88]": {
+        "dataSource": "system.general.faultArray[88]",
+        "label": "Fault Array[88]",
+        "multiplier": 1.0,
+        "scale": "linear",
+        "favorite": false,
+        "selected": false,
+        "color": "#8e37ff"
+    },
+    "system.general.faultArray[89]": {
+        "dataSource": "system.general.faultArray[89]",
+        "label": "Fault Array[89]",
+        "multiplier": 1.0,
+        "scale": "linear",
+        "favorite": false,
+        "selected": false,
+        "color": "#ff3737"
+    },
+    "system.general.faultArray[8]": {
+        "dataSource": "system.general.faultArray[8]",
+        "label": "Fault Array[8]",
+        "multiplier": 1.0,
+        "scale": "linear",
+        "favorite": false,
+        "selected": false,
+        "color": "#ffde37"
+    },
+    "system.general.faultArray[90]": {
+        "dataSource": "system.general.faultArray[90]",
+        "label": "Fault Array[90]",
+        "multiplier": 1.0,
+        "scale": "linear",
+        "favorite": false,
+        "selected": false,
+        "color": "#37b2ff"
+    },
+    "system.general.faultArray[91]": {
+        "dataSource": "system.general.faultArray[91]",
+        "label": "Fault Array[91]",
+        "multiplier": 1.0,
+        "scale": "linear",
+        "favorite": false,
+        "selected": false,
+        "color": "#ffaf37"
+    },
+    "system.general.faultArray[92]": {
+        "dataSource": "system.general.faultArray[92]",
+        "label": "Fault Array[92]",
+        "multiplier": 1.0,
+        "scale": "linear",
+        "favorite": false,
+        "selected": false,
+        "color": "#ffe437"
+    },
+    "system.general.faultArray[93]": {
+        "dataSource": "system.general.faultArray[93]",
+        "label": "Fault Array[93]",
+        "multiplier": 1.0,
+        "scale": "linear",
+        "favorite": false,
+        "selected": false,
+        "color": "#ff378a"
+    },
+    "system.general.faultArray[94]": {
+        "dataSource": "system.general.faultArray[94]",
+        "label": "Fault Array[94]",
+        "multiplier": 1.0,
+        "scale": "linear",
+        "favorite": false,
+        "selected": false,
+        "color": "#ff9437"
+    },
+    "system.general.faultArray[95]": {
+        "dataSource": "system.general.faultArray[95]",
+        "label": "Fault Array[95]",
+        "multiplier": 1.0,
+        "scale": "linear",
+        "favorite": false,
+        "selected": false,
+        "color": "#ff375c"
+    },
+    "system.general.faultArray[96]": {
+        "dataSource": "system.general.faultArray[96]",
+        "label": "Fault Array[96]",
+        "multiplier": 1.0,
+        "scale": "linear",
+        "favorite": false,
+        "selected": false,
+        "color": "#37ffb6"
+    },
+    "system.general.faultArray[97]": {
+        "dataSource": "system.general.faultArray[97]",
+        "label": "Fault Array[97]",
+        "multiplier": 1.0,
+        "scale": "linear",
+        "favorite": false,
+        "selected": false,
+        "color": "#37afff"
+    },
+    "system.general.faultArray[98]": {
+        "dataSource": "system.general.faultArray[98]",
+        "label": "Fault Array[98]",
+        "multiplier": 1.0,
+        "scale": "linear",
+        "favorite": false,
+        "selected": false,
+        "color": "#6937ff"
+    },
+    "system.general.faultArray[99]": {
+        "dataSource": "system.general.faultArray[99]",
+        "label": "Fault Array[99]",
+        "multiplier": 1.0,
+        "scale": "linear",
+        "favorite": false,
+        "selected": false,
+        "color": "#3762ff"
+    },
+    "system.general.faultArray[9]": {
+        "dataSource": "system.general.faultArray[9]",
+        "label": "Fault Array[9]",
+        "multiplier": 1.0,
+        "scale": "linear",
+        "favorite": false,
+        "selected": false,
+        "color": "#b6ff37"
+    },
+    "system.general.faultCount": {
+        "dataSource": "system.general.faultCount",
+        "label": "Fault Count",
+        "multiplier": 1.0,
+        "scale": "linear",
+        "favorite": false,
+        "selected": false,
+        "color": "#ffa837"
+    },
+    "system.general.messageBuffer[0]": {
+        "dataSource": "system.general.messageBuffer[0]",
+        "label": "Message Buffer[0]",
+        "multiplier": 1.0,
+        "scale": "linear",
+        "favorite": false,
+        "selected": false,
+        "color": "#ff3737"
+    },
+    "system.general.messageBuffer[10]": {
+        "dataSource": "system.general.messageBuffer[10]",
+        "label": "Message Buffer[10]",
+        "multiplier": 1.0,
+        "scale": "linear",
+        "favorite": false,
+        "selected": false,
+        "color": "#3a37ff"
+    },
+    "system.general.messageBuffer[11]": {
+        "dataSource": "system.general.messageBuffer[11]",
+        "label": "Message Buffer[11]",
+        "multiplier": 1.0,
+        "scale": "linear",
+        "favorite": false,
+        "selected": false,
+        "color": "#ff373a"
+    },
+    "system.general.messageBuffer[12]": {
+        "dataSource": "system.general.messageBuffer[12]",
+        "label": "Message Buffer[12]",
+        "multiplier": 1.0,
+        "scale": "linear",
+        "favorite": false,
+        "selected": false,
+        "color": "#e1ff37"
+    },
+    "system.general.messageBuffer[13]": {
+        "dataSource": "system.general.messageBuffer[13]",
+        "label": "Message Buffer[13]",
+        "multiplier": 1.0,
+        "scale": "linear",
+        "favorite": false,
+        "selected": false,
+        "color": "#f2ff37"
+    },
+    "system.general.messageBuffer[14]": {
+        "dataSource": "system.general.messageBuffer[14]",
+        "label": "Message Buffer[14]",
+        "multiplier": 1.0,
+        "scale": "linear",
+        "favorite": false,
+        "selected": false,
+        "color": "#ff3762"
+    },
+    "system.general.messageBuffer[15]": {
+        "dataSource": "system.general.messageBuffer[15]",
+        "label": "Message Buffer[15]",
+        "multiplier": 1.0,
+        "scale": "linear",
+        "favorite": false,
+        "selected": false,
+        "color": "#9bff37"
+    },
+    "system.general.messageBuffer[16]": {
+        "dataSource": "system.general.messageBuffer[16]",
+        "label": "Message Buffer[16]",
+        "multiplier": 1.0,
+        "scale": "linear",
+        "favorite": false,
+        "selected": false,
+        "color": "#37ff37"
+    },
+    "system.general.messageBuffer[17]": {
+        "dataSource": "system.general.messageBuffer[17]",
+        "label": "Message Buffer[17]",
+        "multiplier": 1.0,
+        "scale": "linear",
+        "favorite": false,
+        "selected": false,
+        "color": "#ff379e"
+    },
+    "system.general.messageBuffer[18]": {
+        "dataSource": "system.general.messageBuffer[18]",
+        "label": "Message Buffer[18]",
+        "multiplier": 1.0,
+        "scale": "linear",
+        "favorite": false,
+        "selected": false,
+        "color": "#7aff37"
+    },
+    "system.general.messageBuffer[19]": {
+        "dataSource": "system.general.messageBuffer[19]",
+        "label": "Message Buffer[19]",
+        "multiplier": 1.0,
+        "scale": "linear",
+        "favorite": false,
+        "selected": false,
+        "color": "#fff237"
+    },
+    "system.general.messageBuffer[1]": {
+        "dataSource": "system.general.messageBuffer[1]",
+        "label": "Message Buffer[1]",
+        "multiplier": 1.0,
+        "scale": "linear",
+        "favorite": false,
+        "selected": false,
+        "color": "#37ff41"
+    },
+    "system.general.messageBuffer[20]": {
+        "dataSource": "system.general.messageBuffer[20]",
+        "label": "Message Buffer[20]",
+        "multiplier": 1.0,
+        "scale": "linear",
+        "favorite": false,
+        "selected": false,
+        "color": "#ff5237"
+    },
+    "system.general.messageBuffer[21]": {
+        "dataSource": "system.general.messageBuffer[21]",
+        "label": "Message Buffer[21]",
+        "multiplier": 1.0,
+        "scale": "linear",
+        "favorite": false,
+        "selected": false,
+        "color": "#37ffd7"
+    },
+    "system.general.messageBuffer[22]": {
+        "dataSource": "system.general.messageBuffer[22]",
+        "label": "Message Buffer[22]",
+        "multiplier": 1.0,
+        "scale": "linear",
+        "favorite": false,
+        "selected": false,
+        "color": "#37caff"
+    },
+    "system.general.messageBuffer[23]": {
+        "dataSource": "system.general.messageBuffer[23]",
+        "label": "Message Buffer[23]",
+        "multiplier": 1.0,
+        "scale": "linear",
+        "favorite": false,
+        "selected": false,
+        "color": "#376cff"
+    },
+    "system.general.messageBuffer[24]": {
+        "dataSource": "system.general.messageBuffer[24]",
+        "label": "Message Buffer[24]",
+        "multiplier": 1.0,
+        "scale": "linear",
+        "favorite": false,
+        "selected": false,
+        "color": "#ff9837"
+    },
+    "system.general.messageBuffer[25]": {
+        "dataSource": "system.general.messageBuffer[25]",
+        "label": "Message Buffer[25]",
+        "multiplier": 1.0,
+        "scale": "linear",
+        "favorite": false,
+        "selected": false,
+        "color": "#ffe137"
+    },
+    "system.general.messageBuffer[26]": {
+        "dataSource": "system.general.messageBuffer[26]",
+        "label": "Message Buffer[26]",
+        "multiplier": 1.0,
+        "scale": "linear",
+        "favorite": false,
+        "selected": false,
+        "color": "#8e37ff"
+    },
+    "system.general.messageBuffer[27]": {
+        "dataSource": "system.general.messageBuffer[27]",
+        "label": "Message Buffer[27]",
+        "multiplier": 1.0,
+        "scale": "linear",
+        "favorite": false,
+        "selected": false,
+        "color": "#ff37b2"
+    },
+    "system.general.messageBuffer[28]": {
+        "dataSource": "system.general.messageBuffer[28]",
+        "label": "Message Buffer[28]",
+        "multiplier": 1.0,
+        "scale": "linear",
+        "favorite": false,
+        "selected": false,
+        "color": "#55ff37"
+    },
+    "system.general.messageBuffer[29]": {
+        "dataSource": "system.general.messageBuffer[29]",
+        "label": "Message Buffer[29]",
+        "multiplier": 1.0,
+        "scale": "linear",
+        "favorite": false,
+        "selected": false,
+        "color": "#37e8ff"
+    },
+    "system.general.messageBuffer[2]": {
+        "dataSource": "system.general.messageBuffer[2]",
+        "label": "Message Buffer[2]",
+        "multiplier": 1.0,
+        "scale": "linear",
+        "favorite": false,
+        "selected": false,
+        "color": "#6937ff"
+    },
+    "system.general.messageBuffer[3]": {
+        "dataSource": "system.general.messageBuffer[3]",
+        "label": "Message Buffer[3]",
+        "multiplier": 1.0,
+        "scale": "linear",
+        "favorite": false,
+        "selected": false,
+        "color": "#37ff5f"
+    },
+    "system.general.messageBuffer[4]": {
+        "dataSource": "system.general.messageBuffer[4]",
+        "label": "Message Buffer[4]",
+        "multiplier": 1.0,
+        "scale": "linear",
+        "favorite": false,
+        "selected": false,
+        "color": "#ff3798"
+    },
+    "system.general.messageBuffer[5]": {
+        "dataSource": "system.general.messageBuffer[5]",
+        "label": "Message Buffer[5]",
+        "multiplier": 1.0,
+        "scale": "linear",
+        "favorite": false,
+        "selected": false,
+        "color": "#37ffa2"
+    },
+    "system.general.messageBuffer[6]": {
+        "dataSource": "system.general.messageBuffer[6]",
+        "label": "Message Buffer[6]",
+        "multiplier": 1.0,
+        "scale": "linear",
+        "favorite": false,
+        "selected": false,
+        "color": "#ffaf37"
+    },
+    "system.general.messageBuffer[7]": {
+        "dataSource": "system.general.messageBuffer[7]",
+        "label": "Message Buffer[7]",
+        "multiplier": 1.0,
+        "scale": "linear",
+        "favorite": false,
+        "selected": false,
+        "color": "#ff377d"
+    },
+    "system.general.messageBuffer[8]": {
+        "dataSource": "system.general.messageBuffer[8]",
+        "label": "Message Buffer[8]",
+        "multiplier": 1.0,
+        "scale": "linear",
+        "favorite": false,
+        "selected": false,
+        "color": "#37eeff"
+    },
+    "system.general.messageBuffer[9]": {
+        "dataSource": "system.general.messageBuffer[9]",
+        "label": "Message Buffer[9]",
+        "multiplier": 1.0,
+        "scale": "linear",
+        "favorite": false,
+        "selected": false,
+        "color": "#37f2ff"
+    },
+    "system.general.requestClearFaults": {
+        "dataSource": "system.general.requestClearFaults",
+        "label": "Request Clear Faults",
+        "multiplier": 1.0,
+        "scale": "linear",
+        "favorite": false,
+        "selected": false,
+        "color": "#ebff37"
+    },
+    "system.general.systemFault": {
+        "dataSource": "system.general.systemFault",
+        "label": "System Fault",
+        "multiplier": 1.0,
+        "scale": "linear",
+        "favorite": false,
+        "selected": false,
+        "color": "#ff3769"
+    },
+    "system.ionSource.cesium.coolantOn": {
+        "dataSource": "system.ionSource.cesium.coolantOn",
+        "label": "Coolant On",
+        "multiplier": 1.0,
+        "scale": "linear",
+        "favorite": false,
+        "selected": false,
+        "color": "#da37ff"
+    },
+    "system.ionSource.cesium.heaterOn": {
+        "dataSource": "system.ionSource.cesium.heaterOn",
+        "label": "Heater On",
+        "multiplier": 1.0,
+        "scale": "linear",
+        "favorite": false,
+        "selected": false,
+        "color": "#37ff87"
+    },
+    "system.ionSource.cesium.hmiSetpointCEnabled": {
+        "dataSource": "system.ionSource.cesium.hmiSetpointCEnabled",
+        "label": "Hmi Setpoint Cenabled",
+        "multiplier": 1.0,
+        "scale": "linear",
+        "favorite": false,
+        "selected": false,
+        "color": "#91ff37"
+    },
+    "system.ionSource.cesium.hmiSetpointCEntry": {
+        "dataSource": "system.ionSource.cesium.hmiSetpointCEntry",
+        "label": "Hmi Setpoint Centry",
+        "multiplier": 1.0,
+        "scale": "linear",
+        "favorite": false,
+        "selected": false,
+        "color": "#3eff37"
+    },
+    "system.ionSource.cesium.hmiSetpointCEntryMax": {
+        "dataSource": "system.ionSource.cesium.hmiSetpointCEntryMax",
+        "label": "Hmi Setpoint Centry Max",
+        "multiplier": 1.0,
+        "scale": "linear",
+        "favorite": false,
+        "selected": false,
+        "color": "#c037ff"
+    },
+    "system.ionSource.cesium.hmiSetpointCEntryMin": {
+        "dataSource": "system.ionSource.cesium.hmiSetpointCEntryMin",
+        "label": "Hmi Setpoint Centry Min",
+        "multiplier": 1.0,
+        "scale": "linear",
+        "favorite": false,
+        "selected": false,
+        "color": "#37ff48"
+    },
+    "system.ionSource.cesium.readbackC": {
+        "dataSource": "system.ionSource.cesium.readbackC",
+        "label": "Cesium (\u00b0C)",
+        "multiplier": 1.0,
+        "scale": "linear",
+        "favorite": true,
+        "selected": true,
+        "color": "#ff3791"
+    },
+    "system.ionSource.cesium.status": {
+        "dataSource": "system.ionSource.cesium.status",
+        "label": "Status",
+        "multiplier": 1.0,
+        "scale": "linear",
+        "favorite": false,
+        "selected": false,
+        "color": "#ffde37"
+    },
+    "system.ionSource.extraction.hmiSetpointVEnabled": {
+        "dataSource": "system.ionSource.extraction.hmiSetpointVEnabled",
+        "label": "Hmi Setpoint Venabled",
+        "multiplier": 1.0,
+        "scale": "linear",
+        "favorite": false,
+        "selected": false,
+        "color": "#ff377a"
+    },
+    "system.ionSource.extraction.hmiSetpointVEntry": {
+        "dataSource": "system.ionSource.extraction.hmiSetpointVEntry",
+        "label": "Hmi Setpoint Ventry",
+        "multiplier": 1.0,
+        "scale": "linear",
+        "favorite": false,
+        "selected": false,
+        "color": "#ff3737"
+    },
+    "system.ionSource.extraction.hmiSetpointVEntryMax": {
+        "dataSource": "system.ionSource.extraction.hmiSetpointVEntryMax",
+        "label": "Hmi Setpoint Ventry Max",
+        "multiplier": 1.0,
+        "scale": "linear",
+        "favorite": false,
+        "selected": false,
+        "color": "#9837ff"
+    },
+    "system.ionSource.extraction.hmiSetpointVEntryMin": {
+        "dataSource": "system.ionSource.extraction.hmiSetpointVEntryMin",
+        "label": "Hmi Setpoint Ventry Min",
+        "multiplier": 1.0,
+        "scale": "linear",
+        "favorite": false,
+        "selected": false,
+        "color": "#37ffca"
+    },
+    "system.ionSource.extraction.readbackA": {
+        "dataSource": "system.ionSource.extraction.readbackA",
+        "label": "Extraction (A)",
+        "multiplier": 1.0,
+        "scale": "linear",
+        "favorite": true,
+        "selected": true,
+        "color": "#ff379e"
+    },
+    "system.ionSource.extraction.readbackV": {
+        "dataSource": "system.ionSource.extraction.readbackV",
+        "label": "Extraction (V)",
+        "multiplier": 1.0,
+        "scale": "linear",
+        "favorite": true,
+        "selected": false,
+        "color": "#4e37ff"
+    },
+    "system.ionSource.extraction.readbackW": {
+        "dataSource": "system.ionSource.extraction.readbackW",
+        "label": "Extraction (W)",
+        "multiplier": 1.0,
+        "scale": "linear",
+        "favorite": false,
+        "selected": false,
+        "color": "#37ffda"
+    },
+    "system.ionSource.extraction.status": {
+        "dataSource": "system.ionSource.extraction.status",
+        "label": "Status",
+        "multiplier": 1.0,
+        "scale": "linear",
+        "favorite": false,
+        "selected": false,
+        "color": "#37ffff"
+    },
+    "system.ionSource.general.beamVoltage": {
+        "dataSource": "system.ionSource.general.beamVoltage",
+        "label": "Beam Voltage",
+        "multiplier": 1.0,
+        "scale": "linear",
+        "favorite": false,
+        "selected": false,
+        "color": "#4e37ff"
+    },
+    "system.ionSource.general.bodyTempC": {
+        "dataSource": "system.ionSource.general.bodyTempC",
+        "label": "Body Temp (\u00b0C)",
+        "multiplier": 1.0,
+        "scale": "linear",
+        "favorite": true,
+        "selected": false,
+        "color": "#37ffe8"
+    },
+    "system.ionSource.general.bodyTempOkay": {
+        "dataSource": "system.ionSource.general.bodyTempOkay",
+        "label": "Body Temp Okay",
+        "multiplier": 1.0,
+        "scale": "linear",
+        "favorite": false,
+        "selected": false,
+        "color": "#37ffe4"
+    },
+    "system.ionSource.general.conditioningPaused": {
+        "dataSource": "system.ionSource.general.conditioningPaused",
+        "label": "Conditioning Paused",
+        "multiplier": 1.0,
+        "scale": "linear",
+        "favorite": false,
+        "selected": false,
+        "color": "#374bff"
+    },
+    "system.ionSource.general.doorStatus": {
+        "dataSource": "system.ionSource.general.doorStatus",
+        "label": "Door Status",
+        "multiplier": 1.0,
+        "scale": "linear",
+        "favorite": false,
+        "selected": false,
+        "color": "#ffac37"
+    },
+    "system.ionSource.general.modeCurrent": {
+        "dataSource": "system.ionSource.general.modeCurrent",
+        "label": "Mode Current",
+        "multiplier": 1.0,
+        "scale": "linear",
+        "favorite": false,
+        "selected": false,
+        "color": "#37c0ff"
+    },
+    "system.ionSource.general.requestCondition": {
+        "dataSource": "system.ionSource.general.requestCondition",
+        "label": "Request Condition",
+        "multiplier": 1.0,
+        "scale": "linear",
+        "favorite": false,
+        "selected": false,
+        "color": "#ff374b"
+    },
+    "system.ionSource.general.requestPause": {
+        "dataSource": "system.ionSource.general.requestPause",
+        "label": "Request Pause",
+        "multiplier": 1.0,
+        "scale": "linear",
+        "favorite": false,
+        "selected": false,
+        "color": "#94ff37"
+    },
+    "system.ionSource.general.requestResume": {
+        "dataSource": "system.ionSource.general.requestResume",
+        "label": "Request Resume",
+        "multiplier": 1.0,
+        "scale": "linear",
+        "favorite": false,
+        "selected": false,
+        "color": "#69ff37"
+    },
+    "system.ionSource.general.requestStart": {
+        "dataSource": "system.ionSource.general.requestStart",
+        "label": "Request Start",
+        "multiplier": 1.0,
+        "scale": "linear",
+        "favorite": false,
+        "selected": false,
+        "color": "#91ff37"
+    },
+    "system.ionSource.general.requestStop": {
+        "dataSource": "system.ionSource.general.requestStop",
+        "label": "Request Stop",
+        "multiplier": 1.0,
+        "scale": "linear",
+        "favorite": false,
+        "selected": false,
+        "color": "#37f2ff"
+    },
+    "system.ionSource.general.status": {
+        "dataSource": "system.ionSource.general.status",
+        "label": "Status",
+        "multiplier": 1.0,
+        "scale": "linear",
+        "favorite": false,
+        "selected": false,
+        "color": "#d437ff"
+    },
+    "system.ionSource.ioniser.filament.readbackA": {
+        "dataSource": "system.ionSource.ioniser.filament.readbackA",
+        "label": "Filament (A)",
+        "multiplier": 1.0,
+        "scale": "linear",
+        "favorite": false,
+        "selected": false,
+        "color": "#37ff62"
+    },
+    "system.ionSource.ioniser.filament.readbackV": {
+        "dataSource": "system.ionSource.ioniser.filament.readbackV",
+        "label": "Filament (V)",
+        "multiplier": 1.0,
+        "scale": "linear",
+        "favorite": false,
+        "selected": false,
+        "color": "#ff7637"
+    },
+    "system.ionSource.ioniser.filament.readbackW": {
+        "dataSource": "system.ionSource.ioniser.filament.readbackW",
+        "label": "Filament (W)",
+        "multiplier": 1.0,
+        "scale": "linear",
+        "favorite": true,
+        "selected": false,
+        "color": "#f8ff37"
+    },
+    "system.ionSource.ioniser.filament.status": {
+        "dataSource": "system.ionSource.ioniser.filament.status",
+        "label": "Status",
+        "multiplier": 1.0,
+        "scale": "linear",
+        "favorite": false,
+        "selected": false,
+        "color": "#ffd037"
+    },
+    "system.ionSource.ioniser.hmiSetpointWEnabled": {
+        "dataSource": "system.ionSource.ioniser.hmiSetpointWEnabled",
+        "label": "Hmi Setpoint Wenabled",
+        "multiplier": 1.0,
+        "scale": "linear",
+        "favorite": false,
+        "selected": false,
+        "color": "#ff7337"
+    },
+    "system.ionSource.ioniser.hmiSetpointWEntry": {
+        "dataSource": "system.ionSource.ioniser.hmiSetpointWEntry",
+        "label": "Hmi Setpoint Wentry",
+        "multiplier": 1.0,
+        "scale": "linear",
+        "favorite": false,
+        "selected": false,
+        "color": "#62ff37"
+    },
+    "system.ionSource.ioniser.hmiSetpointWEntryMax": {
+        "dataSource": "system.ionSource.ioniser.hmiSetpointWEntryMax",
+        "label": "Hmi Setpoint Wentry Max",
+        "multiplier": 1.0,
+        "scale": "linear",
+        "favorite": false,
+        "selected": false,
+        "color": "#ff6237"
+    },
+    "system.ionSource.ioniser.hmiSetpointWEntryMin": {
+        "dataSource": "system.ionSource.ioniser.hmiSetpointWEntryMin",
+        "label": "Hmi Setpoint Wentry Min",
+        "multiplier": 1.0,
+        "scale": "linear",
+        "favorite": false,
+        "selected": false,
+        "color": "#ffb937"
+    },
+    "system.ionSource.ioniser.powerRatio": {
+        "dataSource": "system.ionSource.ioniser.powerRatio",
+        "label": "Power Ratio",
+        "multiplier": 1.0,
+        "scale": "linear",
+        "favorite": false,
+        "selected": false,
+        "color": "#ff3766"
+    },
+    "system.ionSource.ioniser.readbackW": {
+        "dataSource": "system.ionSource.ioniser.readbackW",
+        "label": "Ioniser (W)",
+        "multiplier": 1.0,
+        "scale": "linear",
+        "favorite": true,
+        "selected": false,
+        "color": "#ebff37"
+    },
+    "system.ionSource.ioniser.status": {
+        "dataSource": "system.ionSource.ioniser.status",
+        "label": "Status",
+        "multiplier": 1.0,
+        "scale": "linear",
+        "favorite": false,
+        "selected": false,
+        "color": "#b6ff37"
+    },
+    "system.ionSource.ioniser.thermionic.readbackA": {
+        "dataSource": "system.ionSource.ioniser.thermionic.readbackA",
+        "label": "Thermionic (A)",
+        "multiplier": 1.0,
+        "scale": "linear",
+        "favorite": true,
+        "selected": false,
+        "color": "#ff6637"
+    },
+    "system.ionSource.ioniser.thermionic.readbackV": {
+        "dataSource": "system.ionSource.ioniser.thermionic.readbackV",
+        "label": "Thermionic (V)",
+        "multiplier": 1.0,
+        "scale": "linear",
+        "favorite": false,
+        "selected": false,
+        "color": "#f837ff"
+    },
+    "system.ionSource.ioniser.thermionic.readbackW": {
+        "dataSource": "system.ionSource.ioniser.thermionic.readbackW",
+        "label": "Thermionic (W)",
+        "multiplier": 1.0,
+        "scale": "linear",
+        "favorite": false,
+        "selected": false,
+        "color": "#6637ff"
+    },
+    "system.ionSource.ioniser.thermionic.status": {
+        "dataSource": "system.ionSource.ioniser.thermionic.status",
+        "label": "Status",
+        "multiplier": 1.0,
+        "scale": "linear",
+        "favorite": false,
+        "selected": false,
+        "color": "#a8ff37"
+    },
+    "system.ionSource.target.hmiSetpointVEnabled": {
+        "dataSource": "system.ionSource.target.hmiSetpointVEnabled",
+        "label": "Hmi Setpoint Venabled",
+        "multiplier": 1.0,
+        "scale": "linear",
+        "favorite": false,
+        "selected": false,
+        "color": "#70ff37"
+    },
+    "system.ionSource.target.hmiSetpointVEntry": {
+        "dataSource": "system.ionSource.target.hmiSetpointVEntry",
+        "label": "Hmi Setpoint Ventry",
+        "multiplier": 1.0,
+        "scale": "linear",
+        "favorite": false,
+        "selected": false,
+        "color": "#ff37d4"
+    },
+    "system.ionSource.target.hmiSetpointVEntryMax": {
+        "dataSource": "system.ionSource.target.hmiSetpointVEntryMax",
+        "label": "Hmi Setpoint Ventry Max",
+        "multiplier": 1.0,
+        "scale": "linear",
+        "favorite": false,
+        "selected": false,
+        "color": "#37ff7d"
+    },
+    "system.ionSource.target.hmiSetpointVEntryMin": {
+        "dataSource": "system.ionSource.target.hmiSetpointVEntryMin",
+        "label": "Hmi Setpoint Ventry Min",
+        "multiplier": 1.0,
+        "scale": "linear",
+        "favorite": false,
+        "selected": false,
+        "color": "#376cff"
+    },
+    "system.ionSource.target.readbackA": {
+        "dataSource": "system.ionSource.target.readbackA",
+        "label": "Target (A)",
+        "multiplier": 1.0,
+        "scale": "linear",
+        "favorite": true,
+        "selected": false,
+        "color": "#37e4ff"
+    },
+    "system.ionSource.target.readbackV": {
+        "dataSource": "system.ionSource.target.readbackV",
+        "label": "Target (V)",
+        "multiplier": 1.0,
+        "scale": "linear",
+        "favorite": true,
+        "selected": false,
+        "color": "#5537ff"
+    },
+    "system.ionSource.target.readbackW": {
+        "dataSource": "system.ionSource.target.readbackW",
+        "label": "Target (W)",
+        "multiplier": 1.0,
+        "scale": "linear",
+        "favorite": false,
+        "selected": false,
+        "color": "#3769ff"
+    },
+    "system.ionSource.target.status": {
+        "dataSource": "system.ionSource.target.status",
+        "label": "Status",
+        "multiplier": 1.0,
+        "scale": "linear",
+        "favorite": false,
+        "selected": false,
+        "color": "#ff7a37"
+    },
+    "system.vacuumSystem.gauges.beamline.readback_mB": {
+        "dataSource": "system.vacuumSystem.gauges.beamline.readback_mB",
+        "label": "Beamline (mB)",
+        "multiplier": 1.0,
+        "scale": "log",
+        "favorite": false,
+        "selected": false,
+        "color": "#ff37d4"
+    },
+    "system.vacuumSystem.gauges.beamline.status": {
+        "dataSource": "system.vacuumSystem.gauges.beamline.status",
+        "label": "Status",
+        "multiplier": 1.0,
+        "scale": "log",
+        "favorite": false,
+        "selected": false,
+        "color": "#37ff84"
+    },
+    "system.vacuumSystem.gauges.chamber_UHV_gauge.readback_mB": {
+        "dataSource": "system.vacuumSystem.gauges.chamber_UHV_gauge.readback_mB",
+        "label": "Chamber U Hv Gauge (mB)",
+        "multiplier": 1.0,
+        "scale": "log",
+        "favorite": false,
+        "selected": false,
+        "color": "#4b37ff"
+    },
+    "system.vacuumSystem.gauges.chamber_UHV_gauge.status": {
+        "dataSource": "system.vacuumSystem.gauges.chamber_UHV_gauge.status",
+        "label": "Status",
+        "multiplier": 1.0,
+        "scale": "log",
+        "favorite": false,
+        "selected": false,
+        "color": "#ff8437"
+    },
+    "system.vacuumSystem.gauges.chamber_reg_gauge.readback_mB": {
+        "dataSource": "system.vacuumSystem.gauges.chamber_reg_gauge.readback_mB",
+        "label": "Chamber Reg Gauge (mB)",
+        "multiplier": 1.0,
+        "scale": "log",
+        "favorite": false,
+        "selected": false,
+        "color": "#37eeff"
+    },
+    "system.vacuumSystem.gauges.chamber_reg_gauge.status": {
+        "dataSource": "system.vacuumSystem.gauges.chamber_reg_gauge.status",
+        "label": "Status",
+        "multiplier": 1.0,
+        "scale": "log",
+        "favorite": false,
+        "selected": false,
+        "color": "#ca37ff"
+    },
+    "system.vacuumSystem.gauges.source.readback_mB": {
+        "dataSource": "system.vacuumSystem.gauges.source.readback_mB",
+        "label": "Source (mB)",
+        "multiplier": 1.0,
+        "scale": "log",
+        "favorite": true,
+        "selected": false,
+        "color": "#ff6937"
+    },
+    "system.vacuumSystem.gauges.source.status": {
+        "dataSource": "system.vacuumSystem.gauges.source.status",
+        "label": "Status",
+        "multiplier": 1.0,
+        "scale": "log",
+        "favorite": false,
+        "selected": false,
+        "color": "#37caff"
+    },
+    "system.vacuumSystem.pumps.ion.chamber_1.current_readback_A": {
+        "dataSource": "system.vacuumSystem.pumps.ion.chamber_1.current_readback_A",
+        "label": "Chamber 1 (A)",
+        "multiplier": 1.0,
+        "scale": "log",
+        "favorite": false,
+        "selected": false,
+        "color": "#ff5237"
+    },
+    "system.vacuumSystem.pumps.ion.chamber_1.on_hours": {
+        "dataSource": "system.vacuumSystem.pumps.ion.chamber_1.on_hours",
+        "label": "On Hours",
+        "multiplier": 1.0,
+        "scale": "log",
+        "favorite": false,
+        "selected": false,
+        "color": "#ff375f"
+    },
+    "system.vacuumSystem.pumps.ion.chamber_1.voltage_readback_V": {
+        "dataSource": "system.vacuumSystem.pumps.ion.chamber_1.voltage_readback_V",
+        "label": "Chamber 1 (V)",
+        "multiplier": 1.0,
+        "scale": "log",
+        "favorite": false,
+        "selected": false,
+        "color": "#ff378e"
+    },
+    "system.vacuumSystem.pumps.roughing.beamline.status": {
+        "dataSource": "system.vacuumSystem.pumps.roughing.beamline.status",
+        "label": "Status",
+        "multiplier": 1.0,
+        "scale": "log",
+        "favorite": false,
+        "selected": false,
+        "color": "#58ff37"
+    },
+    "system.vacuumSystem.pumps.roughing.loadlock.status": {
+        "dataSource": "system.vacuumSystem.pumps.roughing.loadlock.status",
+        "label": "Status",
+        "multiplier": 1.0,
+        "scale": "log",
+        "favorite": false,
+        "selected": false,
+        "color": "#ff3744"
+    },
+    "system.vacuumSystem.pumps.roughing.source.status": {
+        "dataSource": "system.vacuumSystem.pumps.roughing.source.status",
+        "label": "Status",
+        "multiplier": 1.0,
+        "scale": "log",
+        "favorite": false,
+        "selected": false,
+        "color": "#37ffd4"
+    },
+    "system.vacuumSystem.pumps.titanium.chamber_1.filament_1.cycles": {
+        "dataSource": "system.vacuumSystem.pumps.titanium.chamber_1.filament_1.cycles",
+        "label": "Cycles",
+        "multiplier": 1.0,
+        "scale": "log",
+        "favorite": false,
+        "selected": false,
+        "color": "#ff9137"
+    },
+    "system.vacuumSystem.pumps.titanium.chamber_1.filament_1.on_hours": {
+        "dataSource": "system.vacuumSystem.pumps.titanium.chamber_1.filament_1.on_hours",
+        "label": "On Hours",
+        "multiplier": 1.0,
+        "scale": "log",
+        "favorite": false,
+        "selected": false,
+        "color": "#3791ff"
+    },
+    "system.vacuumSystem.pumps.titanium.chamber_1.filament_1.status": {
+        "dataSource": "system.vacuumSystem.pumps.titanium.chamber_1.filament_1.status",
+        "label": "Status",
+        "multiplier": 1.0,
+        "scale": "log",
+        "favorite": false,
+        "selected": false,
+        "color": "#c3ff37"
+    },
+    "system.vacuumSystem.pumps.titanium.chamber_1.nominal_current_A": {
+        "dataSource": "system.vacuumSystem.pumps.titanium.chamber_1.nominal_current_A",
+        "label": "Nominal Current A (A)",
+        "multiplier": 1.0,
+        "scale": "log",
+        "favorite": false,
+        "selected": false,
+        "color": "#3776ff"
+    },
+    "system.vacuumSystem.pumps.titanium.chamber_1.off_time_s": {
+        "dataSource": "system.vacuumSystem.pumps.titanium.chamber_1.off_time_s",
+        "label": "Off Time S",
+        "multiplier": 1.0,
+        "scale": "log",
+        "favorite": false,
+        "selected": false,
+        "color": "#69ff37"
+    },
+    "system.vacuumSystem.pumps.titanium.chamber_1.on_time_s": {
+        "dataSource": "system.vacuumSystem.pumps.titanium.chamber_1.on_time_s",
+        "label": "On Time S",
+        "multiplier": 1.0,
+        "scale": "log",
+        "favorite": false,
+        "selected": false,
+        "color": "#37ffda"
+    },
+    "system.vacuumSystem.pumps.turbo.beamline.on_hours": {
+        "dataSource": "system.vacuumSystem.pumps.turbo.beamline.on_hours",
+        "label": "On Hours",
+        "multiplier": 1.0,
+        "scale": "log",
+        "favorite": false,
+        "selected": false,
+        "color": "#ff373a"
+    },
+    "system.vacuumSystem.pumps.turbo.beamline.speed": {
+        "dataSource": "system.vacuumSystem.pumps.turbo.beamline.speed",
+        "label": "Speed",
+        "multiplier": 1.0,
+        "scale": "log",
+        "favorite": false,
+        "selected": false,
+        "color": "#37ff5c"
+    },
+    "system.vacuumSystem.pumps.turbo.beamline.status": {
+        "dataSource": "system.vacuumSystem.pumps.turbo.beamline.status",
+        "label": "Status",
+        "multiplier": 1.0,
+        "scale": "log",
+        "favorite": false,
+        "selected": false,
+        "color": "#37ffb6"
+    },
+    "system.vacuumSystem.pumps.turbo.chamber.on_hours": {
+        "dataSource": "system.vacuumSystem.pumps.turbo.chamber.on_hours",
+        "label": "On Hours",
+        "multiplier": 1.0,
+        "scale": "log",
+        "favorite": false,
+        "selected": false,
+        "color": "#eeff37"
+    },
+    "system.vacuumSystem.pumps.turbo.chamber.speed": {
+        "dataSource": "system.vacuumSystem.pumps.turbo.chamber.speed",
+        "label": "Speed",
+        "multiplier": 1.0,
+        "scale": "log",
+        "favorite": false,
+        "selected": false,
+        "color": "#37ff3e"
+    },
+    "system.vacuumSystem.pumps.turbo.chamber.status": {
+        "dataSource": "system.vacuumSystem.pumps.turbo.chamber.status",
+        "label": "Status",
+        "multiplier": 1.0,
+        "scale": "log",
+        "favorite": false,
+        "selected": false,
+        "color": "#ff375f"
+    },
+    "system.vacuumSystem.pumps.turbo.loadlock.on_hours": {
+        "dataSource": "system.vacuumSystem.pumps.turbo.loadlock.on_hours",
+        "label": "On Hours",
+        "multiplier": 1.0,
+        "scale": "log",
+        "favorite": false,
+        "selected": false,
+        "color": "#6c37ff"
+    },
+    "system.vacuumSystem.pumps.turbo.loadlock.speed": {
+        "dataSource": "system.vacuumSystem.pumps.turbo.loadlock.speed",
+        "label": "Speed",
+        "multiplier": 1.0,
+        "scale": "log",
+        "favorite": false,
+        "selected": false,
+        "color": "#b937ff"
+    },
+    "system.vacuumSystem.pumps.turbo.loadlock.status": {
+        "dataSource": "system.vacuumSystem.pumps.turbo.loadlock.status",
+        "label": "Status",
+        "multiplier": 1.0,
+        "scale": "log",
+        "favorite": false,
+        "selected": false,
+        "color": "#ff37de"
+    },
+    "system.vacuumSystem.pumps.turbo.source_1.on_hours": {
+        "dataSource": "system.vacuumSystem.pumps.turbo.source_1.on_hours",
+        "label": "On Hours",
+        "multiplier": 1.0,
+        "scale": "log",
+        "favorite": false,
+        "selected": false,
+        "color": "#ff37d4"
+    },
+    "system.vacuumSystem.pumps.turbo.source_1.speed": {
+        "dataSource": "system.vacuumSystem.pumps.turbo.source_1.speed",
+        "label": "Speed",
+        "multiplier": 1.0,
+        "scale": "log",
+        "favorite": false,
+        "selected": false,
+        "color": "#bc37ff"
+    },
+    "system.vacuumSystem.pumps.turbo.source_1.status": {
+        "dataSource": "system.vacuumSystem.pumps.turbo.source_1.status",
+        "label": "Status",
+        "multiplier": 1.0,
+        "scale": "log",
+        "favorite": false,
+        "selected": false,
+        "color": "#fcff37"
+    },
+    "system.vacuumSystem.pumps.turbo.source_2.on_hours": {
+        "dataSource": "system.vacuumSystem.pumps.turbo.source_2.on_hours",
+        "label": "On Hours",
+        "multiplier": 1.0,
+        "scale": "log",
+        "favorite": false,
+        "selected": false,
+        "color": "#ff37c3"
+    },
+    "system.vacuumSystem.pumps.turbo.source_2.speed": {
+        "dataSource": "system.vacuumSystem.pumps.turbo.source_2.speed",
+        "label": "Speed",
+        "multiplier": 1.0,
+        "scale": "log",
+        "favorite": false,
+        "selected": false,
+        "color": "#44ff37"
+    },
+    "system.vacuumSystem.pumps.turbo.source_2.status": {
+        "dataSource": "system.vacuumSystem.pumps.turbo.source_2.status",
+        "label": "Status",
+        "multiplier": 1.0,
+        "scale": "log",
+        "favorite": false,
+        "selected": false,
+        "color": "#37caff"
+    },
+    "system.vacuumSystem.valves.gate.beamline-chamber.cycles": {
+        "dataSource": "system.vacuumSystem.valves.gate.beamline-chamber.cycles",
+        "label": "Cycles",
+        "multiplier": 1.0,
+        "scale": "log",
+        "favorite": false,
+        "selected": false,
+        "color": "#afff37"
+    },
+    "system.vacuumSystem.valves.gate.beamline-chamber.open": {
+        "dataSource": "system.vacuumSystem.valves.gate.beamline-chamber.open",
+        "label": "Open",
+        "multiplier": 1.0,
+        "scale": "log",
+        "favorite": false,
+        "selected": false,
+        "color": "#ff37f8"
+    },
+    "system.vacuumSystem.valves.gate.beamline-chamber.requestOpen": {
+        "dataSource": "system.vacuumSystem.valves.gate.beamline-chamber.requestOpen",
+        "label": "Request Open",
+        "multiplier": 1.0,
+        "scale": "log",
+        "favorite": false,
+        "selected": false,
+        "color": "#b6ff37"
+    },
+    "system.vacuumSystem.valves.gate.chamber-loadlock.cycles": {
+        "dataSource": "system.vacuumSystem.valves.gate.chamber-loadlock.cycles",
+        "label": "Cycles",
+        "multiplier": 1.0,
+        "scale": "log",
+        "favorite": false,
+        "selected": false,
+        "color": "#37ffd7"
+    },
+    "system.vacuumSystem.valves.gate.chamber-loadlock.open": {
+        "dataSource": "system.vacuumSystem.valves.gate.chamber-loadlock.open",
+        "label": "Open",
+        "multiplier": 1.0,
+        "scale": "log",
+        "favorite": false,
+        "selected": false,
+        "color": "#3758ff"
+    },
+    "system.vacuumSystem.valves.gate.source-beamline.cycles": {
+        "dataSource": "system.vacuumSystem.valves.gate.source-beamline.cycles",
+        "label": "Cycles",
+        "multiplier": 1.0,
+        "scale": "log",
+        "favorite": false,
+        "selected": false,
+        "color": "#ff3791"
+    },
+    "system.vacuumSystem.valves.gate.source-beamline.open": {
+        "dataSource": "system.vacuumSystem.valves.gate.source-beamline.open",
+        "label": "Open",
+        "multiplier": 1.0,
+        "scale": "log",
+        "favorite": false,
+        "selected": false,
+        "color": "#ff37b2"
+    },
+    "system.vacuumSystem.valves.gate.source-beamline.requestOpen": {
+        "dataSource": "system.vacuumSystem.valves.gate.source-beamline.requestOpen",
+        "label": "Request Open",
+        "multiplier": 1.0,
+        "scale": "log",
+        "favorite": false,
+        "selected": false,
+        "color": "#ff375c"
+    },
+    "system.vacuumSystem.valves.pneumatic.placeholder": {
+        "dataSource": "system.vacuumSystem.valves.pneumatic.placeholder",
+        "label": "Placeholder",
+        "multiplier": 1.0,
+        "scale": "log",
+        "favorite": false,
+        "selected": false,
+        "color": "#d4ff37"
+    },
+    "virtual.plcStatus": {
+        "dataSource": "virtual.plcStatus",
+        "label": "Plc Status",
+        "multiplier": 1.0,
+        "scale": "linear",
+        "favorite": false,
+        "selected": false,
+        "color": "#ffee37"
+    },
+    "virtual.targetForm": {
+        "dataSource": "virtual.targetForm",
+        "label": "Target Form",
+        "multiplier": 1.0,
+        "scale": "linear",
+        "favorite": false,
+        "selected": false,
+        "color": "#ffb937"
+    },
+    "virtual.targetMaterial": {
+        "dataSource": "virtual.targetMaterial",
+        "label": "Target Material",
+        "multiplier": 1.0,
+        "scale": "linear",
+        "favorite": false,
+        "selected": false,
+        "color": "#ffd037"
+    }
+}

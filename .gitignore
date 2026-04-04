@@ -1,0 +1,21 @@
+# Environments
+venv/
+env/
+.env
+
+# Python Cache
+__pycache__/
+*.py[cod]
+
+# PyCharm specific
+.idea/
+
+# SCADA Data & Logs
+LogData/
+PlotData/
+MassScanData/
+FaultLogs/
+SystemLogs/
+SystemLogsBin/
+*.npz
+*.log
