@@ -33,7 +33,7 @@ class PLCMicroservice:
         self.tags = {}
 
         # 3. Initialization
-        self._load_tags()
+        self.tags = self._load_tags()
         self._connect_plc()
 
     def _connect_plc(self):
