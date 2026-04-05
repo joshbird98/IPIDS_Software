@@ -15,6 +15,18 @@ from utils.data_engine import TimeSeriesEngine
 
 from datetime import datetime
 
+class LogAxisItem(pg.AxisItem):
+    def tickStrings(self, values, scale, spacing):
+        """Converts the raw log10 values back to scientific notation for the UI."""
+        strings = []
+        for v in values:
+            try:
+                # E.g., if the numpy value is -8.0, display '1.0e-8'
+                strings.append(f"1.0e{int(v)}")
+            except:
+                strings.append("")
+        return strings
+
 
 class TimeAxisItem(pg.AxisItem):
     def __init__(self, *args, **kwargs):
@@ -56,7 +68,11 @@ class DataViewerApp(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("IPIDS Data Historian - Phase 2")
-        self.resize(1400, 850)
+        # Set a sensible fallback size that fits all laptop screens (e.g., 720p minimum)
+        self.resize(1100, 650)
+
+        # Force the application to open fully maximized
+        self.showMaximized()
 
         # Initialize Engine (Point this to your LogData folder)
         current_dir = os.path.dirname(os.path.abspath(__file__))
@@ -86,7 +102,6 @@ class DataViewerApp(QMainWindow):
         # --- Sidebar ---
         sidebar = QWidget()
         sidebar_layout = QVBoxLayout(sidebar)
-        sidebar.setFixedWidth(280)
 
         # 1. Quick Presets
         sidebar_layout.addWidget(QLabel("<b>Quick Ranges:</b>"))
@@ -149,16 +164,38 @@ class DataViewerApp(QMainWindow):
         # --- Plot Area ---
         pg.setConfigOptions(antialias=True)
         self.time_axis = TimeAxisItem(orientation='bottom')
-        self.graph = pg.PlotWidget(axisItems={'bottom': self.time_axis})
+        self.log_axis = LogAxisItem(orientation='right')
+
+        # Inject BOTH custom axes during instantiation
+        self.graph = pg.PlotWidget(axisItems={'bottom': self.time_axis, 'right': self.log_axis})
         self.graph.setBackground('k')
         self.graph.showGrid(x=True, y=True, alpha=0.3)
+        self.graph.getAxis('left').setLabel('Linear Data')
+        self.graph.getAxis('right').setLabel('Vacuum (mB)')
 
-        # Connect mouse interaction signals
+        # Create the independent overlay ViewBox for Log data
+        self.right_viewbox = pg.ViewBox()
+        self.graph.scene().addItem(self.right_viewbox)
+        self.graph.getAxis('right').linkToView(self.right_viewbox)
+        self.right_viewbox.setXLink(self.graph)
+
+        # Connect the resize signal so the overlay stays perfectly aligned
+        self.graph.getPlotItem().vb.sigResized.connect(self._update_views)
         self.graph.sigRangeChanged.connect(self._on_view_changed)
 
         splitter = QSplitter(Qt.Orientation.Horizontal)
         splitter.addWidget(sidebar)
         splitter.addWidget(self.graph)
+
+        # 1. Set default pixel widths (280px for sidebar, the rest for the graph)
+        splitter.setSizes([280, 1000])
+
+        # 2. Assign Stretch Factors
+        # Index 0 (Sidebar) gets a stretch of 0 (stays compact)
+        # Index 1 (Graph) gets a stretch of 1 (absorbs all extra window space)
+        splitter.setStretchFactor(0, 0)
+        splitter.setStretchFactor(1, 1)
+
         layout.addWidget(splitter)
 
     def _set_preset_range(self, hours):
@@ -193,37 +230,60 @@ class DataViewerApp(QMainWindow):
         self._render_plot()
 
     def _render_plot(self):
-        """Decimates and renders the current buffer."""
+        """Decimates and routes curves to their respective Linear or Log ViewBoxes."""
         self.graph.clear()
+        self.right_viewbox.clear()  # Remember to clear the overlay too!
 
-        # Force the X-Axis to span the exact requested window
-        # (Subtract t0 because the pyqtgraph x-coordinates are normalized)
         view_start = self.req_start_ts - self.t0
         view_end = self.req_end_ts - self.t0
         self.graph.setXRange(view_start, view_end, padding=0)
 
-        # If the query returned no data, stop here (leaves a correctly scaled blank graph)
         if len(self.raw_ts) == 0:
+            self.graph.hideAxis('right')
+            self.graph.hideAxis('left')
             return
 
         self.graph.addLegend(offset=(10, 10))
         norm_ts = self.raw_ts - self.t0
+        target_pts = self.graph.width() * 2
 
-        # Determine target points based on screen resolution
-        pixel_width = self.graph.width()
-        target_pts = pixel_width * 2
+        has_linear = False
+        has_log = False
 
         for idx, tag in enumerate(self.engine.channel_keys):
             cfg = self.plot_config.get(tag, {})
             if not cfg.get('selected'): continue
 
             y_raw = self.raw_vals[:, idx] * cfg.get('multiplier', 1.0)
-
-            d_ts, d_y = TimeSeriesEngine.downsample_minmax(norm_ts, y_raw, target_pts)
-
             pen = pg.mkPen(color=cfg.get('color', '#ffffff'), width=1.5)
-            curve = self.graph.plot(x=d_ts, y=d_y, pen=pen, name=cfg.get('label', tag))
-            curve.setClipToView(True)
+            label = cfg.get('label', tag)
+
+            if cfg.get('scale') == 'log':
+                has_log = True
+                # Log Math: Filter out zero/negative noise to prevent math errors
+                valid_mask = y_raw > 1.0e-12
+                if np.any(valid_mask):
+                    y_clean = y_raw.copy()
+                    y_clean[~valid_mask] = np.nan
+
+                    # Decimate first (faster), then apply log10 math
+                    d_ts, d_y = TimeSeriesEngine.downsample_minmax(norm_ts, y_clean, target_pts)
+                    with np.errstate(invalid='ignore'):
+                        d_y_log = np.log10(d_y)
+
+                    # Plot to Right ViewBox
+                    curve = pg.PlotDataItem(x=d_ts, y=d_y_log, pen=pen, name=label)
+                    self.right_viewbox.addItem(curve)
+                    self.graph.getPlotItem().legend.addItem(curve, name=label)
+            else:
+                has_linear = True
+                # Standard Linear Plot
+                d_ts, d_y = TimeSeriesEngine.downsample_minmax(norm_ts, y_raw, target_pts)
+                curve = self.graph.plot(x=d_ts, y=d_y, pen=pen, name=label)
+
+        # Clean UI: Hide axes if no channels are currently using them
+        self.graph.showAxis('left') if has_linear else self.graph.hideAxis('left')
+        self.graph.showAxis('right') if has_log else self.graph.hideAxis('right')
 
     def open_channel_config(self):
         available_tags = {key: None for key in self.engine.channel_keys}
@@ -252,6 +312,11 @@ class DataViewerApp(QMainWindow):
 
         self.dt_start.blockSignals(False)
         self.dt_end.blockSignals(False)
+
+    def _update_views(self):
+        """Forces the right ViewBox to perfectly overlay the primary ViewBox on window resize."""
+        self.right_viewbox.setGeometry(self.graph.getPlotItem().vb.sceneBoundingRect())
+        self.right_viewbox.linkedViewChanged(self.graph.getPlotItem().vb, self.right_viewbox.XAxis)
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)
