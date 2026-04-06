@@ -6,6 +6,9 @@ Brokerless architecture using 127.0.0.1
 
 HOST = "tcp://127.0.0.1"
 
+NOISY_RACK_WAVESHARE_IP = "192.168.1.200"
+NOISY_RACK_WAVESHARE_PORT = 4196
+
 # --- PLC Service (Snap7) ---
 # PUBlishes 10Hz tag data and faults
 ZMQ_PORT_PLC_PUB = f"{HOST}:5550"

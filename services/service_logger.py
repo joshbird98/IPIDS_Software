@@ -10,6 +10,8 @@ from datetime import datetime
 
 from network_config import ZMQ_PORT_PLC_PUB, ZMQ_PORT_SERIAL_PUB, ZMQ_PORT_LOGGER_CMD, TOPIC_PLC_DATA, TOPIC_SERIAL_DATA
 from hmi_config import DEFAULT_LOG_DIRECTORY
+from hmi_config import HMI_DB_DOCUMENT_ADDRESS
+from utils.db_parser import parse_tia_db
 
 
 class LoggerMicroservice:
@@ -40,21 +42,21 @@ class LoggerMicroservice:
         self.io_thread = threading.Thread(target=self._disk_writer_loop, daemon=True)
         self.io_thread.start()
 
-        # 3. Buffer Configurations
-        self.keys = None  # Populated on first payload
-        self.num_keys = 0
+        # 3. Buffer Configurations (Deterministic)
+        self.keys = self._generate_deterministic_keys()
+        self.num_keys = len(self.keys)
 
         # High Res: 10Hz for 5 mins = 3000 points
         self.high_res_max = 3000
         self.high_res_ptr = 0
         self.high_res_full = False
-        self.high_res_buffer = None
+        self.high_res_buffer = np.zeros((self.high_res_max, self.num_keys), dtype=np.float32)
         self.high_res_ts = np.zeros(self.high_res_max, dtype=np.float64)
 
         # Low Res: 0.5Hz for 24 hours = 43200 points
         self.low_res_max = 43200
         self.low_res_ptr = 0
-        self.low_res_buffer = None
+        self.low_res_buffer = np.zeros((self.low_res_max, self.num_keys), dtype=np.float32)
         self.low_res_ts = np.zeros(self.low_res_max, dtype=np.float64)
 
         # Timing state
@@ -77,42 +79,67 @@ class LoggerMicroservice:
         self.tick_rate = 0.100  # 10Hz target
         self.next_tick = time.time() + self.tick_rate
 
-    def _init_buffers(self, data):
-        # 1. Filter out non-numeric tags (like STRING or formatted TIME)
+    def _generate_deterministic_keys(self) -> list:
+        """Pre-allocates all known keys to lock array sizes before networking begins."""
         valid_keys = []
-        for k, v in data.items():
-            if isinstance(v, (int, float, bool)):
-                valid_keys.append(k)
-            else:
-                try:
-                    # Test if string is a valid number (e.g. "1.23")
-                    float(v)
-                    valid_keys.append(k)
-                except (ValueError, TypeError):
-                    print(f"[Logger] Skipping non-numeric tag: '{k}' (Value: {v})")
 
-        # 2. Initialize with only the valid numeric keys
-        self.keys = sorted(valid_keys)
-        self.num_keys = len(self.keys)
+        # 1. Standard Vacuum Keys
+        for node in [10, 20]:
+            for ch in [1, 2, 3]:
+                valid_keys.append(f"vac_node_{node}_ch_{ch}_pressure")
+                valid_keys.append(f"vac_node_{node}_ch_{ch}_status")
 
-        self.high_res_buffer = np.zeros((self.high_res_max, self.num_keys), dtype=np.float32)
-        self.low_res_buffer = np.zeros((self.low_res_max, self.num_keys), dtype=np.float32)
-        print(f"[Logger] Buffers initialized for {self.num_keys} numeric tags.")
+        # 2. Automatically load PLC Keys
+        # Parse the DB and filter only numeric-compatible types
+        plc_tags = parse_tia_db(HMI_DB_DOCUMENT_ADDRESS)
+        allowed_numeric_types = {"BOOL", "INT", "UINT", "WORD", "DINT", "UDINT", "DWORD", "REAL"}
 
-    def _update_state_cache(self, payload_bytes):
-        """Merges incoming network data into the RAM cache immediately."""
+        for tag_name, tag_type in plc_tags.items():
+            if tag_type in allowed_numeric_types:
+                valid_keys.append(tag_name)
+
+        return sorted(valid_keys)
+
+    def _flatten_vacuum_data(self, data: dict) -> dict:
+        """Extracts pressure and maps status strings to numeric enums for Numpy."""
+        flat_data = {}
+
+        # Double check these string values against your Leybold manual/outputs
+        STATUS_MAP = {
+            "OK": 0.0,
+            "NO-SEN": 1.0,
+            "Range?": 2.0,
+            "S-OFF": 3.0,
+            "Error-H": 4.0,
+            "Error-L": 5.0,
+            "Error-S": 6.0
+        }
+
+        for node_id, node_data in data.items():
+            for ch_id, ch_data in node_data.get("channels", {}).items():
+                p = ch_data.get("pressure")
+                s = ch_data.get("status")
+
+                if p is not None:
+                    flat_data[f"vac_node_{node_id}_ch_{ch_id}_pressure"] = float(p)
+
+                if s is not None:
+                    clean_status = str(s).strip().upper()
+                    flat_data[f"vac_node_{node_id}_ch_{ch_id}_status"] = STATUS_MAP.get(clean_status, -1.0)
+
+        return flat_data
+
+    def _update_state_cache(self, topic: bytes, payload_bytes: bytes):
+        """Routes payload processing based on topic and merges to RAM cache."""
         data = json.loads(payload_bytes.decode('utf-8'))
-        self.current_state.update(data)
 
-        # Initialize Numpy arrays on the very first payload we ever receive
-        if self.keys is None:
-            self._init_buffers(self.current_state)
+        if topic == TOPIC_SERIAL_DATA:
+            self.current_state.update(self._flatten_vacuum_data(data))
+        else:
+            self.current_state.update(data)
 
     def _log_current_state(self):
-        """Writes the current RAM cache to Numpy. Triggered by the Internal Clock."""
-        if self.keys is None:
-            return  # Don't log if we haven't received any data yet
-
+        """Writes the current RAM cache to Numpy arrays."""
         current_ts = time.time()
         row = np.array([float(self.current_state.get(k, 0.0)) for k in self.keys], dtype=np.float32)
 
@@ -257,15 +284,15 @@ class LoggerMicroservice:
             try:
                 # Calculate time remaining until the next 10Hz tick
                 current_time = time.time()
-                time_to_next_tick = max(0, self.next_tick - current_time)
+                time_to_next_tick = max(0.0, self.next_tick - current_time)
                 timeout_ms = int(time_to_next_tick * 1000)
 
                 socks = dict(self.poller.poll(timeout_ms))
 
                 # 1. Process Network Data (Updates the cache instantly)
                 if self.sub_socket in socks and socks[self.sub_socket] == zmq.POLLIN:
-                    _, payload = self.sub_socket.recv_multipart()
-                    self._update_state_cache(payload)
+                    topic, payload = self.sub_socket.recv_multipart()
+                    self._update_state_cache(topic, payload)
 
                 # 2. Process Command Stream (Triggers)
                 if self.cmd_socket in socks and socks[self.cmd_socket] == zmq.POLLIN:
