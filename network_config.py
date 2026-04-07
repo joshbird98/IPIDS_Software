@@ -15,10 +15,16 @@ ZMQ_PORT_PLC_PUB = f"{HOST}:5550"
 # PULLs write commands from the GUI or other services
 ZMQ_PORT_PLC_CMD = f"{HOST}:5551"
 
-# --- Serial Service (Modbus/TCP) ---
+# --- Vacuum Service (ASCII/TCP) ---
 # PUBlishes vacuum/HV data
-ZMQ_PORT_SERIAL_PUB = f"{HOST}:5552"
+ZMQ_PORT_VACUUM_PUB = f"{HOST}:5556"
 # PULLs commands for vacuum/HV
+ZMQ_PORT_VACUUM_CMD = f"{HOST}:5557"
+
+# --- Serial Service (Modbus/TCP) ---
+# PUBlishes serial data
+ZMQ_PORT_SERIAL_PUB = f"{HOST}:5552"
+# PULLs commands for serial
 ZMQ_PORT_SERIAL_CMD = f"{HOST}:5553"
 
 # --- Logger Service ---
@@ -28,5 +34,7 @@ ZMQ_PORT_LOGGER_CMD = f"{HOST}:5554"
 # --- ZMQ Topics ---
 TOPIC_PLC_DATA = b"PLC_DATA"
 TOPIC_PLC_FAULTS = b"PLC_FAULTS"
+TOPIC_VACUUM_DATA = b"VACUUM_DATA"
+TOPIC_VACUUM_FAULTS = b"VACUUM_FAULTS"
 TOPIC_SERIAL_DATA = b"SERIAL_DATA"
 TOPIC_SERIAL_FAULTS = b"SERIAL_FAULTS"

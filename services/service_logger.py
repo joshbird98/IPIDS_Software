@@ -8,10 +8,8 @@ import threading
 import numpy as np
 from datetime import datetime
 
-from network_config import ZMQ_PORT_PLC_PUB, ZMQ_PORT_SERIAL_PUB, ZMQ_PORT_LOGGER_CMD, TOPIC_PLC_DATA, TOPIC_SERIAL_DATA
+from network_config import ZMQ_PORT_PLC_PUB, ZMQ_PORT_VACUUM_PUB, ZMQ_PORT_LOGGER_CMD, TOPIC_PLC_DATA, TOPIC_VACUUM_DATA
 from hmi_config import DEFAULT_LOG_DIRECTORY
-from hmi_config import HMI_DB_DOCUMENT_ADDRESS
-from utils.db_parser import parse_tia_db
 
 
 class LoggerMicroservice:
@@ -21,10 +19,10 @@ class LoggerMicroservice:
 
         self.sub_socket = self.context.socket(zmq.SUB)
         self.sub_socket.connect(ZMQ_PORT_PLC_PUB)
-        self.sub_socket.connect(ZMQ_PORT_SERIAL_PUB)
+        self.sub_socket.connect(ZMQ_PORT_VACUUM_PUB)
 
         self.sub_socket.setsockopt(zmq.SUBSCRIBE, TOPIC_PLC_DATA)
-        self.sub_socket.setsockopt(zmq.SUBSCRIBE, TOPIC_SERIAL_DATA)
+        self.sub_socket.setsockopt(zmq.SUBSCRIBE, TOPIC_VACUUM_DATA)
 
         self.current_state = {}
 
@@ -45,6 +43,8 @@ class LoggerMicroservice:
         # 3. Buffer Configurations (Deterministic)
         self.keys = self._generate_deterministic_keys()
         self.num_keys = len(self.keys)
+
+        self.vacuum_hw_map = self._build_vacuum_hw_map()
 
         # High Res: 10Hz for 5 mins = 3000 points
         self.high_res_max = 3000
@@ -79,53 +79,76 @@ class LoggerMicroservice:
         self.tick_rate = 0.100  # 10Hz target
         self.next_tick = time.time() + self.tick_rate
 
+    def _build_vacuum_hw_map(self) -> dict:
+        """Creates a lookup table mapping (Node, Channel) -> Registry Base Path."""
+        current_dir = os.path.dirname(os.path.abspath(__file__))
+        project_root = os.path.dirname(current_dir)
+        registry_path = os.path.join(project_root, "system_tags.json")
+
+        hw_map = {}
+        try:
+            with open(registry_path, "r") as f:
+                registry = json.load(f)
+
+            for full_tag, metadata in registry.items():
+                if metadata.get("source") == "service_vacuum":
+                    node = str(metadata.get("hw_node"))
+                    ch = str(metadata.get("hw_channel"))
+
+                    if node and ch and node != "None" and ch != "None":
+                        # full_tag is e.g. "vacuum.controller_10.vg1_source.pressure"
+                        # We slice off the ".pressure" to get the base path
+                        base_path = full_tag.rsplit('.', 1)[0]
+                        hw_map[(node, ch)] = base_path
+        except Exception as e:
+            print(f"[Logger] Failed to build HW map: {e}")
+
+        return hw_map
+
     def _generate_deterministic_keys(self) -> list:
-        """Pre-allocates all known keys to lock array sizes before networking begins."""
-        valid_keys = []
+        """Loads keys from the central registry to lock array sizes."""
+        # Dynamically locate the project root (one directory up from /services)
+        current_dir = os.path.dirname(os.path.abspath(__file__))
+        project_root = os.path.dirname(current_dir)
+        registry_path = os.path.join(project_root, "system_tags.json")
 
-        # 1. Standard Vacuum Keys
-        for node in [10, 20]:
-            for ch in [1, 2, 3]:
-                valid_keys.append(f"vac_node_{node}_ch_{ch}_pressure")
-                valid_keys.append(f"vac_node_{node}_ch_{ch}_status")
-
-        # 2. Automatically load PLC Keys
-        # Parse the DB and filter only numeric-compatible types
-        plc_tags = parse_tia_db(HMI_DB_DOCUMENT_ADDRESS)
-        allowed_numeric_types = {"BOOL", "INT", "UINT", "WORD", "DINT", "UDINT", "DWORD", "REAL"}
-
-        for tag_name, tag_type in plc_tags.items():
-            if tag_type in allowed_numeric_types:
-                valid_keys.append(tag_name)
-
-        return sorted(valid_keys)
+        try:
+            with open(registry_path, "r") as f:
+                registry = json.load(f)
+                # Sort them alphabetically to guarantee array index matching across services
+                return sorted(list(registry.keys()))
+        except FileNotFoundError:
+            print(f"CRITICAL: Registry not found at {registry_path}. Run build_registry.py first.")
+            return []
 
     def _flatten_vacuum_data(self, data: dict) -> dict:
-        """Extracts pressure and maps status strings to numeric enums for Numpy."""
+        """Maps incoming hardware data to the registry using pure hardware addresses."""
         flat_data = {}
 
-        # Double check these string values against your Leybold manual/outputs
         STATUS_MAP = {
-            "OK": 0.0,
-            "NO-SEN": 1.0,
-            "Range?": 2.0,
-            "S-OFF": 3.0,
-            "Error-H": 4.0,
-            "Error-L": 5.0,
-            "Error-S": 6.0
+            "OK": 0.0, "NO-SEN": 1.0, "RANGE?": 2.0, "S-OFF": 3.0,
+            "ERROR-H": 4.0, "ERROR-L": 5.0, "ERROR-S": 6.0
         }
 
-        for node_id, node_data in data.items():
-            for ch_id, ch_data in node_data.get("channels", {}).items():
+        for node_id_str, node_data in data.items():
+            for ch_id_str, ch_data in node_data.get("channels", {}).items():
+
+                # 1. Ask the lookup table what the exact string is supposed to be
+                base_path = self.vacuum_hw_map.get((node_id_str, ch_id_str))
+
+                if not base_path:
+                    continue  # If it's not in the registry, ignore it
+
+                # 2. Map Pressure
                 p = ch_data.get("pressure")
-                s = ch_data.get("status")
-
                 if p is not None:
-                    flat_data[f"vac_node_{node_id}_ch_{ch_id}_pressure"] = float(p)
+                    flat_data[f"{base_path}.pressure"] = float(p)
 
+                # 3. Map Status
+                s = ch_data.get("status")
                 if s is not None:
                     clean_status = str(s).strip().upper()
-                    flat_data[f"vac_node_{node_id}_ch_{ch_id}_status"] = STATUS_MAP.get(clean_status, -1.0)
+                    flat_data[f"{base_path}.status"] = STATUS_MAP.get(clean_status, -1.0)
 
         return flat_data
 
@@ -133,7 +156,7 @@ class LoggerMicroservice:
         """Routes payload processing based on topic and merges to RAM cache."""
         data = json.loads(payload_bytes.decode('utf-8'))
 
-        if topic == TOPIC_SERIAL_DATA:
+        if topic == TOPIC_VACUUM_DATA:
             self.current_state.update(self._flatten_vacuum_data(data))
         else:
             self.current_state.update(data)

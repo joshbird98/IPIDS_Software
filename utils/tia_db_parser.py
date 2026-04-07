@@ -1,4 +1,4 @@
-# utils/db_parser.py
+# utils/tia_db_parser.py
 import re
 
 
@@ -11,7 +11,7 @@ def parse_tia_db(filepath: str) -> dict:
 
     re_array_bool = re.compile(r'((?:"[^"]+")|(?:\w+))(?:.*):\s*Array\[(\d+)\.\.(\d+)\]\s*of\s*Bool', re.IGNORECASE)
     re_array_int = re.compile(r'((?:"[^"]+")|(?:\w+))(?:.*):\s*Array\[(\d+)\.\.(\d+)\]\s*of\s*Int', re.IGNORECASE)
-    re_std = re.compile(r'((?:"[^"]+")|(?:\w+))(?:.*):\s*(\w+)')
+    re_std = re.compile(r'((?:"[^"]+")|(?:\w+))(?:.*):\s*(\w+)', re.IGNORECASE)
 
     try:
         with open(filepath, "r", encoding="utf-8") as f:
@@ -36,6 +36,13 @@ def parse_tia_db(filepath: str) -> dict:
             break
 
         if in_struct and ":" in line and not line.startswith("TITLE"):
+
+            comment = ""
+            if "//" in line:
+                parts = line.split("//", 1)
+                line = parts[0].strip()  # The left side goes to the regex
+                comment = parts[1].strip()  # The right side is saved as the comment
+
             array_match_bool = re_array_bool.search(line)
             array_match_int = re_array_int.search(line)
             std_match = re_std.match(line)
@@ -43,19 +50,27 @@ def parse_tia_db(filepath: str) -> dict:
             if array_match_bool:
                 name = array_match_bool.group(1).replace('"', '')
                 start, end = int(array_match_bool.group(2)), int(array_match_bool.group(3))
+
                 for i in range(start, end + 1):
-                    tags[".".join(stack + [f"{name}[{i}]"])] = "BOOL"
+                    full_name = ".".join(stack + [f"{name}[{i}]"])
+                    # Apply the array comment to every element
+                    tags[full_name] = {"type": "BOOL", "comment": comment}
+
             elif array_match_int:
                 name = array_match_int.group(1).replace('"', '')
                 start, end = int(array_match_int.group(2)), int(array_match_int.group(3))
+
                 for i in range(start, end + 1):
-                    tags[".".join(stack + [f"{name}[{i}]"])] = "INT"
+                    full_name = ".".join(stack + [f"{name}[{i}]"])
+                    tags[full_name] = {"type": "INT", "comment": comment}
+
             elif std_match:
                 name = std_match.group(1).replace('"', '')
                 dtype = std_match.group(2).upper()
                 if dtype == "STRUCT":
                     stack.append(name)
                 else:
-                    tags[".".join(stack + [name])] = dtype
+                    full_name = ".".join(stack + [name])
+                    tags[full_name] = {"type": dtype, "comment": comment}
 
     return tags

@@ -1,0 +1,26 @@
+{
+    "10": {
+        "channels": {
+            "1": {"name": "VG1 Source"},
+            "2": {"name": "VG2 PreMag"},
+            "3": {"name": "VG3 BLine"}
+        },
+        "relays": {
+            "1": {"channel": 1, "on_val": 1.0e-5, "off_val": 5.0e-5},
+            "2": {"channel": 2, "on_val": 1.0e-5, "off_val": 5.0e-5},
+            "3": {"channel": 3, "on_val": 1.0e-5, "off_val": 5.0e-5}
+        }
+    },
+    "20": {
+        "channels": {
+            "1": {"name": "VG4 Cham 1"},
+            "2": {"name": "VG2 LdLock"},
+            "3": {"name": "VG3 Cham 2"}
+        },
+        "relays": {
+            "1": {"channel": 1, "on_val": 1.0e-5, "off_val": 5.0e-5},
+            "2": {"channel": 2, "on_val": 1.0e-5, "off_val": 5.0e-5},
+            "3": {"channel": 3, "on_val": 1.0e-5, "off_val": 5.0e-5}
+        }
+    }
+}
