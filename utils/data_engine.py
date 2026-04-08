@@ -61,7 +61,7 @@ class TimeSeriesEngine:
         self.manifest.sort(key=lambda x: x['start'])
         print(f"[Engine] Indexed {len(self.manifest)} files.")
 
-    def query(self, start_ts, end_ts):
+    def query(self, start_ts, end_ts, stride=1):
         """
         Loads and stitches all files that intersect the requested time window.
         Returns: (stitched_timestamps, stitched_values)
@@ -110,6 +110,12 @@ class TimeSeriesEngine:
 
         final_ts = sorted_ts[start_idx:end_idx]
         final_vals = sorted_vals[start_idx:end_idx]
+
+        if stride > 1:
+            # We use NumPy slicing [::stride] to skip rows.
+            # This is an O(1) memory view operation—extremely fast.
+            final_ts = final_ts[::stride]
+            final_vals = final_vals[::stride]
 
         return final_ts, final_vals
 

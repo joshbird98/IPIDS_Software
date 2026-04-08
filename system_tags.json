@@ -1,0 +1,3212 @@
+{
+    "plc.system.beamline.drop_in_cup.engaged": {
+        "source": "service_plc",
+        "datatype": "BOOL",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "",
+        "default_label": "Drop In Cup Engaged"
+    },
+    "plc.system.beamline.drop_in_cup.hmiSetpointVEntry": {
+        "source": "service_plc",
+        "datatype": "REAL",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "",
+        "default_label": "Drop In Cup Hmi Setpoint V Entry"
+    },
+    "plc.system.beamline.drop_in_cup.hmiSetpointVEntryMax": {
+        "source": "service_plc",
+        "datatype": "REAL",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "",
+        "default_label": "Drop In Cup Hmi Setpoint V Entry Max"
+    },
+    "plc.system.beamline.drop_in_cup.hmiSetpointVEntryMin": {
+        "source": "service_plc",
+        "datatype": "REAL",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "",
+        "default_label": "Drop In Cup Hmi Setpoint V Entry Min"
+    },
+    "plc.system.beamline.drop_in_cup.readbackA": {
+        "source": "service_plc",
+        "datatype": "REAL",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "",
+        "default_label": "Drop In Cup Readback A"
+    },
+    "plc.system.beamline.drop_in_cup.readbackV": {
+        "source": "service_plc",
+        "datatype": "REAL",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "",
+        "default_label": "Drop In Cup Readback V"
+    },
+    "plc.system.beamline.drop_in_cup.requestEngaged": {
+        "source": "service_plc",
+        "datatype": "BOOL",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "",
+        "default_label": "Drop In Cup Request Engaged"
+    },
+    "plc.system.beamline.einzels.lens1.fault": {
+        "source": "service_plc",
+        "datatype": "BOOL",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "",
+        "default_label": "Lens1 Fault"
+    },
+    "plc.system.beamline.einzels.lens1.hmiSetpointVEnabled": {
+        "source": "service_plc",
+        "datatype": "BOOL",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "",
+        "default_label": "Lens1 Hmi Setpoint V Enabled"
+    },
+    "plc.system.beamline.einzels.lens1.hmiSetpointVEntry": {
+        "source": "service_plc",
+        "datatype": "REAL",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "",
+        "default_label": "Lens1 Hmi Setpoint V Entry"
+    },
+    "plc.system.beamline.einzels.lens1.hmiSetpointVEntryMax": {
+        "source": "service_plc",
+        "datatype": "REAL",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "",
+        "default_label": "Lens1 Hmi Setpoint V Entry Max"
+    },
+    "plc.system.beamline.einzels.lens1.hmiSetpointVEntryMin": {
+        "source": "service_plc",
+        "datatype": "REAL",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "",
+        "default_label": "Lens1 Hmi Setpoint V Entry Min"
+    },
+    "plc.system.beamline.einzels.lens1.outputEnabled": {
+        "source": "service_plc",
+        "datatype": "BOOL",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "",
+        "default_label": "Lens1 Output Enabled"
+    },
+    "plc.system.beamline.einzels.lens1.readbackA": {
+        "source": "service_plc",
+        "datatype": "REAL",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "",
+        "default_label": "Lens1 Readback A"
+    },
+    "plc.system.beamline.einzels.lens1.readbackV": {
+        "source": "service_plc",
+        "datatype": "REAL",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "",
+        "default_label": "Lens1 Readback V"
+    },
+    "plc.system.beamline.einzels.lens1.status": {
+        "source": "service_plc",
+        "datatype": "BOOL",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "",
+        "default_label": "Lens1 Status"
+    },
+    "plc.system.beamline.einzels.lens2.fault": {
+        "source": "service_plc",
+        "datatype": "BOOL",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "",
+        "default_label": "Lens2 Fault"
+    },
+    "plc.system.beamline.einzels.lens2.hmiSetpointVEnabled": {
+        "source": "service_plc",
+        "datatype": "BOOL",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "",
+        "default_label": "Lens2 Hmi Setpoint V Enabled"
+    },
+    "plc.system.beamline.einzels.lens2.hmiSetpointVEntry": {
+        "source": "service_plc",
+        "datatype": "REAL",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "",
+        "default_label": "Lens2 Hmi Setpoint V Entry"
+    },
+    "plc.system.beamline.einzels.lens2.hmiSetpointVEntryMax": {
+        "source": "service_plc",
+        "datatype": "REAL",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "",
+        "default_label": "Lens2 Hmi Setpoint V Entry Max"
+    },
+    "plc.system.beamline.einzels.lens2.hmiSetpointVEntryMin": {
+        "source": "service_plc",
+        "datatype": "REAL",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "",
+        "default_label": "Lens2 Hmi Setpoint V Entry Min"
+    },
+    "plc.system.beamline.einzels.lens2.outputEnabled": {
+        "source": "service_plc",
+        "datatype": "BOOL",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "",
+        "default_label": "Lens2 Output Enabled"
+    },
+    "plc.system.beamline.einzels.lens2.readbackA": {
+        "source": "service_plc",
+        "datatype": "REAL",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "",
+        "default_label": "Lens2 Readback A"
+    },
+    "plc.system.beamline.einzels.lens2.readbackV": {
+        "source": "service_plc",
+        "datatype": "REAL",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "",
+        "default_label": "Lens2 Readback V"
+    },
+    "plc.system.beamline.einzels.lens2.status": {
+        "source": "service_plc",
+        "datatype": "BOOL",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "",
+        "default_label": "Lens2 Status"
+    },
+    "plc.system.beamline.einzels.lens3.fault": {
+        "source": "service_plc",
+        "datatype": "BOOL",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "",
+        "default_label": "Lens3 Fault"
+    },
+    "plc.system.beamline.einzels.lens3.hmiSetpointVEnabled": {
+        "source": "service_plc",
+        "datatype": "BOOL",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "",
+        "default_label": "Lens3 Hmi Setpoint V Enabled"
+    },
+    "plc.system.beamline.einzels.lens3.hmiSetpointVEntry": {
+        "source": "service_plc",
+        "datatype": "REAL",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "",
+        "default_label": "Lens3 Hmi Setpoint V Entry"
+    },
+    "plc.system.beamline.einzels.lens3.hmiSetpointVEntryMax": {
+        "source": "service_plc",
+        "datatype": "REAL",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "",
+        "default_label": "Lens3 Hmi Setpoint V Entry Max"
+    },
+    "plc.system.beamline.einzels.lens3.hmiSetpointVEntryMin": {
+        "source": "service_plc",
+        "datatype": "REAL",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "",
+        "default_label": "Lens3 Hmi Setpoint V Entry Min"
+    },
+    "plc.system.beamline.einzels.lens3.outputEnabled": {
+        "source": "service_plc",
+        "datatype": "BOOL",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "",
+        "default_label": "Lens3 Output Enabled"
+    },
+    "plc.system.beamline.einzels.lens3.readbackA": {
+        "source": "service_plc",
+        "datatype": "REAL",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "",
+        "default_label": "Lens3 Readback A"
+    },
+    "plc.system.beamline.einzels.lens3.readbackV": {
+        "source": "service_plc",
+        "datatype": "REAL",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "",
+        "default_label": "Lens3 Readback V"
+    },
+    "plc.system.beamline.einzels.lens3.status": {
+        "source": "service_plc",
+        "datatype": "BOOL",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "",
+        "default_label": "Lens3 Status"
+    },
+    "plc.system.beamline.magnet.fault": {
+        "source": "service_plc",
+        "datatype": "BOOL",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "",
+        "default_label": "Magnet Fault"
+    },
+    "plc.system.beamline.magnet.hmiSetpointAEnabled": {
+        "source": "service_plc",
+        "datatype": "BOOL",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "",
+        "default_label": "Magnet Hmi Setpoint A Enabled"
+    },
+    "plc.system.beamline.magnet.hmiSetpointAEntry": {
+        "source": "service_plc",
+        "datatype": "REAL",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "",
+        "default_label": "Magnet Hmi Setpoint A Entry"
+    },
+    "plc.system.beamline.magnet.hmiSetpointAEntryMax": {
+        "source": "service_plc",
+        "datatype": "REAL",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "",
+        "default_label": "Magnet Hmi Setpoint A Entry Max"
+    },
+    "plc.system.beamline.magnet.hmiSetpointAEntryMin": {
+        "source": "service_plc",
+        "datatype": "REAL",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "",
+        "default_label": "Magnet Hmi Setpoint A Entry Min"
+    },
+    "plc.system.beamline.magnet.outputEnabled": {
+        "source": "service_plc",
+        "datatype": "BOOL",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "",
+        "default_label": "Magnet Output Enabled"
+    },
+    "plc.system.beamline.magnet.readbackA": {
+        "source": "service_plc",
+        "datatype": "REAL",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "",
+        "default_label": "Magnet Readback A"
+    },
+    "plc.system.beamline.magnet.readbackV": {
+        "source": "service_plc",
+        "datatype": "REAL",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "",
+        "default_label": "Magnet Readback V"
+    },
+    "plc.system.beamline.magnet.static_active": {
+        "source": "service_plc",
+        "datatype": "BOOL",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "",
+        "default_label": "Magnet Static Active"
+    },
+    "plc.system.beamline.magnet.status": {
+        "source": "service_plc",
+        "datatype": "INT",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "",
+        "default_label": "Magnet Status"
+    },
+    "plc.system.beamline.massScan.feedback.currentStep": {
+        "source": "service_plc",
+        "datatype": "UINT",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "",
+        "default_label": "Feedback Current Step"
+    },
+    "plc.system.beamline.massScan.feedback.remainingTime_m": {
+        "source": "service_plc",
+        "datatype": "UINT",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "",
+        "default_label": "Feedback Remaining Time M"
+    },
+    "plc.system.beamline.massScan.feedback.remainingTime_s": {
+        "source": "service_plc",
+        "datatype": "UINT",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "",
+        "default_label": "Feedback Remaining Time S"
+    },
+    "plc.system.beamline.massScan.feedback.resultsReady": {
+        "source": "service_plc",
+        "datatype": "BOOL",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "",
+        "default_label": "Feedback Results Ready"
+    },
+    "plc.system.beamline.massScan.feedback.status": {
+        "source": "service_plc",
+        "datatype": "INT",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "0=Idle, 1=Zeroing, 2=Scanning, 99=Error",
+        "default_label": "Feedback Status"
+    },
+    "plc.system.beamline.massScan.feedback.sweepActive": {
+        "source": "service_plc",
+        "datatype": "BOOL",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "",
+        "default_label": "Feedback Sweep Active"
+    },
+    "plc.system.beamline.massScan.requestStart": {
+        "source": "service_plc",
+        "datatype": "BOOL",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "",
+        "default_label": "Mass Scan Request Start"
+    },
+    "plc.system.beamline.massScan.requestStop": {
+        "source": "service_plc",
+        "datatype": "BOOL",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "",
+        "default_label": "Mass Scan Request Stop"
+    },
+    "plc.system.beamline.massScan.settings.startCurrent": {
+        "source": "service_plc",
+        "datatype": "REAL",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "",
+        "default_label": "Settings Start Current"
+    },
+    "plc.system.beamline.massScan.settings.stopCurrent": {
+        "source": "service_plc",
+        "datatype": "REAL",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "",
+        "default_label": "Settings Stop Current"
+    },
+    "plc.system.beamline.massScan.settings.totalSteps": {
+        "source": "service_plc",
+        "datatype": "UINT",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "",
+        "default_label": "Settings Total Steps"
+    },
+    "plc.system.beamline.mass_slits.bias_voltage": {
+        "source": "service_plc",
+        "datatype": "REAL",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "",
+        "default_label": "Mass Slits Bias Voltage"
+    },
+    "plc.system.beamline.mass_slits.gap_offset_mm": {
+        "source": "service_plc",
+        "datatype": "REAL",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "",
+        "default_label": "Mass Slits Gap Offset Mm"
+    },
+    "plc.system.beamline.mass_slits.gap_width_mm": {
+        "source": "service_plc",
+        "datatype": "REAL",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "",
+        "default_label": "Mass Slits Gap Width Mm"
+    },
+    "plc.system.beamline.mass_slits.left_position": {
+        "source": "service_plc",
+        "datatype": "REAL",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "",
+        "default_label": "Mass Slits Left Position"
+    },
+    "plc.system.beamline.mass_slits.right_position": {
+        "source": "service_plc",
+        "datatype": "REAL",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "",
+        "default_label": "Mass Slits Right Position"
+    },
+    "plc.system.beamline.steerers.x.fault": {
+        "source": "service_plc",
+        "datatype": "BOOL",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "",
+        "default_label": "X Fault"
+    },
+    "plc.system.beamline.steerers.x.hmiSetpointVEnabled": {
+        "source": "service_plc",
+        "datatype": "BOOL",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "",
+        "default_label": "X Hmi Setpoint V Enabled"
+    },
+    "plc.system.beamline.steerers.x.hmiSetpointVEntry": {
+        "source": "service_plc",
+        "datatype": "REAL",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "",
+        "default_label": "X Hmi Setpoint V Entry"
+    },
+    "plc.system.beamline.steerers.x.hmiSetpointVEntryMax": {
+        "source": "service_plc",
+        "datatype": "REAL",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "",
+        "default_label": "X Hmi Setpoint V Entry Max"
+    },
+    "plc.system.beamline.steerers.x.hmiSetpointVEntryMin": {
+        "source": "service_plc",
+        "datatype": "REAL",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "",
+        "default_label": "X Hmi Setpoint V Entry Min"
+    },
+    "plc.system.beamline.steerers.x.outputEnabled": {
+        "source": "service_plc",
+        "datatype": "BOOL",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "",
+        "default_label": "X Output Enabled"
+    },
+    "plc.system.beamline.steerers.x.readbackA": {
+        "source": "service_plc",
+        "datatype": "REAL",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "",
+        "default_label": "X Readback A"
+    },
+    "plc.system.beamline.steerers.x.readbackV": {
+        "source": "service_plc",
+        "datatype": "REAL",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "",
+        "default_label": "X Readback V"
+    },
+    "plc.system.beamline.steerers.x.status": {
+        "source": "service_plc",
+        "datatype": "BOOL",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "",
+        "default_label": "X Status"
+    },
+    "plc.system.beamline.steerers.y.fault": {
+        "source": "service_plc",
+        "datatype": "BOOL",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "",
+        "default_label": "Y Fault"
+    },
+    "plc.system.beamline.steerers.y.hmiSetpointVEnabled": {
+        "source": "service_plc",
+        "datatype": "BOOL",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "",
+        "default_label": "Y Hmi Setpoint V Enabled"
+    },
+    "plc.system.beamline.steerers.y.hmiSetpointVEntry": {
+        "source": "service_plc",
+        "datatype": "REAL",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "",
+        "default_label": "Y Hmi Setpoint V Entry"
+    },
+    "plc.system.beamline.steerers.y.hmiSetpointVEntryMax": {
+        "source": "service_plc",
+        "datatype": "REAL",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "",
+        "default_label": "Y Hmi Setpoint V Entry Max"
+    },
+    "plc.system.beamline.steerers.y.hmiSetpointVEntryMin": {
+        "source": "service_plc",
+        "datatype": "REAL",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "",
+        "default_label": "Y Hmi Setpoint V Entry Min"
+    },
+    "plc.system.beamline.steerers.y.outputEnabled": {
+        "source": "service_plc",
+        "datatype": "BOOL",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "",
+        "default_label": "Y Output Enabled"
+    },
+    "plc.system.beamline.steerers.y.readbackA": {
+        "source": "service_plc",
+        "datatype": "REAL",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "",
+        "default_label": "Y Readback A"
+    },
+    "plc.system.beamline.steerers.y.readbackV": {
+        "source": "service_plc",
+        "datatype": "REAL",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "",
+        "default_label": "Y Readback V"
+    },
+    "plc.system.beamline.steerers.y.status": {
+        "source": "service_plc",
+        "datatype": "BOOL",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "",
+        "default_label": "Y Status"
+    },
+    "plc.system.beamline.straight_thru_cup.readbackA": {
+        "source": "service_plc",
+        "datatype": "REAL",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "",
+        "default_label": "Straight Thru Cup Readback A"
+    },
+    "plc.system.endstation.neutral_trap.fault": {
+        "source": "service_plc",
+        "datatype": "BOOL",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "",
+        "default_label": "Neutral Trap Fault"
+    },
+    "plc.system.endstation.neutral_trap.hmiSetpointLeftVEnabled": {
+        "source": "service_plc",
+        "datatype": "BOOL",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "",
+        "default_label": "Neutral Trap Hmi Setpoint Left V Enabled"
+    },
+    "plc.system.endstation.neutral_trap.hmiSetpointLeftVEntry": {
+        "source": "service_plc",
+        "datatype": "REAL",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "",
+        "default_label": "Neutral Trap Hmi Setpoint Left V Entry"
+    },
+    "plc.system.endstation.neutral_trap.hmiSetpointLeftVEntryMax": {
+        "source": "service_plc",
+        "datatype": "REAL",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "",
+        "default_label": "Neutral Trap Hmi Setpoint Left V Entry Max"
+    },
+    "plc.system.endstation.neutral_trap.hmiSetpointLeftVEntryMin": {
+        "source": "service_plc",
+        "datatype": "REAL",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "",
+        "default_label": "Neutral Trap Hmi Setpoint Left V Entry Min"
+    },
+    "plc.system.endstation.neutral_trap.hmiSetpointRightVEnabled": {
+        "source": "service_plc",
+        "datatype": "BOOL",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "",
+        "default_label": "Neutral Trap Hmi Setpoint Right V Enabled"
+    },
+    "plc.system.endstation.neutral_trap.hmiSetpointRightVEntry": {
+        "source": "service_plc",
+        "datatype": "REAL",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "",
+        "default_label": "Neutral Trap Hmi Setpoint Right V Entry"
+    },
+    "plc.system.endstation.neutral_trap.hmiSetpointRightVEntryMax": {
+        "source": "service_plc",
+        "datatype": "REAL",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "",
+        "default_label": "Neutral Trap Hmi Setpoint Right V Entry Max"
+    },
+    "plc.system.endstation.neutral_trap.hmiSetpointRightVEntryMin": {
+        "source": "service_plc",
+        "datatype": "REAL",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "",
+        "default_label": "Neutral Trap Hmi Setpoint Right V Entry Min"
+    },
+    "plc.system.endstation.neutral_trap.readbackLeftA": {
+        "source": "service_plc",
+        "datatype": "REAL",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "",
+        "default_label": "Neutral Trap Readback Left A"
+    },
+    "plc.system.endstation.neutral_trap.readbackLeftV": {
+        "source": "service_plc",
+        "datatype": "REAL",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "",
+        "default_label": "Neutral Trap Readback Left V"
+    },
+    "plc.system.endstation.neutral_trap.readbackRightA": {
+        "source": "service_plc",
+        "datatype": "REAL",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "",
+        "default_label": "Neutral Trap Readback Right A"
+    },
+    "plc.system.endstation.neutral_trap.readbackRightV": {
+        "source": "service_plc",
+        "datatype": "REAL",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "",
+        "default_label": "Neutral Trap Readback Right V"
+    },
+    "plc.system.endstation.neutral_trap.status": {
+        "source": "service_plc",
+        "datatype": "BOOL",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "",
+        "default_label": "Neutral Trap Status"
+    },
+    "plc.system.endstation.sample.measured_fluence_ions_cm2": {
+        "source": "service_plc",
+        "datatype": "REAL",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "",
+        "default_label": "Sample Measured Fluence Ions Cm2"
+    },
+    "plc.system.endstation.sample.measured_temp_C": {
+        "source": "service_plc",
+        "datatype": "REAL",
+        "unit": "\u00b0C",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "",
+        "default_label": "Sample Measured Temp"
+    },
+    "plc.system.endstation.sample.reference_number": {
+        "source": "service_plc",
+        "datatype": "INT",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "",
+        "default_label": "Sample Reference Number"
+    },
+    "plc.system.endstation.sample.requested_fluence_ions_cm2": {
+        "source": "service_plc",
+        "datatype": "REAL",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "",
+        "default_label": "Sample Requested Fluence Ions Cm2"
+    },
+    "plc.system.endstation.sample.requested_temp_C": {
+        "source": "service_plc",
+        "datatype": "REAL",
+        "unit": "\u00b0C",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "",
+        "default_label": "Sample Requested Temp"
+    },
+    "plc.system.endstation.sample.status": {
+        "source": "service_plc",
+        "datatype": "INT",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "",
+        "default_label": "Sample Status"
+    },
+    "plc.system.endstation.stage.electrical.bias": {
+        "source": "service_plc",
+        "datatype": "REAL",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "",
+        "default_label": "Electrical Bias"
+    },
+    "plc.system.endstation.stage.electrical.measured_current_A": {
+        "source": "service_plc",
+        "datatype": "REAL",
+        "unit": "A",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "",
+        "default_label": "Electrical Measured Current"
+    },
+    "plc.system.endstation.stage.motion.readback_angle_deg": {
+        "source": "service_plc",
+        "datatype": "REAL",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "",
+        "default_label": "Motion Readback Angle Deg"
+    },
+    "plc.system.endstation.stage.motion.readback_x_mm": {
+        "source": "service_plc",
+        "datatype": "REAL",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "",
+        "default_label": "Motion Readback X Mm"
+    },
+    "plc.system.endstation.stage.motion.readback_y_mm": {
+        "source": "service_plc",
+        "datatype": "REAL",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "",
+        "default_label": "Motion Readback Y Mm"
+    },
+    "plc.system.endstation.stage.motion.readback_z_mm": {
+        "source": "service_plc",
+        "datatype": "REAL",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "",
+        "default_label": "Motion Readback Z Mm"
+    },
+    "plc.system.endstation.stage.motion.setpoint_angle_deg": {
+        "source": "service_plc",
+        "datatype": "REAL",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "",
+        "default_label": "Motion Setpoint Angle Deg"
+    },
+    "plc.system.endstation.stage.motion.setpoint_x_mm": {
+        "source": "service_plc",
+        "datatype": "REAL",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "",
+        "default_label": "Motion Setpoint X Mm"
+    },
+    "plc.system.endstation.stage.motion.setpoint_y_mm": {
+        "source": "service_plc",
+        "datatype": "REAL",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "",
+        "default_label": "Motion Setpoint Y Mm"
+    },
+    "plc.system.endstation.stage.motion.setpoint_z_mm": {
+        "source": "service_plc",
+        "datatype": "REAL",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "",
+        "default_label": "Motion Setpoint Z Mm"
+    },
+    "plc.system.endstation.stage.motion.status": {
+        "source": "service_plc",
+        "datatype": "INT",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "",
+        "default_label": "Motion Status"
+    },
+    "plc.system.general.bufferIndex": {
+        "source": "service_plc",
+        "datatype": "INT",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "",
+        "default_label": "General Buffer Index"
+    },
+    "plc.system.general.coolantStatus": {
+        "source": "service_plc",
+        "datatype": "BOOL",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "Indicator, to show if coolant is active",
+        "default_label": "General Coolant Status"
+    },
+    "plc.system.general.errorPLC": {
+        "source": "service_plc",
+        "datatype": "BOOL",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "Shows error in the PLC",
+        "default_label": "General Error P L C"
+    },
+    "plc.system.general.faultArray[0]": {
+        "source": "service_plc",
+        "datatype": "BOOL",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "",
+        "default_label": "General Fault Array[0]"
+    },
+    "plc.system.general.faultArray[100]": {
+        "source": "service_plc",
+        "datatype": "BOOL",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "",
+        "default_label": "General Fault Array[100]"
+    },
+    "plc.system.general.faultArray[10]": {
+        "source": "service_plc",
+        "datatype": "BOOL",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "",
+        "default_label": "General Fault Array[10]"
+    },
+    "plc.system.general.faultArray[11]": {
+        "source": "service_plc",
+        "datatype": "BOOL",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "",
+        "default_label": "General Fault Array[11]"
+    },
+    "plc.system.general.faultArray[12]": {
+        "source": "service_plc",
+        "datatype": "BOOL",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "",
+        "default_label": "General Fault Array[12]"
+    },
+    "plc.system.general.faultArray[13]": {
+        "source": "service_plc",
+        "datatype": "BOOL",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "",
+        "default_label": "General Fault Array[13]"
+    },
+    "plc.system.general.faultArray[14]": {
+        "source": "service_plc",
+        "datatype": "BOOL",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "",
+        "default_label": "General Fault Array[14]"
+    },
+    "plc.system.general.faultArray[15]": {
+        "source": "service_plc",
+        "datatype": "BOOL",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "",
+        "default_label": "General Fault Array[15]"
+    },
+    "plc.system.general.faultArray[16]": {
+        "source": "service_plc",
+        "datatype": "BOOL",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "",
+        "default_label": "General Fault Array[16]"
+    },
+    "plc.system.general.faultArray[17]": {
+        "source": "service_plc",
+        "datatype": "BOOL",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "",
+        "default_label": "General Fault Array[17]"
+    },
+    "plc.system.general.faultArray[18]": {
+        "source": "service_plc",
+        "datatype": "BOOL",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "",
+        "default_label": "General Fault Array[18]"
+    },
+    "plc.system.general.faultArray[19]": {
+        "source": "service_plc",
+        "datatype": "BOOL",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "",
+        "default_label": "General Fault Array[19]"
+    },
+    "plc.system.general.faultArray[1]": {
+        "source": "service_plc",
+        "datatype": "BOOL",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "",
+        "default_label": "General Fault Array[1]"
+    },
+    "plc.system.general.faultArray[20]": {
+        "source": "service_plc",
+        "datatype": "BOOL",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "",
+        "default_label": "General Fault Array[20]"
+    },
+    "plc.system.general.faultArray[21]": {
+        "source": "service_plc",
+        "datatype": "BOOL",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "",
+        "default_label": "General Fault Array[21]"
+    },
+    "plc.system.general.faultArray[22]": {
+        "source": "service_plc",
+        "datatype": "BOOL",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "",
+        "default_label": "General Fault Array[22]"
+    },
+    "plc.system.general.faultArray[23]": {
+        "source": "service_plc",
+        "datatype": "BOOL",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "",
+        "default_label": "General Fault Array[23]"
+    },
+    "plc.system.general.faultArray[24]": {
+        "source": "service_plc",
+        "datatype": "BOOL",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "",
+        "default_label": "General Fault Array[24]"
+    },
+    "plc.system.general.faultArray[25]": {
+        "source": "service_plc",
+        "datatype": "BOOL",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "",
+        "default_label": "General Fault Array[25]"
+    },
+    "plc.system.general.faultArray[26]": {
+        "source": "service_plc",
+        "datatype": "BOOL",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "",
+        "default_label": "General Fault Array[26]"
+    },
+    "plc.system.general.faultArray[27]": {
+        "source": "service_plc",
+        "datatype": "BOOL",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "",
+        "default_label": "General Fault Array[27]"
+    },
+    "plc.system.general.faultArray[28]": {
+        "source": "service_plc",
+        "datatype": "BOOL",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "",
+        "default_label": "General Fault Array[28]"
+    },
+    "plc.system.general.faultArray[29]": {
+        "source": "service_plc",
+        "datatype": "BOOL",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "",
+        "default_label": "General Fault Array[29]"
+    },
+    "plc.system.general.faultArray[2]": {
+        "source": "service_plc",
+        "datatype": "BOOL",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "",
+        "default_label": "General Fault Array[2]"
+    },
+    "plc.system.general.faultArray[30]": {
+        "source": "service_plc",
+        "datatype": "BOOL",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "",
+        "default_label": "General Fault Array[30]"
+    },
+    "plc.system.general.faultArray[31]": {
+        "source": "service_plc",
+        "datatype": "BOOL",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "",
+        "default_label": "General Fault Array[31]"
+    },
+    "plc.system.general.faultArray[32]": {
+        "source": "service_plc",
+        "datatype": "BOOL",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "",
+        "default_label": "General Fault Array[32]"
+    },
+    "plc.system.general.faultArray[33]": {
+        "source": "service_plc",
+        "datatype": "BOOL",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "",
+        "default_label": "General Fault Array[33]"
+    },
+    "plc.system.general.faultArray[34]": {
+        "source": "service_plc",
+        "datatype": "BOOL",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "",
+        "default_label": "General Fault Array[34]"
+    },
+    "plc.system.general.faultArray[35]": {
+        "source": "service_plc",
+        "datatype": "BOOL",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "",
+        "default_label": "General Fault Array[35]"
+    },
+    "plc.system.general.faultArray[36]": {
+        "source": "service_plc",
+        "datatype": "BOOL",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "",
+        "default_label": "General Fault Array[36]"
+    },
+    "plc.system.general.faultArray[37]": {
+        "source": "service_plc",
+        "datatype": "BOOL",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "",
+        "default_label": "General Fault Array[37]"
+    },
+    "plc.system.general.faultArray[38]": {
+        "source": "service_plc",
+        "datatype": "BOOL",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "",
+        "default_label": "General Fault Array[38]"
+    },
+    "plc.system.general.faultArray[39]": {
+        "source": "service_plc",
+        "datatype": "BOOL",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "",
+        "default_label": "General Fault Array[39]"
+    },
+    "plc.system.general.faultArray[3]": {
+        "source": "service_plc",
+        "datatype": "BOOL",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "",
+        "default_label": "General Fault Array[3]"
+    },
+    "plc.system.general.faultArray[40]": {
+        "source": "service_plc",
+        "datatype": "BOOL",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "",
+        "default_label": "General Fault Array[40]"
+    },
+    "plc.system.general.faultArray[41]": {
+        "source": "service_plc",
+        "datatype": "BOOL",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "",
+        "default_label": "General Fault Array[41]"
+    },
+    "plc.system.general.faultArray[42]": {
+        "source": "service_plc",
+        "datatype": "BOOL",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "",
+        "default_label": "General Fault Array[42]"
+    },
+    "plc.system.general.faultArray[43]": {
+        "source": "service_plc",
+        "datatype": "BOOL",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "",
+        "default_label": "General Fault Array[43]"
+    },
+    "plc.system.general.faultArray[44]": {
+        "source": "service_plc",
+        "datatype": "BOOL",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "",
+        "default_label": "General Fault Array[44]"
+    },
+    "plc.system.general.faultArray[45]": {
+        "source": "service_plc",
+        "datatype": "BOOL",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "",
+        "default_label": "General Fault Array[45]"
+    },
+    "plc.system.general.faultArray[46]": {
+        "source": "service_plc",
+        "datatype": "BOOL",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "",
+        "default_label": "General Fault Array[46]"
+    },
+    "plc.system.general.faultArray[47]": {
+        "source": "service_plc",
+        "datatype": "BOOL",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "",
+        "default_label": "General Fault Array[47]"
+    },
+    "plc.system.general.faultArray[48]": {
+        "source": "service_plc",
+        "datatype": "BOOL",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "",
+        "default_label": "General Fault Array[48]"
+    },
+    "plc.system.general.faultArray[49]": {
+        "source": "service_plc",
+        "datatype": "BOOL",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "",
+        "default_label": "General Fault Array[49]"
+    },
+    "plc.system.general.faultArray[4]": {
+        "source": "service_plc",
+        "datatype": "BOOL",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "",
+        "default_label": "General Fault Array[4]"
+    },
+    "plc.system.general.faultArray[50]": {
+        "source": "service_plc",
+        "datatype": "BOOL",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "",
+        "default_label": "General Fault Array[50]"
+    },
+    "plc.system.general.faultArray[51]": {
+        "source": "service_plc",
+        "datatype": "BOOL",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "",
+        "default_label": "General Fault Array[51]"
+    },
+    "plc.system.general.faultArray[52]": {
+        "source": "service_plc",
+        "datatype": "BOOL",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "",
+        "default_label": "General Fault Array[52]"
+    },
+    "plc.system.general.faultArray[53]": {
+        "source": "service_plc",
+        "datatype": "BOOL",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "",
+        "default_label": "General Fault Array[53]"
+    },
+    "plc.system.general.faultArray[54]": {
+        "source": "service_plc",
+        "datatype": "BOOL",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "",
+        "default_label": "General Fault Array[54]"
+    },
+    "plc.system.general.faultArray[55]": {
+        "source": "service_plc",
+        "datatype": "BOOL",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "",
+        "default_label": "General Fault Array[55]"
+    },
+    "plc.system.general.faultArray[56]": {
+        "source": "service_plc",
+        "datatype": "BOOL",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "",
+        "default_label": "General Fault Array[56]"
+    },
+    "plc.system.general.faultArray[57]": {
+        "source": "service_plc",
+        "datatype": "BOOL",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "",
+        "default_label": "General Fault Array[57]"
+    },
+    "plc.system.general.faultArray[58]": {
+        "source": "service_plc",
+        "datatype": "BOOL",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "",
+        "default_label": "General Fault Array[58]"
+    },
+    "plc.system.general.faultArray[59]": {
+        "source": "service_plc",
+        "datatype": "BOOL",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "",
+        "default_label": "General Fault Array[59]"
+    },
+    "plc.system.general.faultArray[5]": {
+        "source": "service_plc",
+        "datatype": "BOOL",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "",
+        "default_label": "General Fault Array[5]"
+    },
+    "plc.system.general.faultArray[60]": {
+        "source": "service_plc",
+        "datatype": "BOOL",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "",
+        "default_label": "General Fault Array[60]"
+    },
+    "plc.system.general.faultArray[61]": {
+        "source": "service_plc",
+        "datatype": "BOOL",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "",
+        "default_label": "General Fault Array[61]"
+    },
+    "plc.system.general.faultArray[62]": {
+        "source": "service_plc",
+        "datatype": "BOOL",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "",
+        "default_label": "General Fault Array[62]"
+    },
+    "plc.system.general.faultArray[63]": {
+        "source": "service_plc",
+        "datatype": "BOOL",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "",
+        "default_label": "General Fault Array[63]"
+    },
+    "plc.system.general.faultArray[64]": {
+        "source": "service_plc",
+        "datatype": "BOOL",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "",
+        "default_label": "General Fault Array[64]"
+    },
+    "plc.system.general.faultArray[65]": {
+        "source": "service_plc",
+        "datatype": "BOOL",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "",
+        "default_label": "General Fault Array[65]"
+    },
+    "plc.system.general.faultArray[66]": {
+        "source": "service_plc",
+        "datatype": "BOOL",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "",
+        "default_label": "General Fault Array[66]"
+    },
+    "plc.system.general.faultArray[67]": {
+        "source": "service_plc",
+        "datatype": "BOOL",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "",
+        "default_label": "General Fault Array[67]"
+    },
+    "plc.system.general.faultArray[68]": {
+        "source": "service_plc",
+        "datatype": "BOOL",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "",
+        "default_label": "General Fault Array[68]"
+    },
+    "plc.system.general.faultArray[69]": {
+        "source": "service_plc",
+        "datatype": "BOOL",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "",
+        "default_label": "General Fault Array[69]"
+    },
+    "plc.system.general.faultArray[6]": {
+        "source": "service_plc",
+        "datatype": "BOOL",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "",
+        "default_label": "General Fault Array[6]"
+    },
+    "plc.system.general.faultArray[70]": {
+        "source": "service_plc",
+        "datatype": "BOOL",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "",
+        "default_label": "General Fault Array[70]"
+    },
+    "plc.system.general.faultArray[71]": {
+        "source": "service_plc",
+        "datatype": "BOOL",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "",
+        "default_label": "General Fault Array[71]"
+    },
+    "plc.system.general.faultArray[72]": {
+        "source": "service_plc",
+        "datatype": "BOOL",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "",
+        "default_label": "General Fault Array[72]"
+    },
+    "plc.system.general.faultArray[73]": {
+        "source": "service_plc",
+        "datatype": "BOOL",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "",
+        "default_label": "General Fault Array[73]"
+    },
+    "plc.system.general.faultArray[74]": {
+        "source": "service_plc",
+        "datatype": "BOOL",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "",
+        "default_label": "General Fault Array[74]"
+    },
+    "plc.system.general.faultArray[75]": {
+        "source": "service_plc",
+        "datatype": "BOOL",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "",
+        "default_label": "General Fault Array[75]"
+    },
+    "plc.system.general.faultArray[76]": {
+        "source": "service_plc",
+        "datatype": "BOOL",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "",
+        "default_label": "General Fault Array[76]"
+    },
+    "plc.system.general.faultArray[77]": {
+        "source": "service_plc",
+        "datatype": "BOOL",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "",
+        "default_label": "General Fault Array[77]"
+    },
+    "plc.system.general.faultArray[78]": {
+        "source": "service_plc",
+        "datatype": "BOOL",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "",
+        "default_label": "General Fault Array[78]"
+    },
+    "plc.system.general.faultArray[79]": {
+        "source": "service_plc",
+        "datatype": "BOOL",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "",
+        "default_label": "General Fault Array[79]"
+    },
+    "plc.system.general.faultArray[7]": {
+        "source": "service_plc",
+        "datatype": "BOOL",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "",
+        "default_label": "General Fault Array[7]"
+    },
+    "plc.system.general.faultArray[80]": {
+        "source": "service_plc",
+        "datatype": "BOOL",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "",
+        "default_label": "General Fault Array[80]"
+    },
+    "plc.system.general.faultArray[81]": {
+        "source": "service_plc",
+        "datatype": "BOOL",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "",
+        "default_label": "General Fault Array[81]"
+    },
+    "plc.system.general.faultArray[82]": {
+        "source": "service_plc",
+        "datatype": "BOOL",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "",
+        "default_label": "General Fault Array[82]"
+    },
+    "plc.system.general.faultArray[83]": {
+        "source": "service_plc",
+        "datatype": "BOOL",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "",
+        "default_label": "General Fault Array[83]"
+    },
+    "plc.system.general.faultArray[84]": {
+        "source": "service_plc",
+        "datatype": "BOOL",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "",
+        "default_label": "General Fault Array[84]"
+    },
+    "plc.system.general.faultArray[85]": {
+        "source": "service_plc",
+        "datatype": "BOOL",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "",
+        "default_label": "General Fault Array[85]"
+    },
+    "plc.system.general.faultArray[86]": {
+        "source": "service_plc",
+        "datatype": "BOOL",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "",
+        "default_label": "General Fault Array[86]"
+    },
+    "plc.system.general.faultArray[87]": {
+        "source": "service_plc",
+        "datatype": "BOOL",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "",
+        "default_label": "General Fault Array[87]"
+    },
+    "plc.system.general.faultArray[88]": {
+        "source": "service_plc",
+        "datatype": "BOOL",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "",
+        "default_label": "General Fault Array[88]"
+    },
+    "plc.system.general.faultArray[89]": {
+        "source": "service_plc",
+        "datatype": "BOOL",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "",
+        "default_label": "General Fault Array[89]"
+    },
+    "plc.system.general.faultArray[8]": {
+        "source": "service_plc",
+        "datatype": "BOOL",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "",
+        "default_label": "General Fault Array[8]"
+    },
+    "plc.system.general.faultArray[90]": {
+        "source": "service_plc",
+        "datatype": "BOOL",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "",
+        "default_label": "General Fault Array[90]"
+    },
+    "plc.system.general.faultArray[91]": {
+        "source": "service_plc",
+        "datatype": "BOOL",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "",
+        "default_label": "General Fault Array[91]"
+    },
+    "plc.system.general.faultArray[92]": {
+        "source": "service_plc",
+        "datatype": "BOOL",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "",
+        "default_label": "General Fault Array[92]"
+    },
+    "plc.system.general.faultArray[93]": {
+        "source": "service_plc",
+        "datatype": "BOOL",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "",
+        "default_label": "General Fault Array[93]"
+    },
+    "plc.system.general.faultArray[94]": {
+        "source": "service_plc",
+        "datatype": "BOOL",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "",
+        "default_label": "General Fault Array[94]"
+    },
+    "plc.system.general.faultArray[95]": {
+        "source": "service_plc",
+        "datatype": "BOOL",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "",
+        "default_label": "General Fault Array[95]"
+    },
+    "plc.system.general.faultArray[96]": {
+        "source": "service_plc",
+        "datatype": "BOOL",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "",
+        "default_label": "General Fault Array[96]"
+    },
+    "plc.system.general.faultArray[97]": {
+        "source": "service_plc",
+        "datatype": "BOOL",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "",
+        "default_label": "General Fault Array[97]"
+    },
+    "plc.system.general.faultArray[98]": {
+        "source": "service_plc",
+        "datatype": "BOOL",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "",
+        "default_label": "General Fault Array[98]"
+    },
+    "plc.system.general.faultArray[99]": {
+        "source": "service_plc",
+        "datatype": "BOOL",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "",
+        "default_label": "General Fault Array[99]"
+    },
+    "plc.system.general.faultArray[9]": {
+        "source": "service_plc",
+        "datatype": "BOOL",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "",
+        "default_label": "General Fault Array[9]"
+    },
+    "plc.system.general.faultCount": {
+        "source": "service_plc",
+        "datatype": "INT",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "Count of how many faults are present",
+        "default_label": "General Fault Count"
+    },
+    "plc.system.general.messageBuffer[0]": {
+        "source": "service_plc",
+        "datatype": "INT",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "",
+        "default_label": "General Message Buffer[0]"
+    },
+    "plc.system.general.messageBuffer[10]": {
+        "source": "service_plc",
+        "datatype": "INT",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "",
+        "default_label": "General Message Buffer[10]"
+    },
+    "plc.system.general.messageBuffer[11]": {
+        "source": "service_plc",
+        "datatype": "INT",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "",
+        "default_label": "General Message Buffer[11]"
+    },
+    "plc.system.general.messageBuffer[12]": {
+        "source": "service_plc",
+        "datatype": "INT",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "",
+        "default_label": "General Message Buffer[12]"
+    },
+    "plc.system.general.messageBuffer[13]": {
+        "source": "service_plc",
+        "datatype": "INT",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "",
+        "default_label": "General Message Buffer[13]"
+    },
+    "plc.system.general.messageBuffer[14]": {
+        "source": "service_plc",
+        "datatype": "INT",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "",
+        "default_label": "General Message Buffer[14]"
+    },
+    "plc.system.general.messageBuffer[15]": {
+        "source": "service_plc",
+        "datatype": "INT",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "",
+        "default_label": "General Message Buffer[15]"
+    },
+    "plc.system.general.messageBuffer[16]": {
+        "source": "service_plc",
+        "datatype": "INT",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "",
+        "default_label": "General Message Buffer[16]"
+    },
+    "plc.system.general.messageBuffer[17]": {
+        "source": "service_plc",
+        "datatype": "INT",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "",
+        "default_label": "General Message Buffer[17]"
+    },
+    "plc.system.general.messageBuffer[18]": {
+        "source": "service_plc",
+        "datatype": "INT",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "",
+        "default_label": "General Message Buffer[18]"
+    },
+    "plc.system.general.messageBuffer[19]": {
+        "source": "service_plc",
+        "datatype": "INT",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "",
+        "default_label": "General Message Buffer[19]"
+    },
+    "plc.system.general.messageBuffer[1]": {
+        "source": "service_plc",
+        "datatype": "INT",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "",
+        "default_label": "General Message Buffer[1]"
+    },
+    "plc.system.general.messageBuffer[20]": {
+        "source": "service_plc",
+        "datatype": "INT",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "",
+        "default_label": "General Message Buffer[20]"
+    },
+    "plc.system.general.messageBuffer[21]": {
+        "source": "service_plc",
+        "datatype": "INT",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "",
+        "default_label": "General Message Buffer[21]"
+    },
+    "plc.system.general.messageBuffer[22]": {
+        "source": "service_plc",
+        "datatype": "INT",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "",
+        "default_label": "General Message Buffer[22]"
+    },
+    "plc.system.general.messageBuffer[23]": {
+        "source": "service_plc",
+        "datatype": "INT",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "",
+        "default_label": "General Message Buffer[23]"
+    },
+    "plc.system.general.messageBuffer[24]": {
+        "source": "service_plc",
+        "datatype": "INT",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "",
+        "default_label": "General Message Buffer[24]"
+    },
+    "plc.system.general.messageBuffer[25]": {
+        "source": "service_plc",
+        "datatype": "INT",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "",
+        "default_label": "General Message Buffer[25]"
+    },
+    "plc.system.general.messageBuffer[26]": {
+        "source": "service_plc",
+        "datatype": "INT",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "",
+        "default_label": "General Message Buffer[26]"
+    },
+    "plc.system.general.messageBuffer[27]": {
+        "source": "service_plc",
+        "datatype": "INT",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "",
+        "default_label": "General Message Buffer[27]"
+    },
+    "plc.system.general.messageBuffer[28]": {
+        "source": "service_plc",
+        "datatype": "INT",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "",
+        "default_label": "General Message Buffer[28]"
+    },
+    "plc.system.general.messageBuffer[29]": {
+        "source": "service_plc",
+        "datatype": "INT",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "",
+        "default_label": "General Message Buffer[29]"
+    },
+    "plc.system.general.messageBuffer[2]": {
+        "source": "service_plc",
+        "datatype": "INT",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "",
+        "default_label": "General Message Buffer[2]"
+    },
+    "plc.system.general.messageBuffer[3]": {
+        "source": "service_plc",
+        "datatype": "INT",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "",
+        "default_label": "General Message Buffer[3]"
+    },
+    "plc.system.general.messageBuffer[4]": {
+        "source": "service_plc",
+        "datatype": "INT",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "",
+        "default_label": "General Message Buffer[4]"
+    },
+    "plc.system.general.messageBuffer[5]": {
+        "source": "service_plc",
+        "datatype": "INT",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "",
+        "default_label": "General Message Buffer[5]"
+    },
+    "plc.system.general.messageBuffer[6]": {
+        "source": "service_plc",
+        "datatype": "INT",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "",
+        "default_label": "General Message Buffer[6]"
+    },
+    "plc.system.general.messageBuffer[7]": {
+        "source": "service_plc",
+        "datatype": "INT",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "",
+        "default_label": "General Message Buffer[7]"
+    },
+    "plc.system.general.messageBuffer[8]": {
+        "source": "service_plc",
+        "datatype": "INT",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "",
+        "default_label": "General Message Buffer[8]"
+    },
+    "plc.system.general.messageBuffer[9]": {
+        "source": "service_plc",
+        "datatype": "INT",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "",
+        "default_label": "General Message Buffer[9]"
+    },
+    "plc.system.general.requestClearFaults": {
+        "source": "service_plc",
+        "datatype": "BOOL",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "Button input, to clear faults",
+        "default_label": "General Request Clear Faults"
+    },
+    "plc.system.general.systemFault": {
+        "source": "service_plc",
+        "datatype": "BOOL",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "Indicator, to show if fault is present",
+        "default_label": "General System Fault"
+    },
+    "plc.system.ionSource.cesium.coolantOn": {
+        "source": "service_plc",
+        "datatype": "BOOL",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "Indicator, to show if coolant is active",
+        "default_label": "Cesium Coolant On"
+    },
+    "plc.system.ionSource.cesium.heaterOn": {
+        "source": "service_plc",
+        "datatype": "BOOL",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "Indicator, to show if heat is being applied",
+        "default_label": "Cesium Heater On"
+    },
+    "plc.system.ionSource.cesium.hmiSetpointCEnabled": {
+        "source": "service_plc",
+        "datatype": "BOOL",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "Determines if temperature setpoint can be written too by HMI",
+        "default_label": "Cesium Hmi Setpoint C Enabled"
+    },
+    "plc.system.ionSource.cesium.hmiSetpointCEntry": {
+        "source": "service_plc",
+        "datatype": "REAL",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "Entry field, to set cesium temperature",
+        "default_label": "Cesium Hmi Setpoint C Entry"
+    },
+    "plc.system.ionSource.cesium.hmiSetpointCEntryMax": {
+        "source": "service_plc",
+        "datatype": "REAL",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "",
+        "default_label": "Cesium Hmi Setpoint C Entry Max"
+    },
+    "plc.system.ionSource.cesium.hmiSetpointCEntryMin": {
+        "source": "service_plc",
+        "datatype": "REAL",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "",
+        "default_label": "Cesium Hmi Setpoint C Entry Min"
+    },
+    "plc.system.ionSource.cesium.readbackC": {
+        "source": "service_plc",
+        "datatype": "REAL",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "Display field, showing cesium temperature",
+        "default_label": "Cesium Readback C"
+    },
+    "plc.system.ionSource.cesium.status": {
+        "source": "service_plc",
+        "datatype": "INT",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "Status for cesium, 0=off/disabled, 1=on/enabled, 2=fault",
+        "default_label": "Cesium Status"
+    },
+    "plc.system.ionSource.extraction.hmiSetpointVEnabled": {
+        "source": "service_plc",
+        "datatype": "BOOL",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "Determines if extraction setopint can be written too by HMI",
+        "default_label": "Extraction Hmi Setpoint V Enabled"
+    },
+    "plc.system.ionSource.extraction.hmiSetpointVEntry": {
+        "source": "service_plc",
+        "datatype": "REAL",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "Entry field, to set extraction voltage",
+        "default_label": "Extraction Hmi Setpoint V Entry"
+    },
+    "plc.system.ionSource.extraction.hmiSetpointVEntryMax": {
+        "source": "service_plc",
+        "datatype": "REAL",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "",
+        "default_label": "Extraction Hmi Setpoint V Entry Max"
+    },
+    "plc.system.ionSource.extraction.hmiSetpointVEntryMin": {
+        "source": "service_plc",
+        "datatype": "REAL",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "",
+        "default_label": "Extraction Hmi Setpoint V Entry Min"
+    },
+    "plc.system.ionSource.extraction.readbackA": {
+        "source": "service_plc",
+        "datatype": "REAL",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "Display field, showing extraction current",
+        "default_label": "Extraction Readback A"
+    },
+    "plc.system.ionSource.extraction.readbackV": {
+        "source": "service_plc",
+        "datatype": "REAL",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "Display field, showing extraction voltage",
+        "default_label": "Extraction Readback V"
+    },
+    "plc.system.ionSource.extraction.readbackW": {
+        "source": "service_plc",
+        "datatype": "REAL",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "Display field, showing extraction power",
+        "default_label": "Extraction Readback W"
+    },
+    "plc.system.ionSource.extraction.status": {
+        "source": "service_plc",
+        "datatype": "INT",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "Status for extraction, 0=off/disabled, 1=on/enabled, 2=fault",
+        "default_label": "Extraction Status"
+    },
+    "plc.system.ionSource.general.beamVoltage": {
+        "source": "service_plc",
+        "datatype": "REAL",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "",
+        "default_label": "General Beam Voltage"
+    },
+    "plc.system.ionSource.general.bodyTempC": {
+        "source": "service_plc",
+        "datatype": "REAL",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "Display number, showing source temperature",
+        "default_label": "General Body Temp C"
+    },
+    "plc.system.ionSource.general.bodyTempOkay": {
+        "source": "service_plc",
+        "datatype": "BOOL",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "Indicator, to show if source is cold enough - affects colour of above number",
+        "default_label": "General Body Temp Okay"
+    },
+    "plc.system.ionSource.general.conditioningPaused": {
+        "source": "service_plc",
+        "datatype": "BOOL",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "Indicator, to show if conditioning has paused",
+        "default_label": "General Conditioning Paused"
+    },
+    "plc.system.ionSource.general.doorStatus": {
+        "source": "service_plc",
+        "datatype": "BOOL",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "",
+        "default_label": "General Door Status"
+    },
+    "plc.system.ionSource.general.modeCurrent": {
+        "source": "service_plc",
+        "datatype": "INT",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "Display field showing source mode",
+        "default_label": "General Mode Current"
+    },
+    "plc.system.ionSource.general.requestCondition": {
+        "source": "service_plc",
+        "datatype": "BOOL",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "Tickbox input",
+        "default_label": "General Request Condition"
+    },
+    "plc.system.ionSource.general.requestPause": {
+        "source": "service_plc",
+        "datatype": "BOOL",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "Button input, to pause the source",
+        "default_label": "General Request Pause"
+    },
+    "plc.system.ionSource.general.requestResume": {
+        "source": "service_plc",
+        "datatype": "BOOL",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "Button input, to resume the source",
+        "default_label": "General Request Resume"
+    },
+    "plc.system.ionSource.general.requestStart": {
+        "source": "service_plc",
+        "datatype": "BOOL",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "Button input, to start the source",
+        "default_label": "General Request Start"
+    },
+    "plc.system.ionSource.general.requestStop": {
+        "source": "service_plc",
+        "datatype": "BOOL",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "Button input, to stop the source",
+        "default_label": "General Request Stop"
+    },
+    "plc.system.ionSource.general.status": {
+        "source": "service_plc",
+        "datatype": "INT",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "Status, enabled=+1, fault=+2",
+        "default_label": "General Status"
+    },
+    "plc.system.ionSource.ioniser.filament.readbackA": {
+        "source": "service_plc",
+        "datatype": "REAL",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "",
+        "default_label": "Filament Readback A"
+    },
+    "plc.system.ionSource.ioniser.filament.readbackV": {
+        "source": "service_plc",
+        "datatype": "REAL",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "",
+        "default_label": "Filament Readback V"
+    },
+    "plc.system.ionSource.ioniser.filament.readbackW": {
+        "source": "service_plc",
+        "datatype": "REAL",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "",
+        "default_label": "Filament Readback W"
+    },
+    "plc.system.ionSource.ioniser.filament.status": {
+        "source": "service_plc",
+        "datatype": "INT",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "Status, enabled=+1, fault=+2",
+        "default_label": "Filament Status"
+    },
+    "plc.system.ionSource.ioniser.hmiSetpointWEnabled": {
+        "source": "service_plc",
+        "datatype": "BOOL",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "Determines if power setpoint can be written too by HMI",
+        "default_label": "Ioniser Hmi Setpoint W Enabled"
+    },
+    "plc.system.ionSource.ioniser.hmiSetpointWEntry": {
+        "source": "service_plc",
+        "datatype": "REAL",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "Entry field, to set ioniser power",
+        "default_label": "Ioniser Hmi Setpoint W Entry"
+    },
+    "plc.system.ionSource.ioniser.hmiSetpointWEntryMax": {
+        "source": "service_plc",
+        "datatype": "REAL",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "",
+        "default_label": "Ioniser Hmi Setpoint W Entry Max"
+    },
+    "plc.system.ionSource.ioniser.hmiSetpointWEntryMin": {
+        "source": "service_plc",
+        "datatype": "REAL",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "",
+        "default_label": "Ioniser Hmi Setpoint W Entry Min"
+    },
+    "plc.system.ionSource.ioniser.powerRatio": {
+        "source": "service_plc",
+        "datatype": "REAL",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "",
+        "default_label": "Ioniser Power Ratio"
+    },
+    "plc.system.ionSource.ioniser.readbackW": {
+        "source": "service_plc",
+        "datatype": "REAL",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "Display field, showing ioniser power",
+        "default_label": "Ioniser Readback W"
+    },
+    "plc.system.ionSource.ioniser.status": {
+        "source": "service_plc",
+        "datatype": "INT",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "Status for ioniser, enabled=+1, fault=+2",
+        "default_label": "Ioniser Status"
+    },
+    "plc.system.ionSource.ioniser.thermionic.readbackA": {
+        "source": "service_plc",
+        "datatype": "REAL",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "",
+        "default_label": "Thermionic Readback A"
+    },
+    "plc.system.ionSource.ioniser.thermionic.readbackV": {
+        "source": "service_plc",
+        "datatype": "REAL",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "",
+        "default_label": "Thermionic Readback V"
+    },
+    "plc.system.ionSource.ioniser.thermionic.readbackW": {
+        "source": "service_plc",
+        "datatype": "REAL",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "",
+        "default_label": "Thermionic Readback W"
+    },
+    "plc.system.ionSource.ioniser.thermionic.status": {
+        "source": "service_plc",
+        "datatype": "INT",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "Status, enabled=+1, fault=+2",
+        "default_label": "Thermionic Status"
+    },
+    "plc.system.ionSource.target.hmiSetpointVEnabled": {
+        "source": "service_plc",
+        "datatype": "BOOL",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "Determines if voltage setpoint can be written too by HMI",
+        "default_label": "Target Hmi Setpoint V Enabled"
+    },
+    "plc.system.ionSource.target.hmiSetpointVEntry": {
+        "source": "service_plc",
+        "datatype": "REAL",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "Entry field, to set target voltage",
+        "default_label": "Target Hmi Setpoint V Entry"
+    },
+    "plc.system.ionSource.target.hmiSetpointVEntryMax": {
+        "source": "service_plc",
+        "datatype": "REAL",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "",
+        "default_label": "Target Hmi Setpoint V Entry Max"
+    },
+    "plc.system.ionSource.target.hmiSetpointVEntryMin": {
+        "source": "service_plc",
+        "datatype": "REAL",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "",
+        "default_label": "Target Hmi Setpoint V Entry Min"
+    },
+    "plc.system.ionSource.target.readbackA": {
+        "source": "service_plc",
+        "datatype": "REAL",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "Display field, showing target current",
+        "default_label": "Target Readback A"
+    },
+    "plc.system.ionSource.target.readbackV": {
+        "source": "service_plc",
+        "datatype": "REAL",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "Display field, showing target voltage",
+        "default_label": "Target Readback V"
+    },
+    "plc.system.ionSource.target.readbackW": {
+        "source": "service_plc",
+        "datatype": "REAL",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "Display field, showing target power",
+        "default_label": "Target Readback W"
+    },
+    "plc.system.ionSource.target.status": {
+        "source": "service_plc",
+        "datatype": "INT",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "Status for target, 0=off/disabled, 1=on/enabled, 2=fault",
+        "default_label": "Target Status"
+    },
+    "plc.system.vacuumSystem.gauges.beamline.readback_mB": {
+        "source": "service_plc",
+        "datatype": "REAL",
+        "unit": "mB",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "",
+        "default_label": "Beamline Readback"
+    },
+    "plc.system.vacuumSystem.gauges.beamline.status": {
+        "source": "service_plc",
+        "datatype": "BOOL",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "",
+        "default_label": "Beamline Status"
+    },
+    "plc.system.vacuumSystem.gauges.chamber_UHV_gauge.readback_mB": {
+        "source": "service_plc",
+        "datatype": "BOOL",
+        "unit": "mB",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "",
+        "default_label": "Chamber U H V Gauge Readback"
+    },
+    "plc.system.vacuumSystem.gauges.chamber_UHV_gauge.status": {
+        "source": "service_plc",
+        "datatype": "BOOL",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "",
+        "default_label": "Chamber U H V Gauge Status"
+    },
+    "plc.system.vacuumSystem.gauges.chamber_reg_gauge.readback_mB": {
+        "source": "service_plc",
+        "datatype": "REAL",
+        "unit": "mB",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "",
+        "default_label": "Chamber Reg Gauge Readback"
+    },
+    "plc.system.vacuumSystem.gauges.chamber_reg_gauge.status": {
+        "source": "service_plc",
+        "datatype": "BOOL",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "",
+        "default_label": "Chamber Reg Gauge Status"
+    },
+    "plc.system.vacuumSystem.gauges.source.readback_mB": {
+        "source": "service_plc",
+        "datatype": "REAL",
+        "unit": "mB",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "",
+        "default_label": "Source Readback"
+    },
+    "plc.system.vacuumSystem.gauges.source.status": {
+        "source": "service_plc",
+        "datatype": "BOOL",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "",
+        "default_label": "Source Status"
+    },
+    "plc.system.vacuumSystem.pumps.ion.chamber_1.current_readback_A": {
+        "source": "service_plc",
+        "datatype": "REAL",
+        "unit": "A",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "",
+        "default_label": "Chamber 1 Current Readback"
+    },
+    "plc.system.vacuumSystem.pumps.ion.chamber_1.on_hours": {
+        "source": "service_plc",
+        "datatype": "REAL",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "",
+        "default_label": "Chamber 1 On Hours"
+    },
+    "plc.system.vacuumSystem.pumps.ion.chamber_1.voltage_readback_V": {
+        "source": "service_plc",
+        "datatype": "REAL",
+        "unit": "V",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "",
+        "default_label": "Chamber 1 Voltage Readback"
+    },
+    "plc.system.vacuumSystem.pumps.roughing.beamline.status": {
+        "source": "service_plc",
+        "datatype": "BOOL",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "",
+        "default_label": "Beamline Status"
+    },
+    "plc.system.vacuumSystem.pumps.roughing.loadlock.status": {
+        "source": "service_plc",
+        "datatype": "BOOL",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "",
+        "default_label": "Loadlock Status"
+    },
+    "plc.system.vacuumSystem.pumps.roughing.source.status": {
+        "source": "service_plc",
+        "datatype": "BOOL",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "",
+        "default_label": "Source Status"
+    },
+    "plc.system.vacuumSystem.pumps.titanium.chamber_1.filament_1.cycles": {
+        "source": "service_plc",
+        "datatype": "INT",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "",
+        "default_label": "Filament 1 Cycles"
+    },
+    "plc.system.vacuumSystem.pumps.titanium.chamber_1.filament_1.on_hours": {
+        "source": "service_plc",
+        "datatype": "REAL",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "",
+        "default_label": "Filament 1 On Hours"
+    },
+    "plc.system.vacuumSystem.pumps.titanium.chamber_1.filament_1.status": {
+        "source": "service_plc",
+        "datatype": "BOOL",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "",
+        "default_label": "Filament 1 Status"
+    },
+    "plc.system.vacuumSystem.pumps.titanium.chamber_1.nominal_current_A": {
+        "source": "service_plc",
+        "datatype": "REAL",
+        "unit": "A",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "",
+        "default_label": "Chamber 1 Nominal Current"
+    },
+    "plc.system.vacuumSystem.pumps.titanium.chamber_1.off_time_s": {
+        "source": "service_plc",
+        "datatype": "REAL",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "",
+        "default_label": "Chamber 1 Off Time S"
+    },
+    "plc.system.vacuumSystem.pumps.titanium.chamber_1.on_time_s": {
+        "source": "service_plc",
+        "datatype": "REAL",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "",
+        "default_label": "Chamber 1 On Time S"
+    },
+    "plc.system.vacuumSystem.pumps.turbo.beamline.on_hours": {
+        "source": "service_plc",
+        "datatype": "REAL",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "",
+        "default_label": "Beamline On Hours"
+    },
+    "plc.system.vacuumSystem.pumps.turbo.beamline.speed": {
+        "source": "service_plc",
+        "datatype": "REAL",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "",
+        "default_label": "Beamline Speed"
+    },
+    "plc.system.vacuumSystem.pumps.turbo.beamline.status": {
+        "source": "service_plc",
+        "datatype": "BOOL",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "",
+        "default_label": "Beamline Status"
+    },
+    "plc.system.vacuumSystem.pumps.turbo.chamber.on_hours": {
+        "source": "service_plc",
+        "datatype": "REAL",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "",
+        "default_label": "Chamber On Hours"
+    },
+    "plc.system.vacuumSystem.pumps.turbo.chamber.speed": {
+        "source": "service_plc",
+        "datatype": "REAL",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "",
+        "default_label": "Chamber Speed"
+    },
+    "plc.system.vacuumSystem.pumps.turbo.chamber.status": {
+        "source": "service_plc",
+        "datatype": "BOOL",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "",
+        "default_label": "Chamber Status"
+    },
+    "plc.system.vacuumSystem.pumps.turbo.loadlock.on_hours": {
+        "source": "service_plc",
+        "datatype": "REAL",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "",
+        "default_label": "Loadlock On Hours"
+    },
+    "plc.system.vacuumSystem.pumps.turbo.loadlock.speed": {
+        "source": "service_plc",
+        "datatype": "REAL",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "",
+        "default_label": "Loadlock Speed"
+    },
+    "plc.system.vacuumSystem.pumps.turbo.loadlock.status": {
+        "source": "service_plc",
+        "datatype": "BOOL",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "",
+        "default_label": "Loadlock Status"
+    },
+    "plc.system.vacuumSystem.pumps.turbo.source_1.on_hours": {
+        "source": "service_plc",
+        "datatype": "REAL",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "",
+        "default_label": "Source 1 On Hours"
+    },
+    "plc.system.vacuumSystem.pumps.turbo.source_1.speed": {
+        "source": "service_plc",
+        "datatype": "REAL",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "",
+        "default_label": "Source 1 Speed"
+    },
+    "plc.system.vacuumSystem.pumps.turbo.source_1.status": {
+        "source": "service_plc",
+        "datatype": "BOOL",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "",
+        "default_label": "Source 1 Status"
+    },
+    "plc.system.vacuumSystem.pumps.turbo.source_2.on_hours": {
+        "source": "service_plc",
+        "datatype": "REAL",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "",
+        "default_label": "Source 2 On Hours"
+    },
+    "plc.system.vacuumSystem.pumps.turbo.source_2.speed": {
+        "source": "service_plc",
+        "datatype": "REAL",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "",
+        "default_label": "Source 2 Speed"
+    },
+    "plc.system.vacuumSystem.pumps.turbo.source_2.status": {
+        "source": "service_plc",
+        "datatype": "BOOL",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "",
+        "default_label": "Source 2 Status"
+    },
+    "plc.system.vacuumSystem.valves.gate.beamline-chamber.cycles": {
+        "source": "service_plc",
+        "datatype": "INT",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "",
+        "default_label": "Beamline-Chamber Cycles"
+    },
+    "plc.system.vacuumSystem.valves.gate.beamline-chamber.open": {
+        "source": "service_plc",
+        "datatype": "BOOL",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "",
+        "default_label": "Beamline-Chamber Open"
+    },
+    "plc.system.vacuumSystem.valves.gate.beamline-chamber.requestOpen": {
+        "source": "service_plc",
+        "datatype": "BOOL",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "",
+        "default_label": "Beamline-Chamber Request Open"
+    },
+    "plc.system.vacuumSystem.valves.gate.chamber-loadlock.cycles": {
+        "source": "service_plc",
+        "datatype": "INT",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "",
+        "default_label": "Chamber-Loadlock Cycles"
+    },
+    "plc.system.vacuumSystem.valves.gate.chamber-loadlock.open": {
+        "source": "service_plc",
+        "datatype": "BOOL",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "",
+        "default_label": "Chamber-Loadlock Open"
+    },
+    "plc.system.vacuumSystem.valves.gate.source-beamline.cycles": {
+        "source": "service_plc",
+        "datatype": "INT",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "",
+        "default_label": "Source-Beamline Cycles"
+    },
+    "plc.system.vacuumSystem.valves.gate.source-beamline.open": {
+        "source": "service_plc",
+        "datatype": "BOOL",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "",
+        "default_label": "Source-Beamline Open"
+    },
+    "plc.system.vacuumSystem.valves.gate.source-beamline.requestOpen": {
+        "source": "service_plc",
+        "datatype": "BOOL",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "",
+        "default_label": "Source-Beamline Request Open"
+    },
+    "plc.system.vacuumSystem.valves.pneumatic.placeholder": {
+        "source": "service_plc",
+        "datatype": "BOOL",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "",
+        "default_label": "Pneumatic Placeholder"
+    },
+    "vacuum.controller_10.vg1_source.pressure": {
+        "source": "service_vacuum",
+        "hw_node": 10,
+        "hw_channel": 1,
+        "datatype": "REAL",
+        "unit": "mB",
+        "default_scale": "log",
+        "multiplier": 1.0,
+        "description": "VG1 Source Pressure",
+        "default_label": "VG1 Source Pressure"
+    },
+    "vacuum.controller_10.vg1_source.status": {
+        "source": "service_vacuum",
+        "hw_node": 10,
+        "hw_channel": 1,
+        "datatype": "INT",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "VG1 Source Status Code",
+        "default_label": "VG1 Source Status"
+    },
+    "vacuum.controller_10.vg2_premag.pressure": {
+        "source": "service_vacuum",
+        "hw_node": 10,
+        "hw_channel": 2,
+        "datatype": "REAL",
+        "unit": "mB",
+        "default_scale": "log",
+        "multiplier": 1.0,
+        "description": "VG2 PreMag Pressure",
+        "default_label": "VG2 PreMag Pressure"
+    },
+    "vacuum.controller_10.vg2_premag.status": {
+        "source": "service_vacuum",
+        "hw_node": 10,
+        "hw_channel": 2,
+        "datatype": "INT",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "VG2 PreMag Status Code",
+        "default_label": "VG2 PreMag Status"
+    },
+    "vacuum.controller_10.vg3_bline.pressure": {
+        "source": "service_vacuum",
+        "hw_node": 10,
+        "hw_channel": 3,
+        "datatype": "REAL",
+        "unit": "mB",
+        "default_scale": "log",
+        "multiplier": 1.0,
+        "description": "VG3 BLine Pressure",
+        "default_label": "VG3 BLine Pressure"
+    },
+    "vacuum.controller_10.vg3_bline.status": {
+        "source": "service_vacuum",
+        "hw_node": 10,
+        "hw_channel": 3,
+        "datatype": "INT",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "VG3 BLine Status Code",
+        "default_label": "VG3 BLine Status"
+    },
+    "vacuum.controller_20.vg2_ldlock.pressure": {
+        "source": "service_vacuum",
+        "hw_node": 20,
+        "hw_channel": 2,
+        "datatype": "REAL",
+        "unit": "mB",
+        "default_scale": "log",
+        "multiplier": 1.0,
+        "description": "VG2 LdLock Pressure",
+        "default_label": "VG2 LdLock Pressure"
+    },
+    "vacuum.controller_20.vg2_ldlock.status": {
+        "source": "service_vacuum",
+        "hw_node": 20,
+        "hw_channel": 2,
+        "datatype": "INT",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "VG2 LdLock Status Code",
+        "default_label": "VG2 LdLock Status"
+    },
+    "vacuum.controller_20.vg3_cham_2.pressure": {
+        "source": "service_vacuum",
+        "hw_node": 20,
+        "hw_channel": 3,
+        "datatype": "REAL",
+        "unit": "mB",
+        "default_scale": "log",
+        "multiplier": 1.0,
+        "description": "VG3 Cham 2 Pressure",
+        "default_label": "VG3 Cham 2 Pressure"
+    },
+    "vacuum.controller_20.vg3_cham_2.status": {
+        "source": "service_vacuum",
+        "hw_node": 20,
+        "hw_channel": 3,
+        "datatype": "INT",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "VG3 Cham 2 Status Code",
+        "default_label": "VG3 Cham 2 Status"
+    },
+    "vacuum.controller_20.vg4_cham_1.pressure": {
+        "source": "service_vacuum",
+        "hw_node": 20,
+        "hw_channel": 1,
+        "datatype": "REAL",
+        "unit": "mB",
+        "default_scale": "log",
+        "multiplier": 1.0,
+        "description": "VG4 Cham 1 Pressure",
+        "default_label": "VG4 Cham 1 Pressure"
+    },
+    "vacuum.controller_20.vg4_cham_1.status": {
+        "source": "service_vacuum",
+        "hw_node": 20,
+        "hw_channel": 1,
+        "datatype": "INT",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "VG4 Cham 1 Status Code",
+        "default_label": "VG4 Cham 1 Status"
+    }
+}
