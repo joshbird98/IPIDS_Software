@@ -52,12 +52,13 @@ class ChannelSelectorDialog(QDialog):
 
         # 2. Tree
         self.tree = QTreeWidget()
-        self.tree.setHeaderLabels(["Hierarchy / Tag", "Plot Label", "Mult.", "Scale", "Fav"])
+        self.tree.setHeaderLabels(["Hierarchy / Tag", "Plot Label", "Mult.", "Scale", "Fav", "Lane"])
         self.tree.setColumnWidth(0, 350)
         self.tree.setColumnWidth(1, 200)
         self.tree.setColumnWidth(2, 60)
         self.tree.setColumnWidth(3, 80)
         self.tree.setColumnWidth(4, 40)
+        self.tree.setColumnWidth(5, 80)
         layout.addWidget(self.tree)
 
         self._populate_tree()
@@ -262,6 +263,22 @@ class ChannelSelectorDialog(QDialog):
         btn_fav.clicked.connect(lambda: self._on_fav_clicked(full_tag))
         self.tree.setItemWidget(item, 4, btn_fav)
 
+        # Col 5: Lane Assignment Dropdown
+        lane_combo = QComboBox()
+        # Define default system lanes
+        lane_combo.addItems(["Lane 1", "Lane 2", "Lane 3", "Lane 4"])
+
+        # Load existing preference or default to Lane 1
+        current_lane = user_cfg.get('lane', 'Lane 1')
+        lane_combo.setCurrentText(current_lane)
+
+        lane_combo.setStyleSheet("""
+                    QComboBox { background-color: white; color: black; border: 1px solid #ccc; padding: 1px; }
+                    QComboBox QAbstractItemView { background-color: white; color: black; selection-background-color: #e0e0e0; }
+                """)
+        lane_combo.currentTextChanged.connect(lambda txt: self._on_lane_changed(item, full_tag, txt))
+        self.tree.setItemWidget(item, 5, lane_combo)
+
         if full_tag not in self.item_map:
             self.item_map[full_tag] = []
         self.item_map[full_tag].append(item)
@@ -298,6 +315,20 @@ class ChannelSelectorDialog(QDialog):
                 pass
 
         self.tree.blockSignals(False)
+
+    def _on_lane_changed(self, source_item, full_tag, new_lane):
+        """Saves the lane selection and syncs favorites."""
+        if full_tag not in self.config: self.config[full_tag] = {}
+        self.config[full_tag]['lane'] = new_lane
+
+        if full_tag in self.item_map:
+            for mapped_item in self.item_map[full_tag]:
+                if mapped_item != source_item:
+                    combo = self.tree.itemWidget(mapped_item, 5)
+                    if combo and combo.currentText() != new_lane:
+                        combo.blockSignals(True)
+                        combo.setCurrentText(new_lane)
+                        combo.blockSignals(False)
 
     # --- New Event Handlers for the Injected Widgets ---
 
@@ -446,18 +477,18 @@ class ChannelSelectorDialog(QDialog):
         self.accept()
 
     def get_selection(self):
-        """Compiles the final config. Uses self.config for favorite/selected truth."""
         final_config = {}
         for tag, items in self.item_map.items():
             if not items: continue
-            # Primary item is the one in 'All Channels' (usually index 0)
             item = items[0]
 
-            # Use the dictionary for favorite/selected state as it's the most reliable
             is_selected = (item.checkState(0) == Qt.CheckState.Checked)
             is_fav = self.config.get(tag, {}).get('favorite', False)
-
             color = self.config.get(tag, {}).get('color') or self._get_persistent_color(tag)
+
+            # Extract lane from the widget
+            lane_widget = self.tree.itemWidget(item, 5)
+            lane_val = lane_widget.currentText() if lane_widget else "Lane 1"
 
             final_config[tag] = {
                 "dataSource": tag,
@@ -466,6 +497,7 @@ class ChannelSelectorDialog(QDialog):
                 "scale": self.tree.itemWidget(item, 3).currentText().lower(),
                 "favorite": is_fav,
                 "selected": is_selected,
-                "color": color
+                "color": color,
+                "lane": lane_val  # Inject into master config
             }
         return final_config
