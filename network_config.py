@@ -9,17 +9,35 @@ HOST = "tcp://127.0.0.1"
 NOISY_RACK_WAVESHARE_IP = "192.168.1.200"
 NOISY_RACK_WAVESHARE_PORT = 4196
 
+SRC_TURBO_WAVESHARE_IP = "192.168.1.201"
+SRC_TURBO_WAVESHARE_PORT = 4196
+
+LDLK_TURBO_WAVESHARE_IP = "192.168.1.202"
+LDLK_TURBO_WAVESHARE_PORT = 4196
+
 # --- PLC Service (Snap7) ---
 # PUBlishes 10Hz tag data and faults
 ZMQ_PORT_PLC_PUB = f"{HOST}:5550"
 # PULLs write commands from the GUI or other services
 ZMQ_PORT_PLC_CMD = f"{HOST}:5551"
 
-# --- Vacuum Service (ASCII/TCP) ---
+# --- Vacuum Gauge Service (ASCII/TCP) ---
 # PUBlishes vacuum/HV data
 ZMQ_PORT_VACUUM_PUB = f"{HOST}:5556"
 # PULLs commands for vacuum/HV
 ZMQ_PORT_VACUUM_CMD = f"{HOST}:5557"
+
+# --- Source Turbopump Service (TCP) ---
+# PUBlishes vacuum/HV data
+ZMQ_PORT_SRC_TURBO_PUB = f"{HOST}:5558"
+# PULLs commands for vacuum/HV
+ZMQ_PORT_SRC_TURBO_CMD = f"{HOST}:5559"
+
+# --- Loadlock Turbopump Service (TCP) ---
+# PUBlishes vacuum/HV data
+ZMQ_PORT_LDLK_TURBO_PUB = f"{HOST}:5560"
+# PULLs commands for vacuum/HV
+ZMQ_PORT_LDLK_TURBO_CMD = f"{HOST}:5561"
 
 # --- Serial Service (Modbus/TCP) ---
 # PUBlishes serial data
@@ -36,5 +54,9 @@ TOPIC_PLC_DATA = b"PLC_DATA"
 TOPIC_PLC_FAULTS = b"PLC_FAULTS"
 TOPIC_VACUUM_DATA = b"VACUUM_DATA"
 TOPIC_VACUUM_FAULTS = b"VACUUM_FAULTS"
+TOPIC_SRC_TURBO_DATA = b"SRC_TURBO_DATA"
+TOPIC_SRC_TURBO_FAULTS = b"SRC_TURBO_FAULTS"
+TOPIC_LDLK_TURBO_DATA = b"LDLK_TURBO_DATA"
+TOPIC_LDLK_TURBO_FAULTS = b"LDLK_TURBO_FAULTS"
 TOPIC_SERIAL_DATA = b"SERIAL_DATA"
 TOPIC_SERIAL_FAULTS = b"SERIAL_FAULTS"
