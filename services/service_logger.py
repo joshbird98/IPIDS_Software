@@ -56,6 +56,7 @@ class LoggerMicroservice:
         # Low Res: 0.5Hz for 24 hours = 43200 points
         self.low_res_max = 43200
         self.low_res_ptr = 0
+        self.low_res_full = False
         self.low_res_buffer = np.zeros((self.low_res_max, self.num_keys), dtype=np.float32)
         self.low_res_ts = np.zeros(self.low_res_max, dtype=np.float64)
 
@@ -176,11 +177,16 @@ class LoggerMicroservice:
             self.high_res_full = True
 
         # 2. Update Low-Res Buffer (2s interval)
+        # ---> UN-INDENTED THIS ENTIRE BLOCK <---
         if current_ts - self.last_low_res_log >= self.low_res_interval:
-            if self.low_res_ptr < self.low_res_max:
-                self.low_res_ts[self.low_res_ptr] = current_ts
-                self.low_res_buffer[self.low_res_ptr, :] = row
-                self.low_res_ptr += 1
+            self.low_res_ts[self.low_res_ptr] = current_ts
+            self.low_res_buffer[self.low_res_ptr, :] = row
+
+            self.low_res_ptr += 1
+            if self.low_res_ptr >= self.low_res_max:
+                self.low_res_ptr = 0
+                self.low_res_full = True
+
             self.last_low_res_log = current_ts
 
         # 3. Periodic Disk Flush of Low-Res Data
@@ -197,16 +203,20 @@ class LoggerMicroservice:
                 self._finalize_burst()
 
     def _queue_low_res_flush(self):
-        print("LOW RES FLUSH")
         """Extracts valid low-res data and sends to I/O thread."""
-        if self.low_res_ptr == 0: return
+        if not self.low_res_full and self.low_res_ptr == 0:
+            return
 
         filename = f"daily_trend_{datetime.now().strftime('%Y%m%d')}.npz"
         filepath = os.path.join(DEFAULT_LOG_DIRECTORY, filename)
 
-        # Copy arrays to prevent modification during disk write
-        ts_copy = self.low_res_ts[:self.low_res_ptr].copy()
-        data_copy = self.low_res_buffer[:self.low_res_ptr, :].copy()
+        if self.low_res_full:
+            # Unravel the circular buffer so time goes strictly from old -> new
+            ts_copy = np.roll(self.low_res_ts, -self.low_res_ptr)
+            data_copy = np.roll(self.low_res_buffer, -self.low_res_ptr, axis=0)
+        else:
+            ts_copy = self.low_res_ts[:self.low_res_ptr].copy()
+            data_copy = self.low_res_buffer[:self.low_res_ptr, :].copy()
 
         self.write_queue.put(('SAVE', filepath, ts_copy, data_copy, self.keys))
 
@@ -271,28 +281,45 @@ class LoggerMicroservice:
     def _disk_writer_loop(self):
         while self.running:
             try:
+                # 1. Try to get a task from the queue
                 task = self.write_queue.get(timeout=1.0)
                 cmd = task[0]
 
-                if cmd == 'SAVE':
-                    # Standard daily trend save
-                    _, filepath, ts, data, keys = task
-                    temp_path = filepath.replace(".npz", "_temp.npz")
-                    np.savez_compressed(temp_path, timestamps=ts, values=data, keys=keys)
-                    LoggerMicroservice._atomic_rename(temp_path, filepath)
+                # 2. Attempt the specific disk I/O operations
+                try:
+                    if cmd == 'SAVE':
+                        # Standard daily trend save
+                        _, filepath, ts, data, keys = task
+                        temp_path = filepath.replace(".npz", "_temp.npz")
+                        np.savez_compressed(temp_path, timestamps=ts, values=data, keys=keys)
+                        LoggerMicroservice._atomic_rename(temp_path, filepath)
+                        print("")
+                        print(f"[Logger] Successfully saved trend: {os.path.basename(filepath)}")
 
-                elif cmd == 'SAVE_BURST':
-                    # Burst save (PRE or POST)
-                    _, filepath, ts, data, keys, meta_str = task
-                    temp_path = filepath.replace(".npz", "_temp.npz")
-                    np.savez_compressed(temp_path, timestamps=ts, values=data, keys=keys, metadata=np.array(meta_str))
-                    LoggerMicroservice._atomic_rename(temp_path, filepath)
+                    elif cmd == 'SAVE_BURST':
+                        # Burst save (PRE or POST)
+                        _, filepath, ts, data, keys, meta_str = task
+                        temp_path = filepath.replace(".npz", "_temp.npz")
+                        np.savez_compressed(temp_path, timestamps=ts, values=data, keys=keys, metadata=np.array(meta_str))
+                        LoggerMicroservice._atomic_rename(temp_path, filepath)
+                        print(f"[Logger] Successfully saved burst: {os.path.basename(filepath)}")
 
-                self.write_queue.task_done()
+                except Exception as io_err:
+                    # If the write fails, safely extract the filepath to see exactly what broke
+                    failed_file = task[1] if len(task) > 1 else "Unknown File"
+                    print(f"[Logger I/O Error] Failed to write {os.path.basename(failed_file)}: {io_err}")
+
+                finally:
+                    # No matter what happens (success or crash), tell the queue we are done
+                    # with this task so the thread doesn't deadlock.
+                    self.write_queue.task_done()
+
             except queue.Empty:
+                # Normal timeout, just loop again
                 continue
             except Exception as e:
-                print(f"[Logger I/O Error] {e}")
+                # Catch-all for any weird queue or tuple unpacking errors
+                print(f"[Logger Loop Error] Critical worker failure: {e}")
 
     @staticmethod
     def _atomic_rename(temp_path, final_path):
@@ -328,6 +355,7 @@ class LoggerMicroservice:
                 if current_time >= self.next_tick:
                     self._log_current_state()
                     self.next_tick = current_time + self.tick_rate
+                    print(".", end="", flush=True)
 
             except KeyboardInterrupt:
                 break

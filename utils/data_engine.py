@@ -27,7 +27,7 @@ class TimeSeriesEngine:
         self.manifest.clear()
 
         for filename in os.listdir(self.log_dir):
-            if not filename.endswith(".npz"):
+            if not filename.endswith(".npz") or filename.endswith("_temp.npz"):
                 continue
 
             filepath = os.path.join(self.log_dir, filename)
