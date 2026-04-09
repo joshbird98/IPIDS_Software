@@ -6,6 +6,7 @@ import numpy as np
 import copy
 from datetime import datetime
 import textwrap
+import json
 
 from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QVBoxLayout, QHBoxLayout,
@@ -154,20 +155,19 @@ class TimeAxisItem(pg.AxisItem):
 # --- Main Application ---
 
 class DataViewerApp(QMainWindow):
-    def __init__(self):
+    def __init__(self, shared_cache, window_title="IPIDS Data Viewer"):
         super().__init__()
-        self.setWindowTitle("IPIDS Infinite Historian")
+        self.setWindowTitle(window_title)
         self.resize(1200, 800)
         self.showMaximized()
 
         # 1. Data Layer
-        current_dir = os.path.dirname(os.path.abspath(__file__))
-        log_dir = os.path.join(os.path.dirname(current_dir), "LogData")
-        self.cache = InfiniteDataCache(log_dir)
+        self.cache = shared_cache
         self.system_registry = load_registry()
 
         # 2. Profiles & Config
-        self.profiles_file = os.path.join(os.path.dirname(current_dir), "config", "workspace_profiles.json")
+        current_direc = os.path.dirname(os.path.abspath(__file__))
+        self.profiles_file = os.path.join(os.path.dirname(current_direc), "config", "workspace_profiles.json")
         self.profiles = self._load_all_profiles()
         self.plot_config = copy.deepcopy(self.profiles.get("Default", {}))
 
@@ -180,23 +180,19 @@ class DataViewerApp(QMainWindow):
 
         self._init_ui()
 
-        # 4. Connect Signals & Start
-        self.cache.data_updated.connect(self._on_cache_updated)
-        self.cache.set_active_tags(list(self.plot_config.keys()))
-        self.cache.start()
+        # 4. Connect Signals
+        self.cache.data_updated.connect(self._refresh_plot)
 
-        now = time.time()
-        self.cache.request_history(now - 300, now, stride=1) # Loads a little snippet of data
-
-        QTimer.singleShot(3000, self._silent_preload) # Prelods the last 24 hours silently
+        # Use the new register method so we don't wipe out other windows
+        self.cache.register_tags(list(self.plot_config.keys()))
 
         # 5. Fixed-rate Render Timer (30 FPS)
         self.render_timer = QTimer()
         self.render_timer.timeout.connect(self._refresh_plot)
         self.render_timer.start(33)
 
-        self.pin_idx = None  # Stores the index of the reference point
-        self.pin_x = None  # Stores the absolute timestamp of the pin
+        self.pin_idx = None
+        self.pin_x = None
 
     def _init_ui(self):
         main_widget = QWidget()
@@ -267,8 +263,8 @@ class DataViewerApp(QMainWindow):
         path_layout = QHBoxLayout()
         self.edit_export_path = QLineEdit()
         # Default to root/PlotData
-        current_dir = os.path.dirname(os.path.abspath(__file__))
-        default_path = os.path.join(os.path.dirname(current_dir), "PlotData")
+        current_direc = os.path.dirname(os.path.abspath(__file__))
+        default_path = os.path.join(os.path.dirname(current_direc), "PlotData")
         if not os.path.exists(default_path): os.makedirs(default_path)
 
         self.edit_export_path.setText(os.path.join(default_path, "IPIDS_Snapshot"))
@@ -578,10 +574,14 @@ class DataViewerApp(QMainWindow):
     def _save_current_profile(self):
         """Saves the current lane and channel configuration as a reusable profile."""
         from PyQt6.QtWidgets import QInputDialog, QMessageBox
+        import os
+        import json
+        import copy
 
         name, ok = QInputDialog.getText(self, "Save Profile", "Enter profile name:")
         if ok and name.strip():
             name = name.strip()
+
             # 1. Add to RAM dictionary
             self.profiles[name] = copy.deepcopy(self.plot_config)
 
@@ -590,13 +590,33 @@ class DataViewerApp(QMainWindow):
                 self.combo_profiles.addItem(name)
             self.combo_profiles.setCurrentText(name)
 
-            # 3. Save to Disk
+            # 3. Save to Disk (Safe Multi-Window Read-Modify-Write)
             try:
                 # Ensure directory exists
                 os.makedirs(os.path.dirname(self.profiles_file), exist_ok=True)
+
+                # A. Read current state of the disk to preserve other windows' saves
+                disk_profiles = {}
+                if os.path.exists(self.profiles_file):
+                    try:
+                        with open(self.profiles_file, "r") as f:
+                            disk_profiles = json.load(f)
+                    except json.JSONDecodeError:
+                        pass  # File is corrupt or completely empty, start fresh
+
+                # B. Inject this window's new profile into the up-to-date disk state
+                disk_profiles[name] = copy.deepcopy(self.plot_config)
+
+                # C. Save the merged dictionary back to the file
                 with open(self.profiles_file, "w") as f:
-                    json.dump(self.profiles, f, indent=4)
+                    json.dump(disk_profiles, f, indent=4)
+
+                # D. Update local RAM so this window immediately "sees" any profiles
+                #    that other windows might have saved recently.
+                self.profiles = disk_profiles
+
                 QMessageBox.information(self, "Success", f"Profile '{name}' saved successfully.")
+
             except Exception as e:
                 QMessageBox.critical(self, "Error", f"Failed to save profile:\n{e}")
 
@@ -611,7 +631,7 @@ class DataViewerApp(QMainWindow):
         name = self.combo_profiles.currentText()
         if name in self.profiles:
             self.plot_config = copy.deepcopy(self.profiles[name])
-            self.cache.set_active_tags(list(self.plot_config.keys()))
+            self.cache.register_tags(list(self.plot_config.keys()))
 
             self._build_lanes()
             self._ensure_inspector_items()
@@ -622,7 +642,7 @@ class DataViewerApp(QMainWindow):
         dlg = ChannelSelectorDialog(available_tags, self.plot_config, self.system_registry, self)
         if dlg.exec():
             self.plot_config = dlg.get_selection()
-            self.cache.set_active_tags(list(self.plot_config.keys()))
+            self.cache.register_tags(list(self.plot_config.keys()))
 
         self._build_lanes()
         self._ensure_inspector_items()
@@ -1050,7 +1070,6 @@ class DataViewerApp(QMainWindow):
             self.marker_items.clear()
 
     def closeEvent(self, event):
-        self.cache.stop()
         super().closeEvent(event)
 
 
@@ -1058,6 +1077,36 @@ if __name__ == "__main__":
     import json
 
     app = QApplication(sys.argv)
-    window = DataViewerApp()
-    window.show()
-    sys.exit(app.exec())
+
+    # 1. Initialize the Single Master Cache
+    current_dir = os.path.dirname(os.path.abspath(__file__))
+    log_dir = os.path.join(os.path.dirname(current_dir), "LogData")
+
+    print("[Launcher] Spinning up Master Data Cache...")
+    master_cache = InfiniteDataCache(log_dir)
+    master_cache.start()
+
+    # Preload the last 5 minutes immediately
+    now = time.time()
+    master_cache.request_history(now - 300, now, stride=1)
+
+    # 2. Launch Multiple Thin-Client Windows
+    # Both windows are passed the exact same master_cache memory reference
+    window_1 = DataViewerApp(master_cache, window_title="IPIDS Data Viewer - Window 1")
+    window_2 = DataViewerApp(master_cache, window_title="IPIDS Data Viewer - Window 2")
+    window_3 = DataViewerApp(master_cache, window_title="IPIDS Data Viewer - Window 3")
+    window_4 = DataViewerApp(master_cache, window_title="IPIDS Data Viewer - Window 4")
+
+    window_1.show()
+    window_2.show()
+    window_3.show()
+    window_4.show()
+
+    # 3. Execute Application Loop
+    # The code will block here until the user closes ALL open windows
+    exit_code = app.exec()
+
+    # 4. Graceful Teardown
+    print("[Launcher] All windows closed. Terminating background threads...")
+    master_cache.stop()
+    sys.exit(exit_code)

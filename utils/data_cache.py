@@ -67,12 +67,17 @@ class InfiniteDataCache(QObject):
         self.current_stride = 1
         self.loaded_ranges = [] # List of (start, end, stride) to prevent redundant fetches
 
-    def set_active_tags(self, tags: list):
-        """Initializes tracking arrays when the UI config changes."""
-        self.tags = [tag for tag in tags if tag in self.engine.channel_keys]
-        for tag in self.tags:
+    def register_tags(self, tags: list):
+        """Adds new tags to the master tracking list without overwriting existing ones."""
+        valid_tags = [tag for tag in tags if tag in self.engine.channel_keys]
+
+        for tag in valid_tags:
+            if tag not in self.tags:
+                self.tags.append(tag)
             if tag not in self.y_data:
-                self.y_data[tag] = np.array([], dtype=np.float64)
+                # Pre-pad with NaNs to match the global timeline length
+                current_x_len = len(self.x_time)
+                self.y_data[tag] = np.full(current_x_len, np.nan, dtype=np.float64)
 
     def start(self):
         self.zmq_listener.start()
