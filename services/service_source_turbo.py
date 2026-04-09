@@ -176,26 +176,59 @@ class TurbovacMicroservice:
         return bytes(frame)
 
     def _transaction(self, pnu, index, value=0, ak=AK_READ, control_word=0x0400):
-        """
-        Returns (Value, ResponseAK, StatusWord).
-        """
+        """Returns (Value, ResponseAK, StatusWord)."""
         if not self.connected: return None, None, None
 
         try:
-            while select.select([self.sock], [], [], 0.0)[0]:
-                self.sock.recv(1024)
+            # 1. Aggressive Non-Blocking Flush
+            # More robust than select(); violently clears out all stale bytes
+            self.sock.setblocking(False)
+            try:
+                while self.sock.recv(4096):
+                    pass
+            except Exception:
+                pass  # Expected when buffer is finally empty
 
+            # Restore normal blocking and timeout for the actual read
+            self.sock.setblocking(True)
+            self.sock.settimeout(SOCKET_TIMEOUT)
+
+            # 2. Transmit
             self.sock.sendall(self._generate_frame(pnu, index, value, ak, control_word))
-            time.sleep(0.02)
-            res = self.sock.recv(1024)
 
-            if len(res) < 24: return None, None, None
+            # 3. RS485 Turnaround Delay (Increased slightly for long-term stability)
+            time.sleep(0.04)
 
+            # 4. Strictly receive exactly 24 bytes
+            # Prevents TCP fragmentation from leaving bytes behind
+            res = b""
+            start_time = time.time()
+            while len(res) < 24:
+                chunk = self.sock.recv(24 - len(res))
+                if not chunk:
+                    break
+                res += chunk
+                if time.time() - start_time > SOCKET_TIMEOUT:
+                    break
+
+            if len(res) < 24:
+                return None, None, None
+
+            # 5. Extract PKE header to verify Protocol Sync
             resp_pke = (res[3] << 8) | res[4]
             resp_ak = (resp_pke >> 12) & 0xF
-            res_pwe = (res[7] << 24) | (res[8] << 16) | (res[9] << 8) | res[10]
 
-            # Extract ZSW (Status Word) from PZD1
+            # The PNU is stored in bits 0-10 of the PKE
+            resp_pnu = resp_pke & 0x07FF
+
+            # THE SILVER BULLET: Did the pump answer the right question?
+            if resp_pnu != pnu:
+                print(f"[!] DESYNC DETECTED! Asked for PNU {pnu}, got PNU {resp_pnu}.")
+                self.connected = False  # Force a clean TCP reconnect to fix the pipeline
+                return None, None, None
+
+            # 6. Extract payload
+            res_pwe = (res[7] << 24) | (res[8] << 16) | (res[9] << 8) | res[10]
             zsw = (res[11] << 8) | res[12]
 
             return res_pwe, resp_ak, zsw
@@ -209,9 +242,15 @@ class TurbovacMicroservice:
 
     # --- INITIALIZATION & HANDSHAKE ---
     def _connect_socket(self):
-        if self.sock: self.sock.close()
+        if self.sock:
+            try:
+                self.sock.close()
+            except Exception:
+                pass
         try:
             self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            # Disable Nagle's Algorithm for instant small-packet transmission
+            self.sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
             self.sock.settimeout(SOCKET_TIMEOUT)
             self.sock.connect((SRC_TURBO_WAVESHARE_IP, SRC_TURBO_WAVESHARE_PORT))
             self.connected = True

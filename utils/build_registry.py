@@ -148,23 +148,23 @@ def build_system_registry():
 
     # --- 3. Turbovac Tags ---
     turbo_base_tags = {
-        "vacuum.source_chamber.turbo_1.speed_hz": {"unit": "Hz", "short": "Speed", "desc": "Actual Frequency",
+        "vacuum.source.turbo_1.speed_hz": {"unit": "Hz", "short": "Speed", "desc": "Actual Frequency",
                                                    "label": "Turbo Speed"},
-        "vacuum.source_chamber.turbo_1.speed_pct": {"unit": "%", "short": "Speed", "desc": "Percent of Max Speed",
+        "vacuum.source.turbo_1.speed_pct": {"unit": "%", "short": "Speed", "desc": "Percent of Max Speed",
                                                     "label": "Turbo Speed"},
-        "vacuum.source_chamber.turbo_1.temp_bearing": {"unit": "°C", "short": "Bearing Temp",
+        "vacuum.source.turbo_1.temp_bearing": {"unit": "°C", "short": "Bearing Temp",
                                                        "desc": "Bearing Temperature", "label": "Bearing Temp"},
-        "vacuum.source_chamber.turbo_1.temp_converter": {"unit": "°C", "short": "Converter Temp",
+        "vacuum.source.turbo_1.temp_converter": {"unit": "°C", "short": "Converter Temp",
                                                          "desc": "Converter Temperature", "label": "Converter Temp"},
-        "vacuum.source_chamber.turbo_1.voltage": {"unit": "V", "short": "Voltage", "desc": "Motor Voltage",
+        "vacuum.source.turbo_1.voltage": {"unit": "V", "short": "Voltage", "desc": "Motor Voltage",
                                                   "label": "Turbo Voltage"},
-        "vacuum.source_chamber.turbo_1.current": {"unit": "A", "short": "Current", "desc": "Motor Current",
+        "vacuum.source.turbo_1.current": {"unit": "A", "short": "Current", "desc": "Motor Current",
                                                   "label": "Turbo Current"},
-        "vacuum.source_chamber.turbo_1.status_turning": {"unit": "", "short": "Status Turning",
+        "vacuum.source.turbo_1.status_turning": {"unit": "", "short": "Status Turning",
                                                          "desc": "Is rotor turning", "label": "Turbo Turning"},
-        "vacuum.source_chamber.turbo_1.status_ready": {"unit": "", "short": "Status Ready",
+        "vacuum.source.turbo_1.status_ready": {"unit": "", "short": "Status Ready",
                                                        "desc": "Normal operation reached", "label": "Turbo Ready"},
-        "vacuum.source_chamber.turbo_1.status_error": {"unit": "", "short": "Status Error",
+        "vacuum.source.turbo_1.status_error": {"unit": "", "short": "Status Error",
                                                        "desc": "Active error state", "label": "Turbo Error"}
     }
 

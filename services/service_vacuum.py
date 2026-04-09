@@ -112,8 +112,30 @@ class VacuumMicroservice:
         if crc_val < 32: crc_val += 32
         return address + body + bytes([crc_val]) + b'\x04'
 
+    def _clear_stale_buffer(self):
+        """Reads and discards any lingering data in the TCP buffer to prevent desync."""
+        if not self.connected or not self.sock:
+            return
+        try:
+            self.sock.settimeout(0.0)  # Switch to non-blocking
+            while True:
+                discarded = self.sock.recv(1024)
+                if not discarded:
+                    break
+        except BlockingIOError:
+            pass  # Buffer is empty, which is what we want
+        except Exception:
+            self.connected = False
+        finally:
+            if self.sock:
+                self.sock.settimeout(SOCKET_TIMEOUT)  # Restore operational timeout
+
     def _read_transaction(self, node_id: int, param_group: str, param_no: str) -> str:
         if not self.connected: return None
+
+        # 1. PRE-TRANSMIT FLUSH (Prevents desync from previous timeouts)
+        self._clear_stale_buffer()
+
         payload = self._generate_read_frame(node_id, param_group, param_no)
         try:
             self.sock.sendall(payload)
@@ -123,21 +145,20 @@ class VacuumMicroservice:
                 return response[ack_idx + 1:-2].decode('ascii', errors='ignore').strip()
             return None
         except socket.timeout:
-            return None  # Normal RS485 delay, do not drop connection
+            # 2. LOG TIMEOUT BUT KEEP CONNECTION OPEN
+            # The next transaction's _clear_stale_buffer() will catch any delayed response.
+            # print(f"[Vacuum Service] Read timeout (Node {node_id}, Param {param_no}).")
+            return None
         except Exception:
             self.connected = False
             return None
 
-    def _read_transaction_with_retry(self, node_id, param_group, param_no, max_retries=50):
-        for _ in range(max_retries):
-            val = self._read_transaction(node_id, param_group, param_no)
-            if val is not None: return val
-            time.sleep(POLL_INTERVAL)
-        return None
-
     def _write_transaction(self, node_id: int, param_group: str, param_no: str, value: str) -> str:
         """Sends a Write Command and classifies the hardware response."""
         if not self.connected: return "ERROR"
+
+        # 1. PRE-TRANSMIT FLUSH
+        self._clear_stale_buffer()
 
         address = f"{node_id:02X}".encode('ascii')
         body = b'\x0e' + param_group.encode('ascii') + b';' + param_no.encode('ascii') + b';' + value.encode(
@@ -160,10 +181,18 @@ class VacuumMicroservice:
                 return "ERROR"  # Garbage response
 
         except socket.timeout:
+            print(f"[Vacuum Service] Write timeout (Node {node_id}, Param {param_no}).")
             return "ERROR"
         except Exception:
             self.connected = False
             return "ERROR"
+
+    def _read_transaction_with_retry(self, node_id, param_group, param_no, max_retries=50):
+        for _ in range(max_retries):
+            val = self._read_transaction(node_id, param_group, param_no)
+            if val is not None: return val
+            time.sleep(POLL_INTERVAL)
+        return None
 
     def _write_transaction_with_retry(self, node_id: int, param_group: str, param_no: str, value: str,
                                       max_retries: int = 10) -> bool:
@@ -287,7 +316,7 @@ class VacuumMicroservice:
                 if "channels" in node_data:
                     for ch_str, ch_params in node_data["channels"].items():
                         ch = int(ch_str)
-                        target_name = str(ch_params.get("name", ""))[:10]  # Leybold limit is 10 chars
+                        target_name = str(ch_params.get("name", ""))[:10].strip()  # Leybold limit is 10 chars
 
                         if target_name:
                             # Group = Channel, Param = 5 (Name)

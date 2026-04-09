@@ -2,7 +2,7 @@
     "10": {
         "channels": {
             "1": {
-                "subsystem": "source_chamber",
+                "subsystem": "source",
                 "device": "gauge_vg1",
                 "name": "Source VG1"
             },
@@ -14,26 +14,26 @@
             "3": {
                 "subsystem": "beamline",
                 "device": "gauge_vg3",
-                "name": "Beamline VG3"
+                "name": "Bline VG3"
             }
         }
     },
     "20": {
         "channels": {
             "1": {
-                "subsystem": "loadlock",
-                "device": "gauge_vg1",
-                "name": "Loadlock VG1"
+                "subsystem": "chamber",
+                "device": "gauge_vg4",
+                "name": "Chamb VG4"
             },
             "2": {
-                "subsystem": "chamber_2",
-                "device": "gauge_vg2",
-                "name": "Chamber 2 VG2"
+                "subsystem": "loadlock",
+                "device": "gauge_vg5",
+                "name": "Ldlk VG5"
             },
             "3": {
-                "subsystem": "chamber_1",
-                "device": "gauge_vg3",
-                "name": "Chamber 1 VG3"
+                "subsystem": "chamber",
+                "device": "gauge_vg6",
+                "name": "Chamb VG6"
             }
         }
     }
