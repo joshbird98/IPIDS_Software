@@ -535,7 +535,14 @@ class DataViewerApp(QMainWindow):
                 else:
                     self.lanes[lane].addItem(c)
 
-                self.lane_legends[lane].addItem(c, name=cfg.get('label', tag))
+                # --- UNIT INJECTION FOR INITIAL DRAW ---
+                label_text = cfg.get('label', tag)
+                unit = getattr(self, 'system_registry', {}).get(tag, {}).get("unit", "")
+                unit_str = f" [{unit}]" if unit else ""
+                display_name = f"{label_text}{unit_str}"
+
+                # Pass the dynamically constructed string to the legend
+                self.lane_legends[lane].addItem(c, name=display_name)
                 self.curves[tag] = c
 
             y = self.cache.y_data.get(tag, np.array([]))
@@ -867,39 +874,48 @@ class DataViewerApp(QMainWindow):
                 # If no message or not hovering, force hide
                 label.hide()
 
-                # --- DYNAMIC LEGEND UPDATES ---
-                active_pin_ts = getattr(self, 'pin_timestamp', None)
-                pin_idx_resolved = None
+            # --- DYNAMIC LEGEND UPDATES ---
+            active_pin_ts = getattr(self, 'pin_timestamp', None)
+            pin_idx_resolved = None
 
-                # If a pin exists, find its current index in the RAM cache
-                if active_pin_ts is not None:
-                    # We search the cache for the index closest to our absolute timestamp
-                    pin_idx_resolved = np.searchsorted(self.cache.x_time, active_pin_ts, side='right') - 1
-                    # Ensure the pin hasn't been pruned out of RAM (index < 0)
-                    if pin_idx_resolved < 0:
-                        pin_idx_resolved = None
+            # If a pin exists, find its current index in the RAM cache
+            if active_pin_ts is not None:
+                # We search the cache for the index closest to our absolute timestamp
+                pin_idx_resolved = np.searchsorted(self.cache.x_time, active_pin_ts, side='right') - 1
+                # Ensure the pin hasn't been pruned out of RAM (index < 0)
+                if pin_idx_resolved < 0:
+                    pin_idx_resolved = None
 
-                for tag, curve in self.curves.items():
-                    cfg = self.plot_config.get(tag, {})
-                    lane = cfg.get('lane', 'Lane 1')
-                    y_data = self.cache.y_data.get(tag, np.array([]))
+            for tag, curve in self.curves.items():
+                cfg = self.plot_config.get(tag, {})
+                lane = cfg.get('lane', 'Lane 1')
+                y_data = self.cache.y_data.get(tag, np.array([]))
 
-                    if len(y_data) <= idx or lane not in self.lane_legends:
-                        continue
+                if len(y_data) <= idx or lane not in self.lane_legends:
+                    continue
 
-                    val = y_data[idx]
-                    label_text = cfg.get('label', tag)
-                    fmt = ".2e" if cfg.get('scale') == 'log' else ".2f"
-                    legend_text = f"{label_text}: {val:{fmt}}"
+                val = y_data[idx]
+                label_text = cfg.get('label', tag)
+                fmt = ".2e" if cfg.get('scale') == 'log' else ".2f"
 
-                    # Calculate and append Delta if the pin is active and valid
-                    if pin_idx_resolved is not None and pin_idx_resolved < len(y_data):
-                        dy = val - y_data[pin_idx_resolved]
-                        legend_text += f" (Δ: {dy:{fmt}})"
+                # 1. Reconstruct 'Label [Unit]'
+                unit = getattr(self, 'system_registry', {}).get(tag, {}).get("unit", "")
+                unit_bracket = f" [{unit}]" if unit else ""
+                display_name = f"{label_text}{unit_bracket}"
 
-                    lbl_item = self.lane_legends[lane].getLabel(curve)
-                    if lbl_item:
-                        lbl_item.setText(legend_text)
+                # 2. Format base readout
+                legend_text = f"{display_name}: {val:{fmt}}"
+
+                # 3. Format Delta readout with units
+                if pin_idx_resolved is not None and pin_idx_resolved < len(y_data):
+                    dy = val - y_data[pin_idx_resolved]
+                    # Append unit specifically to the delta value
+                    unit_suffix = f" {unit}" if unit else ""
+                    legend_text += f" (Δ: {dy:{fmt}}{unit_suffix})"
+
+                lbl_item = self.lane_legends[lane].getLabel(curve)
+                if lbl_item:
+                    lbl_item.setText(legend_text)
 
     def _on_graph_clicked(self, event):
         if not self.lanes: return
@@ -991,21 +1007,27 @@ class DataViewerApp(QMainWindow):
             self.layout_widget.setCursor(Qt.CursorShape.ArrowCursor)
 
     def _reset_legend_text(self):
-        """Resets all legends across all active lanes."""
+        """Restores legends to 'Label [Unit]' format when inspector is off."""
         for tag, curve in self.curves.items():
             cfg = self.plot_config.get(tag, {})
             lane = cfg.get('lane', 'Lane 1')
+
             if lane in self.lane_legends:
                 lbl_item = self.lane_legends[lane].getLabel(curve)
                 if lbl_item:
-                    lbl_item.setText(cfg.get('label', tag))
+                    label_text = cfg.get('label', tag)
+                    # Fetch unit from registry
+                    unit = getattr(self, 'system_registry', {}).get(tag, {}).get("unit", "")
+                    unit_str = f" [{unit}]" if unit else ""
 
-        # Invalidate and re-calculate sizes for all legends
+                    lbl_item.setText(f"{label_text}{unit_str}")
+
+        # Force layout update to prevent text clipping
         for legend in self.lane_legends.values():
             legend.layout.invalidate()
             legend.resize(0, 0)
             legend.updateSize()
-            legend.layout.activate()
+            #legend.layout.activate()
 
     def _format_delta_time(self, seconds):
         """Converts seconds into a human-readable string (e.g., 2h 46m 40s)."""

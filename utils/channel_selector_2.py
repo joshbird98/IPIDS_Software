@@ -229,11 +229,10 @@ class ChannelSelectorDialog(QDialog):
             item.setText(0, f"{default_label}{unit_str}")
             item.setText(1, "")
         else:
-            # Hierarchy view: Show short name + unit, show editable plot label
-            short_name = full_tag.split('.')[-1].replace('_', ' ').title()
+            short_name = metadata.get('short_name', full_tag.split('.')[-1].replace('_', ' ').title())
             item.setText(0, f"{short_name}{unit_str}")
-            # Keep the editable label strictly unit-free
-            item.setText(1, user_cfg.get('label', default_label))
+            base_label = user_cfg.get('label', default_label)
+            item.setText(1, f"{base_label}{unit_str}")
 
         if description:
             item.setToolTip(0, description)
@@ -296,8 +295,27 @@ class ChannelSelectorDialog(QDialog):
 
         # Col 1: Label Edited
         elif column == 1 and full_tag:
-            self.config[full_tag]['label'] = item.text(1).strip()
-            self._sync_items(full_tag, item, column_to_sync=1, text_val=item.text(1))
+            raw_text = item.text(1).strip()
+
+            # Fetch the expected unit
+            unit = self.registry.get(full_tag, {}).get("unit", "")
+            unit_str = f" [{unit}]" if unit else ""
+
+            # STRIP the unit out if the user left it in the text box
+            if unit_str and raw_text.endswith(unit_str):
+                clean_label = raw_text[:-len(unit_str)].strip()
+            else:
+                # If they accidentally deleted the unit while typing, that's fine too
+                clean_label = raw_text
+
+            # Save ONLY the clean label to the backend
+            self.config[full_tag]['label'] = clean_label
+
+            # RE-APPEND the unit to the UI to keep the table looking uniform
+            display_text = f"{clean_label}{unit_str}"
+            item.setText(1, display_text)
+
+            self._sync_items(full_tag, item, column_to_sync=1, text_val=display_text)
             self._update_selected_label()
 
         # Col 2: Multiplier Edited
@@ -394,16 +412,28 @@ class ChannelSelectorDialog(QDialog):
                         mapped_item.setCheckState(column_to_sync, check_state)
 
     def _update_selected_label(self):
-        """Scans the config and updates the live label at the top of the UI."""
+        """Scans the config and updates the live label at the top of the UI, including units."""
         selected_names = []
         for tag, user_config in self.config.items():
             if user_config.get("selected", False):
-                # Grab the custom label, or fallback to the tag name
-                label = user_config.get("label", tag.split('.')[-1])
-                selected_names.append(label)
+                # 1. Fetch metadata from the smart registry
+                reg_data = self.registry.get(tag, {})
+
+                # 2. Get the clean base label
+                # Priority: User's custom label -> Registry's default label -> Raw string split
+                base_label = user_config.get("label")
+                if not base_label:
+                    base_label = reg_data.get("default_label", tag.split('.')[-1])
+
+                # 3. Extract the unit dynamically
+                unit = reg_data.get("unit", "")
+                unit_str = f" [{unit}]" if unit else ""
+
+                # 4. Combine them for the display list
+                selected_names.append(f"{base_label}{unit_str}")
 
         if selected_names:
-            # Join them with a bullet point or comma
+            # Join them with a bullet point
             text = " • ".join(selected_names)
             self.selected_label.setText(f"Active Traces: {text}")
             self.selected_label.setStyleSheet("font-weight: bold; color: #4CAF50; padding: 5px;")  # Green
@@ -477,14 +507,25 @@ class ChannelSelectorDialog(QDialog):
             lane_widget = self.tree.itemWidget(item, 5)
             lane_val = lane_widget.currentText() if lane_widget else "Lane 1"
 
+            # --- GUARANTEE CLEAN EXPORT ---
+            # We pull the label directly from self.config, which we know is clean,
+            # falling back to a stripped version of the UI text just in case.
+            clean_label = self.config.get(tag, {}).get('label')
+            if not clean_label:
+                unit = self.registry.get(tag, {}).get("unit", "")
+                unit_str = f" [{unit}]" if unit else ""
+                raw_label = item.text(1)
+                clean_label = raw_label[:-len(unit_str)].strip() if (
+                            unit_str and raw_label.endswith(unit_str)) else raw_label
+
             final_config[tag] = {
                 "dataSource": tag,
-                "label": item.text(1),
+                "label": clean_label,  # Unit-Free!
                 "multiplier": float(item.text(2)) if item.text(2) else 1.0,
                 "scale": self.tree.itemWidget(item, 3).currentText().lower(),
                 "favorite": is_fav,
                 "selected": is_selected,
                 "color": color,
-                "lane": lane_val  # Inject into master config
+                "lane": lane_val
             }
         return final_config
