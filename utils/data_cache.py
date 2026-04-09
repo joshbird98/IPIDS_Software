@@ -2,7 +2,8 @@ import os
 import json
 import time
 import numpy as np
-from PyQt6.QtCore import QObject, QThread, pyqtSignal
+import psutil
+from PyQt6.QtCore import QObject, QThread, pyqtSignal, QTimer
 
 from utils.data_engine import TimeSeriesEngine
 from utils.zmq_listener import ZMQLiveEngine
@@ -41,6 +42,7 @@ class HistoryFetchWorker(QThread):
 class InfiniteDataCache(QObject):
     """Unified RAM buffer managing both live ZMQ streams and historical disk data."""
     data_updated = pyqtSignal()
+    markers_changed = pyqtSignal()
 
     def __init__(self, log_dir: str):
         super().__init__()
@@ -53,16 +55,56 @@ class InfiniteDataCache(QObject):
         self.zmq_listener = ZMQLiveEngine(ZMQ_PORT_PLC_PUB, ZMQ_PORT_VACUUM_PUB, ZMQ_PORT_SRC_TURBO_PUB)
         self.zmq_listener.data_ready.connect(self._on_live_data)
 
-        # Master Data Storage
-        self.tags = []
-        self.x_time = np.array([], dtype=np.float64)
+        # --- MEMORY MANAGEMENT PARAMETERS ---
+        self.max_capacity = 200000  # Max points kept in RAM (~5.5 hours at 10Hz)
+        self.chunk_size = 5000  # Block allocation size (~8.3 minutes of space)
 
-        # THE OMNISCIENT CACHE: Pre-allocate arrays for ALL keys instantly upon boot
-        self.y_data = {key: np.array([], dtype=np.float64) for key in self.engine.channel_keys}
+        # 1. The Background Buffers (The true memory)
+        self._x_buffer = np.zeros(self.chunk_size, dtype=np.float64)
+        self._y_buffers = {key: np.zeros(self.chunk_size, dtype=np.float64) for key in self.engine.channel_keys}
+
+        self.write_ptr = 0
+
+        # 2. The UI Views (These act as windows so the UI never sees the blank trailing zeros)
+        self.tags = []
+        self.x_time = self._x_buffer[:0]
+        self.y_data = {key: self._y_buffers[key][:0] for key in self.engine.channel_keys}
 
         self.oldest_loaded_ts = time.time()
         self.is_fetching = False
         self.current_stride = 1
+
+        # --- HEALTH MONITORING ---
+        self.process = psutil.Process(os.getpid())
+
+        # Initialize CPU percent baseline (first call always returns 0.0)
+        self.process.cpu_percent()
+
+        self.health_timer = QTimer()
+        self.health_timer.timeout.connect(self._print_health_stats)
+        self.health_timer.start(60000)  # Print every 60,000 ms (1 minute)
+
+        # --- THROTTLED RENDER LOOP ---
+        self.render_timer = QTimer()
+        self.render_timer.timeout.connect(self._emit_render_signal)
+        self.render_timer.start(250)  # Emits update at 4Hz (every 250ms)
+
+    def notify_markers_changed(self):
+        """Tells all connected windows to reload markers from disk."""
+        self.markers_changed.emit()
+
+    def _emit_render_signal(self):
+        """Safely triggers a UI redraw at a controlled frame rate."""
+        if self.write_ptr > 0 and not self.is_fetching:
+            self.data_updated.emit()
+
+    def _print_health_stats(self):
+        """Polls the OS for process-specific memory and CPU utilization."""
+        # RSS (Resident Set Size) is the non-swapped physical memory the process has used
+        mem_mb = self.process.memory_info().rss / (1024 * 1024)
+        cpu_pct = self.process.cpu_percent()
+
+        print(f"[Health] CPU: {cpu_pct:>4.1f}% | RAM: {mem_mb:>6.1f} MB | Buffer: {self.write_ptr}/{self.max_capacity}")
 
     def _build_vacuum_hw_map(self) -> dict:
         current_dir = os.path.dirname(os.path.abspath(__file__))
@@ -81,7 +123,7 @@ class InfiniteDataCache(QObject):
                         device = data.get("device", f"ch_{ch}")
                         hw_map[(node, ch)] = f"vacuum.{subsystem}.{device}"
         except Exception as e:
-            print(f"[Cache] Failed to build HW map: {e}")
+            pass
 
         return hw_map
 
@@ -131,7 +173,6 @@ class InfiniteDataCache(QObject):
         return flat_data
 
     def register_tags(self, tags: list):
-        """Updates which tags the UI is currently plotting."""
         self.tags = [tag for tag in tags if tag in self.engine.channel_keys]
 
     def start(self):
@@ -142,9 +183,27 @@ class InfiniteDataCache(QObject):
         self.history_worker.wait()
 
     def request_history(self, start_ts: float, end_ts: float, stride=1):
-        if self.is_fetching: return
+        """Triggers a disk read ONLY if requesting data we don't already have."""
+        """Deduplicates requests from multiple windows to prevent disk spam."""
+        if self.is_fetching:
+            return
+
+            # 1. If the requested data is ALREADY in our Omniscient RAM, abort.
+            # We add a 1-second buffer to handle floating point jitter.
+        if start_ts >= (self.oldest_loaded_ts - 1.0):
+            return
+
+            # 2. Only fetch the "gap" between what we have and what is requested.
+            # This prevents loading the same data twice.
+        fetch_end = min(end_ts, self.oldest_loaded_ts)
+
+        # If the gap is too small (less than a few seconds), ignore it.
+        if fetch_end - start_ts < 2.0:
+            return
+
         self.is_fetching = True
-        self.history_worker.fetch(start_ts, end_ts, stride)
+        print(f"[Cache] Multi-window request gap: {fetch_end - start_ts:.1f}s. Fetching...")
+        self.history_worker.fetch(start_ts, fetch_end, stride)
 
     def _on_history_fetched(self, req_start, req_end, ts_array, vals_array, stride):
         if len(ts_array) == 0:
@@ -152,6 +211,7 @@ class InfiniteDataCache(QObject):
             self.oldest_loaded_ts = min(self.oldest_loaded_ts, req_start)
             return
 
+        # Use the valid view (self.x_time), not the raw background buffer
         if len(self.x_time) > 0:
             cutoff_idx = np.searchsorted(ts_array, self.x_time[0], side='left')
             new_x = ts_array[:cutoff_idx]
@@ -163,13 +223,18 @@ class InfiniteDataCache(QObject):
             self.is_fetching = False
             return
 
-        self.x_time = np.concatenate((new_x, self.x_time))
-
-        # OMNISCIENT UPDATE: Save history for EVERY known key, even if the UI isn't looking at it yet
+        # Prepend to the raw background buffers
+        self._x_buffer = np.concatenate((new_x, self._x_buffer))
         for idx, tag in enumerate(self.engine.channel_keys):
-            hist_y = vals_array[:cutoff_idx, idx]
-            current_y = self.y_data[tag]
-            self.y_data[tag] = np.concatenate((hist_y, current_y))
+            self._y_buffers[tag] = np.concatenate((vals_array[:cutoff_idx, idx], self._y_buffers[tag]))
+
+        # Shift the pointer to account for the new historical data
+        self.write_ptr += len(new_x)
+
+        # Update the UI views
+        self.x_time = self._x_buffer[:self.write_ptr]
+        for tag in self.engine.channel_keys:
+            self.y_data[tag] = self._y_buffers[tag][:self.write_ptr]
 
         self.oldest_loaded_ts = min(self.oldest_loaded_ts, req_start)
         self.current_stride = min(self.current_stride, stride)
@@ -187,16 +252,41 @@ class InfiniteDataCache(QObject):
         flat_data.update(self._flatten_vacuum_data(raw_data_dict))
         flat_data.update(self._flatten_turbo_data(raw_data_dict))
 
-        current_time = time.time()
-        self.x_time = np.append(self.x_time, current_time)
+        # 1. Expand buffers if we hit the end
+        if self.write_ptr >= len(self._x_buffer):
+            self._x_buffer = np.concatenate((self._x_buffer, np.zeros(self.chunk_size)))
+            for tag in self.engine.channel_keys:
+                self._y_buffers[tag] = np.concatenate((self._y_buffers[tag], np.zeros(self.chunk_size)))
 
-        # OMNISCIENT UPDATE: Append live data for EVERY known key
+        # 2. Insert the live data using the pointer
+        self._x_buffer[self.write_ptr] = time.time()
+
         for tag in self.engine.channel_keys:
             val = flat_data.get(tag)
             if val is None:
-                # If network drops, hold previous value, or use NaN if first tick (prevents plotting 0.0 log errors)
-                val = self.y_data[tag][-1] if len(self.y_data[tag]) > 0 else np.nan
+                # Hold previous value if network drops, or NaN if it's the very first tick
+                val = self._y_buffers[tag][self.write_ptr - 1] if self.write_ptr > 0 else np.nan
+            self._y_buffers[tag][self.write_ptr] = val
 
-            self.y_data[tag] = np.append(self.y_data[tag], val)
+        self.write_ptr += 1
 
-        self.data_updated.emit()
+        # 3. Update the windows for the UI to read
+        self.x_time = self._x_buffer[:self.write_ptr]
+        for tag in self.engine.channel_keys:
+            self.y_data[tag] = self._y_buffers[tag][:self.write_ptr]
+
+        # 4. Prune Old Memory (Indefinite Runtime Protection)
+        if self.write_ptr > self.max_capacity:
+            trim_amount = 50000  # Drop the oldest ~1.3 hours of data from RAM
+
+            self._x_buffer = self._x_buffer[trim_amount:]
+            for tag in self.engine.channel_keys:
+                self._y_buffers[tag] = self._y_buffers[tag][trim_amount:]
+
+            self.write_ptr -= trim_amount
+
+            self.x_time = self._x_buffer[:self.write_ptr]
+            for tag in self.engine.channel_keys:
+                self.y_data[tag] = self._y_buffers[tag][:self.write_ptr]
+
+        #self.data_updated.emit()

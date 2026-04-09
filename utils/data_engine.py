@@ -111,7 +111,7 @@ class TimeSeriesEngine:
                     else:
                         file_keys = []
 
-                    print(f"[DEBUG File] Loaded {os.path.basename(filepath)}. Found {len(file_keys)} keys. Sample: {file_keys[:3]}")
+                    #print(f"[DEBUG File] Loaded {os.path.basename(filepath)}. Found {len(file_keys)} keys. Sample: {file_keys[:3]}")
 
                     # Create a blank slate of NaNs shaped to match the CURRENT master schema
                     padded_vals = np.full((len(file_ts), num_cols), np.nan, dtype=np.float32)
@@ -155,7 +155,7 @@ class TimeSeriesEngine:
             final_ts = final_ts[::stride]
             final_vals = final_vals[::stride]
 
-        print(f"[DEBUG Engine] Query Complete. Handing over {len(final_ts)} rows with shape {final_vals.shape} to the background thread.")
+        #print(f"[DEBUG Engine] Query Complete. Handing over {len(final_ts)} rows with shape {final_vals.shape} to the background thread.")
 
         return final_ts, final_vals
 

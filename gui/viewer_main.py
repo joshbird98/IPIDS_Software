@@ -182,17 +182,16 @@ class DataViewerApp(QMainWindow):
 
         # 4. Connect Signals
         self.cache.data_updated.connect(self._refresh_plot)
+        self.cache.markers_changed.connect(lambda: QTimer.singleShot(50, self._refresh_event_markers))
 
         # Use the new register method so we don't wipe out other windows
         self.cache.register_tags(list(self.plot_config.keys()))
 
-        # 5. Fixed-rate Render Timer (30 FPS)
-        self.render_timer = QTimer()
-        self.render_timer.timeout.connect(self._refresh_plot)
-        self.render_timer.start(33)
-
         self.pin_idx = None
         self.pin_x = None
+
+        self.log_axis_widgets = {}
+        self.y_auto_scale = True
 
     def _init_ui(self):
         main_widget = QWidget()
@@ -208,6 +207,10 @@ class DataViewerApp(QMainWindow):
         self.btn_scroll_lock.setStyleSheet("background-color: #4CAF50; color: white; font-weight: bold; padding: 10px;")
         self.btn_scroll_lock.clicked.connect(self._toggle_scroll_lock)
         sidebar_layout.addWidget(self.btn_scroll_lock)
+
+        self.btn_y_lock = QPushButton("🔓 Y-Scale: AUTO")
+        self.btn_y_lock.clicked.connect(self._toggle_y_lock)
+        sidebar_layout.addWidget(self.btn_y_lock)
 
         sidebar_layout.addWidget(QLabel("<b>Profiles:</b>"))
 
@@ -235,6 +238,18 @@ class DataViewerApp(QMainWindow):
         sidebar_layout.addWidget(btn_save_profile)
 
         self.btn_config = QPushButton("⚙️ Configure Channels")
+        self.btn_config.setStyleSheet("""
+                    QPushButton {
+                        background-color: #2196F3; 
+                        color: white; 
+                        font-weight: bold; 
+                        padding: 12px;
+                        border-radius: 4px;
+                    }
+                    QPushButton:hover {
+                        background-color: #1976D2;
+                    }
+                """)
         self.btn_config.clicked.connect(self.open_channel_config)
         sidebar_layout.addWidget(self.btn_config)
 
@@ -262,11 +277,6 @@ class DataViewerApp(QMainWindow):
         self.btn_inspector.setCheckable(True)
         self.btn_inspector.toggled.connect(self._on_inspector_toggled)
         sidebar_layout.addWidget(self.btn_inspector)
-
-        self.stats_label = QLabel("Stats: (Enable Inspector)")
-        self.stats_label.setStyleSheet("font-family: monospace; font-size: 10pt; color: #222; font-weight: 500;")
-        self.stats_label.setWordWrap(True)
-        sidebar_layout.addWidget(self.stats_label)
 
         sidebar_layout.addSpacing(20)
         sidebar_layout.addWidget(QLabel("<b>Export Settings:</b>"))
@@ -329,13 +339,31 @@ class DataViewerApp(QMainWindow):
         # Build the initial grid
         self._build_lanes()
 
+    def _toggle_y_lock(self):
+        self.y_auto_scale = not self.y_auto_scale
+
+        if self.y_auto_scale:
+            self.btn_y_lock.setText("🔓 Y-Scale: AUTO")
+            self.btn_y_lock.setStyleSheet("")
+        else:
+            self.btn_y_lock.setText("🔒 Y-Scale: LOCKED")
+            self.btn_y_lock.setStyleSheet("background-color: #FF9800; color: white;")
+
+        # Apply the state to all lanes
+        for lane_name in self.lanes:
+            p = self.lanes[lane_name]
+            p.vb.enableAutoRange(axis=pg.ViewBox.YAxis, enable=self.y_auto_scale)
+            self.lane_axes[lane_name].enableAutoRange(axis=pg.ViewBox.YAxis, enable=self.y_auto_scale)
+
     def _build_lanes(self):
         """Reconstructs the plotting grid, preserving view state and preventing memory leaks."""
         current_range = None
         if self.lanes:
+            # Save the current X-axis zoom level to restore it after the rebuild
             current_range = list(self.lanes.values())[0].viewRange()[0]
 
-        # DEEP CLEANUP
+        # --- 1. DEEP CLEANUP ---
+        # Explicitly remove items from the scene to prevent memory leaks in long-running sessions
         for vb in self.lane_axes.values():
             if vb.scene(): vb.scene().removeItem(vb)
         for c in self.curves.values():
@@ -344,11 +372,13 @@ class DataViewerApp(QMainWindow):
             if m.scene(): m.scene().removeItem(m)
 
         self.layout_widget.clear()
-        self.layout_widget.ci.layout.setSpacing(35)  # Increased gap between lanes
+        self.layout_widget.ci.layout.setSpacing(35)
 
+        # Reset all state tracking containers
         self.lanes.clear()
         self.lane_axes.clear()
         self.lane_legends.clear()
+        self.log_axis_widgets = {}  # Ensure this is reset
         self.v_lines.clear()
         self.pin_lines.clear()
         self.delta_labels.clear()
@@ -356,38 +386,71 @@ class DataViewerApp(QMainWindow):
         self.marker_items.clear()
         self.time_axes = []
 
+        # Identify which lanes actually have selected tags
         active_lanes = set()
         for tag, cfg in self.plot_config.items():
-            if cfg.get('selected'): active_lanes.add(cfg.get('lane', 'Lane 1'))
+            if cfg.get('selected'):
+                active_lanes.add(cfg.get('lane', 'Lane 1'))
 
         sorted_lanes = sorted(list(active_lanes))
-        if not sorted_lanes: return
+
+        if not sorted_lanes:
+            # Add a centered prompt to the layout
+            prompt_text = (
+                "<div style='text-align: center;'>"
+                "<span style='color: #888; font-size: 18pt; font-weight: bold;'>"
+                "No Channels Selected</span><br>"
+                "<span style='color: #666; font-size: 12pt;'>"
+                "Click 'Configure Channels' in the sidebar to begin.</span>"
+                "</div>"
+            )
+            label = self.layout_widget.addLabel(prompt_text, row=0, col=0)
+            # Center it in the available space
+            self.layout_widget.ci.layout.setRowStretchFactor(0, 1)
+            return
 
         base_plot = None
 
+        # --- 2. GRID CONSTRUCTION ---
         for i, lane_name in enumerate(sorted_lanes):
-            # 1. Create the Custom Axis FIRST
+            # A. Setup Custom Time Axis
             time_axis = TimeAxisItem(orientation='bottom')
             time_axis.setHeight(45)
             if i < len(sorted_lanes) - 1:
-                time_axis.hide_text = True
+                time_axis.hide_text = True  # Only show time labels on the bottom-most lane
             self.time_axes.append(time_axis)
 
-            # 2. Pass it INTO the plot during creation
+            # B. Create the Plot Item
             p = self.layout_widget.addPlot(row=i, col=0, axisItems={'bottom': time_axis})
-
-            # 3. NOW turn on the grid (it will apply to our custom axis)
             p.showGrid(x=True, y=True, alpha=0.5)
-
             p.setMenuEnabled(False)
-            p.vb.setMenuEnabled(False)
             p.hideButtons()
-            p.vb.setMouseEnabled(x=True, y=False)
-            p.vb.disableAutoRange(axis=pg.ViewBox.XAxis)
 
-                # --- Linking & View Restoration ---
+            # C. Initialize the Log ViewBox (Fixes "Referenced before assignment")
+            right_vb = pg.ViewBox()
+            right_vb.setMenuEnabled(False)
+            right_vb.setMouseEnabled(x=True, y=False)
+            p.scene().addItem(right_vb)
+
+            # D. Configure ViewBox Auto-Scaling (Y-Axis only)
+            # We disable X-AutoRange because our own Scroll Lock/Timespan logic handles X
+            for vb in [p.vb, right_vb]:
+                vb.setMouseEnabled(x=True, y=False)
+                vb.setAutoVisible(y=True)  # Focus Y-scale only on visible data points
+                vb.enableAutoRange(axis=pg.ViewBox.YAxis, enable=True)
+                vb.disableAutoRange(axis=pg.ViewBox.XAxis)
+
+            # E. Setup Log Axis (Right side)
+            log_axis = LogAxisItem(orientation='right')
+            p.layout.addItem(log_axis, 2, 2)
+            log_axis.linkToView(right_vb)
+            right_vb.setXLink(p)  # Sync X-axis between Linear and Log views
+            self.log_axis_widgets[lane_name] = log_axis
+
+            # F. Linking & View Restoration
             if base_plot is None:
                 base_plot = p
+                # Only the first lane needs to handle the manual view change signals
                 base_plot.sigRangeChanged.connect(self._handle_view_change)
                 self._auto_panning = True
                 if current_range:
@@ -396,26 +459,18 @@ class DataViewerApp(QMainWindow):
                     base_plot.setXRange(-300, 0, padding=0)
                 self._auto_panning = False
             else:
+                # Chain all other lanes to the first one
                 p.setXLink(base_plot)
 
+            # G. Add Legend
             legend = p.addLegend(offset=(10, 10))
             legend.setBrush(pg.mkBrush(0, 0, 0, 150))
             self.lane_legends[lane_name] = legend
 
-            log_axis = LogAxisItem(orientation='right')
-            p.layout.addItem(log_axis, 2, 2)
-
-            right_vb = pg.ViewBox()
-            right_vb.setMenuEnabled(False)
-            right_vb.disableAutoRange(axis=pg.ViewBox.XAxis)  # FIX 1 (Log Axis)
-            right_vb.setMouseEnabled(x=True, y=False)
-
-            p.scene().addItem(right_vb)
-            log_axis.linkToView(right_vb)
-            right_vb.setXLink(p)
-
+            # H. Sync Geometry (Ensures the log axis overlay aligns with the plot)
             p.vb.sigResized.connect(lambda _, vb=right_vb, plot=p: self._sync_specific_viewbox(plot, vb))
 
+            # I. Initialize Inspector Items (Crosshairs & Pins)
             v_line = pg.InfiniteLine(angle=90, movable=False, pen=pg.mkPen('y', width=1, style=Qt.PenStyle.DashLine))
             v_line.hide()
             p.addItem(v_line, ignoreBounds=True)
@@ -431,6 +486,7 @@ class DataViewerApp(QMainWindow):
             p.addItem(delta_label, ignoreBounds=True)
             self.delta_labels.append(delta_label)
 
+            # Store references
             self.lanes[lane_name] = p
             self.lane_axes[lane_name] = right_vb
 
@@ -497,15 +553,30 @@ class DataViewerApp(QMainWindow):
 
             self.curves[tag].setData(x_plot, y_plot)
 
+        # --- Smart Auto-Scroll (Preserves Zoom) ---
         if self.auto_scroll and len(x) > 0:
             self._auto_panning = True
             base_plot = list(self.lanes.values())[0]
-            base_plot.setXRange(x[-1] - self.live_span, x[-1], padding=0)
+
+            # Capture current width
+            view_range = base_plot.viewRange()[0]
+            current_width = view_range[1] - view_range[0]
+
+            # Keep live_span in sync so the 1m/15m buttons remain relevant
+            self.live_span = current_width
+
+            # Snap to live edge
+            base_plot.setXRange(x[-1] - current_width, x[-1], padding=0)
             self._auto_panning = False
 
         for lane, states in active_axes.items():
             left_axis = self.lanes[lane].getAxis('left')
             left_axis.show() # Force axis ON so grid renders
+
+            show_log = states['log']
+            self.lane_axes[lane].setVisible(show_log)
+            if lane in self.log_axis_widgets:
+                self.log_axis_widgets[lane].setVisible(show_log)
 
             if states['linear']:
                 left_axis.setStyle(showValues=True)
@@ -527,44 +598,27 @@ class DataViewerApp(QMainWindow):
     # --- Event Handlers ---
 
     def _handle_view_change(self):
-        if getattr(self, '_auto_panning', False): return
-        if self.auto_scroll: self._toggle_scroll_lock(manual_break=True)
-
-        if not self.lanes: return
-        base_plot = list(self.lanes.values())[0]
-
-        view_start, view_end = base_plot.viewRange()[0]
-        span_seconds = view_end - view_start
-        start_ts = self.t0 + view_start
-        end_ts = self.t0 + view_end
-
-        if span_seconds > 86400 * 7:
-            target_stride = 100
-        elif span_seconds > 86400:
-            target_stride = 10
-        else:
-            target_stride = 1
-
-        if target_stride < self.cache.current_stride:
-            # FIX 3: Erase old curves from the Legends to prevent duplicate stacking!
-            for c in self.curves.values():
-                scene = c.scene()
-                if scene: scene.removeItem(c)
-                for legend in self.lane_legends.values():
-                    legend.removeItem(c)
-
-            self.curves.clear()
-            self.marker_items.clear()
-
-            self.cache.request_history(start_ts, end_ts, stride=target_stride)
-            self._refresh_event_markers()
+        """Signal handler for X-Axis changes. Uses hardware state to detect Zoom vs Pan."""
+        if getattr(self, '_auto_panning', False) or not self.lanes:
             return
 
-        if start_ts < self.cache.oldest_loaded_ts:
-            fetch_start = start_ts - span_seconds
-            self.cache.request_history(fetch_start, self.cache.oldest_loaded_ts, stride=target_stride)
+        # 1. HARDWARE CHECK: Is the user actually holding a mouse button?
+        # Wheel zooming happens with NoButton.
+        # Dragging/Panning happens with Left or Middle button pressed.
+        is_panning = QApplication.mouseButtons() != Qt.MouseButton.NoButton
 
-        self._refresh_event_markers()
+        if self.auto_scroll and is_panning:
+            # User is physically dragging the graph away from 'Now'
+            self._toggle_scroll_lock(manual_break=True)
+
+        # 2. If we are still in Auto-Scroll (meaning they just used the Scroll Wheel),
+        # we update the width so the live edge doesn't "snap" back to 5 minutes.
+        if self.auto_scroll:
+            base_plot = list(self.lanes.values())[0]
+            vr = base_plot.viewRange()[0]
+            self.live_span = vr[1] - vr[0]
+
+        self._check_and_fetch_history()
 
     def _toggle_scroll_lock(self, manual_break=False):
         if manual_break:
@@ -633,11 +687,17 @@ class DataViewerApp(QMainWindow):
                 QMessageBox.critical(self, "Error", f"Failed to save profile:\n{e}")
 
     def _load_all_profiles(self):
+        profiles = {"Default": {}}  # Hardcoded safety start
         try:
-            with open(self.profiles_file, "r") as f:
-                return json.load(f)
-        except:
-            return {"Default": {}}
+            if os.path.exists(self.profiles_file):
+                with open(self.profiles_file, "r") as f:
+                    disk_data = json.load(f)
+                    if isinstance(disk_data, dict):
+                        profiles.update(disk_data)
+        except Exception as e:
+            print(f"[Profiles] Load error, using defaults: {e}")
+
+        return profiles
 
     def _apply_profile(self):
         name = self.combo_profiles.currentText()
@@ -681,39 +741,86 @@ class DataViewerApp(QMainWindow):
     def _set_timespan(self, minutes):
         if not self.lanes: return
         base_plot = list(self.lanes.values())[0]
-
         span_seconds = minutes * 60
+        self.live_span = span_seconds  # Update the internal target
 
-        # FIX 2: Activate the auto-panning shield so we don't break the Scroll Lock
         self._auto_panning = True
 
-        if self.auto_scroll:
-            self.live_span = span_seconds
-            view_range = base_plot.viewRange()[0]
-            right_edge = view_range[1]
-            base_plot.setXRange(right_edge - span_seconds, right_edge, padding=0)
-        else:
-            # If we are looking at history, zoom out from the center of the screen
-            view_range = base_plot.viewRange()[0]
-            center = (view_range[0] + view_range[1]) / 2
-            base_plot.setXRange(center - (span_seconds / 2), center + (span_seconds / 2), padding=0)
+        # Get the right-most edge of the current data or view
+        view_range = base_plot.viewRange()[0]
+        right_edge = view_range[1]
 
-        # Deactivate shield
+        # If we are live, snap to the very end of the cache
+        if self.auto_scroll and len(self.cache.x_time) > 0:
+            right_edge = self.cache.x_time[-1] - self.t0
+
+        base_plot.setXRange(right_edge - span_seconds, right_edge, padding=0)
+        self._check_and_fetch_history()  # History load happens under shield
         self._auto_panning = False
+
+    def _check_and_fetch_history(self):
+        """Unified logic for checking if the current view needs a disk read."""
+        if not self.lanes: return
+        base_plot = list(self.lanes.values())[0]
+
+        view_start, view_end = base_plot.viewRange()[0]
+        span_seconds = view_end - view_start
+        start_ts = self.t0 + view_start
+        end_ts = self.t0 + view_end
+
+        # 1. Determine Resolution (Stride)
+        if span_seconds > 86400 * 7:
+            target_stride = 100
+        elif span_seconds > 86400:
+            target_stride = 10
+        else:
+            target_stride = 1
+
+        # 2. Handle Resolution Increase (Clear old data to prevent stacking)
+        if target_stride < self.cache.current_stride:
+            for c in self.curves.values():
+                scene = c.scene()
+                if scene: scene.removeItem(c)
+                for legend in self.lane_legends.values():
+                    legend.removeItem(c)
+
+            self.curves.clear()
+            self.marker_items.clear()
+
+            self.cache.request_history(start_ts, end_ts, stride=target_stride)
+            self._refresh_event_markers()
+            return
+
+        # 3. Handle Panning Left (Fetch older data)
+        if start_ts < self.cache.oldest_loaded_ts:
+            fetch_start = start_ts - span_seconds
+            self.cache.request_history(fetch_start, self.cache.oldest_loaded_ts, stride=target_stride)
+
+        # 4. Final UI Sync
+        self._refresh_event_markers()
 
     def _on_mouse_moved(self, pos):
         if not self.btn_inspector.isChecked() or len(self.cache.x_time) == 0:
             return
 
+        # 1. IMPROVED HOVER DETECTION
+        # Instead of just 'contains', we find the plot the mouse is vertically closest to
         hovered_plot = None
+        min_dist = float('inf')
+
         for p in self.lanes.values():
-            if p.sceneBoundingRect().contains(pos):
-                hovered_plot = p
-                break
+            rect = p.sceneBoundingRect()
+            # If mouse is inside the horizontal bounds of the plots
+            if rect.left() <= pos.x() <= rect.right():
+                dist = abs(pos.y() - rect.center().y())
+                if dist < min_dist:
+                    min_dist = dist
+                    hovered_plot = p
 
         if not self.lanes: return
         ref_plot = hovered_plot if hovered_plot else list(self.lanes.values())[0]
 
+        # Map to plot coordinates
         mouse_point = ref_plot.vb.mapSceneToView(pos)
         mouse_x = mouse_point.x()
 
@@ -722,44 +829,77 @@ class DataViewerApp(QMainWindow):
         idx = np.clip(idx, 0, len(norm_x) - 1)
         actual_x = norm_x[idx]
 
+        # Update crosshairs for ALL lanes
         for v_line in self.v_lines:
             v_line.setPos(actual_x)
             v_line.setVisible(True)
 
+        # --- DYNAMIC ANCHORING WITH VERTICAL OFFSET ---
+        view_rect = ref_plot.vb.viewRect()
+        x_pct = (mouse_point.x() - view_rect.left()) / view_rect.width()
+        y_pct = (mouse_point.y() - view_rect.bottom()) / view_rect.height()
+
+        # Horizontal: Flip if near the right edge
+        anchor_x = 1.1 if x_pct > 0.8 else -0.1
+
+        # Vertical: If mouse is in the top half of the lane, show text BELOW.
+        # If in bottom half, show text ABOVE.
+        anchor_y = -0.2 if y_pct > 0.5 else 1.2
+
         delta_msg = ""
-        if self.pin_idx is not None:
-            dt = actual_x - (self.cache.x_time[self.pin_idx] - self.t0)
+        # 1. Only generate a message if we have an active pin timestamp
+        active_pin = getattr(self, 'pin_timestamp', None)
+
+        if active_pin is not None:
+            actual_ts = self.cache.x_time[idx]
+            dt = actual_ts - active_pin
             delta_msg = f"Δt: {self._format_delta_time(dt)}"
 
         for i, p in enumerate(self.lanes.values()):
             label = self.delta_labels[i]
-            if p == hovered_plot and self.pin_idx is not None:
+            # 2. Only show the label if we are hovering a plot AND have a message
+            if p == hovered_plot and delta_msg != "":
+                label.setAnchor((anchor_x, anchor_y))
                 label.setPos(actual_x, mouse_point.y())
                 label.setText(delta_msg)
                 label.show()
             else:
+                # If no message or not hovering, force hide
                 label.hide()
 
-        for tag, curve in self.curves.items():
-            cfg = self.plot_config.get(tag, {})
-            lane = cfg.get('lane', 'Lane 1')
-            y_data = self.cache.y_data.get(tag, np.array([]))
+                # --- DYNAMIC LEGEND UPDATES ---
+                active_pin_ts = getattr(self, 'pin_timestamp', None)
+                pin_idx_resolved = None
 
-            if len(y_data) <= idx or lane not in self.lane_legends:
-                continue
+                # If a pin exists, find its current index in the RAM cache
+                if active_pin_ts is not None:
+                    # We search the cache for the index closest to our absolute timestamp
+                    pin_idx_resolved = np.searchsorted(self.cache.x_time, active_pin_ts, side='right') - 1
+                    # Ensure the pin hasn't been pruned out of RAM (index < 0)
+                    if pin_idx_resolved < 0:
+                        pin_idx_resolved = None
 
-            val = y_data[idx]
-            label_text = cfg.get('label', tag)
-            fmt = ".2e" if cfg.get('scale') == 'log' else ".2f"
-            legend_text = f"{label_text}: {val:{fmt}}"
+                for tag, curve in self.curves.items():
+                    cfg = self.plot_config.get(tag, {})
+                    lane = cfg.get('lane', 'Lane 1')
+                    y_data = self.cache.y_data.get(tag, np.array([]))
 
-            if self.pin_idx is not None:
-                dy = val - y_data[self.pin_idx]
-                legend_text += f" (Δ: {dy:{fmt}})"
+                    if len(y_data) <= idx or lane not in self.lane_legends:
+                        continue
 
-            lbl_item = self.lane_legends[lane].getLabel(curve)
-            if lbl_item:
-                lbl_item.setText(legend_text)
+                    val = y_data[idx]
+                    label_text = cfg.get('label', tag)
+                    fmt = ".2e" if cfg.get('scale') == 'log' else ".2f"
+                    legend_text = f"{label_text}: {val:{fmt}}"
+
+                    # Calculate and append Delta if the pin is active and valid
+                    if pin_idx_resolved is not None and pin_idx_resolved < len(y_data):
+                        dy = val - y_data[pin_idx_resolved]
+                        legend_text += f" (Δ: {dy:{fmt}})"
+
+                    lbl_item = self.lane_legends[lane].getLabel(curve)
+                    if lbl_item:
+                        lbl_item.setText(legend_text)
 
     def _on_graph_clicked(self, event):
         if not self.lanes: return
@@ -778,25 +918,38 @@ class DataViewerApp(QMainWindow):
         if event.button() == Qt.MouseButton.LeftButton and QApplication.keyboardModifiers() == Qt.KeyboardModifier.ControlModifier:
             if not self.btn_inspector.isChecked(): return
 
+            ref_plot = list(self.lanes.values())[0]
+            mouse_point = ref_plot.vb.mapSceneToView(event.scenePos())
+
+            # Find the closest data point in time
             norm_x = self.cache.x_time - self.t0
             idx = np.searchsorted(norm_x, mouse_point.x(), side='right') - 1
-            self.pin_idx = np.clip(idx, 0, len(norm_x) - 1)
+            idx = np.clip(idx, 0, len(norm_x) - 1)
 
-            # Show pin across all lanes
+            # CRITICAL: Store the ABSOLUTE timestamp, not the index
+            self.pin_timestamp = self.cache.x_time[idx]
+
+            # Update the red line position for all lanes
             for pin_line in self.pin_lines:
-                pin_line.setPos(norm_x[self.pin_idx])
+                pin_line.setPos(self.pin_timestamp - self.t0)
                 pin_line.show()
 
         # Right Click: Clear Pin
         elif event.button() == Qt.MouseButton.RightButton:
-            self.pin_idx = None
+            self.pin_timestamp = None
             for pin_line in self.pin_lines: pin_line.hide()
             for label in self.delta_labels: label.hide()
 
         self._reset_legend_text()
 
     def _handle_click_events(self, event):
-        """Double click for markers."""
+        """Double click for markers. Only triggers if clicking the background."""
+        # If the user clicked an item (like an InfiniteLine), ignore this event
+        if self.layout_widget.scene().items(event.scenePos()):
+            for item in self.layout_widget.scene().items(event.scenePos()):
+                if isinstance(item, pg.InfiniteLine):
+                    return
+
         if event.double() and self.lanes:
             ref_plot = list(self.lanes.values())[0]
             pos = event.scenePos()
@@ -834,7 +987,6 @@ class DataViewerApp(QMainWindow):
         else:
             self.btn_inspector.setText("🔍 Enable Inspector")
             self.btn_inspector.setStyleSheet("")
-            self.stats_label.setText("Stats: (Enable Inspector)")
             self._reset_legend_text()
             self.layout_widget.setCursor(Qt.CursorShape.ArrowCursor)
 
@@ -977,95 +1129,101 @@ class DataViewerApp(QMainWindow):
         try:
             with open(self.markers_file, 'w') as f:
                 json.dump(all_markers, f, indent=4)
+            self.cache.notify_markers_changed()
         except Exception as e:
             print(f"Failed to save marker: {e}")
 
-    def _add_marker_to_graph(self, ts, text, color="#00E5FF"):
+    def _add_marker_to_graph(self, ts_str, text, color="#00E5FF"):
         if not self.lanes: return
         base_plot = list(self.lanes.values())[0]
 
-        relative_x = ts - self.t0
+        ts_float = float(ts_str)
+        relative_x = ts_float - self.t0
         wrapped_text = textwrap.fill(text, width=25)
+
+        # Stagger logic remains the same
         stagger_heights = [0.90, 0.75, 0.60, 0.45, 0.30]
-        row_index = int(abs(hash(str(f"{ts:.3f}"))) % len(stagger_heights))
+        row_index = int(abs(hash(ts_str)) % len(stagger_heights))
 
         line = pg.InfiniteLine(
             pos=relative_x, angle=90, movable=False,
             pen=pg.mkPen(color, width=2, style=Qt.PenStyle.DashLine),
             label=wrapped_text,
-            labelOpts={'position': stagger_heights[row_index], 'color': color, 'fill': (0, 0, 0, 200), 'movable': False}
+            labelOpts={'position': stagger_heights[row_index], 'color': color, 'fill': (0, 0, 0, 200)}
         )
-        line.sigClicked.connect(lambda obj, ev, t=ts: self._confirm_delete_marker(t))
 
+        # Store using the STRING as the key
+        self.marker_items[ts_str] = line
         base_plot.addItem(line)
-        self.marker_items[ts] = line
+
+        # Connect click, but pass the string key
+        line.sigClicked.connect(lambda obj, ev, k=ts_str: self._confirm_delete_marker(k))
 
     def _refresh_event_markers(self):
-        if not getattr(self, '_markers_visible', True) or not self.lanes: return
+        """Synchronizes RAM markers with Disk using explicit string keys."""
+        if not getattr(self, '_markers_visible', True) or not self.lanes:
+            return
+
         base_plot = list(self.lanes.values())[0]
-
-        view_range = base_plot.viewRange()[0]
-        view_start, view_end = view_range[0], view_range[1]
-        buffer_val = (view_end - view_start)
-
         self.event_data = self._load_markers()
 
+        # 1. Remove deleted or off-screen markers
+        view_range = base_plot.viewRange()[0]
         to_remove = []
-        for ts, item in self.marker_items.items():
-            rel_x = ts - self.t0
-            if rel_x < (view_start - buffer_val) or rel_x > (view_end + buffer_val):
-                scene = item.scene()
-                if scene: scene.removeItem(item)
-                to_remove.append(ts)
-        for ts in to_remove: del self.marker_items[ts]
 
+        for ts_str, item in list(self.marker_items.items()):
+            # If it's gone from disk, it's a deletion sync
+            if ts_str not in self.event_data:
+                base_plot.removeItem(item)
+                to_remove.append(ts_str)
+                continue
+
+            # If it's miles off screen, prune from RAM for performance
+            rel_x = float(ts_str) - self.t0
+            if rel_x < (view_range[0] - self.live_span) or rel_x > (view_range[1] + self.live_span):
+                base_plot.removeItem(item)
+                to_remove.append(ts_str)
+
+        for k in to_remove:
+            del self.marker_items[k]
+
+        # 2. Add new markers found on disk
         for ts_str, data in self.event_data.items():
-            ts = float(ts_str)
-            rel_x = ts - self.t0
-            if (view_start - buffer_val) <= rel_x <= (view_end + buffer_val):
-                if ts not in self.marker_items:
-                    if isinstance(data, dict):
-                        self._add_marker_to_graph(ts, data['text'], data['color'])
-                    else:
-                        self._add_marker_to_graph(ts, data, "#00E5FF")
+            rel_x = float(ts_str) - self.t0
+            if view_range[0] <= rel_x <= view_range[1]:
+                if ts_str not in self.marker_items:
+                    text = data['text'] if isinstance(data, dict) else data
+                    color = data.get('color', "#00E5FF") if isinstance(data, dict) else "#00E5FF"
+                    self._add_marker_to_graph(ts_str, text, color)
 
-    def _confirm_delete_marker(self, ts):
-        """Removes marker from RAM and Disk after user confirmation."""
+        self.layout_widget.scene().update()
+
+    def _confirm_delete_marker(self, ts_key):
+        """Removes marker using the absolute string key to prevent float jitter."""
+        if hasattr(self, '_is_confirming_delete') and self._is_confirming_delete:
+            return
+
+        self._is_confirming_delete = True
         from PyQt6.QtWidgets import QMessageBox
 
-        msg = QMessageBox()
+        msg = QMessageBox(self)
         msg.setIcon(QMessageBox.Icon.Question)
+        msg.setWindowTitle("Delete Marker")
         msg.setText("Delete this event marker?")
         msg.setStandardButtons(QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
 
         if msg.exec() == QMessageBox.StandardButton.Yes:
-            # 1. Remove from Disk (Proximity Search)
+            # 1. Update Disk
             data = self._load_markers()
-            target_key = None
-
-            for ts_str in data.keys():
-                if abs(float(ts_str) - ts) < 0.1:  # 100ms tolerance
-                    target_key = ts_str
-                    break
-
-            if target_key:
-                del data[target_key]
+            if ts_key in data:
+                del data[ts_key]
                 with open(self.markers_file, 'w') as f:
                     json.dump(data, f, indent=4)
-                print(f"Successfully deleted marker at {target_key}")
-            else:
-                print(f"Error: Could not find marker on disk matching {ts}")
 
-            # 2. Complete RAM Cleanup (Safe Scene Removal)
-            if ts in self.marker_items:
-                item = self.marker_items[ts]
-                scene = item.scene()
-                if scene:
-                    scene.removeItem(item)
-                del self.marker_items[ts]
+                # 2. Notify other windows
+                self.cache.notify_markers_changed()
 
-            # 3. Force UI Refresh
-            self._refresh_event_markers()
+        self._is_confirming_delete = False
 
     def _toggle_marker_visibility(self):
         self._markers_visible = not self._markers_visible
@@ -1173,12 +1331,12 @@ if __name__ == "__main__":
     # 2. Launch Multiple Thin-Client Windows
     # Both windows are passed the exact same master_cache memory reference
     window_1 = DataViewerApp(master_cache, window_title="IPIDS Data Viewer - Window 1")
-    #window_2 = DataViewerApp(master_cache, window_title="IPIDS Data Viewer - Window 2")
+    window_2 = DataViewerApp(master_cache, window_title="IPIDS Data Viewer - Window 2")
     #window_3 = DataViewerApp(master_cache, window_title="IPIDS Data Viewer - Window 3")
     #window_4 = DataViewerApp(master_cache, window_title="IPIDS Data Viewer - Window 4")
 
     window_1.show()
-    #window_2.show()
+    window_2.show()
     #window_3.show()
     #window_4.show()
 

@@ -28,7 +28,7 @@ def turn_pump_on():
     time.sleep(0.2)
 
     # The microservice expects exactly this JSON structure
-    payload = {"action": "stop"}
+    payload = {"action": "start"}
 
     print(f"Sending command: {payload}")
     socket.send_json(payload)

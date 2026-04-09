@@ -206,44 +206,47 @@ class ChannelSelectorDialog(QDialog):
         self.fav_root.sortChildren(0, Qt.SortOrder.AscendingOrder)
 
     def _create_tag_row(self, full_tag, parent_node, metadata, in_fav_folder=False):
-        """Helper to create a row. Adapts text based on which folder it lives in."""
+        """Helper to create a row. Adapts text and appends units based on folder."""
         user_cfg = self.config.get(full_tag, {})
 
         item = QTreeWidgetItem(parent_node)
         item.setData(0, Qt.ItemDataRole.UserRole, full_tag)
-        # REMOVED ItemIsEditable here! The double-click interceptor handles it now.
         item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
 
         is_selected = user_cfg.get('selected', False)
         item.setCheckState(0, Qt.CheckState.Checked if is_selected else Qt.CheckState.Unchecked)
 
-        # --- Context-Aware Naming ---
+        # --- Context-Aware Naming & Unit Extraction ---
         default_label = metadata.get('default_label', full_tag)
-        description = metadata.get('description', "")  # Extract the description
+        description = metadata.get('description', "")
+
+        # Extract the unit and format it with brackets
+        unit = metadata.get('unit', "")
+        unit_str = f" [{unit}]" if unit else ""
 
         if in_fav_folder:
-            # Favorites view: Show full name, hide redundant plot label
-            item.setText(0, default_label)
+            # Favorites view: Show full name + unit, hide redundant plot label
+            item.setText(0, f"{default_label}{unit_str}")
             item.setText(1, "")
         else:
-            # Hierarchy view: Show short name, show editable plot label
+            # Hierarchy view: Show short name + unit, show editable plot label
             short_name = full_tag.split('.')[-1].replace('_', ' ').title()
-            item.setText(0, short_name)
+            item.setText(0, f"{short_name}{unit_str}")
+            # Keep the editable label strictly unit-free
             item.setText(1, user_cfg.get('label', default_label))
 
         if description:
-            item.setToolTip(0, description)  # Hover over checkbox/short name
-            item.setToolTip(1, description)  # Hover over plot label
+            item.setToolTip(0, description)
+            item.setToolTip(1, description)
 
         # Col 2: Multiplier
         item.setText(2, str(user_cfg.get('multiplier', metadata.get('multiplier', 1.0))))
 
-        # Col 3: Scale Dropdown (With Dark-Mode CSS Fix)
+        # Col 3: Scale Dropdown
         combo = QComboBox()
         combo.addItems(["Linear", "Log"])
         scale = user_cfg.get('scale', metadata.get('default_scale', 'linear'))
         combo.setCurrentText(scale.title())
-        # Fixed Stylesheet to prevent invisible text
         combo.setStyleSheet("""
             QComboBox { background-color: white; color: black; border: 1px solid #ccc; padding: 1px; }
             QComboBox QAbstractItemView { background-color: white; color: black; selection-background-color: #e0e0e0; }
@@ -261,17 +264,13 @@ class ChannelSelectorDialog(QDialog):
 
         # Col 5: Lane Assignment Dropdown
         lane_combo = QComboBox()
-        # Define default system lanes
         lane_combo.addItems(["Lane 1", "Lane 2", "Lane 3", "Lane 4"])
-
-        # Load existing preference or default to Lane 1
         current_lane = user_cfg.get('lane', 'Lane 1')
         lane_combo.setCurrentText(current_lane)
-
         lane_combo.setStyleSheet("""
-                    QComboBox { background-color: white; color: black; border: 1px solid #ccc; padding: 1px; }
-                    QComboBox QAbstractItemView { background-color: white; color: black; selection-background-color: #e0e0e0; }
-                """)
+            QComboBox { background-color: white; color: black; border: 1px solid #ccc; padding: 1px; }
+            QComboBox QAbstractItemView { background-color: white; color: black; selection-background-color: #e0e0e0; }
+        """)
         lane_combo.currentTextChanged.connect(lambda txt: self._on_lane_changed(item, full_tag, txt))
         self.tree.setItemWidget(item, 5, lane_combo)
 

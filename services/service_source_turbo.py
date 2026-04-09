@@ -114,7 +114,7 @@ class TurbovacMicroservice:
         # 2. State
         self.sock = None
         self.connected = False
-        self.active_control_word = 0x0400  # Default to Remote + Stop
+        self.active_control_word = None  # Do not assume OFF on boot
         self.state: Dict[str, Any] = {
             "serial": None,
             "hw_version": None,
@@ -222,20 +222,33 @@ class TurbovacMicroservice:
 
     def _verify_safety_strategy(self):
         print("\n" + "=" * 40)
-        print("[Turbo Service] VERIFYING SAFETY STRATEGY...")
+        print("[Turbo Service] INITIALIZING AND VERIFYING SAFETY STRATEGY...")
 
-        # 1. Read static hardware info
-        self.state["serial"], _, _ = self._transaction(PNU_SERIAL, 0)
-        self.state["hw_version"], _, _ = self._transaction(PNU_HW_VER, 0)
-        m_hz, ak_m, _ = self._transaction(PNU_MAX_FREQ, 0)
+        # --- THE SAFE READ ---
+        # Control word 0x0000 leaves Bit 10 (Enable Process Data) low.
+        # The pump answers the query but ignores the Start/Stop bits.
+        raw_hz, ak_hz, zsw = self._transaction(PNU_ACT_FREQ, 0, control_word=0x0000)
+
+        if raw_hz is not None and raw_hz > 0:
+            print(f"[Turbo Service] Pump is already SPINNING at {raw_hz} Hz. Adopting LATCHED ON state.")
+            self.active_control_word = 0x0401
+        else:
+            print("[Turbo Service] Pump is STOPPED. Adopting LATCHED OFF state.")
+            self.active_control_word = 0x0400
+
+        # 1. Read static hardware info (Now using the synchronized control word!)
+        self.state["serial"], _, _ = self._transaction(PNU_SERIAL, 0, control_word=self.active_control_word)
+        self.state["hw_version"], _, _ = self._transaction(PNU_HW_VER, 0, control_word=self.active_control_word)
+
+        m_hz, ak_m, _ = self._transaction(PNU_MAX_FREQ, 0, control_word=self.active_control_word)
         if m_hz is not None and ak_m not in [7, 8]:
             self.state["max_hz"] = m_hz
 
         # 2. Read Argon Strategy Parameters
-        val_x201, ak_x201, zsw = self._transaction(PNU_X201_FUNC, 0, ak=1)
-        val_relay, ak_relay, zsw = self._transaction(PNU_RELAY_X1, 0, ak=6)
-        val_vent_on, ak_on, zsw = self._transaction(PNU_VENT_ON_FREQ, 0, ak=1)
-        val_vent_off, ak_off, zsw = self._transaction(PNU_VENT_OFF_FREQ, 0, ak=1)
+        val_x201, ak_x201, _ = self._transaction(PNU_X201_FUNC, 0, ak=1, control_word=self.active_control_word)
+        val_relay, ak_relay, _ = self._transaction(PNU_RELAY_X1, 0, ak=6, control_word=self.active_control_word)
+        val_vent_on, ak_on, _ = self._transaction(PNU_VENT_ON_FREQ, 0, ak=1, control_word=self.active_control_word)
+        val_vent_off, ak_off, _ = self._transaction(PNU_VENT_OFF_FREQ, 0, ak=1, control_word=self.active_control_word)
 
         print(f"-> X201 Func:   {val_x201} (RespAK: {ak_x201})")
         print(f"-> X1 Relay:    {val_relay} (RespAK: {ak_relay})")
@@ -248,37 +261,32 @@ class TurbovacMicroservice:
             print("[Turbo Service] Skipping verification until flash write completes.")
             self.state["safety_synced"] = False
             print("=" * 40 + "\n")
-            return  # Abort verification safely
+            return
 
-        # 4. Logic: Strategy is valid only if all match
+            # 4. Logic: Strategy is valid only if all match
         is_synced = (val_x201 == 19 and val_relay == 4 and val_vent_on == 500 and val_vent_off == 5)
         self.state["safety_synced"] = is_synced
 
         if not is_synced:
-            freq, ak_freq, _ = self._transaction(PNU_ACT_FREQ, 0)
-            # Ensure we have a valid frequency read, not an error code
-            if freq is not None and ak_freq not in [7, 8] and freq == 0:
+            # We already know raw_hz from the Safe Read at the top
+            if raw_hz == 0:
                 print("[Turbo Service] Strategy out of sync. Correcting now...")
-                self._transaction(PNU_X201_FUNC, 0, value=19, ak=AK_WRITE_16)
-                time.sleep(0.1)  # Brief pause between writes
 
-                self._transaction(PNU_RELAY_X1, 0, value=4, ak=AK_WRITE_FIELD_16)
+                self._transaction(PNU_X201_FUNC, 0, value=19, ak=AK_WRITE_16, control_word=self.active_control_word)
                 time.sleep(0.1)
-
-                self._transaction(PNU_VENT_ON_FREQ, 0, value=500, ak=AK_WRITE_16)
+                self._transaction(PNU_RELAY_X1, 0, value=4, ak=AK_WRITE_FIELD_16, control_word=self.active_control_word)
                 time.sleep(0.1)
-
-                self._transaction(PNU_VENT_OFF_FREQ, 0, value=5, ak=AK_WRITE_16)
+                self._transaction(PNU_VENT_ON_FREQ, 0, value=500, ak=AK_WRITE_16, control_word=self.active_control_word)
+                time.sleep(0.1)
+                self._transaction(PNU_VENT_OFF_FREQ, 0, value=5, ak=AK_WRITE_16, control_word=self.active_control_word)
                 time.sleep(0.1)
 
                 print("[Turbo Service] Saving to flash (P8=1)...")
-                self._transaction(8, 0, value=1, ak=AK_WRITE_16)
+                self._transaction(8, 0, value=1, ak=AK_WRITE_16, control_word=self.active_control_word)
 
-                # RESTORED: Give the pump 30 seconds to write EEPROM without interruption
                 print("[Turbo Service] Waiting 30 seconds for non-volatile write...")
                 time.sleep(30)
                 print("[Turbo Service] Save complete. Resuming normal operations.")
-
             else:
                 print("[!] SAFETY WARNING: Pump is SPINNING but Argon strategy is not loaded!")
         else:
