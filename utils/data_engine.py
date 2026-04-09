@@ -1,5 +1,6 @@
 import os
 import numpy as np
+import json
 
 
 class TimeSeriesEngine:
@@ -10,9 +11,26 @@ class TimeSeriesEngine:
     def __init__(self, log_directory):
         self.log_dir = log_directory
         self.manifest = []  # Stores dicts: {'path': str, 'start': float, 'end': float}
-        self.channel_keys = []
+
+        # 1. Load schema from central registry immediately
+        self.channel_keys = self._load_master_schema()
 
         self._scan_directory()
+
+    def _load_master_schema(self) -> list:
+        """Loads the exact schema directly from system_tags.json."""
+        current_dir = os.path.dirname(os.path.abspath(__file__))
+        project_root = os.path.dirname(current_dir)
+        registry_path = os.path.join(project_root, "system_tags.json")
+
+        try:
+            with open(registry_path, "r") as f:
+                registry = json.load(f)
+                # Sort alphabetically to guarantee index matching with the Logger
+                return sorted(list(registry.keys()))
+        except FileNotFoundError:
+            print(f"[Engine] CRITICAL: Registry not found at {registry_path}.")
+            return []
 
     def _scan_directory(self):
         """
@@ -34,7 +52,6 @@ class TimeSeriesEngine:
 
             try:
                 # np.load is lazy. It doesn't load the massive 'values' array into RAM
-                # until you explicitly ask for it. This makes scanning hundreds of files very fast.
                 with np.load(filepath, allow_pickle=True) as data:
                     timestamps = data['timestamps']
 
@@ -49,10 +66,6 @@ class TimeSeriesEngine:
                         'start': t_start,
                         'end': t_end
                     })
-
-                    # Capture the channel keys from the very first valid file we read
-                    if not self.channel_keys and 'keys' in data:
-                        self.channel_keys = list(data['keys'])
 
             except Exception as e:
                 print(f"[Engine] Failed to index {filename}: {e}")
@@ -69,7 +82,6 @@ class TimeSeriesEngine:
         # 1. Find overlapping files
         files_to_load = []
         for file_info in self.manifest:
-            # Check for overlap: File starts before window ends AND File ends after window starts
             if file_info['start'] <= end_ts and file_info['end'] >= start_ts:
                 files_to_load.append(file_info['path'])
 
@@ -82,28 +94,52 @@ class TimeSeriesEngine:
         ts_chunks = []
         val_chunks = []
 
+        master_keys = self.channel_keys
+        num_cols = len(master_keys)
+
         for filepath in files_to_load:
             try:
                 with np.load(filepath, allow_pickle=True) as data:
-                    ts_chunks.append(data['timestamps'])
-                    val_chunks.append(data['values'])
+                    file_ts = data['timestamps']
+                    file_vals = data['values']
+
+                    # --- THE FIX: Safely extract and decode keys from NumPy ---
+                    if 'keys' in data:
+                        raw_keys = data['keys']
+                        # Force any weird byte-strings into standard Python strings
+                        file_keys = [k.decode('utf-8') if isinstance(k, bytes) else str(k) for k in raw_keys]
+                    else:
+                        file_keys = []
+
+                    print(f"[DEBUG File] Loaded {os.path.basename(filepath)}. Found {len(file_keys)} keys. Sample: {file_keys[:3]}")
+
+                    # Create a blank slate of NaNs shaped to match the CURRENT master schema
+                    padded_vals = np.full((len(file_ts), num_cols), np.nan, dtype=np.float32)
+
+                    # Map the old columns into their correct positions in the new schema
+                    for i, key in enumerate(file_keys):
+                        if key in master_keys:
+                            master_idx = master_keys.index(key)
+                            padded_vals[:, master_idx] = file_vals[:, i]
+
+                    ts_chunks.append(file_ts)
+                    val_chunks.append(padded_vals)
+
             except Exception as e:
                 print(f"[Engine] Error loading {filepath} during query: {e}")
 
         if not ts_chunks:
             return np.array([]), np.array([])
 
-        # Concatenate all chunks
         raw_ts = np.concatenate(ts_chunks)
         raw_vals = np.vstack(val_chunks)
 
         # 3. Sort chronologically
-        # (Crucial because a Burst file and a Daily file might have overlapping timestamps)
         sort_indices = np.argsort(raw_ts, kind='mergesort')
         sorted_ts = raw_ts[sort_indices]
         sorted_vals = raw_vals[sort_indices]
 
-        # 4. Filter duplicates IN THE BACKGROUND
+        # 4. Filter duplicates
         unique_ts, unique_idx = np.unique(sorted_ts, return_index=True)
         sorted_ts = unique_ts
         sorted_vals = sorted_vals[unique_idx]
@@ -119,6 +155,8 @@ class TimeSeriesEngine:
             final_ts = final_ts[::stride]
             final_vals = final_vals[::stride]
 
+        print(f"[DEBUG Engine] Query Complete. Handing over {len(final_ts)} rows with shape {final_vals.shape} to the background thread.")
+
         return final_ts, final_vals
 
     @staticmethod
@@ -129,32 +167,25 @@ class TimeSeriesEngine:
         """
         n_points = len(values)
 
-        # If we have less points than the screen width, just return the raw data
         if n_points <= target_points:
             return times, values
 
-        # Calculate chunk size (e.g., if we have 1,000,000 points and want 2,000, chunk size is 500)
-        # We divide by 2 because each chunk yields TWO points (a min and a max)
         chunk_size = max(1, n_points // (target_points // 2))
 
-        # Truncate arrays so they divide evenly into the chunk size
         n_chunks = n_points // chunk_size
         n_usable = n_chunks * chunk_size
 
         data_view = values[:n_usable].reshape(n_chunks, chunk_size)
         time_view = times[:n_usable].reshape(n_chunks, chunk_size)
 
-        # Suppress warnings if a chunk is entirely NaNs
         with np.errstate(invalid='ignore'):
             mins = np.nanmin(data_view, axis=1)
             maxs = np.nanmax(data_view, axis=1)
 
-        # Interleave the mins and maxs
         final_values = np.empty(n_chunks * 2, dtype=values.dtype)
         final_values[0::2] = mins
         final_values[1::2] = maxs
 
-        # Interleave the times (start of chunk for min, end of chunk for max)
         final_times = np.empty(n_chunks * 2, dtype=times.dtype)
         final_times[0::2] = time_view[:, 0]
         final_times[1::2] = time_view[:, -1]

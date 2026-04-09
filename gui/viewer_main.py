@@ -210,9 +210,21 @@ class DataViewerApp(QMainWindow):
         sidebar_layout.addWidget(self.btn_scroll_lock)
 
         sidebar_layout.addWidget(QLabel("<b>Profiles:</b>"))
+
+        # Create a mini horizontal layout for the dropdown + delete button
+        profile_row = QHBoxLayout()
+
         self.combo_profiles = QComboBox()
         self.combo_profiles.addItems(self.profiles.keys())
-        sidebar_layout.addWidget(self.combo_profiles)
+
+        self.btn_delete_profile = QPushButton("🗑️")
+        self.btn_delete_profile.setFixedWidth(35)
+        # Connect to a wrapper function that passes the current text
+        self.btn_delete_profile.clicked.connect(lambda: self._delete_profile(self.combo_profiles.currentText()))
+
+        profile_row.addWidget(self.combo_profiles)
+        profile_row.addWidget(self.btn_delete_profile)
+        sidebar_layout.addLayout(profile_row)
 
         btn_load = QPushButton("Load Profile")
         btn_load.clicked.connect(self._apply_profile)
@@ -237,7 +249,7 @@ class DataViewerApp(QMainWindow):
 
         sidebar_layout.addWidget(QLabel("<b>Timespan:</b>"))
         span_layout = QHBoxLayout()
-        for label, minutes in [("5m", 5), ("15m", 15), ("1h", 60), ("24h", 1440)]:
+        for label, minutes in [("1m", 1), ("15m", 15), ("1h", 60), ("12h", 720)]:
             btn = QPushButton(label)
             btn.clicked.connect(lambda ch, m=minutes: self._set_timespan(m))
             span_layout.addWidget(btn)
@@ -1069,6 +1081,74 @@ class DataViewerApp(QMainWindow):
                     scene.removeItem(item)
             self.marker_items.clear()
 
+    def _show_profile_context_menu(self, pos):
+        """Generates the right-click menu for items INSIDE the profile dropdown."""
+        from PyQt6.QtWidgets import QMenu
+
+        # Find exactly which item they right-clicked in the open list
+        index = self.combo_profiles.view().indexAt(pos)
+        if not index.isValid():
+            return
+
+        profile_name = self.combo_profiles.itemText(index.row())
+
+        # Safeguard: Do not allow deleting the Default profile
+        if not profile_name or profile_name == "Default":
+            return
+
+        menu = QMenu(self)
+        delete_action = menu.addAction(f"Delete '{profile_name}'")
+
+        # Map the position relative to the popup viewport
+        global_pos = self.combo_profiles.view().viewport().mapToGlobal(pos)
+        action = menu.exec(global_pos)
+
+        if action == delete_action:
+            self._delete_profile(profile_name)
+            # Note: Keep the _delete_profile method exactly as I wrote it previously!
+
+    def _delete_profile(self, profile_name):
+        """Safely removes a profile from the disk and updates all UI."""
+        from PyQt6.QtWidgets import QMessageBox
+        import json
+        import os
+
+        # 1. Ask for confirmation
+        reply = QMessageBox.question(
+            self, 'Delete Profile',
+            f"Are you sure you want to delete '{profile_name}'?\nThis will affect all open windows.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No
+        )
+
+        if reply == QMessageBox.StandardButton.Yes:
+            # 2. Multi-Window Safe Disk Removal
+            try:
+                if os.path.exists(self.profiles_file):
+                    with open(self.profiles_file, "r") as f:
+                        disk_profiles = json.load(f)
+
+                    if profile_name in disk_profiles:
+                        del disk_profiles[profile_name]
+
+                        with open(self.profiles_file, "w") as f:
+                            json.dump(disk_profiles, f, indent=4)
+
+                        # Update this window's local RAM
+                        self.profiles = disk_profiles
+            except Exception as e:
+                QMessageBox.critical(self, "Error", f"Failed to delete profile from disk:\n{e}")
+                return
+
+            # 3. Update the UI Dropdown
+            idx = self.combo_profiles.findText(profile_name)
+            if idx != -1:
+                self.combo_profiles.removeItem(idx)
+
+            # 4. Snap the UI back to the Default profile safely
+            self.combo_profiles.setCurrentText("Default")
+            self._apply_profile()
+
     def closeEvent(self, event):
         super().closeEvent(event)
 
@@ -1093,14 +1173,14 @@ if __name__ == "__main__":
     # 2. Launch Multiple Thin-Client Windows
     # Both windows are passed the exact same master_cache memory reference
     window_1 = DataViewerApp(master_cache, window_title="IPIDS Data Viewer - Window 1")
-    window_2 = DataViewerApp(master_cache, window_title="IPIDS Data Viewer - Window 2")
-    window_3 = DataViewerApp(master_cache, window_title="IPIDS Data Viewer - Window 3")
-    window_4 = DataViewerApp(master_cache, window_title="IPIDS Data Viewer - Window 4")
+    #window_2 = DataViewerApp(master_cache, window_title="IPIDS Data Viewer - Window 2")
+    #window_3 = DataViewerApp(master_cache, window_title="IPIDS Data Viewer - Window 3")
+    #window_4 = DataViewerApp(master_cache, window_title="IPIDS Data Viewer - Window 4")
 
     window_1.show()
-    window_2.show()
-    window_3.show()
-    window_4.show()
+    #window_2.show()
+    #window_3.show()
+    #window_4.show()
 
     # 3. Execute Application Loop
     # The code will block here until the user closes ALL open windows

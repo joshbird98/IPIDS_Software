@@ -3077,51 +3077,7 @@
         "description": "",
         "default_label": "Pneumatic Placeholder"
     },
-    "vacuum.controller_10.vg1_source.pressure": {
-        "source": "service_vacuum",
-        "hw_node": 10,
-        "hw_channel": 1,
-        "datatype": "REAL",
-        "unit": "mB",
-        "default_scale": "log",
-        "multiplier": 1.0,
-        "description": "VG1 Source Pressure",
-        "default_label": "VG1 Source Pressure"
-    },
-    "vacuum.controller_10.vg1_source.status": {
-        "source": "service_vacuum",
-        "hw_node": 10,
-        "hw_channel": 1,
-        "datatype": "INT",
-        "unit": "",
-        "default_scale": "linear",
-        "multiplier": 1.0,
-        "description": "VG1 Source Status Code",
-        "default_label": "VG1 Source Status"
-    },
-    "vacuum.controller_10.vg2_premag.pressure": {
-        "source": "service_vacuum",
-        "hw_node": 10,
-        "hw_channel": 2,
-        "datatype": "REAL",
-        "unit": "mB",
-        "default_scale": "log",
-        "multiplier": 1.0,
-        "description": "VG2 PreMag Pressure",
-        "default_label": "VG2 PreMag Pressure"
-    },
-    "vacuum.controller_10.vg2_premag.status": {
-        "source": "service_vacuum",
-        "hw_node": 10,
-        "hw_channel": 2,
-        "datatype": "INT",
-        "unit": "",
-        "default_scale": "linear",
-        "multiplier": 1.0,
-        "description": "VG2 PreMag Status Code",
-        "default_label": "VG2 PreMag Status"
-    },
-    "vacuum.controller_10.vg3_bline.pressure": {
+    "vacuum.beamline.gauge_vg3.pressure": {
         "source": "service_vacuum",
         "hw_node": 10,
         "hw_channel": 3,
@@ -3129,10 +3085,10 @@
         "unit": "mB",
         "default_scale": "log",
         "multiplier": 1.0,
-        "description": "VG3 BLine Pressure",
-        "default_label": "VG3 BLine Pressure"
+        "description": "Beamline VG3 Pressure",
+        "default_label": "Beamline VG3 Pressure"
     },
-    "vacuum.controller_10.vg3_bline.status": {
+    "vacuum.beamline.gauge_vg3.status": {
         "source": "service_vacuum",
         "hw_node": 10,
         "hw_channel": 3,
@@ -3140,32 +3096,10 @@
         "unit": "",
         "default_scale": "linear",
         "multiplier": 1.0,
-        "description": "VG3 BLine Status Code",
-        "default_label": "VG3 BLine Status"
+        "description": "Beamline VG3 Status Code",
+        "default_label": "Beamline VG3 Status"
     },
-    "vacuum.controller_20.vg2_ldlock.pressure": {
-        "source": "service_vacuum",
-        "hw_node": 20,
-        "hw_channel": 2,
-        "datatype": "REAL",
-        "unit": "mB",
-        "default_scale": "log",
-        "multiplier": 1.0,
-        "description": "VG2 LdLock Pressure",
-        "default_label": "VG2 LdLock Pressure"
-    },
-    "vacuum.controller_20.vg2_ldlock.status": {
-        "source": "service_vacuum",
-        "hw_node": 20,
-        "hw_channel": 2,
-        "datatype": "INT",
-        "unit": "",
-        "default_scale": "linear",
-        "multiplier": 1.0,
-        "description": "VG2 LdLock Status Code",
-        "default_label": "VG2 LdLock Status"
-    },
-    "vacuum.controller_20.vg3_cham_2.pressure": {
+    "vacuum.chamber_1.gauge_vg3.pressure": {
         "source": "service_vacuum",
         "hw_node": 20,
         "hw_channel": 3,
@@ -3173,10 +3107,10 @@
         "unit": "mB",
         "default_scale": "log",
         "multiplier": 1.0,
-        "description": "VG3 Cham 2 Pressure",
-        "default_label": "VG3 Cham 2 Pressure"
+        "description": "Chamber 1 VG3 Pressure",
+        "default_label": "Chamber 1 VG3 Pressure"
     },
-    "vacuum.controller_20.vg3_cham_2.status": {
+    "vacuum.chamber_1.gauge_vg3.status": {
         "source": "service_vacuum",
         "hw_node": 20,
         "hw_channel": 3,
@@ -3184,10 +3118,32 @@
         "unit": "",
         "default_scale": "linear",
         "multiplier": 1.0,
-        "description": "VG3 Cham 2 Status Code",
-        "default_label": "VG3 Cham 2 Status"
+        "description": "Chamber 1 VG3 Status Code",
+        "default_label": "Chamber 1 VG3 Status"
     },
-    "vacuum.controller_20.vg4_cham_1.pressure": {
+    "vacuum.chamber_2.gauge_vg2.pressure": {
+        "source": "service_vacuum",
+        "hw_node": 20,
+        "hw_channel": 2,
+        "datatype": "REAL",
+        "unit": "mB",
+        "default_scale": "log",
+        "multiplier": 1.0,
+        "description": "Chamber 2 VG2 Pressure",
+        "default_label": "Chamber 2 VG2 Pressure"
+    },
+    "vacuum.chamber_2.gauge_vg2.status": {
+        "source": "service_vacuum",
+        "hw_node": 20,
+        "hw_channel": 2,
+        "datatype": "INT",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "Chamber 2 VG2 Status Code",
+        "default_label": "Chamber 2 VG2 Status"
+    },
+    "vacuum.loadlock.gauge_vg1.pressure": {
         "source": "service_vacuum",
         "hw_node": 20,
         "hw_channel": 1,
@@ -3195,10 +3151,10 @@
         "unit": "mB",
         "default_scale": "log",
         "multiplier": 1.0,
-        "description": "VG4 Cham 1 Pressure",
-        "default_label": "VG4 Cham 1 Pressure"
+        "description": "Loadlock VG1 Pressure",
+        "default_label": "Loadlock VG1 Pressure"
     },
-    "vacuum.controller_20.vg4_cham_1.status": {
+    "vacuum.loadlock.gauge_vg1.status": {
         "source": "service_vacuum",
         "hw_node": 20,
         "hw_channel": 1,
@@ -3206,7 +3162,132 @@
         "unit": "",
         "default_scale": "linear",
         "multiplier": 1.0,
-        "description": "VG4 Cham 1 Status Code",
-        "default_label": "VG4 Cham 1 Status"
+        "description": "Loadlock VG1 Status Code",
+        "default_label": "Loadlock VG1 Status"
+    },
+    "vacuum.premagnet.gauge_vg2.pressure": {
+        "source": "service_vacuum",
+        "hw_node": 10,
+        "hw_channel": 2,
+        "datatype": "REAL",
+        "unit": "mB",
+        "default_scale": "log",
+        "multiplier": 1.0,
+        "description": "Premag VG2 Pressure",
+        "default_label": "Premag VG2 Pressure"
+    },
+    "vacuum.premagnet.gauge_vg2.status": {
+        "source": "service_vacuum",
+        "hw_node": 10,
+        "hw_channel": 2,
+        "datatype": "INT",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "Premag VG2 Status Code",
+        "default_label": "Premag VG2 Status"
+    },
+    "vacuum.source_chamber.gauge_vg1.pressure": {
+        "source": "service_vacuum",
+        "hw_node": 10,
+        "hw_channel": 1,
+        "datatype": "REAL",
+        "unit": "mB",
+        "default_scale": "log",
+        "multiplier": 1.0,
+        "description": "Source VG1 Pressure",
+        "default_label": "Source VG1 Pressure"
+    },
+    "vacuum.source_chamber.gauge_vg1.status": {
+        "source": "service_vacuum",
+        "hw_node": 10,
+        "hw_channel": 1,
+        "datatype": "INT",
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "Source VG1 Status Code",
+        "default_label": "Source VG1 Status"
+    },
+    "vacuum.source_chamber.turbo_1.current": {
+        "source": "service_source_turbo",
+        "datatype": "REAL",
+        "unit": "A",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "Motor Current",
+        "default_label": "Turbo Current"
+    },
+    "vacuum.source_chamber.turbo_1.speed_hz": {
+        "source": "service_source_turbo",
+        "datatype": "REAL",
+        "unit": "Hz",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "Actual Frequency",
+        "default_label": "Turbo Speed"
+    },
+    "vacuum.source_chamber.turbo_1.speed_pct": {
+        "source": "service_source_turbo",
+        "datatype": "REAL",
+        "unit": "%",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "Percent of Max Speed",
+        "default_label": "Turbo %"
+    },
+    "vacuum.source_chamber.turbo_1.status_error": {
+        "source": "service_source_turbo",
+        "datatype": "REAL",
+        "unit": "Bool",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "Active error state",
+        "default_label": "Turbo Error"
+    },
+    "vacuum.source_chamber.turbo_1.status_ready": {
+        "source": "service_source_turbo",
+        "datatype": "REAL",
+        "unit": "Bool",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "Normal operation reached",
+        "default_label": "Turbo Ready"
+    },
+    "vacuum.source_chamber.turbo_1.status_turning": {
+        "source": "service_source_turbo",
+        "datatype": "REAL",
+        "unit": "Bool",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "Is rotor turning",
+        "default_label": "Turbo Turning"
+    },
+    "vacuum.source_chamber.turbo_1.temp_bearing": {
+        "source": "service_source_turbo",
+        "datatype": "REAL",
+        "unit": "\u00b0C",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "Bearing Temperature",
+        "default_label": "Bearing Temp"
+    },
+    "vacuum.source_chamber.turbo_1.temp_converter": {
+        "source": "service_source_turbo",
+        "datatype": "REAL",
+        "unit": "\u00b0C",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "Converter Temperature",
+        "default_label": "Converter Temp"
+    },
+    "vacuum.source_chamber.turbo_1.voltage": {
+        "source": "service_source_turbo",
+        "datatype": "REAL",
+        "unit": "V",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "Motor Voltage",
+        "default_label": "Turbo Voltage"
     }
 }

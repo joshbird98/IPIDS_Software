@@ -1,26 +1,40 @@
 {
     "10": {
         "channels": {
-            "1": {"name": "VG1 Source"},
-            "2": {"name": "VG2 PreMag"},
-            "3": {"name": "VG3 BLine"}
-        },
-        "relays": {
-            "1": {"channel": 1, "on_val": 1.0e-5, "off_val": 5.0e-5},
-            "2": {"channel": 2, "on_val": 1.0e-5, "off_val": 5.0e-5},
-            "3": {"channel": 3, "on_val": 1.0e-5, "off_val": 5.0e-5}
+            "1": {
+                "subsystem": "source_chamber",
+                "device": "gauge_vg1",
+                "name": "Source VG1"
+            },
+            "2": {
+                "subsystem": "premagnet",
+                "device": "gauge_vg2",
+                "name": "Premag VG2"
+            },
+            "3": {
+                "subsystem": "beamline",
+                "device": "gauge_vg3",
+                "name": "Beamline VG3"
+            }
         }
     },
     "20": {
         "channels": {
-            "1": {"name": "VG4 Cham 1"},
-            "2": {"name": "VG2 LdLock"},
-            "3": {"name": "VG3 Cham 2"}
-        },
-        "relays": {
-            "1": {"channel": 1, "on_val": 1.0e-5, "off_val": 5.0e-5},
-            "2": {"channel": 2, "on_val": 1.0e-5, "off_val": 5.0e-5},
-            "3": {"channel": 3, "on_val": 1.0e-5, "off_val": 5.0e-5}
+            "1": {
+                "subsystem": "loadlock",
+                "device": "gauge_vg1",
+                "name": "Loadlock VG1"
+            },
+            "2": {
+                "subsystem": "chamber_2",
+                "device": "gauge_vg2",
+                "name": "Chamber 2 VG2"
+            },
+            "3": {
+                "subsystem": "chamber_1",
+                "device": "gauge_vg3",
+                "name": "Chamber 1 VG3"
+            }
         }
     }
 }

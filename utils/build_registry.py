@@ -40,8 +40,6 @@ def build_system_registry():
     new_registry = {}
 
     # --- 1. Vacuum System Tags ---
-    import re  # Ensure this is at the top of your file
-
     vacuum_settings_path = os.path.join(project_root, "config", "vacuum_settings.json")
     try:
         with open(vacuum_settings_path, "r") as f:
@@ -51,21 +49,24 @@ def build_system_registry():
 
     for node in [10, 20]:
         for ch in [1, 2, 3]:
-            # Extract custom name from config
             node_str = str(node)
             ch_str = str(ch)
-            custom_name = f"Ch {ch}"  # Fallback
 
+            # Default fallbacks if the config is missing
+            subsystem = f"controller_{node}"
+            device = f"ch_{ch}"
+            custom_name = f"Node {node} Ch {ch}"
+
+            # Extract the ISA-95 routing and custom name from config
             if node_str in vacuum_settings and "channels" in vacuum_settings[node_str]:
-                if ch_str in vacuum_settings[node_str]["channels"]:
-                    custom_name = vacuum_settings[node_str]["channels"][ch_str].get("name", custom_name)
+                ch_data = vacuum_settings[node_str]["channels"].get(ch_str, {})
+                subsystem = ch_data.get("subsystem", subsystem)
+                device = ch_data.get("device", device)
+                custom_name = ch_data.get("name", custom_name)
 
-            # 1. Format the Base Tag
-            # Convert "VG1 Source" to "vg1_source" for a safe JSON key
-            slug_name = re.sub(r'[^a-zA-Z0-9_]', '', custom_name.replace(' ', '_')).lower()
-
-            # This creates the UI Folders: Vacuum -> Controller 10 -> VG1 Source
-            base_tag = f"vacuum.controller_{node}.{slug_name}"
+            # 1. Format the Base Tag (ISA-95 Standard)
+            # Creates e.g., "vacuum.source_chamber.gauge_vg1"
+            base_tag = f"vacuum.{subsystem}.{device}"
 
             def get_existing(tag, key, default):
                 return existing_registry.get(tag, {}).get(key, default)
@@ -73,8 +74,8 @@ def build_system_registry():
             # 2. Build the Pressure Tag
             new_registry[f"{base_tag}.pressure"] = {
                 "source": "service_vacuum",
-                "hw_node": node,  # Backend mapping
-                "hw_channel": ch,  # Backend mapping
+                "hw_node": node,
+                "hw_channel": ch,
                 "datatype": "REAL",
                 "unit": "mB",
                 "default_scale": "log",
@@ -86,8 +87,8 @@ def build_system_registry():
             # 3. Build the Status Tag
             new_registry[f"{base_tag}.status"] = {
                 "source": "service_vacuum",
-                "hw_node": node,  # Backend mapping
-                "hw_channel": ch,  # Backend mapping
+                "hw_node": node,
+                "hw_channel": ch,
                 "datatype": "INT",
                 "unit": "",
                 "default_scale": "linear",
@@ -149,7 +150,37 @@ def build_system_registry():
                 "default_label": existing_tag.get("default_label", clean_label)
             }
 
-    # --- 3. Save to Disk ---
+    # --- 3. Turbovac Tags ---
+    turbo_base_tags = {
+        "vacuum.source_chamber.turbo_1.speed_hz": {"unit": "Hz", "desc": "Actual Frequency", "label": "Turbo Speed"},
+        "vacuum.source_chamber.turbo_1.speed_pct": {"unit": "%", "desc": "Percent of Max Speed", "label": "Turbo %"},
+        "vacuum.source_chamber.turbo_1.temp_bearing": {"unit": "°C", "desc": "Bearing Temperature",
+                                                       "label": "Bearing Temp"},
+        "vacuum.source_chamber.turbo_1.temp_converter": {"unit": "°C", "desc": "Converter Temperature",
+                                                         "label": "Converter Temp"},
+        "vacuum.source_chamber.turbo_1.voltage": {"unit": "V", "desc": "Motor Voltage", "label": "Turbo Voltage"},
+        "vacuum.source_chamber.turbo_1.current": {"unit": "A", "desc": "Motor Current", "label": "Turbo Current"},
+        "vacuum.source_chamber.turbo_1.status_turning": {"unit": "Bool", "desc": "Is rotor turning",
+                                                         "label": "Turbo Turning"},
+        "vacuum.source_chamber.turbo_1.status_ready": {"unit": "Bool", "desc": "Normal operation reached",
+                                                       "label": "Turbo Ready"},
+        "vacuum.source_chamber.turbo_1.status_error": {"unit": "Bool", "desc": "Active error state",
+                                                       "label": "Turbo Error"}
+    }
+
+    for tag, info in turbo_base_tags.items():
+        existing_tag = existing_registry.get(tag, {})
+        new_registry[tag] = {
+            "source": "service_source_turbo",
+            "datatype": "REAL",  # Logged as floats for PyQtGraph compatibility
+            "unit": existing_tag.get("unit", info["unit"]),
+            "default_scale": existing_tag.get("default_scale", "linear"),
+            "multiplier": existing_tag.get("multiplier", 1.0),
+            "description": existing_tag.get("description", info["desc"]),
+            "default_label": existing_tag.get("default_label", info["label"])
+        }
+
+    # --- 4. Save to Disk ---
     with open(registry_path, "w") as f:
         sorted_registry = {k: new_registry[k] for k in sorted(new_registry.keys())}
         json.dump(sorted_registry, f, indent=4)

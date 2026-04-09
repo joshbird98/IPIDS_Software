@@ -8,7 +8,12 @@ import threading
 import numpy as np
 from datetime import datetime
 
-from network_config import ZMQ_PORT_PLC_PUB, ZMQ_PORT_VACUUM_PUB, ZMQ_PORT_LOGGER_CMD, TOPIC_PLC_DATA, TOPIC_VACUUM_DATA
+from network_config import (
+    ZMQ_PORT_PLC_PUB, ZMQ_PORT_VACUUM_PUB, ZMQ_PORT_LOGGER_CMD,
+    TOPIC_PLC_DATA, TOPIC_VACUUM_DATA,
+    ZMQ_PORT_SRC_TURBO_PUB, TOPIC_SRC_TURBO_DATA  # <--- ADDED THESE
+)
+
 from hmi_config import DEFAULT_LOG_DIRECTORY
 
 
@@ -20,9 +25,15 @@ class LoggerMicroservice:
         self.sub_socket = self.context.socket(zmq.SUB)
         self.sub_socket.connect(ZMQ_PORT_PLC_PUB)
         self.sub_socket.connect(ZMQ_PORT_VACUUM_PUB)
+        self.sub_socket.connect(ZMQ_PORT_SRC_TURBO_PUB)
 
         self.sub_socket.setsockopt(zmq.SUBSCRIBE, TOPIC_PLC_DATA)
         self.sub_socket.setsockopt(zmq.SUBSCRIBE, TOPIC_VACUUM_DATA)
+
+        if isinstance(TOPIC_SRC_TURBO_DATA, str):
+            self.sub_socket.setsockopt(zmq.SUBSCRIBE, TOPIC_SRC_TURBO_DATA.encode('utf-8'))
+        else:
+            self.sub_socket.setsockopt(zmq.SUBSCRIBE, TOPIC_SRC_TURBO_DATA)
 
         self.current_state = {}
 
@@ -131,7 +142,10 @@ class LoggerMicroservice:
             "ERROR-H": 4.0, "ERROR-L": 5.0, "ERROR-S": 6.0
         }
 
-        for node_id_str, node_data in data.items():
+        for node_id_str, node_data in data.items():# ---> ADD THIS LINE to protect against non-vacuum data <---
+            if not isinstance(node_data, dict):
+                continue
+
             for ch_id_str, ch_data in node_data.get("channels", {}).items():
 
                 # 1. Ask the lookup table what the exact string is supposed to be
@@ -153,14 +167,65 @@ class LoggerMicroservice:
 
         return flat_data
 
-    def _update_state_cache(self, topic: bytes, payload_bytes: bytes):
-        """Routes payload processing based on topic and merges to RAM cache."""
-        data = json.loads(payload_bytes.decode('utf-8'))
+    def _flatten_turbo_data(self, data: dict) -> dict:
+        """Extracts continuous variables from the Turbo payload and maps them to registry keys."""
 
-        if topic == TOPIC_VACUUM_DATA:
+        # --- PROTECT LINE: Signature Check ---
+        # If the payload doesn't contain these specific nested dictionaries,
+        # it is not from the Turbo pump. Reject it immediately.
+        if not isinstance(data.get("temps"), dict) or not isinstance(data.get("electrical"), dict):
+            return {}
+
+        flat_data = {}
+
+        # Speeds
+        if "hz" in data:
+            flat_data["vacuum.source_chamber.turbo_1.speed_hz"] = float(data["hz"])
+        if "pct" in data:
+            flat_data["vacuum.source_chamber.turbo_1.speed_pct"] = float(data["pct"])
+
+        # Temperatures
+        temps = data.get("temps", {})
+        if "bearing" in temps:
+            flat_data["vacuum.source_chamber.turbo_1.temp_bearing"] = float(temps["bearing"])
+        if "converter" in temps:
+            flat_data["vacuum.source_chamber.turbo_1.temp_converter"] = float(temps["converter"])
+
+        # Electrical
+        elec = data.get("electrical", {})
+        if "volts" in elec:
+            flat_data["vacuum.source_chamber.turbo_1.voltage"] = float(elec["volts"])
+        if "amps" in elec:
+            flat_data["vacuum.source_chamber.turbo_1.current"] = float(elec["amps"])
+
+        # Status Flags (Converted to floats for charting)
+        status = data.get("status", {})
+        if "turning" in status:
+            flat_data["vacuum.source_chamber.turbo_1.status_turning"] = 1.0 if status["turning"] else 0.0
+        if "ready" in status:
+            flat_data["vacuum.source_chamber.turbo_1.status_ready"] = 1.0 if status["ready"] else 0.0
+        if "error_active" in status:
+            flat_data["vacuum.source_chamber.turbo_1.status_error"] = 1.0 if status["error_active"] else 0.0
+
+        return flat_data
+
+    def _update_state_cache(self, topic: bytes, payload_bytes: bytes):
+        """Routes payload processing based on shape, avoiding fragile ZMQ topic strings."""
+        try:
+            data = json.loads(payload_bytes.decode('utf-8'))
+
+            # 1. Merge standard flat keys (e.g. PLC data)
+            for k, v in data.items():
+                if not isinstance(v, dict):
+                    self.current_state[k] = v
+
+            # 2. Apply hardware-specific flatteners.
+            # They safely return {} if the payload isn't meant for them.
             self.current_state.update(self._flatten_vacuum_data(data))
-        else:
-            self.current_state.update(data)
+            self.current_state.update(self._flatten_turbo_data(data))
+
+        except json.JSONDecodeError:
+            pass  # Ignore corrupted network packets
 
     def _log_current_state(self):
         """Writes the current RAM cache to Numpy arrays."""

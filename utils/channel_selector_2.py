@@ -30,10 +30,7 @@ class ChannelSelectorDialog(QDialog):
         self.btn_all_fav = QPushButton("Select All Favourites")
         self.btn_none_fav = QPushButton("Deselect All Favourites")
         self.btn_deselect_all = QPushButton("Deselect All Channels")
-        self.btn_reset = QPushButton("💥 Factory Reset Settings")
-        self.btn_reset.setStyleSheet("background-color: #ffcccc; color: red; font-weight: bold;")
 
-        self.btn_reset.clicked.connect(self._factory_reset)
         self.btn_all_fav.clicked.connect(self._select_all_favourites)
         self.btn_none_fav.clicked.connect(self._deselect_all_favourites)
         self.btn_deselect_all.clicked.connect(self._deselect_all_channels)
@@ -42,7 +39,6 @@ class ChannelSelectorDialog(QDialog):
         btn_layout.addWidget(self.btn_none_fav)
         btn_layout.addWidget(self.btn_deselect_all)
         btn_layout.addStretch()
-        btn_layout.addWidget(self.btn_reset)
         layout.addLayout(btn_layout)
 
         self.selected_label = QLabel("Active Traces: None")
@@ -460,14 +456,6 @@ class ChannelSelectorDialog(QDialog):
 
         self.tree.blockSignals(False)
         self._update_selected_label()  # Refresh the green/red text at the top
-
-    def _factory_reset(self):
-        ret = QMessageBox.question(self, "Reset", "Wipe all settings?",
-                                   QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
-        if ret == QMessageBox.StandardButton.Yes:
-            delete_config()
-            self.config = {}
-            self._populate_tree()
 
     def _safe_accept(self):
         count = sum(1 for items in self.item_map.values() if items and items[0].checkState(0) == Qt.CheckState.Checked)
