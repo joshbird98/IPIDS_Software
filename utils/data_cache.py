@@ -97,53 +97,45 @@ class InfiniteDataCache(QObject):
         self.history_worker.fetch(start_ts, end_ts, stride)
 
     def _on_history_fetched(self, req_start, req_end, ts_array, vals_array, stride):
-        """Prepends historical data, merges overlaps, and ensures monotonic time."""
+        """Lightning-fast merge: Trims overlap and prepends without sorting."""
         if len(ts_array) == 0:
             self.is_fetching = False
-            # Even if empty, update the boundary so we don't keep asking for the same empty gap
             self.oldest_loaded_ts = min(self.oldest_loaded_ts, req_start)
             return
 
-        # 1. Resolution Management
-        if stride < self.current_stride:
-            # SHARPENING: We are zooming in. Discard low-res and take high-res.
-            self.x_time = ts_array
-            for tag in self.tags:
-                try:
-                    idx = self.engine.channel_keys.index(tag)
-                    self.y_data[tag] = vals_array[:, idx]
-                except ValueError:
-                    self.y_data[tag] = np.array([])
+        # 1. FAST TRIM: Find exactly where history overlaps with our live RAM
+        if len(self.x_time) > 0:
+            # np.searchsorted is O(log N) - almost instantly finds the cutoff index
+            cutoff_idx = np.searchsorted(ts_array, self.x_time[0], side='left')
+            new_x = ts_array[:cutoff_idx]
         else:
-            # STITCHING: Combine new history with existing cache
-            combined_x = np.concatenate((ts_array, self.x_time))
+            cutoff_idx = len(ts_array)
+            new_x = ts_array
 
-            # Find the indices that would sort the combined array
-            # This is the "Magic Fix" for the back-and-forth curves
-            sort_idx = np.argsort(combined_x)
+        # If the requested history is entirely engulfed by our RAM already, abort
+        if len(new_x) == 0:
+            self.is_fetching = False
+            return
 
-            # Remove duplicates (in case history and live data overlapped)
-            # We use return_index to find unique timestamp positions
-            unique_x, unique_idx = np.unique(combined_x[sort_idx], return_index=True)
-            self.x_time = unique_x
+        # 2. PREPEND X-AXIS
+        self.x_time = np.concatenate((new_x, self.x_time))
 
-            for tag in self.tags:
-                try:
-                    idx = self.engine.channel_keys.index(tag)
-                    hist_y = vals_array[:, idx]
+        # 3. PREPEND Y-AXIS
+        for tag in self.tags:
+            current_y = self.y_data.get(tag, np.array([]))
 
-                    # Merge Y values and apply the same sorting/uniqueness as X
-                    current_y = self.y_data.get(tag, np.array([]))
-                    combined_y = np.concatenate((hist_y, current_y))
+            try:
+                idx = self.engine.channel_keys.index(tag)
+                # Slice the Y-data exactly where we sliced the X-data
+                hist_y = vals_array[:cutoff_idx, idx]
+            except ValueError:
+                hist_y = np.full(len(new_x), np.nan)
 
-                    # Apply sorting and filter duplicates
-                    self.y_data[tag] = combined_y[sort_idx][unique_idx]
-                except (ValueError, IndexError):
-                    pass
+            self.y_data[tag] = np.concatenate((hist_y, current_y))
 
-        # 2. Update Boundaries
-        self.oldest_loaded_ts = self.x_time[0]
-        self.current_stride = stride
+        # 4. Update Boundaries
+        self.oldest_loaded_ts = min(self.oldest_loaded_ts, req_start)
+        self.current_stride = min(self.current_stride, stride)
         self.is_fetching = False
         self.data_updated.emit()
 

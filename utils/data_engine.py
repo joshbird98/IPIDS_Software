@@ -99,12 +99,16 @@ class TimeSeriesEngine:
 
         # 3. Sort chronologically
         # (Crucial because a Burst file and a Daily file might have overlapping timestamps)
-        sort_indices = np.argsort(raw_ts)
+        sort_indices = np.argsort(raw_ts, kind='mergesort')
         sorted_ts = raw_ts[sort_indices]
         sorted_vals = raw_vals[sort_indices]
 
-        # 4. Hard-slice to the exact requested window boundaries
-        # np.searchsorted is a highly optimized binary search
+        # 4. Filter duplicates IN THE BACKGROUND
+        unique_ts, unique_idx = np.unique(sorted_ts, return_index=True)
+        sorted_ts = unique_ts
+        sorted_vals = sorted_vals[unique_idx]
+
+        # 5. Hard-slice to the requested window
         start_idx = np.searchsorted(sorted_ts, start_ts, side='left')
         end_idx = np.searchsorted(sorted_ts, end_ts, side='right')
 
@@ -112,8 +116,6 @@ class TimeSeriesEngine:
         final_vals = sorted_vals[start_idx:end_idx]
 
         if stride > 1:
-            # We use NumPy slicing [::stride] to skip rows.
-            # This is an O(1) memory view operation—extremely fast.
             final_ts = final_ts[::stride]
             final_vals = final_vals[::stride]
 
