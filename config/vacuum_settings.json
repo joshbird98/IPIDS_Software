@@ -11,7 +11,7 @@
                 "device": "gauge_vg2",
                 "name": "Premag VG2"
             },
-            "3": {
+            "3": {z`
                 "subsystem": "beamline",
                 "device": "gauge_vg3",
                 "name": "Bline VG3"

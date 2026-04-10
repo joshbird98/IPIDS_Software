@@ -1,0 +1,30 @@
+{
+    "_bus_comment": "Maps logical device names to physical RS485 addresses. Dev Types: 05=5kV, 06=10kV, 07=15kV, 08=20kV, 09=30kV, 10=2.5kV",
+    "buses": [
+        {
+            "bus_id": "beamline_waveshare",
+            "devices": {
+                "beamline_einzel_lens": {
+                    "address": "01",
+                    "dev_type": "09",
+                    "_note": "Spellman 30kV unit"
+                },
+                "beamline_extractor": {
+                    "address": "02",
+                    "dev_type": "06",
+                    "_note": "Spellman 10kV unit"
+                }
+            }
+        },
+        {
+            "bus_id": "chamber_waveshare",
+            "devices": {
+                "chamber_einzel_lens": {
+                    "address": "01",
+                    "dev_type": "09",
+                    "_note": "Spellman 30kV unit"
+                }
+            }
+        }
+    ]
+}
