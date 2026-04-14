@@ -15,7 +15,7 @@ from network_config import (
 )
 
 from hmi_config import DEFAULT_LOG_DIRECTORY
-
+from utils.payload_mapper import DynamicPayloadMapper
 
 class LoggerMicroservice:
     def __init__(self):
@@ -44,18 +44,17 @@ class LoggerMicroservice:
         self.poller.register(self.sub_socket, zmq.POLLIN)
         self.poller.register(self.cmd_socket, zmq.POLLIN)
 
-        # 2. Disk I/O Background Thread
+        # 2. Initialize the shared mapper
+        self.payload_mapper = DynamicPayloadMapper()
+        self.keys = sorted(list(self.payload_mapper.valid_keys))
+        self.num_keys = len(self.keys)
+
+        # 3. Disk I/O Background Thread
         os.makedirs(DEFAULT_LOG_DIRECTORY, exist_ok=True)
         self.write_queue = queue.Queue()
         self.running = True
         self.io_thread = threading.Thread(target=self._disk_writer_loop, daemon=True)
         self.io_thread.start()
-
-        # 3. Buffer Configurations (Deterministic)
-        self.keys = self._generate_deterministic_keys()
-        self.num_keys = len(self.keys)
-
-        self.vacuum_hw_map = self._build_vacuum_hw_map()
 
         # High Res: 10Hz for 5 mins = 3000 points
         self.high_res_max = 3000
@@ -91,32 +90,6 @@ class LoggerMicroservice:
         self.tick_rate = 0.100  # 10Hz target
         self.next_tick = time.time() + self.tick_rate
 
-    def _build_vacuum_hw_map(self) -> dict:
-        """Creates a lookup table mapping (Node, Channel) -> Registry Base Path."""
-        current_dir = os.path.dirname(os.path.abspath(__file__))
-        project_root = os.path.dirname(current_dir)
-        registry_path = os.path.join(project_root, "system_tags.json")
-
-        hw_map = {}
-        try:
-            with open(registry_path, "r") as f:
-                registry = json.load(f)
-
-            for full_tag, metadata in registry.items():
-                if metadata.get("source") == "service_vacuum":
-                    node = str(metadata.get("hw_node"))
-                    ch = str(metadata.get("hw_channel"))
-
-                    if node and ch and node != "None" and ch != "None":
-                        # full_tag is e.g. "vacuum.controller_10.vg1_source.pressure"
-                        # We slice off the ".pressure" to get the base path
-                        base_path = full_tag.rsplit('.', 1)[0]
-                        hw_map[(node, ch)] = base_path
-        except Exception as e:
-            print(f"[Logger] Failed to build HW map: {e}")
-
-        return hw_map
-
     def _generate_deterministic_keys(self) -> list:
         """Loads keys from the central registry to lock array sizes."""
         # Dynamically locate the project root (one directory up from /services)
@@ -133,96 +106,12 @@ class LoggerMicroservice:
             print(f"CRITICAL: Registry not found at {registry_path}. Run build_registry.py first.")
             return []
 
-    def _flatten_vacuum_data(self, data: dict) -> dict:
-        """Maps incoming hardware data to the registry using pure hardware addresses."""
-        flat_data = {}
-
-        STATUS_MAP = {
-            "OK": 0.0, "NO-SEN": 1.0, "RANGE?": 2.0, "S-OFF": 3.0,
-            "ERROR-H": 4.0, "ERROR-L": 5.0, "ERROR-S": 6.0
-        }
-
-        for node_id_str, node_data in data.items():# ---> ADD THIS LINE to protect against non-vacuum data <---
-            if not isinstance(node_data, dict):
-                continue
-
-            for ch_id_str, ch_data in node_data.get("channels", {}).items():
-
-                # 1. Ask the lookup table what the exact string is supposed to be
-                base_path = self.vacuum_hw_map.get((node_id_str, ch_id_str))
-
-                if not base_path:
-                    continue  # If it's not in the registry, ignore it
-
-                # 2. Map Pressure
-                p = ch_data.get("pressure")
-                if p is not None:
-                    flat_data[f"{base_path}.pressure"] = float(p)
-
-                # 3. Map Status
-                s = ch_data.get("status")
-                if s is not None:
-                    clean_status = str(s).strip().upper()
-                    flat_data[f"{base_path}.status"] = STATUS_MAP.get(clean_status, -1.0)
-
-        return flat_data
-
-    def _flatten_turbo_data(self, data: dict) -> dict:
-        """Extracts continuous variables from the Turbo payload and maps them to registry keys."""
-
-        # --- PROTECT LINE: Signature Check ---
-        # If the payload doesn't contain these specific nested dictionaries,
-        # it is not from the Turbo pump. Reject it immediately.
-        if not isinstance(data.get("temps"), dict) or not isinstance(data.get("electrical"), dict):
-            return {}
-
-        flat_data = {}
-
-        # Speeds
-        if "hz" in data:
-            flat_data["vacuum.source_chamber.turbo_1.speed_hz"] = float(data["hz"])
-        if "pct" in data:
-            flat_data["vacuum.source_chamber.turbo_1.speed_pct"] = float(data["pct"])
-
-        # Temperatures
-        temps = data.get("temps", {})
-        if "bearing" in temps:
-            flat_data["vacuum.source_chamber.turbo_1.temp_bearing"] = float(temps["bearing"])
-        if "converter" in temps:
-            flat_data["vacuum.source_chamber.turbo_1.temp_converter"] = float(temps["converter"])
-
-        # Electrical
-        elec = data.get("electrical", {})
-        if "volts" in elec:
-            flat_data["vacuum.source_chamber.turbo_1.voltage"] = float(elec["volts"])
-        if "amps" in elec:
-            flat_data["vacuum.source_chamber.turbo_1.current"] = float(elec["amps"])
-
-        # Status Flags (Converted to floats for charting)
-        status = data.get("status", {})
-        if "turning" in status:
-            flat_data["vacuum.source_chamber.turbo_1.status_turning"] = 1.0 if status["turning"] else 0.0
-        if "ready" in status:
-            flat_data["vacuum.source_chamber.turbo_1.status_ready"] = 1.0 if status["ready"] else 0.0
-        if "error_active" in status:
-            flat_data["vacuum.source_chamber.turbo_1.status_error"] = 1.0 if status["error_active"] else 0.0
-
-        return flat_data
-
     def _update_state_cache(self, topic: bytes, payload_bytes: bytes):
         """Routes payload processing based on shape, avoiding fragile ZMQ topic strings."""
         try:
             data = json.loads(payload_bytes.decode('utf-8'))
-
-            # 1. Merge standard flat keys (e.g. PLC data)
-            for k, v in data.items():
-                if not isinstance(v, dict):
-                    self.current_state[k] = v
-
-            # 2. Apply hardware-specific flatteners.
-            # They safely return {} if the payload isn't meant for them.
-            self.current_state.update(self._flatten_vacuum_data(data))
-            self.current_state.update(self._flatten_turbo_data(data))
+            flat_dict = self.payload_mapper.parse(data)
+            self.current_state.update(flat_dict)
 
         except json.JSONDecodeError:
             pass  # Ignore corrupted network packets

@@ -11,6 +11,7 @@ from network_config import (
     ZMQ_PORT_PLC_PUB, ZMQ_PORT_VACUUM_PUB, ZMQ_PORT_SRC_TURBO_PUB,
     TOPIC_PLC_DATA, TOPIC_VACUUM_DATA, TOPIC_SRC_TURBO_DATA
 )
+from utils.payload_mapper import DynamicPayloadMapper
 
 
 class HistoryFetchWorker(QThread):
@@ -47,7 +48,6 @@ class InfiniteDataCache(QObject):
     def __init__(self, log_dir: str):
         super().__init__()
         self.engine = TimeSeriesEngine(log_dir)
-        self.vacuum_hw_map = self._build_vacuum_hw_map()
 
         self.history_worker = HistoryFetchWorker(self.engine)
         self.history_worker.data_fetched.connect(self._on_history_fetched)
@@ -64,6 +64,11 @@ class InfiniteDataCache(QObject):
         self._y_buffers = {key: np.zeros(self.chunk_size, dtype=np.float64) for key in self.engine.channel_keys}
 
         self.write_ptr = 0
+
+        # Initialize the shared mapper
+        self.payload_mapper = DynamicPayloadMapper()
+        self.keys = sorted(list(self.payload_mapper.valid_keys))
+        self.num_keys = len(self.keys)
 
         # 2. The UI Views (These act as windows so the UI never sees the blank trailing zeros)
         self.tags = []
@@ -105,72 +110,6 @@ class InfiniteDataCache(QObject):
         cpu_pct = self.process.cpu_percent()
 
         print(f"[Health] CPU: {cpu_pct:>4.1f}% | RAM: {mem_mb:>6.1f} MB | Buffer: {self.write_ptr}/{self.max_capacity}")
-
-    def _build_vacuum_hw_map(self) -> dict:
-        current_dir = os.path.dirname(os.path.abspath(__file__))
-        project_root = os.path.dirname(current_dir)
-        settings_path = os.path.join(project_root, "config", "vacuum_settings.json")
-
-        hw_map = {}
-        try:
-            with open(settings_path, "r") as f:
-                vacuum_settings = json.load(f)
-
-            for node in ["10", "20"]:
-                if node in vacuum_settings and "channels" in vacuum_settings[node]:
-                    for ch, data in vacuum_settings[node]["channels"].items():
-                        subsystem = data.get("subsystem", f"controller_{node}")
-                        device = data.get("device", f"ch_{ch}")
-                        hw_map[(node, ch)] = f"vacuum.{subsystem}.{device}"
-        except Exception as e:
-            pass
-
-        return hw_map
-
-    def _flatten_vacuum_data(self, data: dict) -> dict:
-        flat_data = {}
-        STATUS_MAP = {"OK": 0.0, "NO-SEN": 1.0, "RANGE?": 2.0, "S-OFF": 3.0, "ERROR-H": 4.0, "ERROR-L": 5.0,
-                      "ERROR-S": 6.0}
-
-        for node_id_str, node_data in data.items():
-            if not isinstance(node_data, dict): continue
-
-            for ch_id_str, ch_data in node_data.get("channels", {}).items():
-                base_path = self.vacuum_hw_map.get((node_id_str, ch_id_str))
-                if not base_path: continue
-
-                p = ch_data.get("pressure")
-                if p is not None: flat_data[f"{base_path}.pressure"] = float(p)
-
-                s = ch_data.get("status")
-                if s is not None: flat_data[f"{base_path}.status"] = STATUS_MAP.get(str(s).strip().upper(), -1.0)
-
-        return flat_data
-
-    def _flatten_turbo_data(self, data: dict) -> dict:
-        if not isinstance(data.get("temps"), dict) or not isinstance(data.get("electrical"), dict):
-            return {}
-
-        flat_data = {}
-        if "hz" in data: flat_data["vacuum.source_chamber.turbo_1.speed_hz"] = float(data["hz"])
-        if "pct" in data: flat_data["vacuum.source_chamber.turbo_1.speed_pct"] = float(data["pct"])
-
-        temps = data.get("temps", {})
-        if "bearing" in temps: flat_data["vacuum.source_chamber.turbo_1.temp_bearing"] = float(temps["bearing"])
-        if "converter" in temps: flat_data["vacuum.source_chamber.turbo_1.temp_converter"] = float(temps["converter"])
-
-        elec = data.get("electrical", {})
-        if "volts" in elec: flat_data["vacuum.source_chamber.turbo_1.voltage"] = float(elec["volts"])
-        if "amps" in elec: flat_data["vacuum.source_chamber.turbo_1.current"] = float(elec["amps"])
-
-        status = data.get("status", {})
-        if "turning" in status: flat_data["vacuum.source_chamber.turbo_1.status_turning"] = 1.0 if status[
-            "turning"] else 0.0
-        if "ready" in status: flat_data["vacuum.source_chamber.turbo_1.status_ready"] = 1.0 if status["ready"] else 0.0
-        if "error_active" in status: flat_data["vacuum.source_chamber.turbo_1.status_error"] = 1.0 if status[
-            "error_active"] else 0.0
-
-        return flat_data
 
     def register_tags(self, tags: list):
         self.tags = [tag for tag in tags if tag in self.engine.channel_keys]
@@ -245,12 +184,7 @@ class InfiniteDataCache(QObject):
         if not self.engine.channel_keys:
             return
 
-        flat_data = {}
-        for k, v in raw_data_dict.items():
-            if not isinstance(v, dict):
-                flat_data[k] = v
-        flat_data.update(self._flatten_vacuum_data(raw_data_dict))
-        flat_data.update(self._flatten_turbo_data(raw_data_dict))
+        flat_data = self.payload_mapper.parse(raw_data_dict)
 
         # 1. Expand buffers if we hit the end
         if self.write_ptr >= len(self._x_buffer):
@@ -288,5 +222,3 @@ class InfiniteDataCache(QObject):
             self.x_time = self._x_buffer[:self.write_ptr]
             for tag in self.engine.channel_keys:
                 self.y_data[tag] = self._y_buffers[tag][:self.write_ptr]
-
-        #self.data_updated.emit()

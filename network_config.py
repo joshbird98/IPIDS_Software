@@ -6,6 +6,14 @@ Brokerless architecture using 127.0.0.1
 
 HOST = "tcp://127.0.0.1"
 
+PLC_IP = "192.168.1.10"
+PLC_RACK = 0
+PLC_SLOT = 1
+
+# TIA Portal Data Block Numbers (Verify these in your TIA project tree)
+DB_INTERFACE_NUM = 10
+DB_RETAIN_NUM = 11
+
 NOISY_RACK_WAVESHARE_IP = "192.168.1.200"
 NOISY_RACK_WAVESHARE_PORT = 4196
 

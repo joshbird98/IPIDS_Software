@@ -11,7 +11,7 @@
                 "device": "gauge_vg2",
                 "name": "Premag VG2"
             },
-            "3": {z`
+            "3": {
                 "subsystem": "beamline",
                 "device": "gauge_vg3",
                 "name": "Bline VG3"
@@ -21,9 +21,9 @@
     "20": {
         "channels": {
             "1": {
-                "subsystem": "chamber",
+                "subsystem": "endstation",
                 "device": "gauge_vg4",
-                "name": "Chamb VG4"
+                "name": "EndS VG4"
             },
             "2": {
                 "subsystem": "loadlock",
@@ -31,9 +31,9 @@
                 "name": "Ldlk VG5"
             },
             "3": {
-                "subsystem": "chamber",
+                "subsystem": "endstation",
                 "device": "gauge_vg6",
-                "name": "Chamb VG6"
+                "name": "EndS VG6"
             }
         }
     }

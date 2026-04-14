@@ -1,0 +1,68 @@
+how does the viewer handle those fast_bursts from the logger (triggered by faults or certain special events etc), they get saved as npz files alongside the daily_trend_20260409.npz files , and contain very detailed high res information. Will the viewer just handle them without any problem?
+
+
+Also, what happens in the future if there are like 500 files in LogData.. does the software get slower??
+
+
+Also, I notice after getting in to work at 08:42AM on a Monday, that I cannot see any data from before 01:24AM , though I am sure it has been running without crash since Friday afternoon?
+
+
+
+
+
+Also, what happens in the future if there are like 500 files in LogData.. does the software get slower??
+
+Gemini said
+The short, candid engineering answer is: Yes, it will get significantly slower, and eventually, it will completely crash your computer.
+
+While PyQtGraph is incredibly fast at drawing lines on the screen, the bottleneck isn't the graphics engine—it is your computer's physical memory (RAM) and the time it takes to read files from the hard drive.
+
+Here is exactly what happens when you hit 500 log files, and how professional SCADA systems architect around it.
+
+The Three Bottlenecks of 500 Files
+1. RAM Exhaustion (The Fatal Flaw)
+Let’s do the math on a single sensor logging at 10Hz:
+
+10 points/sec = 864,000 points per day.
+
+500 days = 432 million points.
+
+A standard 64-bit float takes 8 bytes. 432 million points × 8 bytes ≈ 3.4 Gigabytes of RAM just for the Y data of one single sensor.
+If you load 20 traces into your Channel Manager, you are asking Python to hold 68+ GB of RAM. Your OS will start swapping to the hard drive, and the computer will freeze.
+
+2. Startup Time Lag
+If your startup script runs a loop to open, read, concatenate, and sort 500 .npz files before drawing the UI, your application will look like it has hung. It might take 10 to 30 seconds just to open the window.
+
+3. UI Thread Choking
+PyQtGraph’s autoDownsample=True is magic, but to know how to downsample, it still has to quickly scan the array. Scanning a 400-million-point array every time you pan the mouse an inch will cause the framerate to drop from 60 FPS to a slideshow.
+
+How to Architect for the Future
+To prevent this, you do not need to delete old logs. Instead, you change how the Viewer accesses them. Here are the three standard ways to handle massive data histories:
+
+Solution 1: Time-Window Constraints (The Easiest Fix)
+You should never blindly load *.npz. By default, your Viewer should only ever load the "Last 24 Hours" or "Last 7 Days." * Add a "Date Range" picker to your UI.
+
+If a user wants to see what happened on February 12th, they select that date, the Viewer clears the cache, loads only the files for that specific week, and renders them. This keeps RAM usage permanently low.
+
+Solution 2: Historical Decimation (The Archival Method)
+You don't need 10Hz (100ms) resolution to look at a vacuum pump's performance from two years ago; you usually only care about the minute-by-minute trends.
+
+Write a background Python script that runs once a week.
+
+It takes all the daily 10Hz files older than 30 days, averages them into 1-minute or 5-minute data points, and saves them as archive_2026_04.npz.
+
+This reduces the file size and RAM footprint by a factor of 600x.
+
+Solution 3: Lazy Loading (The Advanced UI)
+Instead of loading the arrays, the Viewer only loads the metadata (start and end times) of the 500 files.
+
+The X-axis shows the full 500 days, but the graph is blank.
+
+When the user zooms in on a specific week, a background thread dynamically fetches just the .npz files that intersect with that visible X-axis window and plots them on the fly.
+
+What you should do next
+If your system is logging daily, you have a bit of time before the RAM issue hits critical mass. But your immediate next step for the Viewer software should be implementing Solution 1: Time-Window Constraints.
+
+Would you like to start planning how to add a "Data Range / Load History" button to your sidebar?
+
+Maybe some kind of combo of 2 and 3 could be useful, like the viewer only loads the relevant time files, but each week of data gets a kind of decimated version that it looks at when zoomed out >1 week, and then as we zoom the timespan in it loads the more detailed relevant npz files - and on startup (and once per day etc) it builds a sort of quick look-up table of all the known npz's and their relevant dates and detail.

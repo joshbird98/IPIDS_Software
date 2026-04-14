@@ -549,7 +549,21 @@ class DataViewerApp(QMainWindow):
             if len(y) == 0: continue
 
             min_len = min(len(x), len(y))
-            x_plot, y_plot = x[-min_len:], y[-min_len:] * cfg.get('multiplier', 1.0)
+            x_plot = x[-min_len:]
+
+            # --- NaN SANITIZATION AND TYPE CASTING ---
+            try:
+                # 1. Force booleans (True/False) to plottable floats (1.0/0.0)
+                y_raw = np.asarray(y[-min_len:], dtype=np.float64)
+
+                # 2. Eradicate NaNs. Replace them with 0.0 so the ViewBox survives.
+                if np.any(np.isnan(y_raw)):
+                    y_raw = np.nan_to_num(y_raw, nan=0.0)
+
+                y_plot = y_raw * cfg.get('multiplier', 1.0)
+            except Exception as e:
+                print(f"[Plot Error] Skipping {tag}: Data cast failed - {e}")
+                continue
 
             if cfg.get('scale') == 'log':
                 active_axes[lane]['log'] = True
