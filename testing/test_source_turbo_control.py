@@ -3,7 +3,7 @@ import time
 
 # Attempt to load the port dynamically, with a fallback
 try:
-    from network_config import ZMQ_PORT_SRC_TURBO_CMD
+    from config.network_config import ZMQ_PORT_SRC_TURBO_CMD
 
     # Ensure it has the tcp:// prefix
     if not ZMQ_PORT_SRC_TURBO_CMD.startswith("tcp://"):

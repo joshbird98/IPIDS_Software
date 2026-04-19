@@ -3,7 +3,7 @@ import os
 
 current_dir = os.path.dirname(os.path.abspath(__file__))
 project_root = os.path.dirname(current_dir)
-logfile_path = os.path.join(project_root, "LogData", "archived_daily_trend_20260407.npz")
+logfile_path = os.path.join(project_root, "telemetry", "archived_daily_trend_20260407.npz")
 
 try:
     data = np.load(logfile_path)

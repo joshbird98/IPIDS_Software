@@ -1,0 +1,41 @@
+{
+    "UDT_Fault_Word_0_System": {
+      "registry_tag": "ion_beam.faults.word_0_system",
+      "bits": {
+        "0.0": {"name": "E_Stop_Pressed", "severity": 1, "description": "Physical Emergency Stop button engaged."},
+        "0.1": {"name": "Safety_Relay_Tripped", "severity": 1, "description": "Hardware safety loop broken. HV disabled."},
+        "0.2": {"name": "Air_Pressure_Low", "severity": 1, "description": "Pneumatic air supply below minimum operating threshold."},
+        "0.3": {"name": "Coolant_Flow_Low", "severity": 1, "description": "Syltherm coolant flow below minimum GPM."},
+        "1.0": {"name": "PC_Watchdog_Timeout", "severity": 1, "description": "Python control software stopped sending 1Hz heartbeat."},
+        "1.1": {"name": "Remote_IO_Lost", "severity": 1, "description": "Profinet connection to remote IO rack severed."}
+      }
+    },
+    "UDT_Fault_Word_1_Vacuum": {
+      "registry_tag": "ion_beam.faults.word_1_vacuum",
+      "bits": {
+        "0.0": {"name": "GateValve_Timeout", "severity": 1, "description": "Source gate valve failed to transition within 3 seconds."},
+        "0.1": {"name": "GateValve_Conflict", "severity": 1, "description": "Both open and closed limit switches active simultaneously."},
+        "1.0": {"name": "Src_Turbo_Trip", "severity": 1, "description": "Source turbopump controller reported a critical fault."},
+        "1.1": {"name": "Ldlk_Turbo_Trip", "severity": 1, "description": "Loadlock turbopump controller reported a critical fault."},
+        "2.0": {"name": "Src_Pressure_High", "severity": 1, "description": "Source chamber pressure exceeded HV interlock threshold."},
+        "2.1": {"name": "Src_Pressure_Warn", "severity": 2, "description": "Source chamber pressure rising above nominal baseline."},
+        }
+    },
+    "UDT_Fault_Word_2_Source": {
+      "registry_tag": "ion_beam.faults.word_2_source",
+      "bits": {
+        "0.0": {"name": "Src_Body_Temp_High", "severity": 1, "description": "Ion source body temperature exceeded safe operating limit."},
+        "0.1": {"name": "Cesium_Oven_OverTemp", "severity": 1, "description": "Cesium oven temperature runaway detected."},
+        "1.0": {"name": "Filament_OverCurrent", "severity": 1, "description": "Filament power supply current exceeded maximum rating."},
+        "1.1": {"name": "Extraction_Arc_Trip", "severity": 2, "description": "Repeated extraction arcing detected. Auto-recovery failed."},
+        }
+    },
+    "UDT_Fault_Word_3_Spellman": {
+      "registry_tag": "ion_beam.faults.word_3_spellman",
+      "bits": {
+        "0.0": {"name": "MPD_Beamline_Trip", "severity": 1, "description": "Beamline Spellman MPD internal fault flag active."},
+        "0.1": {"name": "MPD_Endstation_Trip", "severity": 1, "description": "Endstation Spellman MPD internal fault flag active."},
+        "1.0": {"name": "HV_Cable_Interlock", "severity": 1, "description": "Spellman HV cable physically disconnected from load."},
+        }
+    }
+}

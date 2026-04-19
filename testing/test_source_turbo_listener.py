@@ -4,7 +4,7 @@ import sys
 import os
 
 try:
-    from network_config import ZMQ_PORT_SRC_TURBO_PUB, TOPIC_SRC_TURBO_DATA
+    from config.network_config import ZMQ_PORT_SRC_TURBO_PUB, TOPIC_SRC_TURBO_DATA
 except ImportError:
     ZMQ_PORT_SRC_TURBO_PUB = "tcp://*:5556"
     TOPIC_SRC_TURBO_DATA = b"src_turbo_data"

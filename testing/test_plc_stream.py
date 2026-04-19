@@ -3,7 +3,7 @@ import json
 from datetime import datetime
 
 # Import configurations to match the microservice exact binds
-from network_config import ZMQ_PORT_PLC_PUB, TOPIC_PLC_DATA, TOPIC_PLC_FAULTS
+from config.network_config import ZMQ_PORT_PLC_PUB, TOPIC_PLC_DATA, TOPIC_PLC_FAULTS
 
 
 def run_tester():

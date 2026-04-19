@@ -11,9 +11,9 @@ __pycache__/
 .idea/
 
 # SCADA Data & Logs
-LogData/
-PlotData/
-MassScanData/
+data/telemetry/
+data/exports/
+data/scans/
 FaultLogs/
 SystemLogs/
 SystemLogsBin/

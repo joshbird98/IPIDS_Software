@@ -1,6 +1,6 @@
 import zmq
 import time
-from network_config import ZMQ_PORT_PLC_PUB, TOPIC_PLC_DATA
+from config.network_config import ZMQ_PORT_PLC_PUB, TOPIC_PLC_DATA
 
 
 def run_benchmark():

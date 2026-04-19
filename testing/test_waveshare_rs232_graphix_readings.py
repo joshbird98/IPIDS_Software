@@ -123,7 +123,7 @@ def monitor_and_plot():
                 ax.autoscale_view()
                 ax.set_xlim(left=max(0, current_elapsed - MAX_POINTS), right=current_elapsed + 5)
 
-                # plt.pause processes GUI events and acts as our polling delay
+                # plt.pause processes GUI system_logs and acts as our polling delay
                 # We use 0.7s because the 3x 100ms delays above already took 0.3s
                 plt.pause(0.7)
 

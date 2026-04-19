@@ -5,7 +5,7 @@ import time
 
 # --- CONFIGURATION ---
 # Adjust these to match your actual network_config.py
-from network_config import ZMQ_PORT_VACUUM_PUB, ZMQ_PORT_VACUUM_CMD, TOPIC_VACUUM_DATA
+from config.network_config import ZMQ_PORT_VACUUM_PUB, ZMQ_PORT_VACUUM_CMD, TOPIC_VACUUM_DATA
 
 
 def monitor_stream():

@@ -1,0 +1,49 @@
+{
+    "host": "tcp://127.0.0.1",
+    "plc": {
+        "ip": "192.168.1.10",
+        "rack": 0,
+        "slot": 1,
+        "db_interface": 10,
+        "db_retain": 11
+    },
+    "waveshares": {
+        "noisy_rack": {
+            "ip": "192.168.1.200",
+            "port": 4196
+        },
+        "src_turbo": {
+            "ip": "192.168.1.201",
+            "port": 4196
+        },
+        "ldlk_turbo": {
+            "ip": "192.168.1.202",
+            "port": 4196
+        },
+        "spellman": {
+            "beamline": {
+                "ip": "192.168.1.203",
+                "port": 4196
+            },
+            "endstation": {
+                "ip": "192.168.1.204",
+                "port": 4196
+            }
+        }
+    },
+    "zmq_ports": {
+        "plc_pub": 5550,
+        "plc_cmd": 5551,
+        "serial_pub": 5552,
+        "serial_cmd": 5553,
+        "logger_cmd": 5554,
+        "vacuum_pub": 5556,
+        "vacuum_cmd": 5557,
+        "src_turbo_pub": 5558,
+        "src_turbo_cmd": 5559,
+        "ldlk_turbo_pub": 5560,
+        "ldlk_turbo_cmd": 5561,
+        "spellman_pub": 5562,
+        "spellman_cmd": 5563
+    }
+}

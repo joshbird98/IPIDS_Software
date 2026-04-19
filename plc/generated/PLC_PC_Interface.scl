@@ -1,0 +1,123 @@
+DATA_BLOCK "DB_PC_Interface"
+{ S7_Optimized_Access := 'FALSE' }
+VERSION : 0.1
+NON_RETAIN
+   STRUCT
+      // =====================================================================
+      // TO PC: READ-ONLY FOR PYTHON
+      // The PLC continuously overwrites this from its internal Retain/Memory
+      // =====================================================================
+      To_PC : STRUCT
+         System : STRUCT
+            PC_PLC_Comms_Lost : Bool;
+            Remote_IO_Lost : Bool;
+            Src_Auto_SDown : Bool;
+            Machine_State : Int;
+            PLC_Cycle_Count : DInt;
+         END_STRUCT;
+
+         Faults : STRUCT
+            Word_0 : "UDT_Fault_Word_0";
+            Word_1 : "UDT_Fault_Word_1";
+            Word_2 : "UDT_Fault_Word_2";
+            Word_3 : "UDT_Fault_Word_3";
+         END_STRUCT;
+
+         Facilities : STRUCT
+            Safety_Relay_Active : Bool;
+            Stat_Src_Coolant_OK : Bool;
+            Stat_Air_Press_OK : Bool;
+         END_STRUCT;
+
+         Source_Extraction : STRUCT
+            Stat_Enabled : Bool;
+            RB_Voltage : Real;
+            RB_Current : Real;
+         END_STRUCT;
+
+         Source_Target : STRUCT
+            Stat_Enabled : Bool;
+            RB_Voltage : Real;
+            RB_Current : Real;
+         END_STRUCT;
+
+         Source_Filament : STRUCT
+            Stat_Enabled : Bool;
+            RB_Voltage : Real;
+            RB_Current : Real;
+         END_STRUCT;
+
+         Source_Thermionic : STRUCT
+            Stat_Enabled : Bool;
+            Stat_Auto_Emission : Bool;
+            RB_Voltage : Real;
+            RB_Current : Real;
+         END_STRUCT;
+
+         Source_Cesium : STRUCT
+            RB_Temp : Real;
+         END_STRUCT;
+
+         Source_Chamber : STRUCT
+            Stat_GV_Open : Bool;
+            Stat_GV_Closed : Bool;
+            RB_Body_Temp : Real;
+         END_STRUCT;
+
+         Endstation : STRUCT
+            RB_Dose_Count : Real;
+         END_STRUCT;
+      END_STRUCT;
+
+      // =====================================================================
+      // FROM PC: WRITE-ONLY FOR PYTHON
+      // The PLC reads this, but NEVER blindly overwrites it.
+      // =====================================================================
+      From_PC : STRUCT
+         System : STRUCT
+            PLC_Watchdog : Bool;
+            Cmd_Fault_Reset : Bool;
+         END_STRUCT;
+
+         Source_Extraction : STRUCT
+            Cmd_Enable : Bool;
+            SP_Voltage : Real;
+         END_STRUCT;
+
+         Source_Target : STRUCT
+            Cmd_Enable : Bool;
+            SP_Voltage : Real;
+         END_STRUCT;
+
+         Source_Filament : STRUCT
+            Cmd_Enable : Bool;
+            SP_Current : Real;
+         END_STRUCT;
+
+         Source_Thermionic : STRUCT
+            Cmd_Enable : Bool;
+            Cmd_Auto_Emission : Bool;
+            SP_Current : Real;
+         END_STRUCT;
+
+         Source_Cesium : STRUCT
+            Cmd_Stop_Cooler : Bool;
+            SP_Temp : Real;
+         END_STRUCT;
+
+         Source_Chamber : STRUCT
+            Cmd_Open_GV : Bool;
+         END_STRUCT;
+
+         Beamline_Steering : STRUCT
+            SP_X_Volts : Real;
+            SP_Y_Volts : Real;
+         END_STRUCT;
+
+         Beamline_Diagnostics : STRUCT
+            Cmd_Insert_FC : Bool;
+         END_STRUCT;
+      END_STRUCT;
+   END_STRUCT;
+BEGIN
+END_DATA_BLOCK

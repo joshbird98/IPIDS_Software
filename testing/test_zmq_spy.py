@@ -1,6 +1,6 @@
 import zmq
 import json
-from network_config import ZMQ_PORT_VACUUM_PUB, TOPIC_VACUUM_DATA
+from config.network_config import ZMQ_PORT_VACUUM_PUB, TOPIC_VACUUM_DATA
 
 context = zmq.Context()
 sock = context.socket(zmq.SUB)

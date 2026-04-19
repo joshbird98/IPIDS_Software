@@ -1,10 +1,10 @@
 import os
 import numpy as np
-from utils.data_engine import TimeSeriesEngine
+from src.core.data_engine import TimeSeriesEngine
 
 # Setup paths
 current_dir = os.path.dirname(os.path.abspath(__file__))
-log_dir = os.path.join(os.path.dirname(current_dir), "LogData")
+log_dir = os.path.join(os.path.dirname(current_dir), "telemetry")
 engine = TimeSeriesEngine(log_dir)
 
 # 1. Test standard query
