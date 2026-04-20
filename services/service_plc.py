@@ -2,8 +2,10 @@ import time
 import os
 import zmq
 import json
+import ctypes
 import snap7
 from snap7.util import *
+from snap7.type import S7DataItem, Area, WordLen
 from typing import Dict, Any
 
 from network_config import (
@@ -11,8 +13,10 @@ from network_config import (
     PLC_IP, PLC_RACK, PLC_SLOT, DB_INTERFACE_NUM, DB_RETAIN_NUM
 )
 
-POLL_INTERVAL = 0.5  # 50ms cycle (use 50ms to 100ms)
+POLL_INTERVAL = 0.016  # Gives ~50Hz cycle
 HEARTBEAT_INTERVAL = 1.0  # 1Hz Watchdog
+
+MAX_CMD_AGE = 0.2  # 200ms expiration
 
 
 class PlcMicroservice:
@@ -24,6 +28,7 @@ class PlcMicroservice:
         self.pub_socket.bind(ZMQ_PORT_PLC_PUB)
 
         self.sub_socket = self.context.socket(zmq.SUB)
+        self.sub_socket.setsockopt(zmq.RCVHWM, 5)  # Drop inbound messages if buffer exceeds 5
         self.sub_socket.bind(ZMQ_PORT_PLC_CMD)
         self.sub_socket.setsockopt_string(zmq.SUBSCRIBE, "")
 
@@ -42,6 +47,9 @@ class PlcMicroservice:
         # Calculate block sizes dynamically to minimize network payload
         self.db_interface_size = self._calculate_db_size(DB_INTERFACE_NUM)
         self.db_retain_size = self._calculate_db_size(DB_RETAIN_NUM)
+
+        self.last_retain_read = 0.0
+        self.raw_retain_cache = bytearray(self.db_retain_size)
 
         self.state: Dict[str, Any] = {
             "system": {
@@ -128,7 +136,6 @@ class PlcMicroservice:
             return
 
         self.watchdog_state = not self.watchdog_state
-        print("WATCHDOG STATE: {}".format(self.watchdog_state))
         self._write_tag(watchdog_tag, self.watchdog_state)
 
     def _parse_bytearray(self, data: bytearray, byte_idx: int, bit_idx: int, dtype: str):
@@ -146,24 +153,19 @@ class PlcMicroservice:
         return None
 
     def _read_and_parse_dbs(self):
-        """Executes bulk reads on both DBs and parses values according to the registry."""
+        """Executes sequential reads, caching the Retain DB to save network bandwidth."""
         try:
-            raw_interface = None
-            raw_retain = None
+            current_time = time.time()
 
-            # 1. Bulk Read DB Interface
-            try:
-                raw_interface = self.client.db_read(DB_INTERFACE_NUM, 0, self.db_interface_size)
-            except Exception as e:
-                print(f"[FATAL] Failed to read Interface DB {DB_INTERFACE_NUM}: {e}")
-                raise e
+            # 1. Interface Read (Every Cycle)
+            raw_interface = self.client.db_read(DB_INTERFACE_NUM, 0, self.db_interface_size)
 
-                # 2. Bulk Read DB Retain
-            try:
-                raw_retain = self.client.db_read(DB_RETAIN_NUM, 0, self.db_retain_size)
-            except Exception as e:
-                print(f"[FATAL] Failed to read Retain DB {DB_RETAIN_NUM}: {e}")
-                raise e
+            # 2. Retain Read (Only at 1Hz)
+            if current_time - self.last_retain_read >= 1.0:
+                self.raw_retain_cache = self.client.db_read(DB_RETAIN_NUM, 0, self.db_retain_size)
+                self.last_retain_read = current_time
+
+            raw_retain = self.raw_retain_cache
 
             # 3. Parse Data
             for tag, meta in self.tags.items():
@@ -186,8 +188,7 @@ class PlcMicroservice:
                 else:
                     self.state["data"][tag] = val
 
-            # 4. CPU State Evaluation (The Active Heartbeat)
-            # Replace 'ion_beam.system.plc_cycle_count' with your exact generated tag name
+            # 4. CPU State Evaluation
             current_count = self.state["data"].get("ion_beam.system.plc_cycle_count")
 
             if current_count is not None:
@@ -195,7 +196,6 @@ class PlcMicroservice:
                     self.state["system"]["cpu_state"] = "RUN"
                 else:
                     self.state["system"]["cpu_state"] = "STOP"
-
                 self.plc_cycle_count = current_count
 
         except Exception as e:
@@ -252,15 +252,29 @@ class PlcMicroservice:
                 msg = self.sub_socket.recv_json(flags=zmq.NOBLOCK)
                 tag = msg.get("tag")
                 value = msg.get("value")
+                timestamp = msg.get("ts", 0.0)
 
+
+                # Time-To-Live Verification
+                age = time.time() - timestamp
+                if age > MAX_CMD_AGE:
+                    print(f"[SAFETY] Dropped stale command '{tag}': {value} from {timestamp}. Age: {age:.2f}s")
+                    continue
+
+                # Execute
                 if tag and value is not None:
                     self._write_tag(tag, value)
+                    print(f"[PLC Service] Executed command '{tag}': {value} from {timestamp}")
+
         except zmq.Again:
             pass
+
 
     def run(self):
         print("[PLC Service] Starting Daemon...")
         while True:
+            cycle_start = time.perf_counter()
+
             if not self.connected:
                 self._connect_plc()
                 if not self.connected:
@@ -286,7 +300,10 @@ class PlcMicroservice:
             except Exception as e:
                 print(f"[PLC Service] Publish Error: {e}")
 
-            time.sleep(POLL_INTERVAL)
+            # 5. Maintain Strict Target Frequency
+            elapsed = time.perf_counter() - cycle_start
+            sleep_time = max(0.0, POLL_INTERVAL - elapsed)
+            time.sleep(sleep_time)
 
 
 if __name__ == "__main__":
