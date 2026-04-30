@@ -1,0 +1,40 @@
+,Static,,,,,,,,,
+,System,UDT_System,0,,False,True,True,True,True,
+,Watchdog_Toggle,Bool,0,false,False,True,True,True,False,unit= | mult=1.0 | scale=linear | label=Watchdog Toggle | short=Watchdog | desc=PC toggles this bit at 1Hz
+,Comms_Lost,Bool,0.1,false,False,True,True,True,False,unit= | mult=1.0 | scale=linear | label=Comms Lost | short=Comms | desc=PLC sets this if PC toggle stops
+,Machine_State,Int,2,0,False,True,True,True,False,"unit= | mult=1.0 | scale=linear | label=Machine State | short=State | desc=0=Init, 1=Safe, 2=HV Ready, 3=HV On, 99=Fault"
+,Facilities,UDT_Facilities,4,,False,True,True,True,True,
+,Safety_Relay_Active,Bool,4,false,False,True,True,True,False,unit= | mult=1.0 | scale=linear | label=Safety Relay | short=Safety | desc=Hardware safety relay is engaged
+,Stat_Coolant_OK,Bool,4.1,false,False,True,True,True,False,unit= | mult=1.0 | scale=linear | label=Coolant Flow OK | short=Coolant | desc=Coolant flow is sufficient
+,Stat_Air_Press_OK,Bool,4.2,false,False,True,True,True,False,unit= | mult=1.0 | scale=linear | label=Air Pressure OK | short=Air Press | desc=Pneumatic air pressure is sufficient
+,Source,UDT_Source,6,,False,True,True,True,True,
+,Cmd_Enable_HV,Bool,6,false,False,True,True,True,False,unit= | mult=1.0 | scale=linear | label=Enable HV Cmd | short=En HV | desc=Request to enable High Voltage
+,Cmd_Enable_Target,Bool,6.1,false,False,True,True,True,False,unit= | mult=1.0 | scale=linear | label=Enable Target Cmd | short=En Target | desc=Request to enable Target PSU
+,Cmd_Enable_Filament,Bool,6.2,false,False,True,True,True,False,unit= | mult=1.0 | scale=linear | label=Enable Filament Cmd | short=En Filament | desc=Request to enable Filament PSU
+,Cmd_Enable_Thermionic,Bool,6.3,false,False,True,True,True,False,unit= | mult=1.0 | scale=linear | label=Enable Thermionic Cmd | short=En Therm | desc=Request to enable Thermionic PSU
+,Cmd_Open_Source_GV,Bool,6.4,false,False,True,True,True,False,unit= | mult=1.0 | scale=linear | label=Open Source GV Cmd | short=Open GV | desc=Request to open source gate valve
+,Stat_Source_GV_Open,Bool,6.5,false,False,True,True,True,False,unit= | mult=1.0 | scale=linear | label=Source GV Open | short=GV Open | desc=Source gate valve is fully open
+,Stat_Source_GV_Closed,Bool,6.6,false,False,True,True,True,False,unit= | mult=1.0 | scale=linear | label=Source GV Closed | short=GV Closed | desc=Source gate valve is fully closed
+,SP_Extraction_Voltage,Real,8,0,False,True,True,True,False,unit=kV | mult=1.0 | scale=linear | label=Extraction Voltage SP | short=Ext V SP | desc=Extraction Voltage Setpoint
+,SP_Cesium_Temp,Real,12,0,False,True,True,True,False,unit=°C | mult=1.0 | scale=linear | label=Cesium Oven Temp SP | short=Cs Temp SP | desc=Cesium Oven Temperature Setpoint
+,SP_Filament_Power,Real,16,0,False,True,True,True,False,unit=W | mult=1.0 | scale=linear | label=Filament Power SP | short=Fil Pwr SP | desc=Filament Power Setpoint
+,Act_Extraction_Voltage,Real,20,0,False,True,True,True,False,unit=kV | mult=1.0 | scale=linear | label=Extraction Voltage Act | short=Ext V Act | desc=Actual Extraction Voltage
+,Act_Extraction_Current,Real,24,0,False,True,True,True,False,unit=mA | mult=1.0 | scale=log | label=Extraction Current Act | short=Ext I Act | desc=Actual Extraction Current
+,Act_Target_Voltage,Real,28,0,False,True,True,True,False,unit=kV | mult=1.0 | scale=linear | label=Target Voltage Act | short=Tgt V Act | desc=Actual Target Voltage
+,Act_Target_Current,Real,32,0,False,True,True,True,False,unit=mA | mult=1.0 | scale=log | label=Target Current Act | short=Tgt I Act | desc=Actual Target Current
+,Act_Filament_Voltage,Real,36,0,False,True,True,True,False,unit=V | mult=1.0 | scale=linear | label=Filament Voltage Act | short=Fil V Act | desc=Actual Filament Voltage
+,Act_Filament_Current,Real,40,0,False,True,True,True,False,unit=A | mult=1.0 | scale=linear | label=Filament Current Act | short=Fil I Act | desc=Actual Filament Current
+,Act_Cesium_Temp,Real,44,0,False,True,True,True,False,unit=°C | mult=1.0 | scale=linear | label=Cesium Oven Temp Act | short=Cs Temp Act | desc=Actual Cesium Temperature
+,Act_Source_Body_Temp,Real,48,0,False,True,True,True,False,unit=°C | mult=1.0 | scale=linear | label=Source Body Temp Act | short=Src Temp Act | desc=Actual Source Body Temperature
+,Beamline,UDT_Beamline,52,,False,True,True,True,True,
+,Cmd_FC_DropIn,Bool,52,false,False,True,True,True,False,unit= | mult=1.0 | scale=linear | label=Insert FC Cmd | short=Insert FC | desc=Request to insert Faraday Cup
+,SP_X_Steerer_Volts,Real,54,0,False,True,True,True,False,unit=V | mult=1.0 | scale=linear | label=X Steerer Voltage SP | short=X Steer SP | desc=X Deflection Voltage Setpoint
+,SP_Y_Steerer_Volts,Real,58,0,False,True,True,True,False,unit=V | mult=1.0 | scale=linear | label=Y Steerer Voltage SP | short=Y Steer SP | desc=Y Deflection Voltage Setpoint
+,SP_Mass_Analyzer_Mag,Real,62,0,False,True,True,True,False,unit=G | mult=1.0 | scale=linear | label=Analyzer Magnet SP | short=Mag SP | desc=Mass Analyzer Magnetic Field Setpoint
+,Act_Mass_Analyzer_Mag,Real,66,0,False,True,True,True,False,unit=G | mult=1.0 | scale=linear | label=Analyzer Magnet Act | short=Mag Act | desc=Mass Analyzer Magnetic Field Actual
+,Act_FC_Current,Real,70,0,False,True,True,True,False,unit=uA | mult=1.0 | scale=log | label=Faraday Cup Current | short=FC Current | desc=Beam Current at Faraday Cup
+,Endstation,UDT_Endstation,74,,False,True,True,True,True,
+,Cmd_Platen_Clamp,Bool,74,false,False,True,True,True,False,unit= | mult=1.0 | scale=linear | label=Clamp Platen Cmd | short=Clamp | desc=Clamp wafer to platen
+,SP_Platen_Temp,Real,76,0,False,True,True,True,False,unit=°C | mult=1.0 | scale=linear | label=Platen Temp SP | short=Plat Temp SP | desc=Target Platen Temperature
+,Act_Platen_Temp,Real,80,0,False,True,True,True,False,unit=°C | mult=1.0 | scale=linear | label=Platen Temp Act | short=Plat Temp Act | desc=Actual Platen Temperature
+,Act_Dose_Count,Real,84,0,False,True,True,True,False,unit=ions/cm2 | mult=1.0 | scale=log | label=Implant Dose | short=Dose | desc=Accumulated Implant Dose
