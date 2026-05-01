@@ -7,7 +7,8 @@ from snap7.util import get_bool, get_int, get_dint, get_real, get_dword, set_boo
 from typing import Dict, Any
 
 from src.core.network_config import (
-    ZMQ_PORT_PLC_PUB, ZMQ_PORT_PLC_CMD, TOPIC_PLC_DATA, PLC_IP, PLC_RACK, PLC_SLOT, DB_INTERFACE_NUM
+    ZMQ_PORT_PLC_PUB, ZMQ_PORT_PLC_CMD, TOPIC_PLC_DATA, PLC_IP, PLC_RACK, PLC_SLOT, DB_INTERFACE_NUM,
+    ZMQ_PORT_VACUUM_PUB, ZMQ_PORT_SPELLMAN_PUB, ZMQ_PORT_MAGNET_PUB
 )
 
 POLL_INTERVAL = 0.1  # 100ms cycle (10Hz)
@@ -28,6 +29,19 @@ class PlcMicroservice:
         self.sub_socket.setsockopt(zmq.RCVHWM, 5)  # Drop inbound if queue exceeds 5
         self.sub_socket.bind(ZMQ_PORT_PLC_CMD)
         self.sub_socket.setsockopt_string(zmq.SUBSCRIBE, "")
+
+        # --- ZMQ Telemetry Subscriber (Listening to other Python services) ---
+        self.telem_socket = self.context.socket(zmq.SUB)
+        self.telem_socket.setsockopt(zmq.RCVHWM, 10)
+        self.telem_socket.setsockopt_string(zmq.SUBSCRIBE, "")
+
+        # Connect to the publishers of the other microservices
+        self.telem_socket.connect(ZMQ_PORT_VACUUM_PUB)
+        self.telem_socket.connect(ZMQ_PORT_SPELLMAN_PUB)
+        self.telem_socket.connect(ZMQ_PORT_MAGNET_PUB)
+
+        # --- Mailbox Cache (Prevents Snap7 write-flooding) ---
+        self.mailbox_cache: Dict[str, Any] = {}
 
         # --- Snap7 Setup ---
         self.client = snap7.client.Client()
@@ -230,6 +244,93 @@ class PlcMicroservice:
             self.connected = False
             return False
 
+    def _update_plc_mailbox(self, tag: str, new_value: bool):
+        """Write-on-Change filter for PLC mailboxes to prevent network flooding."""
+        # Only write if the value is different from our local cache
+        if self.mailbox_cache.get(tag) != new_value:
+            success = self._write_tag(tag, new_value)
+            if success:
+                self.mailbox_cache[tag] = new_value
+                # Optional: print for debugging so you can see when a fault is routed
+                print(f"[PLC Broker] Routed to Mailbox: {tag} -> {new_value}")
+
+    def _process_external_telemetry(self):
+        """Listens to external microservices and routes faults to the PLC From_PC mailbox."""
+        try:
+            while True:
+                topic, msg = self.telem_socket.recv_multipart(flags=zmq.NOBLOCK)
+                payload = json.loads(msg.decode('utf-8'))
+                topic_str = topic.decode('utf-8')
+
+                # All modernized microservices use the "faults" dict
+                faults = payload.get("faults", {})
+
+                # ==========================================
+                # ROUTING: SOURCE TURBO
+                # ==========================================
+                if "TURBO" in topic_str:
+                    # Look for exact fault names injected by service_source_turbo.py
+                    comms_fail = faults.get("Src_Turbo_Comms_Fail", {}).get("active", False)
+                    error = faults.get("Src_Turbo_Error_Active", {}).get("active", False)
+                    warn = faults.get("Src_Turbo_Warning_Active", {}).get("active", False)
+                    trip = faults.get("Src_Turbo_Trip", {}).get("active", False)
+
+                    self._update_plc_mailbox("ion_beam.pump_status.stat_src_turbo_comms_fail", comms_fail)
+                    self._update_plc_mailbox("ion_beam.pump_status.stat_src_turbo_error", error)
+                    self._update_plc_mailbox("ion_beam.pump_status.stat_src_turbo_warning", warn)
+                    self._update_plc_mailbox("ion_beam.pump_status.stat_src_turbo_trip", trip)
+
+                # ==========================================
+                # ROUTING: VACUUM GAUGES
+                # ==========================================
+                elif "VACUUM" in topic_str:
+                    # Graphix Controllers Comms
+                    self._update_plc_mailbox("ion_beam.gauges_status.stat_graphix1_comms_fail",
+                                             faults.get("Graphix_1_Comms_Fail", {}).get("active", False))
+                    self._update_plc_mailbox("ion_beam.gauges_status.stat_graphix2_comms_fail",
+                                             faults.get("Graphix_2_Comms_Fail", {}).get("active", False))
+
+                    # Map all 6 gauges explicitly to match PLC UDT naming
+                    for i in range(1, 7):
+                        not_found = faults.get(f"VG{i}_Not_Found", {}).get("active", False)
+                        mismatch = faults.get(f"VG{i}_Type_Mismatch", {}).get("active", False)
+                        # Assumes you add these warnings to your gauge service later if needed
+                        above_sp = faults.get(f"VG{i}_Above_SP_Warn", {}).get("active", False)
+                        rapid_rise = faults.get(f"VG{i}_Rapid_Rise_Warn", {}).get("active", False)
+
+                        self._update_plc_mailbox(f"ion_beam.gauges_status.stat_vg{i}_not_found", not_found)
+                        self._update_plc_mailbox(f"ion_beam.gauges_status.stat_vg{i}_mismatch", mismatch)
+                        self._update_plc_mailbox(f"ion_beam.gauges_status.stat_vg{i}_above_sp", above_sp)
+                        self._update_plc_mailbox(f"ion_beam.gauges_status.stat_vg{i}_rapid_rise", rapid_rise)
+
+                # ==========================================
+                # ROUTING: SPELLMAN PSUs
+                # ==========================================
+                elif "SPELLMAN" in topic_str:
+                    for i in range(1, 6):
+                        prefix = f"Unit{i}"
+                        comms_fail = faults.get(f"{prefix}_Comms_Fail", {}).get("active", False)
+                        overcurrent = faults.get(f"{prefix}_OverCurrent", {}).get("active", False)
+                        undervoltage = faults.get(f"{prefix}_UnderVoltage", {}).get("active", False)
+                        arc_exceeded = faults.get(f"{prefix}_Arc_Exceeded", {}).get("active", False)
+
+                        self._update_plc_mailbox(f"ion_beam.spellman_status.stat_unit{i}_comms_fail", comms_fail)
+                        self._update_plc_mailbox(f"ion_beam.spellman_status.stat_unit{i}_overcurrent", overcurrent)
+                        self._update_plc_mailbox(f"ion_beam.spellman_status.stat_unit{i}_undervoltage", undervoltage)
+                        self._update_plc_mailbox(f"ion_beam.spellman_status.stat_unit{i}_arc_exceeded", arc_exceeded)
+
+                # ==========================================
+                # ROUTING: MAGNET
+                # ==========================================
+                elif "MAGNET" in topic_str:
+                    # To be filled when service_magnet_psu.py is modernized
+                    pass
+
+        except zmq.Again:
+            pass
+        except Exception as e:
+            print(f"[PLC Broker] Error routing external telemetry: {e}")
+
     def _process_commands(self):
         """Defense in Depth: Application Layer TTL Verification"""
         try:
@@ -265,6 +366,7 @@ class PlcMicroservice:
 
             self._read_and_parse_dbs()
             self._process_commands()
+            self._process_external_telemetry()
 
             current_time = time.time()
             if current_time - self.last_heartbeat >= HEARTBEAT_INTERVAL:

@@ -50,6 +50,9 @@ ZMQ_PORT_SERIAL_CMD = f"{HOST}:{_cfg['zmq_ports']['serial_cmd']}"
 
 ZMQ_PORT_LOGGER_CMD = f"{HOST}:{_cfg['zmq_ports']['logger_cmd']}"
 
+ZMQ_PORT_MAGNET_PUB = f"{HOST}:{_cfg['zmq_ports']['magnet_pub']}"
+ZMQ_PORT_MAGNET_CMD = f"{HOST}:{_cfg['zmq_ports']['magnet_cmd']}"
+
 # --- ZMQ Topics ---
 TOPIC_PLC_DATA = b"PLC_DATA"
 TOPIC_VACUUM_DATA = b"VACUUM_DATA"
@@ -57,3 +60,4 @@ TOPIC_SRC_TURBO_DATA = b"SRC_TURBO_DATA"
 TOPIC_LDLK_TURBO_DATA = b"LDLK_TURBO_DATA"
 TOPIC_SERIAL_DATA = b"SERIAL_DATA"
 TOPIC_SPELLMAN_DATA = b"SPELLMAN_DATA"
+TOPIC_MAGNET_DATA = b"MAGNET_DATA"

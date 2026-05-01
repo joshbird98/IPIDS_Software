@@ -120,6 +120,49 @@ def get_turbo_tags():
         }
     return tags
 
+def get_spellman_tags(config_dir):
+    tags = {}
+    config_path = os.path.join(config_dir, "mpd_config.json")
+
+    try:
+        with open(config_path, "r") as f:
+            mpd_config = json.load(f)
+    except FileNotFoundError:
+        return tags
+
+    for bus in mpd_config.get("buses", []):
+        for dev_name, dev_info in bus.get("devices", {}).items():
+            base_tag = f"ion_beam.spellman.{dev_name}"
+
+            # Readbacks (Telemetry)
+            tags[f"{base_tag}.voltage_rb"] = {
+                "source": "service_spellman", "datatype": "REAL", "writable": False,
+                "unit": "kV", "description": f"{dev_name} Voltage Readback"
+            }
+            tags[f"{base_tag}.current_rb"] = {
+                "source": "service_spellman", "datatype": "REAL", "writable": False,
+                "unit": "mA", "description": f"{dev_name} Current Readback"
+            }
+            tags[f"{base_tag}.stat_enabled"] = {
+                "source": "service_spellman", "datatype": "BOOL", "writable": False,
+                "unit": "", "description": f"{dev_name} HV Output Status"
+            }
+
+            # Setpoints (Commands sent directly to the ZMQ service)
+            tags[f"{base_tag}.voltage_sp"] = {
+                "source": "service_spellman", "datatype": "REAL", "writable": True,
+                "unit": "kV", "description": f"{dev_name} Voltage Setpoint"
+            }
+            tags[f"{base_tag}.current_sp"] = {
+                "source": "service_spellman", "datatype": "REAL", "writable": True,
+                "unit": "mA", "description": f"{dev_name} Current Setpoint"
+            }
+            tags[f"{base_tag}.cmd_enable"] = {
+                "source": "service_spellman", "datatype": "BOOL", "writable": True,
+                "unit": "", "description": f"{dev_name} HV Enable Command"
+            }
+
+    return tags
 
 # --- SCL Parser specific to Siemens S7 Memory Alignment (Nested STRUCTs) ---
 def get_plc_tags_from_scl(scl_path, db_number=10, machine_root="ion_beam"):
@@ -290,6 +333,7 @@ def build_system_registry():
 
     vacuum_tags = get_vacuum_tags(config_dir)
     turbo_tags = get_turbo_tags()
+    spellman_tags = get_spellman_tags(config_dir)
 
     scl_path = os.path.join(project_root, "plc", "generated", "PLC_PC_Interface.scl")
     plc_tags = get_plc_tags_from_scl(scl_path, db_number=10)
@@ -297,6 +341,7 @@ def build_system_registry():
     new_registry.update(vacuum_tags)
     new_registry.update(turbo_tags)
     new_registry.update(plc_tags)
+    new_registry.update(spellman_tags)
 
     new_registry = apply_existing_overrides(new_registry, existing_registry)
 

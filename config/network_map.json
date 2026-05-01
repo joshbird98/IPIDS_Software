@@ -44,6 +44,8 @@
         "ldlk_turbo_pub": 5560,
         "ldlk_turbo_cmd": 5561,
         "spellman_pub": 5562,
-        "spellman_cmd": 5563
+        "spellman_cmd": 5563,
+        "magnet_pub": 5564,
+        "magnet_cmd": 5565
     }
 }

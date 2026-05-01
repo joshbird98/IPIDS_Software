@@ -2,23 +2,27 @@
     "UDT_Fault_Word_0_System": {
       "registry_tag": "ion_beam.faults.word_0_system",
       "bits": {
-        "0.0": {"name": "E_Stop_Pressed", "severity": 1, "description": "Physical Emergency Stop button engaged."},
+        "0.0": {"name": "Safety_Relay_Refused", "severity": 1, "description": "Safety relay interlocks not met."},
         "0.1": {"name": "Safety_Relay_Tripped", "severity": 1, "description": "Hardware safety loop broken. HV disabled."},
         "0.2": {"name": "Air_Pressure_Low", "severity": 1, "description": "Pneumatic air supply below minimum operating threshold."},
         "0.3": {"name": "Coolant_Flow_Low", "severity": 1, "description": "Syltherm coolant flow below minimum GPM."},
-        "1.0": {"name": "PC_Watchdog_Timeout", "severity": 1, "description": "Python control software stopped sending 1Hz heartbeat."},
-        "1.1": {"name": "Remote_IO_Lost", "severity": 1, "description": "Profinet connection to remote IO rack severed."}
+        "1.0": {"name": "GateValve_Timeout", "severity": 1, "description": "Gate valve failed to actuate."},
+        "1.1": {"name": "GateValve_Conflict", "severity": 1, "description": "Gate valve reads as both open and closed."},
+        "2.0": {"name": "PC_Watchdog_Timeout", "severity": 1, "description": "Python control software stopped sending 1Hz heartbeat."},
+        "2.1": {"name": "Remote_IO_Lost", "severity": 1, "description": "Profinet connection to remote IO rack severed."}
       }
     },
-    "UDT_Fault_Word_1_Vacuum": {
-      "registry_tag": "ion_beam.faults.word_1_vacuum",
+    "UDT_Fault_Word_1_Pumps": {
+      "registry_tag": "ion_beam.faults.word_1_pumps",
       "bits": {
-        "0.0": {"name": "GateValve_Timeout", "severity": 1, "description": "Source gate valve failed to transition within 3 seconds."},
-        "0.1": {"name": "GateValve_Conflict", "severity": 1, "description": "Both open and closed limit switches active simultaneously."},
-        "1.0": {"name": "Src_Turbo_Trip", "severity": 1, "description": "Source turbopump controller reported a critical fault."},
-        "1.1": {"name": "Ldlk_Turbo_Trip", "severity": 1, "description": "Loadlock turbopump controller reported a critical fault."},
-        "2.0": {"name": "Src_Pressure_High", "severity": 1, "description": "Source chamber pressure exceeded HV interlock threshold."},
-        "2.1": {"name": "Src_Pressure_Warn", "severity": 2, "description": "Source chamber pressure rising above nominal baseline."},
+        "0.0": {"name": "Src_Turbo_Trip", "severity": 1, "description": "Source turbopump stopped unexpectedly."},
+        "0.1": {"name": "Src_Turbo_Comms_Fail", "severity": 1, "description": "Source turbopump communication failure."},
+        "0.2": {"name": "Src_Turbo_Error_Active", "severity": 1, "description": "Source turbopump reports an error."},
+        "0.3": {"name": "Src_Turbo_Warning_Active", "severity": 2, "description": "Source turbopump reports a warning."},
+        "1.0": {"name": "Ldlk_Turbo_Trip", "severity": 1, "description": "Loadlock turbopump stopped unexpectedly."},
+        "1.1": {"name": "Ldlk_Turbo_Comms_Fail", "severity": 1, "description": "Loadlock turbopump communication failure."},
+        "1.2": {"name": "Ldlk_Turbo_Error_Active", "severity": 1, "description": "Loadlock turbopump reports an error."},
+        "1.3": {"name": "Ldlk_Turbo_Warning_Active", "severity": 2, "description": "Loadlock turbopump reports a warning."}
         }
     },
     "UDT_Fault_Word_2_Source": {
@@ -26,16 +30,94 @@
       "bits": {
         "0.0": {"name": "Src_Body_Temp_High", "severity": 1, "description": "Ion source body temperature exceeded safe operating limit."},
         "0.1": {"name": "Cesium_Oven_OverTemp", "severity": 1, "description": "Cesium oven temperature runaway detected."},
-        "1.0": {"name": "Filament_OverCurrent", "severity": 1, "description": "Filament power supply current exceeded maximum rating."},
-        "1.1": {"name": "Extraction_Arc_Trip", "severity": 2, "description": "Repeated extraction arcing detected. Auto-recovery failed."},
+        "0.2": {"name": "Cesium_Oven_HeatFail", "severity": 1, "description": "Cesium oven did not heat up quick enough."},
+        "0.3": {"name": "Cesium_Oven_CoolFail", "severity": 1, "description": "Cesium oven did not cool down quick enough."},
+        "0.4": {"name": "Filament_OverCurrent", "severity": 1, "description": "Filament power supply current exceeded max limit."},
+        "0.5": {"name": "Filament_OverVoltage", "severity": 1, "description": "Filament power supply voltage exceeded max limit."},
+        "0.6": {"name": "Filament_Fail", "severity": 2, "description": "Filament failed to track setpoint."},
+        "1.0": {"name": "Extraction_OverCurrent", "severity": 1, "description": "Extraction power supply current exceeded max limit."},
+        "1.1": {"name": "Extraction_OverVoltage", "severity": 1, "description": "Extraction power supply voltage exceeded max limit."},
+        "1.2": {"name": "Extraction_Fail", "severity": 2, "description": "Extraction failed to track setpoint."},
+        "2.0": {"name": "Target_OverCurrent", "severity": 1, "description": "Target power supply current exceeded max limit."},
+        "2.1": {"name": "Target_OverVoltage", "severity": 1, "description": "Target power supply voltage exceeded max limit."},
+        "2.2": {"name": "Target_Fail", "severity": 2, "description": "Target failed to track setpoint."},
+        "3.0": {"name": "Thermionic_OverCurrent", "severity": 1, "description": "Thermionic power supply current exceeded max limit."},
+        "3.1": {"name": "Thermionic_OverVoltage", "severity": 1, "description": "Thermionic power supply voltage exceeded max limit."},
+        "3.2": {"name": "Thermionic_Fail", "severity": 2, "description": "Failed to produce thermionic current."}
         }
     },
     "UDT_Fault_Word_3_Spellman": {
       "registry_tag": "ion_beam.faults.word_3_spellman",
       "bits": {
-        "0.0": {"name": "MPD_Beamline_Trip", "severity": 1, "description": "Beamline Spellman MPD internal fault flag active."},
-        "0.1": {"name": "MPD_Endstation_Trip", "severity": 1, "description": "Endstation Spellman MPD internal fault flag active."},
-        "1.0": {"name": "HV_Cable_Interlock", "severity": 1, "description": "Spellman HV cable physically disconnected from load."},
-        }
+        "0.0": {"name": "Unit1_Comms_Fail", "severity": 1, "description": "Spellman MPD Unit 1 communication failure."},
+        "0.1": {"name": "Unit1_OverCurrent", "severity": 1, "description": "Spellman MPD Unit 1 current exceeded limit."},
+        "0.2": {"name": "Unit1_OverVoltage", "severity": 1, "description": "Spellman MPD Unit 1 voltage exceeded limit."},
+        "0.3": {"name": "Unit1_Fail", "severity": 1, "description": "Spellman MPD Unit 1 failed to track setpoint."},
+        "0.4": {"name": "Unit1_Arc_Exceeded", "severity": 1, "description": "Spellman MPD Unit 1 has exceeded arc limit."},
+
+        "0.5": {"name": "Unit2_Comms_Fail", "severity": 1, "description": "Spellman MPD Unit 2 communication failure."},
+        "0.6": {"name": "Unit2_OverCurrent", "severity": 1, "description": "Spellman MPD Unit 2 current exceeded limit."},
+        "0.7": {"name": "Unit2_OverVoltage", "severity": 1, "description": "Spellman MPD Unit 2 voltage exceeded limit."},
+        "1.0": {"name": "Unit2_Fail", "severity": 1, "description": "Spellman MPD Unit 2 failed to track setpoint."},
+        "1.1": {"name": "Unit2_Arc_Exceeded", "severity": 1, "description": "Spellman MPD Unit 2 has exceeded arc limit."},
+
+        "1.2": {"name": "Unit3_Comms_Fail", "severity": 1, "description": "Spellman MPD Unit 3 communication failure."},
+        "1.3": {"name": "Unit3_OverCurrent", "severity": 1, "description": "Spellman MPD Unit 3 current exceeded limit."},
+        "1.4": {"name": "Unit3_OverVoltage", "severity": 1, "description": "Spellman MPD Unit 3 voltage exceeded limit."},
+        "1.5": {"name": "Unit3_Fail", "severity": 1, "description": "Spellman MPD Unit 3 failed to track setpoint."},
+        "1.6": {"name": "Unit3_Arc_Exceeded", "severity": 1, "description": "Spellman MPD Unit 3 has exceeded arc limit."},
+
+        "1.7": {"name": "Unit4_Comms_Fail", "severity": 1, "description": "Spellman MPD Unit 4 communication failure."},
+        "2.0": {"name": "Unit4_OverCurrent", "severity": 1, "description": "Spellman MPD Unit 4 current exceeded limit."},
+        "2.1": {"name": "Unit4_OverVoltage", "severity": 1, "description": "Spellman MPD Unit 4 voltage exceeded limit."},
+        "2.2": {"name": "Unit4_Fail", "severity": 1, "description": "Spellman MPD Unit 4 failed to track setpoint."},
+        "2.3": {"name": "Unit4_Arc_Exceeded", "severity": 1, "description": "Spellman MPD Unit 4 has exceeded arc limit."},
+
+        "2.4": {"name": "Unit5_Comms_Fail", "severity": 1, "description": "Spellman MPD Unit 5 communication failure."},
+        "2.5": {"name": "Unit5_OverCurrent", "severity": 1, "description": "Spellman MPD Unit 5 current exceeded limit."},
+        "2.6": {"name": "Unit5_OverVoltage", "severity": 1, "description": "Spellman MPD Unit 5 voltage exceeded limit."},
+        "2.7": {"name": "Unit5_Fail", "severity": 1, "description": "Spellman MPD Unit 5 failed to track setpoint."},
+        "3.0": {"name": "Unit5_Arc_Exceeded", "severity": 1, "description": "Spellman MPD Unit 5 has exceeded arc limit."}
+      }
+    },
+    "UDT_Fault_Word_4_Magnet": {
+      "registry_tag": "ion_beam.faults.word_4_magnet",
+      "bits": {
+        "0.0": {"name": "Magnet_Comms_Fail", "severity": 1, "description": "Magnet PSU communication failure."},
+        "0.1": {"name": "Magnet_Short_Circuit", "severity": 1, "description": "Magnet PSU appears short-circuited."},
+        "0.2": {"name": "Magnet_Open_Circuit", "severity": 1, "description": "Magnet PSU appears open-circuited."},
+        "0.3": {"name": "Magnet_Unexpected_Res", "severity": 1, "description": "Magnet has unexpected resistance value."}
+      }
+    },
+    "UDT_Fault_Word_5_Gauges": {
+      "registry_tag": "ion_beam.faults.word_5_gauges",
+      "bits": {
+        "0.0": {"name": "Graphix_1_Comms_Fail", "severity": 1, "description": "Graphix Unit 1 communication failure."},
+        "0.1": {"name": "Graphix_2_Comms_Fail", "severity": 1, "description": "Graphix Unit 2 communication failure."},
+        "0.2": {"name": "VG1_Not_Found", "severity": 1, "description": "VG1 not found by controller."},
+        "0.3": {"name": "VG1_Type_Mismatch", "severity": 1, "description": "VG1 has unexpected gauge type."},
+        "0.4": {"name": "VG1_Above_SP_Warn", "severity": 1, "description": "VG1 pressure above setpoint."},
+        "0.5": {"name": "VG1_Rapid_Rise_Warn", "severity": 1, "description": "VG1 rapid pressure rise."},
+        "0.6": {"name": "VG2_Not_Found", "severity": 1, "description": "VG2 not found by controller."},
+        "0.7": {"name": "VG2_Type_Mismatch", "severity": 1, "description": "VG2 has unexpected gauge type."},
+        "1.0": {"name": "VG2_Above_SP_Warn", "severity": 1, "description": "VG2 pressure above setpoint."},
+        "1.1": {"name": "VG2_Rapid_Rise_Warn", "severity": 1, "description": "VG2 rapid pressure rise."},
+        "1.2": {"name": "VG3_Not_Found", "severity": 1, "description": "VG3 not found by controller."},
+        "1.3": {"name": "VG3_Type_Mismatch", "severity": 1, "description": "VG3 has unexpected gauge type."},
+        "1.4": {"name": "VG3_Above_SP_Warn", "severity": 1, "description": "VG3 pressure above setpoint."},
+        "1.5": {"name": "VG3_Rapid_Rise_Warn", "severity": 1, "description": "VG3 rapid pressure rise."},
+        "1.6": {"name": "VG4_Not_Found", "severity": 1, "description": "VG4 not found by controller."},
+        "1.7": {"name": "VG4_Type_Mismatch", "severity": 1, "description": "VG4 has unexpected gauge type."},
+        "2.0": {"name": "VG4_Above_SP_Warn", "severity": 1, "description": "VG4 pressure above setpoint."},
+        "2.1": {"name": "VG4_Rapid_Rise_Warn", "severity": 1, "description": "VG4 rapid pressure rise."},
+        "2.2": {"name": "VG5_Not_Found", "severity": 1, "description": "VG5 not found by controller."},
+        "2.3": {"name": "VG5_Type_Mismatch", "severity": 1, "description": "VG5 has unexpected gauge type."},
+        "2.4": {"name": "VG5_Above_SP_Warn", "severity": 1, "description": "VG5 pressure above setpoint."},
+        "2.5": {"name": "VG5_Rapid_Rise_Warn", "severity": 1, "description": "VG5 rapid pressure rise."},
+        "2.6": {"name": "VG6_Not_Found", "severity": 1, "description": "VG1 not found by controller."},
+        "2.7": {"name": "VG6_Type_Mismatch", "severity": 1, "description": "VG6 has unexpected gauge type."},
+        "3.0": {"name": "VG6_Above_SP_Warn", "severity": 1, "description": "VG6 pressure above setpoint."},
+        "3.1": {"name": "VG6_Rapid_Rise_Warn", "severity": 1, "description": "VG6 rapid pressure rise."}
+      }
     }
 }

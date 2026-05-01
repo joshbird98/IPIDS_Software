@@ -12,7 +12,7 @@ try:
         COMMAND_PORT = ZMQ_PORT_SRC_TURBO_CMD
 except ImportError:
     # Fallback assuming localhost if network_config isn't in the same folder
-    COMMAND_PORT = "tcp://localhost:5559"
+    COMMAND_PORT = "tcp://127.0.0.1:5559"
 
 
 def turn_pump_on():
@@ -27,8 +27,12 @@ def turn_pump_on():
     # CRITICAL: Allow the ZMQ PUB/SUB handshake to complete
     time.sleep(0.2)
 
-    # The microservice expects exactly this JSON structure
-    payload = {"action": "start"}
+    # NEW ARCHITECTURE: Tag-Based Routing Payload
+    payload = {
+        "tag": "ion_beam.source.turbo_pump.cmd_enable",
+        "value": True,
+        "ts": time.time()
+    }
 
     print(f"Sending command: {payload}")
     socket.send_json(payload)
@@ -38,7 +42,7 @@ def turn_pump_on():
 
     socket.close()
     context.term()
-    print("Command transmitted. Check the subscriber dashboard for 'Spinning: True'!")
+    print("Command transmitted. Check the microservice terminal to verify it latched!")
 
 
 if __name__ == "__main__":

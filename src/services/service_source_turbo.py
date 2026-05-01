@@ -5,7 +5,7 @@ import json
 from typing import Dict, Any
 
 # Ensure these match your network_config.py
-from config.network_config import (
+from src.core.network_config import (
     ZMQ_PORT_SRC_TURBO_PUB, ZMQ_PORT_SRC_TURBO_CMD, TOPIC_SRC_TURBO_DATA,
     SRC_TURBO_WAVESHARE_IP, SRC_TURBO_WAVESHARE_PORT
 )
@@ -14,6 +14,8 @@ from config.network_config import (
 PUMP_ADDRESS = 0
 SOCKET_TIMEOUT = 1.0
 POLL_INTERVAL = 0.05  # 50ms loop
+
+MAX_CMD_AGE = 0.5
 
 # Task IDs (AK)
 AK_READ = 1
@@ -99,53 +101,48 @@ TURBO_WARNING_DICT = {
     14: "Power supply voltage warning"
 }
 
+
 class TurbovacMicroservice:
     def __init__(self):
         self.context = zmq.Context()
 
         # 1. ZMQ Comms
         self.pub_socket = self.context.socket(zmq.PUB)
+        self.pub_socket.setsockopt(zmq.SNDHWM, 5)
         self.pub_socket.bind(ZMQ_PORT_SRC_TURBO_PUB)
 
         self.sub_socket = self.context.socket(zmq.SUB)
+        self.sub_socket.setsockopt(zmq.RCVHWM, 5)
         self.sub_socket.bind(ZMQ_PORT_SRC_TURBO_CMD)
         self.sub_socket.setsockopt_string(zmq.SUBSCRIBE, "")
 
-        # 2. State
+        # 2. Hardware / Internal State
         self.sock = None
         self.connected = False
-        self.active_control_word = None  # Do not assume OFF on boot
+        self.comms_ok = False
+        self.active_control_word = None
+
+        # Internal Memory (Not broadcasted directly)
+        self._max_hz = 1000
+        self._most_recent_error_desc = "No Error"
+        self._most_recent_warning_desc = "None"
+
+        # 3. Unified Payload Structure
         self.state: Dict[str, Any] = {
-            "serial": None,
-            "hw_version": None,
-            "comms_ok": False,
-            "safety_synced": False,
-            "hz": 0,
-            "pct": 0.0,
-            "max_hz": 1000,
-            "temps": {"bearing": 0, "converter": 0},
-            "electrical": {"volts": 0, "amps": 0.0},
-            "service": {"hours": 0.0},
-            # Active states derived from every packet's Status Word
-            "status": {
-                "ready": False,
-                "turning": False,
-                "accelerating": False,
-                "decelerating": False,
-                "normal_operation": False,
-                "error_active": False,
-                "warning_active": False
+            "timestamp": 0.0,
+            "system": {
+                "connected": False,
+                "cycle_time_ms": 0.0,
+                "safety_synced": False,
+                "serial": None,
+                "hw_version": None,
+                "service_hours": 0.0
             },
-            # Historical logs fetched from parameter memory
-            "history": {
-                "most_recent_error_code": 0,
-                "most_recent_error_desc": "No Error",
-                "most_recent_warning_bits": 0,
-                "most_recent_warning_desc": "None"
-            }
+            "telemetry": {},
+            "faults": {}
         }
 
-        # 3. Slow Task Queue (Round-Robin)
+        # 4. Slow Task Queue (Round-Robin)
         self.slow_tasks = [
             ("bearing_temp", PNU_BEARING_TEMP),
             ("conv_temp", PNU_CONV_TEMP),
@@ -164,11 +161,9 @@ class TurbovacMicroservice:
         return bcc
 
     def _generate_frame(self, pnu, index, value=0, ak=AK_READ, control_word=0x0400):
-        """Constructs 24-byte USS frame. Bit 10 of control word always 1 for remote."""
         stx, lge, adr = 0x02, 22, PUMP_ADDRESS
         pke = (ak << 12) | pnu
         pwe = [(value >> 24) & 0xFF, (value >> 16) & 0xFF, (value >> 8) & 0xFF, value & 0xFF]
-        # PZD1 is the Control Word
         pzd1_hi, pzd1_lo = (control_word >> 8) & 0xFF, control_word & 0xFF
 
         frame = [stx, lge, adr, (pke >> 8) & 0xFF, pke & 0xFF, 0x00, index] + pwe + [pzd1_hi, pzd1_lo] + ([0x00] * 10)
@@ -176,58 +171,41 @@ class TurbovacMicroservice:
         return bytes(frame)
 
     def _transaction(self, pnu, index, value=0, ak=AK_READ, control_word=0x0400):
-        """Returns (Value, ResponseAK, StatusWord)."""
         if not self.connected: return None, None, None
 
         try:
-            # 1. Aggressive Non-Blocking Flush
-            # More robust than select(); violently clears out all stale bytes
             self.sock.setblocking(False)
             try:
-                while self.sock.recv(4096):
-                    pass
+                while self.sock.recv(4096): pass
             except Exception:
-                pass  # Expected when buffer is finally empty
+                pass
 
-            # Restore normal blocking and timeout for the actual read
             self.sock.setblocking(True)
             self.sock.settimeout(SOCKET_TIMEOUT)
 
-            # 2. Transmit
             self.sock.sendall(self._generate_frame(pnu, index, value, ak, control_word))
-
-            # 3. RS485 Turnaround Delay (Increased slightly for long-term stability)
             time.sleep(0.04)
 
-            # 4. Strictly receive exactly 24 bytes
-            # Prevents TCP fragmentation from leaving bytes behind
             res = b""
             start_time = time.time()
             while len(res) < 24:
                 chunk = self.sock.recv(24 - len(res))
-                if not chunk:
-                    break
+                if not chunk: break
                 res += chunk
-                if time.time() - start_time > SOCKET_TIMEOUT:
-                    break
+                if time.time() - start_time > SOCKET_TIMEOUT: break
 
             if len(res) < 24:
                 return None, None, None
 
-            # 5. Extract PKE header to verify Protocol Sync
             resp_pke = (res[3] << 8) | res[4]
             resp_ak = (resp_pke >> 12) & 0xF
-
-            # The PNU is stored in bits 0-10 of the PKE
             resp_pnu = resp_pke & 0x07FF
 
-            # THE SILVER BULLET: Did the pump answer the right question?
             if resp_pnu != pnu:
                 print(f"[!] DESYNC DETECTED! Asked for PNU {pnu}, got PNU {resp_pnu}.")
-                self.connected = False  # Force a clean TCP reconnect to fix the pipeline
+                self.connected = False
                 return None, None, None
 
-            # 6. Extract payload
             res_pwe = (res[7] << 24) | (res[8] << 16) | (res[9] << 8) | res[10]
             zsw = (res[11] << 8) | res[12]
 
@@ -249,23 +227,21 @@ class TurbovacMicroservice:
                 pass
         try:
             self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            # Disable Nagle's Algorithm for instant small-packet transmission
             self.sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
             self.sock.settimeout(SOCKET_TIMEOUT)
             self.sock.connect((SRC_TURBO_WAVESHARE_IP, SRC_TURBO_WAVESHARE_PORT))
             self.connected = True
+            self.state["system"]["connected"] = True
             print(f"[Turbo Service] Connected to {SRC_TURBO_WAVESHARE_IP}")
         except Exception as e:
             self.connected = False
+            self.state["system"]["connected"] = False
             print(f"[Turbo Service] Connection failed: {e}")
 
     def _verify_safety_strategy(self):
         print("\n" + "=" * 40)
         print("[Turbo Service] INITIALIZING AND VERIFYING SAFETY STRATEGY...")
 
-        # --- THE SAFE READ ---
-        # Control word 0x0000 leaves Bit 10 (Enable Process Data) low.
-        # The pump answers the query but ignores the Start/Stop bits.
         raw_hz, ak_hz, zsw = self._transaction(PNU_ACT_FREQ, 0, control_word=0x0000)
 
         if raw_hz is not None and raw_hz > 0:
@@ -275,44 +251,32 @@ class TurbovacMicroservice:
             print("[Turbo Service] Pump is STOPPED. Adopting LATCHED OFF state.")
             self.active_control_word = 0x0400
 
-        # 1. Read static hardware info (Now using the synchronized control word!)
-        self.state["serial"], _, _ = self._transaction(PNU_SERIAL, 0, control_word=self.active_control_word)
-        self.state["hw_version"], _, _ = self._transaction(PNU_HW_VER, 0, control_word=self.active_control_word)
+        ser_val, _, _ = self._transaction(PNU_SERIAL, 0, control_word=self.active_control_word)
+        hw_val, _, _ = self._transaction(PNU_HW_VER, 0, control_word=self.active_control_word)
+        self.state["system"]["serial"] = ser_val
+        self.state["system"]["hw_version"] = hw_val
 
         m_hz, ak_m, _ = self._transaction(PNU_MAX_FREQ, 0, control_word=self.active_control_word)
         if m_hz is not None and ak_m not in [7, 8]:
-            self.state["max_hz"] = m_hz
+            self._max_hz = m_hz
 
-        # 2. Read Argon Strategy Parameters
         val_x201, ak_x201, _ = self._transaction(PNU_X201_FUNC, 0, ak=1, control_word=self.active_control_word)
         val_relay, ak_relay, _ = self._transaction(PNU_RELAY_X1, 0, ak=6, control_word=self.active_control_word)
         val_vent_on, ak_on, _ = self._transaction(PNU_VENT_ON_FREQ, 0, ak=1, control_word=self.active_control_word)
         val_vent_off, ak_off, _ = self._transaction(PNU_VENT_OFF_FREQ, 0, ak=1, control_word=self.active_control_word)
         val_wd, ak_wd, _ = self._transaction(PNU_USS_WATCHDOG, 0, ak=1, control_word=self.active_control_word)
 
-        print(f"-> X201 Func:   {val_x201} (RespAK: {ak_x201})")
-        print(f"-> X1 Relay:    {val_relay} (RespAK: {ak_relay})")
-        print(f"-> Vent ON Hz:  {val_vent_on} (RespAK: {ak_on})")
-        print(f"-> Vent OFF Hz: {val_vent_off} (RespAK: {ak_off})")
-        print(f"-> Watchdog:    {val_wd} (RespAK: {ak_wd})")
-
-        # 3. Handle NACKs (Busy State)
         if 7 in [ak_x201, ak_relay, ak_on, ak_off]:
             print("[!] PUMP RETURNED NACK. Pump is likely saving to flash (Error 102).")
-            print("[Turbo Service] Skipping verification until flash write completes.")
-            self.state["safety_synced"] = False
-            print("=" * 40 + "\n")
+            self.state["system"]["safety_synced"] = False
             return
 
-            # 4. Logic: Strategy is valid only if all match
         is_synced = (val_x201 == 19 and val_relay == 4 and val_vent_on == 500 and val_vent_off == 5 and val_wd == 0)
-        self.state["safety_synced"] = is_synced
+        self.state["system"]["safety_synced"] = is_synced
 
         if not is_synced:
-            # We already know raw_hz from the Safe Read at the top
             if raw_hz == 0:
                 print("[Turbo Service] Strategy out of sync. Correcting now...")
-
                 self._transaction(PNU_X201_FUNC, 0, value=19, ak=AK_WRITE_16, control_word=self.active_control_word)
                 time.sleep(0.1)
                 self._transaction(PNU_RELAY_X1, 0, value=4, ak=AK_WRITE_FIELD_16, control_word=self.active_control_word)
@@ -326,75 +290,104 @@ class TurbovacMicroservice:
 
                 print("[Turbo Service] Saving to flash (P8=1)...")
                 self._transaction(8, 0, value=1, ak=AK_WRITE_16, control_word=self.active_control_word)
-
-                print("[Turbo Service] Waiting 30 seconds for non-volatile write...")
                 time.sleep(30)
-                print("[Turbo Service] Save complete. Resuming normal operations.")
+                print("[Turbo Service] Save complete.")
             else:
                 print("[!] SAFETY WARNING: Pump is SPINNING but Argon strategy is not loaded!")
         else:
             print("[Turbo Service] Safety strategy verified and active.")
-        print("=" * 40 + "\n")
 
     # --- LOOP TASKS ---
     def _process_commands(self):
         try:
             while True:
                 msg = self.sub_socket.recv_json(flags=zmq.NOBLOCK)
-                action = msg.get("action")
 
-                if action == "start":
-                    print("[Turbo Service] Command received: LATCHING START")
-                    self.active_control_word = 0x0401  # Latch Remote + Start
-                elif action == "stop":
-                    print("[Turbo Service] Command received: LATCHING STOP")
-                    self.active_control_word = 0x0400  # Latch Remote + Stop
-                elif action == "reset_error":
-                    print("[Turbo Service] Command received: ERROR RESET")
-                    # Fault resets are an edge-trigger, so a one-off transaction is perfect
+                tag = msg.get("tag", "")
+                value = msg.get("value")
+                ts = msg.get("ts", 0.0)
+
+                # TTL Verification
+                if time.time() - ts > MAX_CMD_AGE:
+                    continue
+
+                # Tag-Based Routing
+                if tag.endswith(".cmd_enable"):
+                    if value is True:
+                        self.active_control_word = 0x0401  # Latch Remote + Start
+                    else:
+                        self.active_control_word = 0x0400  # Latch Remote + Stop
+
+                elif tag.endswith(".cmd_reset") and value is True:
+                    # Fault resets are an edge-trigger
                     self._transaction(3, 0, control_word=0x0480)
+
         except zmq.Again:
             pass
 
     def run(self):
         print("[Turbo Service] Starting USS Daemon...")
         while True:
+            cycle_start = time.perf_counter()
+
             if not self.connected:
                 self._connect_socket()
                 if self.connected:
                     self._verify_safety_strategy()
                 else:
-                    time.sleep(2.0); continue
+                    time.sleep(2.0)
+                    continue
 
-            # 1. High-Priority Poll (Frequency)
+            # 1. High-Priority Poll (Frequency & Status Word)
             raw_hz, ak_hz, zsw = self._transaction(PNU_ACT_FREQ, 0, control_word=self.active_control_word)
 
-            # Filter out NACKs (AK 7 or 8) so error codes don't become hz values
             if raw_hz is not None and ak_hz not in [7, 8]:
-                self.state["hz"] = raw_hz
-                self.state["comms_ok"] = True
+                self.comms_ok = True
 
-                # Map active ZSW bits
-                self.state["status"]["ready"] = bool(zsw & (1 << 0))
-                self.state["status"]["error_active"] = bool(zsw & (1 << 3))
-                self.state["status"]["accelerating"] = bool(zsw & (1 << 4))
-                self.state["status"]["decelerating"] = bool(zsw & (1 << 5))
-                self.state["status"]["normal_operation"] = bool(zsw & (1 << 10))
-                self.state["status"]["turning"] = bool(zsw & (1 << 11))
-                self.state["status"]["warning_active"] = bool(zsw & (1 << 14))
+                # Extract ZSW Flags
+                ready = bool(zsw & (1 << 0))
+                error_active = bool(zsw & (1 << 3))
+                turning = bool(zsw & (1 << 11))
+                warning_active = bool(zsw & (1 << 14))
 
-                max_hz = self.state.get("max_hz", 1000)
-                if max_hz and max_hz > 0:
-                    self.state["pct"] = round((raw_hz / max_hz) * 100, 1)
-                else:
-                    self.state["pct"] = 0.0
+                # Map Telemetry (Using explicit system_tags.json keys)
+                self.state["telemetry"]["ion_beam.source.turbo_pump.speed_hz"] = raw_hz
+                self.state["telemetry"]["ion_beam.source.turbo_pump.status_ready"] = ready
+                self.state["telemetry"]["ion_beam.source.turbo_pump.status_turning"] = turning
+                self.state["telemetry"]["ion_beam.source.turbo_pump.status_error"] = error_active
+
+                if self._max_hz > 0:
+                    self.state["telemetry"]["ion_beam.source.turbo_pump.speed_pct"] = round(
+                        (raw_hz / self._max_hz) * 100, 1)
+
+                # Map Faults explicitly for the PLC Broker
+                self.state["faults"]["Src_Turbo_Error_Active"] = {
+                    "active": error_active, "severity": 2, "description": self._most_recent_error_desc
+                } if error_active else False
+
+                self.state["faults"]["Src_Turbo_Warning_Active"] = {
+                    "active": warning_active, "severity": 3, "description": self._most_recent_warning_desc
+                } if warning_active else False
+
+                # We map a "Trip" condition to an active error while the motor drops below ready state
+                trip_active = error_active and not ready
+                self.state["faults"]["Src_Turbo_Trip"] = {
+                    "active": trip_active, "severity": 1,
+                    "description": f"Drive Tripped: {self._most_recent_error_desc}"
+                } if trip_active else False
+
             elif ak_hz in [7, 8]:
-                # Valid comms, but pump returned an error (likely busy)
-                self.state["comms_ok"] = True
+                self.comms_ok = True  # Pump is talking, just busy
             else:
-                self.state["comms_ok"] = False
+                self.comms_ok = False
 
-            # 2. Process Commands
+            # Enforce Comms Fail Fault
+            comms_fail = not self.connected or not self.comms_ok
+            self.state["faults"]["Src_Turbo_Comms_Fail"] = {
+                "active": comms_fail, "severity": 2, "description": "Lost RS485 communication via Waveshare."
+            } if comms_fail else False
+
+            # 2. Process Incoming ZMQ Commands
             self._process_commands()
 
             # 3. Slow-Priority Poll (Round Robin)
@@ -403,38 +396,37 @@ class TurbovacMicroservice:
 
             if val is not None and ak_val not in [7, 8]:
                 if task_name == "bearing_temp":
-                    self.state["temps"]["bearing"] = val
+                    self.state["telemetry"]["ion_beam.source.turbo_pump.temp_bearing"] = val
                 elif task_name == "conv_temp":
-                    self.state["temps"]["converter"] = val
+                    self.state["telemetry"]["ion_beam.source.turbo_pump.temp_converter"] = val
                 elif task_name == "volts":
-                    self.state["electrical"]["volts"] = val
+                    self.state["telemetry"]["ion_beam.source.turbo_pump.voltage"] = val
                 elif task_name == "amps":
-                    self.state["electrical"]["amps"] = val * 0.1
+                    self.state["telemetry"]["ion_beam.source.turbo_pump.current"] = val * 0.1
                 elif task_name == "op_hours":
-                    self.state["service"]["hours"] = round(val * 0.01, 2)
+                    self.state["system"]["service_hours"] = round(val * 0.01, 2)
                 elif task_name == "warnings":
-                    self.state["history"]["most_recent_warning_bits"] = val
                     active_warnings = [desc for bit, desc in TURBO_WARNING_DICT.items() if val & (1 << bit)]
-                    self.state["history"]["most_recent_warning_desc"] = ", ".join(active_warnings) if active_warnings else "None"
+                    self._most_recent_warning_desc = ", ".join(active_warnings) if active_warnings else "None"
                 elif task_name == "error":
-                    self.state["history"]["most_recent_error_code"] = val
-                    self.state["history"]["most_recent_error_desc"] = TURBO_ERROR_DICT.get(val, f"Unknown Error ({val})")
+                    self._most_recent_error_desc = TURBO_ERROR_DICT.get(val, f"Unknown Error ({val})")
 
             self._slow_idx = (self._slow_idx + 1) % len(self.slow_tasks)
 
             # 4. Broadcast
-            try:
-                # Type-check to prevent encode error
-                if isinstance(TOPIC_SRC_TURBO_DATA, str):
-                    topic = TOPIC_SRC_TURBO_DATA.encode('utf-8')
-                else:
-                    topic = TOPIC_SRC_TURBO_DATA
+            self.state["timestamp"] = time.time()
+            elapsed = time.perf_counter() - cycle_start
+            self.state["system"]["cycle_time_ms"] = elapsed * 1000
 
+            try:
+                topic = TOPIC_SRC_TURBO_DATA if isinstance(TOPIC_SRC_TURBO_DATA,
+                                                           bytes) else TOPIC_SRC_TURBO_DATA.encode('utf-8')
                 self.pub_socket.send_multipart([topic, json.dumps(self.state).encode('utf-8')])
             except Exception as e:
                 print(f"ZMQ Publish Error: {e}")
 
-            time.sleep(POLL_INTERVAL)
+            # Sleep dynamically to maintain accurate 50ms polling loop
+            time.sleep(max(0.0, POLL_INTERVAL - elapsed))
 
 
 if __name__ == "__main__":

@@ -199,25 +199,47 @@ class VacuumMicroservice:
         return False
 
     def _process_commands(self):
-        """TTL-verified command processor."""
+        """TTL-verified, Tag-Based command processor."""
         try:
             while True:
                 msg = self.sub_socket.recv_json(flags=zmq.NOBLOCK)
-                action = msg.get("action")
-                timestamp = msg.get("ts", 0.0)
+                tag = msg.get("tag", "")
+                value = msg.get("value")
+                ts = msg.get("ts", 0.0)
 
-                age = time.time() - timestamp
+                age = time.time() - ts
                 if age > MAX_CMD_AGE:
-                    print(f"[Vacuum Service] WARNING: Dropped stale command '{action}' (Age: {age:.2f}s)")
+                    print(f"[Vacuum Service] WARNING: Dropped stale command for '{tag}'")
                     continue
 
-                # Standard action implementations
-                if action == "set_relay":
-                    # Keep your existing set_relay logic here...
-                    pass
-                elif action == "set_channel_name":
-                    # Keep your existing set_channel_name logic here...
-                    pass
+                parts = tag.split('.')
+                if len(parts) < 4:
+                    continue
+
+                # Handle Relay Setpoints (e.g., ion_beam.vacuum.controller_10.relay_1_on_sp)
+                if "controller_" in parts[2] and "relay_" in parts[3]:
+                    try:
+                        node_id = int(parts[2].replace("controller_", ""))
+
+                        # Extract relay number and command type ('on_sp' or 'off_sp')
+                        relay_str_parts = parts[3].split('_')
+                        relay_id = int(relay_str_parts[1])
+                        cmd_type = relay_str_parts[2]  # 'on' or 'off'
+
+                        if relay_id in RELAY_PARAMS:
+                            param_str = RELAY_PARAMS[relay_id][cmd_type]
+                            target_val_str = f"{float(value):.1E}"  # Leybold scientific notation
+
+                            self._write_transaction_with_retry(node_id, "4", param_str, target_val_str)
+                            print(
+                                f"[Vacuum Service] Executed Relay Command: Node {node_id}, Relay {relay_id} {cmd_type.upper()} -> {target_val_str}")
+
+                    except (ValueError, IndexError):
+                        pass
+
+                # Handle Channel Naming (e.g., ion_beam.source.vacuum_gauge_1.cmd_name)
+                elif "vacuum_gauge_" in parts[2] and parts[3] == "cmd_name":
+                    pass  # Insert your existing name-writing logic here if desired
 
         except zmq.Again:
             pass
@@ -248,18 +270,15 @@ class VacuumMicroservice:
 
     def _enforce_startup_config(self):
         """Reads the config, enforces Names and Relay setpoints if mismatched."""
-        import os
-        current_dir = os.path.dirname(os.path.abspath(__file__))
-        project_root = os.path.dirname(current_dir)
-        config_path = os.path.join(project_root, "config", "vac_gauges_config.json")
 
-        if not os.path.exists(config_path):
+        # We already loaded the JSON into self.config during __init__!
+        if not self.config:
+            print("[Vacuum Service] WARNING: No config loaded. Skipping enforcement.")
             return
 
         print("\n[Vacuum Service] --- VERIFYING STARTUP CONFIG ---")
         try:
-            with open(config_path, "r") as f:
-                config_data = json.load(f)
+            config_data = self.config
 
             for node_str, node_data in config_data.items():
                 node_id = int(node_str)
@@ -383,14 +402,35 @@ class VacuumMicroservice:
                             status_code = int(val)
                             self.state["telemetry"][f"{tag_prefix}.status"] = status_code
 
-                            # Fault mapping evaluation
-                            fault_name = f"Gauge_{node}_{slow_task_target}_Error"
-                            if status_code != 0:  # Assuming 0 is OK
-                                self.state["faults"][fault_name] = {
-                                    "active": True, "severity": 2, "description": f"Gauge returned status {status_code}"
-                                }
-                            else:
-                                self.state["faults"][fault_name] = False
+                            # --- Explicit Fault Mapping for PLC ---
+                            # Map (Node, Channel) to the exact VG prefix from fault_map.json
+                            vg_map = {
+                                (10, 1): "VG1", (10, 2): "VG2", (10, 3): "VG3",
+                                (20, 1): "VG4", (20, 2): "VG5", (20, 3): "VG6"
+                            }
+                            vg_prefix = vg_map.get((node, slow_task_target))
+
+                            if vg_prefix:
+                                fault_not_found = f"{vg_prefix}_Not_Found"
+                                fault_mismatch = f"{vg_prefix}_Type_Mismatch"
+
+                                # Leybold typical statuses: 5 = No Sensor, 6 = ID Error
+                                if status_code == 5:
+                                    self.state["faults"][fault_not_found] = {"active": True, "severity": 2,
+                                                                             "description": "Gauge disconnected."}
+                                    self.state["faults"][fault_mismatch] = False
+                                elif status_code == 6:
+                                    self.state["faults"][fault_not_found] = False
+                                    self.state["faults"][fault_mismatch] = {"active": True, "severity": 2,
+                                                                            "description": "Gauge type mismatch."}
+                                elif status_code != 0:
+                                    # For other general errors (underrange, etc), just flag mismatch for safety
+                                    self.state["faults"][fault_not_found] = False
+                                    self.state["faults"][fault_mismatch] = {"active": True, "severity": 2,
+                                                                            "description": f"Gauge error code: {status_code}"}
+                                else:
+                                    self.state["faults"][fault_not_found] = False
+                                    self.state["faults"][fault_mismatch] = False
                         except ValueError:
                             pass
 
@@ -425,6 +465,16 @@ class VacuumMicroservice:
                 time.sleep(POLL_INTERVAL)
 
             self._slow_task_idx = (self._slow_task_idx + 1) % len(self.slow_tasks)
+
+            # --- Enforce Comms Failures ---
+            comms_fault_active = not self.connected
+            self.state["faults"]["Graphix_1_Comms_Fail"] = {
+                "active": comms_fault_active, "severity": 2, "description": "TCP connection lost to Node 10."
+            } if comms_fault_active else False
+
+            self.state["faults"]["Graphix_2_Comms_Fail"] = {
+                "active": comms_fault_active, "severity": 2, "description": "TCP connection lost to Node 20."
+            } if comms_fault_active else False
 
             # 3. Broadcast Unified Payload
             self.state["timestamp"] = time.time()

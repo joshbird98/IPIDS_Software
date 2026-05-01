@@ -7,11 +7,13 @@
                 "beamline_einzel_lens": {
                     "address": "01",
                     "dev_type": "09",
+                    "plc_unit": 1,
                     "_note": "Spellman 30kV unit"
                 },
                 "beamline_extractor": {
                     "address": "02",
                     "dev_type": "06",
+                    "plc_unit": 2,
                     "_note": "Spellman 10kV unit"
                 }
             }
@@ -22,6 +24,7 @@
                 "chamber_einzel_lens": {
                     "address": "01",
                     "dev_type": "09",
+                    "plc_unit": 3,
                     "_note": "Spellman 30kV unit"
                 }
             }

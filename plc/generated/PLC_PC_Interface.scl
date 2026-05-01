@@ -17,10 +17,12 @@ NON_RETAIN
          END_STRUCT;
 
          Faults : STRUCT
-            Word_0 : "UDT_Fault_Word_0";
-            Word_1 : "UDT_Fault_Word_1";
-            Word_2 : "UDT_Fault_Word_2";
-            Word_3 : "UDT_Fault_Word_3";
+            Word_0 : "UDT_Fault_Word_0_System";
+            Word_1 : "UDT_Fault_Word_1_Pumps";
+            Word_2 : "UDT_Fault_Word_2_Source";
+            Word_3 : "UDT_Fault_Word_3_Spellman";
+            Word_4 : "UDT_Fault_Word_4_Magnet";
+            Word_5 : "UDT_Fault_Word_5_Gauges";
          END_STRUCT;
 
          Facilities : STRUCT
@@ -56,6 +58,7 @@ NON_RETAIN
 
          Source_Cesium : STRUCT
             RB_Temp : Real;
+            Stat_Enabled : Bool;
          END_STRUCT;
 
          Source_Chamber : STRUCT
@@ -117,6 +120,122 @@ NON_RETAIN
          Beamline_Diagnostics : STRUCT
             Cmd_Insert_FC : Bool;
          END_STRUCT;
+
+         // PC evaluates serial/network data and writes Bools here for PLC to latch
+         Pump_Status : STRUCT
+            Stat_Src_Turbo_Trip : Bool;
+            Stat_Src_Turbo_Comms_Fail : Bool;
+            Stat_Src_Turbo_Error : Bool;
+            Stat_Src_Turbo_Warning : Bool;
+            Stat_Ldlk_Turbo_Trip : Bool;
+            Stat_Ldlk_Turbo_Comms_Fail : Bool;
+            Stat_Ldlk_Turbo_Error : Bool;
+            Stat_Ldlk_Turbo_Warning : Bool;
+         END_STRUCT;
+
+         Spellman_Status : STRUCT
+            Stat_Unit1_Comms_Fail : Bool;
+            Stat_Unit1_OverCurrent : Bool;
+            Stat_Unit1_OverVoltage : Bool;
+            Stat_Unit1_Fail : Bool;
+            Stat_Unit1_Arc_Exceeded : Bool;
+
+            Stat_Unit2_Comms_Fail : Bool;
+            Stat_Unit2_OverCurrent : Bool;
+            Stat_Unit2_OverVoltage : Bool;
+            Stat_Unit2_Fail : Bool;
+            Stat_Unit2_Arc_Exceeded : Bool;
+
+            Stat_Unit3_Comms_Fail : Bool;
+            Stat_Unit3_OverCurrent : Bool;
+            Stat_Unit3_OverVoltage : Bool;
+            Stat_Unit3_Fail : Bool;
+            Stat_Unit3_Arc_Exceeded : Bool;
+
+            Stat_Unit4_Comms_Fail : Bool;
+            Stat_Unit4_OverCurrent : Bool;
+            Stat_Unit4_OverVoltage : Bool;
+            Stat_Unit4_Fail : Bool;
+            Stat_Unit4_Arc_Exceeded : Bool;
+
+            Stat_Unit5_Comms_Fail : Bool;
+            Stat_Unit5_OverCurrent : Bool;
+            Stat_Unit5_OverVoltage : Bool;
+            Stat_Unit5_Fail : Bool;
+            Stat_Unit5_Arc_Exceeded : Bool;
+         END_STRUCT;
+
+         Magnet_Status : STRUCT
+            Stat_Comms_Fail : Bool;
+            Stat_Short_Circuit : Bool;
+            Stat_Open_Circuit : Bool;
+            Stat_Unexpected_Res : Bool;
+         END_STRUCT;
+
+         Gauges_Status : STRUCT
+            Stat_Graphix1_Comms_Fail : Bool;
+            Stat_Graphix2_Comms_Fail : Bool;
+            Stat_VG1_Not_Found : Bool;
+            Stat_VG1_Mismatch : Bool;
+            Stat_VG1_Above_SP : Bool;
+            Stat_VG1_Rapid_Rise : Bool;
+            Stat_VG2_Not_Found : Bool;
+            Stat_VG2_Mismatch : Bool;
+            Stat_VG2_Above_SP : Bool;
+            Stat_VG2_Rapid_Rise : Bool;
+            Stat_VG3_Not_Found : Bool;
+            Stat_VG3_Mismatch : Bool;
+            Stat_VG3_Above_SP : Bool;
+            Stat_VG3_Rapid_Rise : Bool;
+            Stat_VG4_Not_Found : Bool;
+            Stat_VG4_Mismatch : Bool;
+            Stat_VG4_Above_SP : Bool;
+            Stat_VG4_Rapid_Rise : Bool;
+            Stat_VG5_Not_Found : Bool;
+            Stat_VG5_Mismatch : Bool;
+            Stat_VG5_Above_SP : Bool;
+            Stat_VG5_Rapid_Rise : Bool;
+            Stat_VG6_Not_Found : Bool;
+            Stat_VG6_Mismatch : Bool;
+            Stat_VG6_Above_SP : Bool;
+            Stat_VG6_Rapid_Rise : Bool;
+         END_STRUCT;
+
+      END_STRUCT;
+   END_STRUCT;
+BEGIN
+END_DATA_BLOCK
+
+DATA_BLOCK "DB_PC_Retain"
+{ S7_Optimized_Access := 'FALSE' }
+VERSION : 0.1
+   STRUCT
+      // =====================================================================
+      // NON-VOLATILE MEMORY
+      // Python NEVER reads or writes to this block. It is purely for the PLC
+      // to store setpoints and faults during power loss.
+      // =====================================================================
+      Faults : STRUCT
+            Word_0 : "UDT_Fault_Word_0_System";
+            Word_1 : "UDT_Fault_Word_1_Pumps";
+            Word_2 : "UDT_Fault_Word_2_Source";
+            Word_3 : "UDT_Fault_Word_3_Spellman";
+            Word_4 : "UDT_Fault_Word_4_Magnet";
+            Word_5 : "UDT_Fault_Word_5_Gauges";
+      END_STRUCT;
+
+      Settings : STRUCT
+         Ext_Voltage_SP : Real;
+         Target_Voltage_SP : Real;
+         Filament_Current_SP : Real;
+         Thermionic_Current_SP : Real;
+         Cesium_Temp_SP : Real;
+         Steering_X_SP : Real;
+         Steering_Y_SP : Real;
+      END_STRUCT;
+
+      Endstation : STRUCT
+         RB_Dose_Count : Real;
       END_STRUCT;
    END_STRUCT;
 BEGIN
