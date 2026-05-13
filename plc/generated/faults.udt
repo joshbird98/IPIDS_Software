@@ -4,8 +4,8 @@ VERSION : 0.1
       Safety_Relay_Refused : Bool;
       Safety_Relay_Tripped : Bool;
       Air_Pressure_Low : Bool;
-      Coolant_Flow_Low : Bool;
-      Spare_0_4 : Bool;
+      Src_Coolant_Flow_Low : Bool;
+      Mag_Coolant_Flow_Low : Bool;
       Spare_0_5 : Bool;
       Spare_0_6 : Bool;
       Spare_0_7 : Bool;
@@ -157,10 +157,10 @@ VERSION : 0.1
       Magnet_Short_Circuit : Bool;
       Magnet_Open_Circuit : Bool;
       Magnet_Unexpected_Res : Bool;
-      Spare_0_4 : Bool;
-      Spare_0_5 : Bool;
-      Spare_0_6 : Bool;
-      Spare_0_7 : Bool;
+      Magnet_PSU_Overtemp : Bool;
+      Magnet_PSU_PowerFail : Bool;
+      Magnet_PSU_OVP : Bool;
+      Magnet_PSU_OCP : Bool;
       Spare_1_0 : Bool;
       Spare_1_1 : Bool;
       Spare_1_2 : Bool;

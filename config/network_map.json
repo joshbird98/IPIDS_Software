@@ -31,6 +31,10 @@
             }
         }
     },
+    "magnet_psu": {
+        "ip": "192.168.1.11",
+        "port": 5025
+    },
     "zmq_ports": {
         "plc_pub": 5550,
         "plc_cmd": 5551,

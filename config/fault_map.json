@@ -5,7 +5,8 @@
         "0.0": {"name": "Safety_Relay_Refused", "severity": 1, "description": "Safety relay interlocks not met."},
         "0.1": {"name": "Safety_Relay_Tripped", "severity": 1, "description": "Hardware safety loop broken. HV disabled."},
         "0.2": {"name": "Air_Pressure_Low", "severity": 1, "description": "Pneumatic air supply below minimum operating threshold."},
-        "0.3": {"name": "Coolant_Flow_Low", "severity": 1, "description": "Syltherm coolant flow below minimum GPM."},
+        "0.3": {"name": "Src_Coolant_Flow_Low", "severity": 1, "description": "Source coolant flow below minimum."},
+        "0.4": {"name": "Mag_Coolant_Flow_Low", "severity": 1, "description": "Magnet coolant flow below minimum."},
         "1.0": {"name": "GateValve_Timeout", "severity": 1, "description": "Gate valve failed to actuate."},
         "1.1": {"name": "GateValve_Conflict", "severity": 1, "description": "Gate valve reads as both open and closed."},
         "2.0": {"name": "PC_Watchdog_Timeout", "severity": 1, "description": "Python control software stopped sending 1Hz heartbeat."},
@@ -86,7 +87,11 @@
         "0.0": {"name": "Magnet_Comms_Fail", "severity": 1, "description": "Magnet PSU communication failure."},
         "0.1": {"name": "Magnet_Short_Circuit", "severity": 1, "description": "Magnet PSU appears short-circuited."},
         "0.2": {"name": "Magnet_Open_Circuit", "severity": 1, "description": "Magnet PSU appears open-circuited."},
-        "0.3": {"name": "Magnet_Unexpected_Res", "severity": 1, "description": "Magnet has unexpected resistance value."}
+        "0.3": {"name": "Magnet_Unexpected_Res", "severity": 1, "description": "Magnet has unexpected resistance value."},
+        "0.4": {"name": "Magnet_PSU_Overtemp", "severity": 1, "description": "Magnet PSU Internal Overtemperature."},
+        "0.5": {"name": "Magnet_PSU_PowerFail", "severity": 1, "description": "Magnet PSU AC Mains Power Fail."},
+        "0.6": {"name": "Magnet_PSU_OVP", "severity": 1, "description": "Magnet PSU Hardware Overvoltage Trip."},
+        "0.7": {"name": "Magnet_PSU_OCP", "severity": 1, "description": "Magnet PSU Hardware Overcurrent Trip."}
       }
     },
     "UDT_Fault_Word_5_Gauges": {

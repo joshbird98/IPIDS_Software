@@ -254,6 +254,13 @@ class PlcMicroservice:
                 # Optional: print for debugging so you can see when a fault is routed
                 print(f"[PLC Broker] Routed to Mailbox: {tag} -> {new_value}")
 
+    def _is_fault_active(self, faults_dict: dict, fault_name: str) -> bool:
+        """Safely extracts the boolean active state whether the fault is a dict or a bool."""
+        fault_data = faults_dict.get(fault_name, False)
+        if isinstance(fault_data, dict):
+            return fault_data.get("active", False)
+        return bool(fault_data)
+
     def _process_external_telemetry(self):
         """Listens to external microservices and routes faults to the PLC From_PC mailbox."""
         try:
@@ -270,10 +277,10 @@ class PlcMicroservice:
                 # ==========================================
                 if "TURBO" in topic_str:
                     # Look for exact fault names injected by service_source_turbo.py
-                    comms_fail = faults.get("Src_Turbo_Comms_Fail", {}).get("active", False)
-                    error = faults.get("Src_Turbo_Error_Active", {}).get("active", False)
-                    warn = faults.get("Src_Turbo_Warning_Active", {}).get("active", False)
-                    trip = faults.get("Src_Turbo_Trip", {}).get("active", False)
+                    comms_fail = self._is_fault_active(faults, "Src_Turbo_Comms_Fail")
+                    error = self._is_fault_active(faults, "Src_Turbo_Error_Active")
+                    warn = self._is_fault_active(faults, "Src_Turbo_Warning_Active")
+                    trip = self._is_fault_active(faults, "Src_Turbo_Trip")
 
                     self._update_plc_mailbox("ion_beam.pump_status.stat_src_turbo_comms_fail", comms_fail)
                     self._update_plc_mailbox("ion_beam.pump_status.stat_src_turbo_error", error)
@@ -286,17 +293,16 @@ class PlcMicroservice:
                 elif "VACUUM" in topic_str:
                     # Graphix Controllers Comms
                     self._update_plc_mailbox("ion_beam.gauges_status.stat_graphix1_comms_fail",
-                                             faults.get("Graphix_1_Comms_Fail", {}).get("active", False))
+                                             self._is_fault_active(faults, "Graphix_1_Comms_Fail"))
                     self._update_plc_mailbox("ion_beam.gauges_status.stat_graphix2_comms_fail",
-                                             faults.get("Graphix_2_Comms_Fail", {}).get("active", False))
+                                             self._is_fault_active(faults, "Graphix_2_Comms_Fail"))
 
                     # Map all 6 gauges explicitly to match PLC UDT naming
                     for i in range(1, 7):
-                        not_found = faults.get(f"VG{i}_Not_Found", {}).get("active", False)
-                        mismatch = faults.get(f"VG{i}_Type_Mismatch", {}).get("active", False)
-                        # Assumes you add these warnings to your gauge service later if needed
-                        above_sp = faults.get(f"VG{i}_Above_SP_Warn", {}).get("active", False)
-                        rapid_rise = faults.get(f"VG{i}_Rapid_Rise_Warn", {}).get("active", False)
+                        not_found = self._is_fault_active(faults, f"VG{i}_Not_Found")
+                        mismatch = self._is_fault_active(faults, f"VG{i}_Type_Mismatch")
+                        above_sp = self._is_fault_active(faults, f"VG{i}_Above_SP_Warn")
+                        rapid_rise = self._is_fault_active(faults, f"VG{i}_Rapid_Rise_Warn")
 
                         self._update_plc_mailbox(f"ion_beam.gauges_status.stat_vg{i}_not_found", not_found)
                         self._update_plc_mailbox(f"ion_beam.gauges_status.stat_vg{i}_mismatch", mismatch)
@@ -309,10 +315,10 @@ class PlcMicroservice:
                 elif "SPELLMAN" in topic_str:
                     for i in range(1, 6):
                         prefix = f"Unit{i}"
-                        comms_fail = faults.get(f"{prefix}_Comms_Fail", {}).get("active", False)
-                        overcurrent = faults.get(f"{prefix}_OverCurrent", {}).get("active", False)
-                        undervoltage = faults.get(f"{prefix}_UnderVoltage", {}).get("active", False)
-                        arc_exceeded = faults.get(f"{prefix}_Arc_Exceeded", {}).get("active", False)
+                        comms_fail = self._is_fault_active(faults, f"{prefix}_Comms_Fail")
+                        overcurrent = self._is_fault_active(faults, f"{prefix}_OverCurrent")
+                        undervoltage = self._is_fault_active(faults, f"{prefix}_UnderVoltage")
+                        arc_exceeded = self._is_fault_active(faults, f"{prefix}_Arc_Exceeded")
 
                         self._update_plc_mailbox(f"ion_beam.spellman_status.stat_unit{i}_comms_fail", comms_fail)
                         self._update_plc_mailbox(f"ion_beam.spellman_status.stat_unit{i}_overcurrent", overcurrent)
@@ -323,8 +329,23 @@ class PlcMicroservice:
                 # ROUTING: MAGNET
                 # ==========================================
                 elif "MAGNET" in topic_str:
-                    # To be filled when service_magnet_psu.py is modernized
-                    pass
+                    comms_fail = self._is_fault_active(faults, "Magnet_Comms_Fail")
+                    short_circ = self._is_fault_active(faults, "Magnet_Short_Circuit")
+                    open_circ = self._is_fault_active(faults, "Magnet_Open_Circuit")
+                    unexpec_res = self._is_fault_active(faults, "Magnet_Unexpected_Res")
+                    psu_overtemp = self._is_fault_active(faults, "Magnet_PSU_OverTemp")
+                    psu_powerfail = self._is_fault_active(faults, "Magnet_PSU_PowerFail")
+                    psu_ovp = self._is_fault_active(faults, "Magnet_PSU_OVP")
+                    psu_ocp = self._is_fault_active(faults, "Magnet_PSU_OCP")
+
+                    self._update_plc_mailbox("ion_beam.magnet.status.stat_comms_fail", comms_fail)
+                    self._update_plc_mailbox("ion_beam.magnet.status.stat_open_circuit", short_circ)
+                    self._update_plc_mailbox("ion_beam.magnet.status.stat_short_circuit", open_circ)
+                    self._update_plc_mailbox("ion_beam.magnet.status.stat_unexpected_res", unexpec_res)
+                    self._update_plc_mailbox("ion_beam.magnet.status.stat_psu_overtemp", psu_overtemp)
+                    self._update_plc_mailbox("ion_beam.magnet.status.stat_psu_powerfail", psu_powerfail)
+                    self._update_plc_mailbox("ion_beam.magnet.status.stat_psu_ovc", psu_ovp)
+                    self._update_plc_mailbox("ion_beam.magnet.status.stat_psu_ovp", psu_ocp)
 
         except zmq.Again:
             pass

@@ -29,6 +29,7 @@ NON_RETAIN
             Safety_Relay_Active : Bool;
             Stat_Src_Coolant_OK : Bool;
             Stat_Air_Press_OK : Bool;
+            Stat_Mag_Coolant_OK : Bool;
          END_STRUCT;
 
          Source_Extraction : STRUCT
@@ -170,6 +171,10 @@ NON_RETAIN
             Stat_Short_Circuit : Bool;
             Stat_Open_Circuit : Bool;
             Stat_Unexpected_Res : Bool;
+            Stat_PSU_Overtemp : Bool;
+            Stat_PSU_PowerFail : Bool;
+            Stat_PSU_OVP : Bool;
+            Stat_PSU_OVC : Bool;
          END_STRUCT;
 
          Gauges_Status : STRUCT

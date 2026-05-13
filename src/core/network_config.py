@@ -17,6 +17,10 @@ PLC_SLOT = _cfg["plc"]["slot"]
 DB_INTERFACE_NUM = _cfg["plc"]["db_interface"]
 DB_RETAIN_NUM = _cfg["plc"]["db_retain"]
 
+# --- Magnet Power Supply Comms ---
+MAGNET_IP = _cfg["magnet_psu"]["ip"]
+MAGNET_PORT = _cfg["magnet_psu"]["port"]
+
 # --- Waveshare Hardware Endpoints ---
 NOISY_RACK_WAVESHARE_IP = _cfg["waveshares"]["noisy_rack"]["ip"]
 NOISY_RACK_WAVESHARE_PORT = _cfg["waveshares"]["noisy_rack"]["port"]

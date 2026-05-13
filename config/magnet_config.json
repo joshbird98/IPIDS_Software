@@ -1,0 +1,10 @@
+{
+  "max_voltage": 10.0,
+  "max_current": 30.0,
+  "max_power": 200.0,
+  "min_current_for_calc": 0.5,
+  "nominal_resistance": 0.35,
+  "resistance_tolerance": 0.05,
+  "short_circuit_threshold": 0.05,
+  "open_circuit_threshold": 50.0
+}
