@@ -155,16 +155,11 @@ class MagnetMicroservice:
                 topic, msg = self.plc_socket.recv_multipart(flags=zmq.NOBLOCK)
                 payload = json.loads(msg.decode('utf-8'))
 
-                # --- DEBUG PRINT ---
-                print(f"\n[PLC DEBUG] Raw Payload Received at {time.time()}:")
-                print(json.dumps(payload, indent=2))
-                # -------------------
-
                 # Update timestamp of last PLC message
                 self.last_plc_ts = time.time()
 
                 # Extract Coolant Boolean
-                plc_coolant = payload.get("telemetry", {}).get("ion_beam.facilities.Stat_Src_Coolant_OK")
+                plc_coolant = payload.get("telemetry", {}).get("ion_beam.facilities.stat_src_coolant_ok")
                 if plc_coolant is not None:
                     self.coolant_ok = plc_coolant
 
