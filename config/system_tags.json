@@ -1079,6 +1079,21 @@
         "bit_offset": 0,
         "snap7_type": "S7WLBit"
     },
+    "ion_beam.source.chamber.stat_vac_ok_for_gv": {
+        "source": "service_plc_snap7",
+        "datatype": "BOOL",
+        "writable": true,
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": " Python writes TRUE if VG1 & VG2 are safe",
+        "default_label": "Stat Vac OK For GV",
+        "short_name": "GV",
+        "db_number": 10,
+        "byte_offset": 122,
+        "bit_offset": 1,
+        "snap7_type": "S7WLBit"
+    },
     "ion_beam.source.extraction.cmd_enable": {
         "source": "service_plc_snap7",
         "datatype": "BOOL",
@@ -2022,6 +2037,21 @@
         "db_number": 10,
         "byte_offset": 138,
         "bit_offset": 6,
+        "snap7_type": "S7WLBit"
+    },
+    "ion_beam.system.cmd_enable_safety": {
+        "source": "service_plc_snap7",
+        "datatype": "BOOL",
+        "writable": true,
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "Cmd Enable Safety",
+        "default_label": "Cmd Enable Safety",
+        "short_name": "Safety",
+        "db_number": 10,
+        "byte_offset": 90,
+        "bit_offset": 2,
         "snap7_type": "S7WLBit"
     },
     "ion_beam.system.cmd_fault_reset": {

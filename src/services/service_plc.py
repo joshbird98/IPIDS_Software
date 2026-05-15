@@ -68,6 +68,16 @@ class PlcMicroservice:
             "faults": {}
         }
 
+        # --- Internal IT Watchdogs ---
+        # Tracks the last time (time.time()) we received data from other services
+        self.last_seen = {
+            "VACUUM": time.time(),
+            "TURBO": time.time(),
+            "SPELLMAN": time.time(),
+            "MAGNET": time.time()
+        }
+        self.SERVICE_TIMEOUT_SEC = 1.0  # 1.0 seconds without data = Service Dead
+
     def _load_fault_map(self) -> dict:
         config_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '../../config/fault_map.json'))
         try:
@@ -247,6 +257,7 @@ class PlcMicroservice:
     def _update_plc_mailbox(self, tag: str, new_value: bool):
         """Write-on-Change filter for PLC mailboxes to prevent network flooding."""
         # Only write if the value is different from our local cache
+
         if self.mailbox_cache.get(tag) != new_value:
             success = self._write_tag(tag, new_value)
             if success:
@@ -268,6 +279,10 @@ class PlcMicroservice:
                 topic, msg = self.telem_socket.recv_multipart(flags=zmq.NOBLOCK)
                 payload = json.loads(msg.decode('utf-8'))
                 topic_str = topic.decode('utf-8')
+
+                for service in self.last_seen.keys():
+                    if service in topic_str:
+                        self.last_seen[service] = time.time()
 
                 # All modernized microservices use the "faults" dict
                 faults = payload.get("faults", {})
@@ -308,6 +323,9 @@ class PlcMicroservice:
                         self._update_plc_mailbox(f"ion_beam.gauges_status.stat_vg{i}_mismatch", mismatch)
                         self._update_plc_mailbox(f"ion_beam.gauges_status.stat_vg{i}_above_sp", above_sp)
                         self._update_plc_mailbox(f"ion_beam.gauges_status.stat_vg{i}_rapid_rise", rapid_rise)
+
+                    gv_safe = payload.get("telemetry", {}).get("ion_beam.vacuum.gv_permissive_ready", False)
+                    self._update_plc_mailbox("ion_beam.source.chamber.stat_vac_ok_for_gv", gv_safe)
 
                 # ==========================================
                 # ROUTING: SPELLMAN PSUs
@@ -352,6 +370,31 @@ class PlcMicroservice:
         except Exception as e:
             print(f"[PLC Broker] Error routing external telemetry: {e}")
 
+    def _enforce_it_watchdogs(self):
+        """Forces fail-safe conditions if external Python microservices crash."""
+        current_time = time.time()
+
+        # 1. Vacuum Service Watchdog
+        if current_time - self.last_seen["VACUUM"] > self.SERVICE_TIMEOUT_SEC:
+            # Vacuum service is dead. Revoke the Gate Valve permissive!
+            print("Vacuum service is silent - closing gate valve and reporting fault")
+            self._update_plc_mailbox("ion_beam.source_chamber.stat_vac_ok_for_gv", False)
+
+            # Optional: You can also flag the Graphix comms faults to alert the GUI
+            self._update_plc_mailbox("ion_beam.gauges_status.stat_graphix1_comms_fail", True)
+            self._update_plc_mailbox("ion_beam.gauges_status.stat_graphix2_comms_fail", True)
+
+        # 2. Turbo Service Watchdog
+        if current_time - self.last_seen["TURBO"] > self.SERVICE_TIMEOUT_SEC:
+            print("Turbo pump service is silent - reporting fault")
+            self._update_plc_mailbox("ion_beam.pump_status.stat_src_turbo_comms_fail", True)
+
+        # 3. Spellman Service Watchdog
+        if current_time - self.last_seen["SPELLMAN"] > self.SERVICE_TIMEOUT_SEC:
+            print("Spellman service is silent - reporting fault")
+            for i in range(1, 6):
+                self._update_plc_mailbox(f"ion_beam.spellman_status.stat_unit{i}_comms_fail", True)
+
     def _process_commands(self):
         """Defense in Depth: Application Layer TTL Verification"""
         try:
@@ -368,7 +411,7 @@ class PlcMicroservice:
                     print(f"[PLC Service] WARNING: Dropped stale command '{tag}' (Age: {age:.2f}s)")
                     continue
 
-                if tag and value is not None:
+                if tag in self.tags and value is not None:
                     self._write_tag(tag, value)
 
         except zmq.Again:

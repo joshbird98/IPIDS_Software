@@ -14,6 +14,8 @@ NON_RETAIN
             Src_Auto_SDown : Bool;
             Machine_State : Int;
             PLC_Cycle_Count : DInt;
+            Remote_Shutdown_Step : Int;   // 0:OK, 1:Hold, 2:Cooling, 3:Tripped, 99:Latched
+            PC_Shutdown_Step : Int;       // 0:OK, 1:Hold, 2:Cooling, 3:Tripped, 99:Latched
          END_STRUCT;
 
          Faults : STRUCT
@@ -81,6 +83,7 @@ NON_RETAIN
          System : STRUCT
             PLC_Watchdog : Bool;
             Cmd_Fault_Reset : Bool;
+            Cmd_Enable_Safety : Bool;
          END_STRUCT;
 
          Source_Extraction : STRUCT
@@ -111,6 +114,7 @@ NON_RETAIN
 
          Source_Chamber : STRUCT
             Cmd_Open_GV : Bool;
+            Stat_Vac_OK_For_GV : Bool; // Python writes TRUE if VG1 & VG2 are safe
          END_STRUCT;
 
          Beamline_Steering : STRUCT

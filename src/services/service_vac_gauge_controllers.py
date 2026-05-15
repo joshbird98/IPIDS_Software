@@ -34,6 +34,10 @@ RELAY_PARAMS = {
     6: {"ch": "21", "on": "22", "off": "23", "status": "24"}
 }
 
+VG_MAP = {
+    (10, 1): "VG1", (10, 2): "VG2", (10, 3): "VG3",
+    (20, 1): "VG4", (20, 2): "VG5", (20, 3): "VG6"
+}
 
 class VacuumMicroservice:
     def __init__(self):
@@ -54,6 +58,8 @@ class VacuumMicroservice:
         self.connected = False
         self.config = self._load_config()
         self.tag_map = self._build_tag_map()
+
+        self.pressure_history: Dict[str, Dict[str, float]] = {}
 
         # --- Unified Payload Structure ---
         self.state: Dict[str, Any] = {
@@ -90,6 +96,8 @@ class VacuumMicroservice:
         """Pre-computes the telemetry string prefixes for fast O(1) loop lookups."""
         mapping = {}
         for node_str, node_data in self.config.items():
+            if not node_str.isdigit():
+                continue
             if "channels" in node_data:
                 for ch_str, ch_data in node_data["channels"].items():
                     subsystem = ch_data.get("subsystem", "unknown")
@@ -281,6 +289,8 @@ class VacuumMicroservice:
             config_data = self.config
 
             for node_str, node_data in config_data.items():
+                if not node_str.isdigit():
+                    continue
                 node_id = int(node_str)
                 if node_id not in NODE_IDS: continue
 
@@ -359,8 +369,43 @@ class VacuumMicroservice:
         except Exception as e:
             print(f"[Vacuum Service] Failed to enforce startup config: {e}")
 
+    def _evaluate_gv_permissive(self):
+        """
+        Domain Expert Logic: Evaluates Gate Valve permissive based EXCLUSIVELY on active faults.
+        If a hardware relay de-energizes, the Above_SP_Warn fault triggers, which instantly revokes this permissive.
+        """
+        is_safe = False
+        try:
+            faults = self.state.get("faults", {})
+
+            def has_fault(gauge_prefix):
+                for key, fault_data in faults.items():
+                    if gauge_prefix in key:
+                        if isinstance(fault_data, dict) and fault_data.get("active", False):
+                            return True
+                        elif fault_data is True:
+                            return True
+                return False
+
+            # Because the hardware relays assert the Above_SP_Warn, we only need to check the faults dict!
+            vg1_has_fault = has_fault("VG1")
+            vg2_has_fault = has_fault("VG2")
+            comms_fail = not self.connected
+
+            if not comms_fail and not vg1_has_fault and not vg2_has_fault:
+                is_safe = True
+
+        except Exception:
+            is_safe = False
+
+        self.state["telemetry"]["ion_beam.vacuum.gv_permissive_ready"] = is_safe
+
     def run(self):
         print("[Vacuum Service] Daemon starting...")
+
+        # Load the global rapid rise threshold
+        global_rise_limit = float(self.config.get("system_interlocks", {}).get("rapid_rise_thresh_mb_s", 5.0e-5))
+
         while True:
             cycle_start = time.perf_counter()
 
@@ -383,11 +428,35 @@ class VacuumMicroservice:
                 for ch in CHANNELS:
                     raw_p = self._read_transaction(node, str(ch), str(PARAM_PRESSURE))
                     tag_prefix = self.tag_map.get((node, ch))
+                    vg_prefix = VG_MAP.get((node, ch))
 
-                    if raw_p is not None and tag_prefix:
+                    if raw_p is not None and tag_prefix and vg_prefix:
                         try:
                             pressure_val = float(raw_p)
                             self.state["telemetry"][f"{tag_prefix}.pressure"] = pressure_val
+
+                            current_time = time.time()
+
+                            # --- Global Rapid Rise Warning (dp/dt) ---
+                            is_rapid_rise = False
+                            if vg_prefix in self.pressure_history:
+                                prev_p = self.pressure_history[vg_prefix]["pressure"]
+                                prev_t = self.pressure_history[vg_prefix]["time"]
+                                dt = current_time - prev_t
+
+                                if dt > 0:
+                                    dp_dt = (pressure_val - prev_p) / dt
+                                    # Trigger if rate is exceeded AND the pressure isn't sitting safely at high vacuum
+                                    if dp_dt > global_rise_limit and pressure_val > 1.0e-6:
+                                        is_rapid_rise = True
+
+                            self.state["faults"][f"{vg_prefix}_Rapid_Rise_Warn"] = {
+                                "active": is_rapid_rise, "severity": 1,
+                                "description": f"{vg_prefix} rapid pressure rise detected."
+                            } if is_rapid_rise else False
+
+                            self.pressure_history[vg_prefix] = {"pressure": pressure_val, "time": current_time}
+
                         except ValueError:
                             pass
                     time.sleep(POLL_INTERVAL)
@@ -397,49 +466,55 @@ class VacuumMicroservice:
                 if slow_task_name == "gauge_status":
                     val = self._read_transaction(node, str(slow_task_target), str(PARAM_STATUS))
                     tag_prefix = self.tag_map.get((node, slow_task_target))
-                    if val and tag_prefix:
+                    vg_prefix = VG_MAP.get((node, slow_task_target))
+
+                    if val and tag_prefix and vg_prefix:
                         try:
                             status_code = int(val)
                             self.state["telemetry"][f"{tag_prefix}.status"] = status_code
 
-                            # --- Explicit Fault Mapping for PLC ---
-                            # Map (Node, Channel) to the exact VG prefix from fault_map.json
-                            vg_map = {
-                                (10, 1): "VG1", (10, 2): "VG2", (10, 3): "VG3",
-                                (20, 1): "VG4", (20, 2): "VG5", (20, 3): "VG6"
-                            }
-                            vg_prefix = vg_map.get((node, slow_task_target))
+                            fault_not_found = f"{vg_prefix}_Not_Found"
+                            fault_mismatch = f"{vg_prefix}_Type_Mismatch"
 
-                            if vg_prefix:
-                                fault_not_found = f"{vg_prefix}_Not_Found"
-                                fault_mismatch = f"{vg_prefix}_Type_Mismatch"
+                            # Leybold typical statuses: 5 = No Sensor, 6 = ID Error
+                            if status_code == 5:
+                                self.state["faults"][fault_not_found] = {"active": True, "severity": 2,
+                                                                         "description": "Gauge disconnected."}
+                                self.state["faults"][fault_mismatch] = False
+                            elif status_code == 6:
+                                self.state["faults"][fault_not_found] = False
+                                self.state["faults"][fault_mismatch] = {"active": True, "severity": 2,
+                                                                        "description": "Gauge type mismatch."}
+                            elif status_code != 0:
+                                # For other general errors (underrange, etc), just flag mismatch for safety
+                                self.state["faults"][fault_not_found] = False
+                                self.state["faults"][fault_mismatch] = {"active": True, "severity": 2,
+                                                                        "description": f"Gauge error code: {status_code}"}
+                            else:
+                                self.state["faults"][fault_not_found] = False
+                                self.state["faults"][fault_mismatch] = False
 
-                                # Leybold typical statuses: 5 = No Sensor, 6 = ID Error
-                                if status_code == 5:
-                                    self.state["faults"][fault_not_found] = {"active": True, "severity": 2,
-                                                                             "description": "Gauge disconnected."}
-                                    self.state["faults"][fault_mismatch] = False
-                                elif status_code == 6:
-                                    self.state["faults"][fault_not_found] = False
-                                    self.state["faults"][fault_mismatch] = {"active": True, "severity": 2,
-                                                                            "description": "Gauge type mismatch."}
-                                elif status_code != 0:
-                                    # For other general errors (underrange, etc), just flag mismatch for safety
-                                    self.state["faults"][fault_not_found] = False
-                                    self.state["faults"][fault_mismatch] = {"active": True, "severity": 2,
-                                                                            "description": f"Gauge error code: {status_code}"}
-                                else:
-                                    self.state["faults"][fault_not_found] = False
-                                    self.state["faults"][fault_mismatch] = False
                         except ValueError:
                             pass
+
 
                 elif slow_task_name == "relay_status":
                     p = RELAY_PARAMS[slow_task_target]["status"]
                     val = self._read_transaction(node, "4", p)
                     if val:
+                        status_int = int(val)
                         self.state["telemetry"][
-                            f"ion_beam.vacuum.controller_{node}.relay_{slow_task_target}_status"] = int(val)
+                            f"ion_beam.vacuum.controller_{node}.relay_{slow_task_target}_status"] = status_int
+
+                        if slow_task_target in CHANNELS:
+                            vg_prefix = VG_MAP.get((node, slow_task_target))
+                            if vg_prefix:
+                                is_above_sp = (status_int == 0)
+                                self.state["faults"][f"{vg_prefix}_Above_SP_Warn"] = {
+                                    "active": is_above_sp,
+                                    "severity": 1,
+                                    "description": f"{vg_prefix} hardware relay de-energized (Pressure High)."
+                                } if is_above_sp else False
 
                 elif slow_task_name == "relay_on":
                     p = RELAY_PARAMS[slow_task_target]["on"]
@@ -475,6 +550,8 @@ class VacuumMicroservice:
             self.state["faults"]["Graphix_2_Comms_Fail"] = {
                 "active": comms_fault_active, "severity": 2, "description": "TCP connection lost to Node 20."
             } if comms_fault_active else False
+
+            self._evaluate_gv_permissive()
 
             # 3. Broadcast Unified Payload
             self.state["timestamp"] = time.time()

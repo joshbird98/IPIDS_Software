@@ -39,13 +39,16 @@
         "1.0": {"name": "Extraction_OverCurrent", "severity": 1, "description": "Extraction power supply current exceeded max limit."},
         "1.1": {"name": "Extraction_OverVoltage", "severity": 1, "description": "Extraction power supply voltage exceeded max limit."},
         "1.2": {"name": "Extraction_Fail", "severity": 2, "description": "Extraction failed to track setpoint."},
+        "1.3": {"name": "Extraction_Sustained_Arc", "severity": 1, "description": "Extraction power supply sustained arc."},
         "2.0": {"name": "Target_OverCurrent", "severity": 1, "description": "Target power supply current exceeded max limit."},
         "2.1": {"name": "Target_OverVoltage", "severity": 1, "description": "Target power supply voltage exceeded max limit."},
         "2.2": {"name": "Target_Fail", "severity": 2, "description": "Target failed to track setpoint."},
+        "2.3": {"name": "Target_Sustained_Arc", "severity": 1, "description": "Target power supply sustained arc."},
         "3.0": {"name": "Thermionic_OverCurrent", "severity": 1, "description": "Thermionic power supply current exceeded max limit."},
         "3.1": {"name": "Thermionic_OverVoltage", "severity": 1, "description": "Thermionic power supply voltage exceeded max limit."},
-        "3.2": {"name": "Thermionic_Fail", "severity": 2, "description": "Failed to produce thermionic current."}
-        }
+        "3.2": {"name": "Thermionic_Fail", "severity": 2, "description": "Failed to produce thermionic current."},
+        "3.3": {"name": "Thermionic_Sustained_Arc", "severity": 1, "description": "Thermionic power supply sustained arc."}
+      }
     },
     "UDT_Fault_Word_3_Spellman": {
       "registry_tag": "ion_beam.faults.word_3_spellman",

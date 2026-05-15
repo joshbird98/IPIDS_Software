@@ -88,7 +88,7 @@ VERSION : 0.1
       Extraction_OverCurrent : Bool;
       Extraction_OverVoltage : Bool;
       Extraction_Fail : Bool;
-      Spare_1_3 : Bool;
+      Extraction_Sustained_Arc : Bool;
       Spare_1_4 : Bool;
       Spare_1_5 : Bool;
       Spare_1_6 : Bool;
@@ -96,7 +96,7 @@ VERSION : 0.1
       Target_OverCurrent : Bool;
       Target_OverVoltage : Bool;
       Target_Fail : Bool;
-      Spare_2_3 : Bool;
+      Target_Sustained_Arc : Bool;
       Spare_2_4 : Bool;
       Spare_2_5 : Bool;
       Spare_2_6 : Bool;
@@ -104,7 +104,7 @@ VERSION : 0.1
       Thermionic_OverCurrent : Bool;
       Thermionic_OverVoltage : Bool;
       Thermionic_Fail : Bool;
-      Spare_3_3 : Bool;
+      Thermionic_Sustained_Arc : Bool;
       Spare_3_4 : Bool;
       Spare_3_5 : Bool;
       Spare_3_6 : Bool;
