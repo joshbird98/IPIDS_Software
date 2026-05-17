@@ -7,8 +7,9 @@ from typing import Dict, Any, Optional
 
 from src.core.network_config import (
     ZMQ_PORT_VACUUM_PUB, ZMQ_PORT_VACUUM_CMD, TOPIC_VACUUM_DATA,
-    NOISY_RACK_WAVESHARE_IP, NOISY_RACK_WAVESHARE_PORT
-)
+    NOISY_RACK_WAVESHARE_IP, NOISY_RACK_WAVESHARE_PORT,
+    ZMQ_PORT_HEARTBEAT)
+
 
 # --- CONFIGURATION ---
 SOCKET_TIMEOUT = 0.3
@@ -82,6 +83,12 @@ class VacuumMicroservice:
             self.slow_tasks.append(("relay_off", sp))
             self.slow_tasks.append(("relay_ch", sp))
         self._slow_task_idx = 0
+
+
+        # Setup the Heartbeat Publisher
+        self.hb_socket = self.context.socket(zmq.PUB)
+        self.hb_socket.connect(ZMQ_PORT_HEARTBEAT)
+        self.last_hb_time = 0.0
 
     def _load_config(self) -> dict:
         config_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '../../config/vac_gauges_config.json'))
@@ -563,6 +570,13 @@ class VacuumMicroservice:
                 self.pub_socket.send_multipart([topic, json.dumps(self.state).encode('utf-8')])
             except Exception as e:
                 print(f"[Vacuum Service] ZMQ Publish Error: {e}")
+
+            # Pulse the heartbeat twice per second
+            current_time = time.time()
+            if current_time - self.last_hb_time >= 0.5:
+                # Ensure the "service" string exactly matches the key in SERVICES_CONFIG
+                self.hb_socket.send_json({"service": "service_logger", "ts": current_time})
+                self.last_hb_time = current_time
 
             time.sleep(max(0.0, 0.05 - elapsed))
 

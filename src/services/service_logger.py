@@ -8,11 +8,11 @@ import threading
 import numpy as np
 from datetime import datetime
 
-from config.network_config import (
+from src.core.network_config import (
     ZMQ_PORT_PLC_PUB, ZMQ_PORT_VACUUM_PUB, ZMQ_PORT_LOGGER_CMD,
     TOPIC_PLC_DATA, TOPIC_VACUUM_DATA,
-    ZMQ_PORT_SRC_TURBO_PUB, TOPIC_SRC_TURBO_DATA  # <--- ADDED THESE
-)
+    ZMQ_PORT_SRC_TURBO_PUB, TOPIC_SRC_TURBO_DATA,
+    ZMQ_PORT_HEARTBEAT)
 
 from hmi_config import DEFAULT_LOG_DIRECTORY
 from src.core.payload_mapper import DynamicPayloadMapper
@@ -89,6 +89,11 @@ class LoggerMicroservice:
         # --- Internal Clock ---
         self.tick_rate = 0.100  # 10Hz target
         self.next_tick = time.time() + self.tick_rate
+
+        # Setup the Heartbeat Publisher
+        self.hb_socket = self.context.socket(zmq.PUB)
+        self.hb_socket.connect(ZMQ_PORT_HEARTBEAT)
+        self.last_hb_time = 0.0
 
     def _generate_deterministic_keys(self) -> list:
         """Loads keys from the central registry to lock array sizes."""
@@ -315,6 +320,13 @@ class LoggerMicroservice:
                 break
             except Exception as e:
                 print(f"[Logger Loop Error] {e}")
+
+            # Pulse the heartbeat twice per second
+            current_time = time.time()
+            if current_time - self.last_hb_time >= 0.5:
+                # Ensure the "service" string exactly matches the key in SERVICES_CONFIG
+                self.hb_socket.send_json({"service": "service_logger", "ts": current_time})
+                self.last_hb_time = current_time
 
         # Shutdown sequence
         self.running = False

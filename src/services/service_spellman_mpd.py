@@ -8,8 +8,8 @@ from typing import Dict, Any, Optional
 
 from src.core.network_config import (
     ZMQ_PORT_SPELLMAN_PUB, ZMQ_PORT_SPELLMAN_CMD, TOPIC_SPELLMAN_DATA, ZMQ_PORT_PLC_PUB,
-    SPELLMAN_WAVESHARES
-)
+    SPELLMAN_WAVESHARES,
+    ZMQ_PORT_HEARTBEAT)
 
 # Protocol Constants
 STX = "\x02"
@@ -130,6 +130,11 @@ class SpellmanMicroservice:
             "telemetry": {},
             "faults": {}
         }
+
+        # Setup the Heartbeat Publisher
+        self.hb_socket = self.context.socket(zmq.PUB)
+        self.hb_socket.connect(ZMQ_PORT_HEARTBEAT)
+        self.last_hb_time = 0.0
 
     def _update_safety_permissives(self):
         """Listens to the PLC telemetry to see if physical power is available."""
@@ -323,6 +328,13 @@ class SpellmanMicroservice:
                 self.pub_socket.send_multipart([topic, json.dumps(self.state).encode('utf-8')])
             except Exception as e:
                 print(f"[Spellman Service] ZMQ Publish Error: {e}")
+
+            # Pulse the heartbeat twice per second
+            current_time = time.time()
+            if current_time - self.last_hb_time >= 0.5:
+                # Ensure the "service" string exactly matches the key in SERVICES_CONFIG
+                self.hb_socket.send_json({"service": "service_logger", "ts": current_time})
+                self.last_hb_time = current_time
 
             time.sleep(max(0.0, POLL_INTERVAL - elapsed))
 

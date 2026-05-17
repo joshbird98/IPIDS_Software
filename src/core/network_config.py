@@ -57,6 +57,8 @@ ZMQ_PORT_LOGGER_CMD = f"{HOST}:{_cfg['zmq_ports']['logger_cmd']}"
 ZMQ_PORT_MAGNET_PUB = f"{HOST}:{_cfg['zmq_ports']['magnet_pub']}"
 ZMQ_PORT_MAGNET_CMD = f"{HOST}:{_cfg['zmq_ports']['magnet_cmd']}"
 
+ZMQ_PORT_HEARTBEAT = f"{HOST}:{_cfg['zmq_ports']['heartbeat_pub']}"
+
 # --- ZMQ Topics ---
 TOPIC_PLC_DATA = b"PLC_DATA"
 TOPIC_VACUUM_DATA = b"VACUUM_DATA"

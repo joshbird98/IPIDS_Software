@@ -9,8 +9,7 @@ from pymodbus.client import ModbusTcpClient
 from pymodbus.framer import FramerType
 
 from src.core.network_config import (
-    MAGNET_IP, MAGNET_PORT, ZMQ_PORT_MAGNET_PUB, ZMQ_PORT_MAGNET_CMD, TOPIC_MAGNET_DATA, ZMQ_PORT_PLC_PUB
-)
+    MAGNET_IP, MAGNET_PORT, ZMQ_PORT_MAGNET_PUB, ZMQ_PORT_MAGNET_CMD, TOPIC_MAGNET_DATA, ZMQ_PORT_PLC_PUB, ZMQ_PORT_HEARTBEAT)
 
 # Performance & Safety Constants
 POLL_INTERVAL = 0.05  # 50ms polling loop
@@ -181,6 +180,11 @@ class MagnetMicroservice:
             "telemetry": {},
             "faults": {}
         }
+
+        # Setup the Heartbeat Publisher
+        self.hb_socket = self.context.socket(zmq.PUB)
+        self.hb_socket.connect(ZMQ_PORT_HEARTBEAT)
+        self.last_hb_time = 0.0
 
     def _load_config(self) -> dict:
         config_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '../../config/magnet_config.json'))
@@ -384,6 +388,13 @@ class MagnetMicroservice:
                     self.pub_socket.send_multipart([topic, json.dumps(self.state).encode('utf-8')])
                 except Exception as e:
                     print(f"[Magnet Service] ZMQ Publish Error: {e}")
+
+                # Pulse the heartbeat twice per second
+                current_time = time.time()
+                if current_time - self.last_hb_time >= 0.5:
+                    # Ensure the "service" string exactly matches the key in SERVICES_CONFIG
+                    self.hb_socket.send_json({"service": "service_logger", "ts": current_time})
+                    self.last_hb_time = current_time
 
                 time.sleep(max(0.0, POLL_INTERVAL - elapsed))
 

@@ -8,8 +8,8 @@ from typing import Dict, Any
 
 from src.core.network_config import (
     ZMQ_PORT_PLC_PUB, ZMQ_PORT_PLC_CMD, TOPIC_PLC_DATA, PLC_IP, PLC_RACK, PLC_SLOT, DB_INTERFACE_NUM,
-    ZMQ_PORT_VACUUM_PUB, ZMQ_PORT_SPELLMAN_PUB, ZMQ_PORT_MAGNET_PUB
-)
+    ZMQ_PORT_VACUUM_PUB, ZMQ_PORT_SPELLMAN_PUB, ZMQ_PORT_MAGNET_PUB,
+    ZMQ_PORT_HEARTBEAT)
 
 POLL_INTERVAL = 0.1  # 100ms cycle (10Hz)
 HEARTBEAT_INTERVAL = 1.0  # 1Hz Watchdog
@@ -77,6 +77,12 @@ class PlcMicroservice:
             "MAGNET": time.time()
         }
         self.SERVICE_TIMEOUT_SEC = 1.0  # 1.0 seconds without data = Service Dead
+
+        # Setup the Heartbeat Publisher
+        self.hb_socket = self.context.socket(zmq.PUB)
+        self.hb_socket.connect(ZMQ_PORT_HEARTBEAT)
+        self.last_hb_time = 0.0
+
 
     def _load_fault_map(self) -> dict:
         config_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '../../config/fault_map.json'))
@@ -444,6 +450,13 @@ class PlcMicroservice:
                 self.pub_socket.send_multipart([topic, json.dumps(self.state).encode('utf-8')])
             except Exception as e:
                 print(f"[PLC Service] Publish Error: {e}")
+
+            # Pulse the heartbeat twice per second
+            current_time = time.time()
+            if current_time - self.last_hb_time >= 0.5:
+                # Ensure the "service" string exactly matches the key in SERVICES_CONFIG
+                self.hb_socket.send_json({"service": "service_logger", "ts": current_time})
+                self.last_hb_time = current_time
 
             # Dynamic sleep to maintain strict 10Hz timing
             elapsed = time.time() - cycle_start

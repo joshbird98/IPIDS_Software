@@ -50,6 +50,7 @@
         "spellman_pub": 5562,
         "spellman_cmd": 5563,
         "magnet_pub": 5564,
-        "magnet_cmd": 5565
+        "magnet_cmd": 5565,
+        "heartbeat_pub": 5566
     }
 }

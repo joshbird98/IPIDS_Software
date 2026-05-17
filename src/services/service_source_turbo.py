@@ -7,8 +7,8 @@ from typing import Dict, Any
 # Ensure these match your network_config.py
 from src.core.network_config import (
     ZMQ_PORT_SRC_TURBO_PUB, ZMQ_PORT_SRC_TURBO_CMD, TOPIC_SRC_TURBO_DATA,
-    SRC_TURBO_WAVESHARE_IP, SRC_TURBO_WAVESHARE_PORT
-)
+    SRC_TURBO_WAVESHARE_IP, SRC_TURBO_WAVESHARE_PORT,
+    ZMQ_PORT_HEARTBEAT)
 
 # --- USS PROTOCOL CONSTANTS ---
 PUMP_ADDRESS = 0
@@ -153,6 +153,11 @@ class TurbovacMicroservice:
             ("error", PNU_ERR_CODE)
         ]
         self._slow_idx = 0
+
+        # Setup the Heartbeat Publisher
+        self.hb_socket = self.context.socket(zmq.PUB)
+        self.hb_socket.connect(ZMQ_PORT_HEARTBEAT)
+        self.last_hb_time = 0.0
 
     # --- USS LOW LEVEL ---
     def _calculate_bcc(self, frame):
@@ -424,6 +429,13 @@ class TurbovacMicroservice:
                 self.pub_socket.send_multipart([topic, json.dumps(self.state).encode('utf-8')])
             except Exception as e:
                 print(f"ZMQ Publish Error: {e}")
+
+            # Pulse the heartbeat twice per second
+            current_time = time.time()
+            if current_time - self.last_hb_time >= 0.5:
+                # Ensure the "service" string exactly matches the key in SERVICES_CONFIG
+                self.hb_socket.send_json({"service": "service_logger", "ts": current_time})
+                self.last_hb_time = current_time
 
             # Sleep dynamically to maintain accurate 50ms polling loop
             time.sleep(max(0.0, POLL_INTERVAL - elapsed))
