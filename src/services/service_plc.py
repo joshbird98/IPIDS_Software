@@ -153,6 +153,7 @@ class PlcMicroservice:
         watchdog_tag = "ion_beam.system.plc_watchdog"
         if watchdog_tag not in self.tags:
             return
+
         self.watchdog_state = not self.watchdog_state
         self._write_tag(watchdog_tag, self.watchdog_state)
 
@@ -229,6 +230,7 @@ class PlcMicroservice:
             self.connected = False
 
     def _write_tag(self, tag: str, new_value: Any) -> bool:
+
         if tag not in self.tags:
             return False
 
@@ -344,10 +346,10 @@ class PlcMicroservice:
                         undervoltage = self._is_fault_active(faults, f"{prefix}_UnderVoltage")
                         arc_exceeded = self._is_fault_active(faults, f"{prefix}_Arc_Exceeded")
 
-                        self._update_plc_mailbox(f"ion_beam.spellman_status.stat_unit{i}_comms_fail", comms_fail)
-                        self._update_plc_mailbox(f"ion_beam.spellman_status.stat_unit{i}_overcurrent", overcurrent)
-                        self._update_plc_mailbox(f"ion_beam.spellman_status.stat_unit{i}_undervoltage", undervoltage)
-                        self._update_plc_mailbox(f"ion_beam.spellman_status.stat_unit{i}_arc_exceeded", arc_exceeded)
+                        self._update_plc_mailbox(f"ion_beam.spellman.status.stat_unit{i}_comms_fail", comms_fail)
+                        self._update_plc_mailbox(f"ion_beam.spellman.status.stat_unit{i}_overcurrent", overcurrent)
+                        self._update_plc_mailbox(f"ion_beam.spellman.status.stat_unit{i}_undervoltage", undervoltage)
+                        self._update_plc_mailbox(f"ion_beam.spellman.status.stat_unit{i}_arc_exceeded", arc_exceeded)
 
                 # ==========================================
                 # ROUTING: MAGNET
@@ -455,7 +457,7 @@ class PlcMicroservice:
             current_time = time.time()
             if current_time - self.last_hb_time >= 0.5:
                 # Ensure the "service" string exactly matches the key in SERVICES_CONFIG
-                self.hb_socket.send_json({"service": "service_logger", "ts": current_time})
+                self.hb_socket.send_json({"service": "service_plc", "ts": current_time})
                 self.last_hb_time = current_time
 
             # Dynamic sleep to maintain strict 10Hz timing

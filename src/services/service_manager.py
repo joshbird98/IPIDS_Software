@@ -15,20 +15,22 @@ CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
 # Tiers dictate the boot order (T0 boots first, T3 last).
 SERVICES_CONFIG = {
     # T-0: Infrastructure & Data Pipelines
-    #"service_events": {"script": os.path.join(CURRENT_DIR, "service_events.py"), "tier": 0, "timeout": 5.0},
-    #"service_logger": {"script": os.path.join(CURRENT_DIR, "service_logger.py"), "tier": 0, "timeout": 5.0},
+    #"service_events": {"script": os.path.join(CURRENT_DIR, "service_events.py"), "tier": 0, "timeout": 1.5},
+    #"service_logger": {"script": os.path.join(CURRENT_DIR, "service_logger.py"), "tier": 0, "timeout": 1.5},
 
     # T-1: Core Safety & Master Data Broker
-    "service_plc": {"script": os.path.join(CURRENT_DIR, "service_plc.py"), "tier": 1, "timeout": 1.0},
+    "service_plc": {"script": os.path.join(CURRENT_DIR, "service_plc.py"), "tier": 1, "timeout": 1.5},
 
     # T-2: Hardware Peripherals
-    "service_vac_gauge": {"script": os.path.join(CURRENT_DIR, "service_vac_gauge_controllers.py"), "tier": 2, "timeout": 1.0},
-    "service_source_turbo": {"script": os.path.join(CURRENT_DIR, "service_source_turbo.py"), "tier": 2, "timeout": 1.0},
-    "service_magnet_psu": {"script": os.path.join(CURRENT_DIR, "service_magnet_psu.py"), "tier": 2, "timeout": 1.0},
-    "service_spellman_mpd": {"script": os.path.join(CURRENT_DIR, "service_spellman_mpd.py"), "tier": 2, "timeout": 1.0},
+    "service_vac_gauge_controllers": {"script": os.path.join(CURRENT_DIR, "service_vac_gauge_controllers.py"), "tier": 2, "timeout": 1.5},
+    "service_source_turbo": {"script": os.path.join(CURRENT_DIR, "service_source_turbo.py"), "tier": 2, "timeout": 1.5},
+    "service_magnet_psu": {"script": os.path.join(CURRENT_DIR, "service_magnet_psu.py"), "tier": 2, "timeout": 1.5},
+    "service_spellman_mpd": {"script": os.path.join(CURRENT_DIR, "service_spellman_mpd.py"), "tier": 2, "timeout": 1.5},
 
     # T-3: Automation & Orchestration
-    # "service_conductor":    {"script": os.path.join(CURRENT_DIR, "service_conductor.py"),    "tier": 3, "timeout": 5.0}
+    # "service_conductor":    {"script": os.path.join(CURRENT_DIR, "service_conductor.py"),    "tier": 3, "timeout": 1.5}
+
+    #"service_dummy": {"script": os.path.join(CURRENT_DIR, "service_dummy.py"), "args": ["crash"], "tier": 2, "timeout": 1.5},
 }
 
 
@@ -85,7 +87,8 @@ class IpidsServiceManager:
 
     def _start_service(self, name):
         """Spawns a service using the exact same Python interpreter running this manager."""
-        script_path = SERVICES_CONFIG[name]["script"]
+        cfg = SERVICES_CONFIG[name]
+        script_path = cfg["script"]
 
         if not os.path.exists(script_path):
             print(f"[IPIDS Manager] WARNING: {script_path} not found. Skipping.")
@@ -94,11 +97,11 @@ class IpidsServiceManager:
         print(f"[IPIDS Manager] Launching {name}...")
 
         # Launch independently. (In the future, you can pipe stdout/stderr to a master log here)
-        proc = subprocess.Popen([sys.executable, script_path])
+        args = cfg.get("args", [])
+        proc = subprocess.Popen([sys.executable, script_path] + args)
 
         self.running_processes[name] = proc
-        # Give the service a grace period equal to its timeout to boot up and send its first pulse
-        self.last_heartbeats[name] = time.time() + SERVICES_CONFIG[name]["timeout"]
+        self.last_heartbeats[name] = time.time() + cfg["timeout"]
 
     def _kill_service(self, name):
         """Forcefully terminates a managed service."""

@@ -310,9 +310,12 @@ class VacuumMicroservice:
                         if target_name:
                             # Group = Channel, Param = 5 (Name)
                             curr_name = self._read_transaction_with_retry(node_id, str(ch), "5", 3)
+
+                            self.hb_socket.send_json({"service": "service_vac_gauge_controllers", "ts": time.time()})
                             if curr_name != target_name:
                                 print(f"-> Node {node_id} Ch {ch}: Name mismatch. Updating to '{target_name}'...")
                                 self._write_transaction_with_retry(node_id, str(ch), "5", target_name)
+                                self.hb_socket.send_json({"service": "service_vac_gauge_controllers", "ts": time.time()})
                                 time.sleep(0.2)
 
                 # --- 2. Enforce Relay Interlocks ---
@@ -336,8 +339,11 @@ class VacuumMicroservice:
                         target_off_str = f"{float(off_val):.1E}"
 
                         curr_ch = self._read_transaction_with_retry(node_id, "4", p_ch, 3)
+                        self.hb_socket.send_json({"service": "service_vac_gauge_controllers", "ts": time.time()})
                         curr_on = self._read_transaction_with_retry(node_id, "4", p_on, 3)
+                        self.hb_socket.send_json({"service": "service_vac_gauge_controllers", "ts": time.time()})
                         curr_off = self._read_transaction_with_retry(node_id, "4", p_off, 3)
+                        self.hb_socket.send_json({"service": "service_vac_gauge_controllers", "ts": time.time()})
 
                         match_found = False
                         if curr_ch == target_ch_str and curr_on is not None and curr_off is not None:
@@ -354,6 +360,7 @@ class VacuumMicroservice:
                         on_success = False
                         print(f"-> Node {node_id} Relay {relay_id}: Mismatch found! Overwriting...")
                         success = self._write_transaction_with_retry(node_id, "4", p_ch, target_ch_str)
+                        self.hb_socket.send_json({"service": "service_vac_gauge_controllers", "ts": time.time()})
                         time.sleep(0.2)
 
                         if success:
@@ -361,12 +368,16 @@ class VacuumMicroservice:
                             current_off_float = float(curr_off) if curr_off else 1000.0
                             if float(on_val) < current_off_float:
                                 on_success = self._write_transaction_with_retry(node_id, "4", p_on, target_on_str)
+                                self.hb_socket.send_json({"service": "service_vac_gauge_controllers", "ts": time.time()})
                                 time.sleep(0.2)
                                 if on_success: self._write_transaction_with_retry(node_id, "4", p_off, target_off_str)
+                                self.hb_socket.send_json({"service": "service_vac_gauge_controllers", "ts": time.time()})
                             else:
                                 on_success = self._write_transaction_with_retry(node_id, "4", p_off, target_off_str)
+                                self.hb_socket.send_json({"service": "service_vac_gauge_controllers", "ts": time.time()})
                                 time.sleep(0.2)
                                 if on_success: self._write_transaction_with_retry(node_id, "4", p_on, target_on_str)
+                                self.hb_socket.send_json({"service": "service_vac_gauge_controllers", "ts": time.time()})
                             time.sleep(0.2)
 
                         if not (success and on_success):
@@ -575,7 +586,7 @@ class VacuumMicroservice:
             current_time = time.time()
             if current_time - self.last_hb_time >= 0.5:
                 # Ensure the "service" string exactly matches the key in SERVICES_CONFIG
-                self.hb_socket.send_json({"service": "service_logger", "ts": current_time})
+                self.hb_socket.send_json({"service": "service_vac_gauge_controllers", "ts": current_time})
                 self.last_hb_time = current_time
 
             time.sleep(max(0.0, 0.05 - elapsed))

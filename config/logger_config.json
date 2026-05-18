@@ -1,0 +1,5 @@
+{
+    "tick_rate_seconds": 0.050,
+    "flush_interval_seconds": 900.0,
+    "buffer_overhead_multiplier": 1.1
+}

@@ -434,7 +434,7 @@ class TurbovacMicroservice:
             current_time = time.time()
             if current_time - self.last_hb_time >= 0.5:
                 # Ensure the "service" string exactly matches the key in SERVICES_CONFIG
-                self.hb_socket.send_json({"service": "service_logger", "ts": current_time})
+                self.hb_socket.send_json({"service": "service_source_turbo", "ts": current_time})
                 self.last_hb_time = current_time
 
             # Sleep dynamically to maintain accurate 50ms polling loop

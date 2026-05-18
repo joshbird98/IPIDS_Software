@@ -10,7 +10,7 @@
         "default_label": "Cmd Insert FC",
         "short_name": "FC",
         "db_number": 10,
-        "byte_offset": 132,
+        "byte_offset": 136,
         "bit_offset": 0,
         "snap7_type": "S7WLBit"
     },
@@ -25,7 +25,7 @@
         "default_label": "SP X Volts",
         "short_name": "Volts",
         "db_number": 10,
-        "byte_offset": 124,
+        "byte_offset": 128,
         "bit_offset": 0,
         "snap7_type": "S7WLReal"
     },
@@ -40,7 +40,7 @@
         "default_label": "SP Y Volts",
         "short_name": "Volts",
         "db_number": 10,
-        "byte_offset": 128,
+        "byte_offset": 132,
         "bit_offset": 0,
         "snap7_type": "S7WLReal"
     },
@@ -103,7 +103,7 @@
         "default_label": "RB Dose Count",
         "short_name": "Count",
         "db_number": 10,
-        "byte_offset": 86,
+        "byte_offset": 90,
         "bit_offset": 0,
         "snap7_type": "S7WLReal"
     },
@@ -166,7 +166,7 @@
         "default_label": "Safety Relay Active",
         "short_name": "Active",
         "db_number": 10,
-        "byte_offset": 32,
+        "byte_offset": 36,
         "bit_offset": 0,
         "snap7_type": "S7WLBit"
     },
@@ -181,7 +181,7 @@
         "default_label": "Stat Air Press OK",
         "short_name": "OK",
         "db_number": 10,
-        "byte_offset": 32,
+        "byte_offset": 36,
         "bit_offset": 2,
         "snap7_type": "S7WLBit"
     },
@@ -196,7 +196,7 @@
         "default_label": "Stat Mag Coolant OK",
         "short_name": "OK",
         "db_number": 10,
-        "byte_offset": 32,
+        "byte_offset": 36,
         "bit_offset": 3,
         "snap7_type": "S7WLBit"
     },
@@ -211,7 +211,7 @@
         "default_label": "Stat Src Coolant OK",
         "short_name": "OK",
         "db_number": 10,
-        "byte_offset": 32,
+        "byte_offset": 36,
         "bit_offset": 1,
         "snap7_type": "S7WLBit"
     },
@@ -226,7 +226,7 @@
         "default_label": "Word 0",
         "short_name": "0",
         "db_number": 10,
-        "byte_offset": 8,
+        "byte_offset": 12,
         "bit_offset": 0,
         "snap7_type": "S7WLDWord"
     },
@@ -241,7 +241,7 @@
         "default_label": "Word 1",
         "short_name": "1",
         "db_number": 10,
-        "byte_offset": 12,
+        "byte_offset": 16,
         "bit_offset": 0,
         "snap7_type": "S7WLDWord"
     },
@@ -256,7 +256,7 @@
         "default_label": "Word 2",
         "short_name": "2",
         "db_number": 10,
-        "byte_offset": 16,
+        "byte_offset": 20,
         "bit_offset": 0,
         "snap7_type": "S7WLDWord"
     },
@@ -271,7 +271,7 @@
         "default_label": "Word 3",
         "short_name": "3",
         "db_number": 10,
-        "byte_offset": 20,
+        "byte_offset": 24,
         "bit_offset": 0,
         "snap7_type": "S7WLDWord"
     },
@@ -286,7 +286,7 @@
         "default_label": "Word 4",
         "short_name": "4",
         "db_number": 10,
-        "byte_offset": 24,
+        "byte_offset": 28,
         "bit_offset": 0,
         "snap7_type": "S7WLDWord"
     },
@@ -301,7 +301,7 @@
         "default_label": "Word 5",
         "short_name": "5",
         "db_number": 10,
-        "byte_offset": 28,
+        "byte_offset": 32,
         "bit_offset": 0,
         "snap7_type": "S7WLDWord"
     },
@@ -316,7 +316,7 @@
         "default_label": "Stat Graphix1 Comms Fail",
         "short_name": "Fail",
         "db_number": 10,
-        "byte_offset": 142,
+        "byte_offset": 146,
         "bit_offset": 0,
         "snap7_type": "S7WLBit"
     },
@@ -331,7 +331,7 @@
         "default_label": "Stat Graphix2 Comms Fail",
         "short_name": "Fail",
         "db_number": 10,
-        "byte_offset": 142,
+        "byte_offset": 146,
         "bit_offset": 1,
         "snap7_type": "S7WLBit"
     },
@@ -346,7 +346,7 @@
         "default_label": "Stat VG1 Above SP",
         "short_name": "SP",
         "db_number": 10,
-        "byte_offset": 142,
+        "byte_offset": 146,
         "bit_offset": 4,
         "snap7_type": "S7WLBit"
     },
@@ -361,7 +361,7 @@
         "default_label": "Stat VG1 Mismatch",
         "short_name": "Mismatch",
         "db_number": 10,
-        "byte_offset": 142,
+        "byte_offset": 146,
         "bit_offset": 3,
         "snap7_type": "S7WLBit"
     },
@@ -376,7 +376,7 @@
         "default_label": "Stat VG1 Not Found",
         "short_name": "Found",
         "db_number": 10,
-        "byte_offset": 142,
+        "byte_offset": 146,
         "bit_offset": 2,
         "snap7_type": "S7WLBit"
     },
@@ -391,7 +391,7 @@
         "default_label": "Stat VG1 Rapid Rise",
         "short_name": "Rise",
         "db_number": 10,
-        "byte_offset": 142,
+        "byte_offset": 146,
         "bit_offset": 5,
         "snap7_type": "S7WLBit"
     },
@@ -406,7 +406,7 @@
         "default_label": "Stat VG2 Above SP",
         "short_name": "SP",
         "db_number": 10,
-        "byte_offset": 143,
+        "byte_offset": 147,
         "bit_offset": 0,
         "snap7_type": "S7WLBit"
     },
@@ -421,7 +421,7 @@
         "default_label": "Stat VG2 Mismatch",
         "short_name": "Mismatch",
         "db_number": 10,
-        "byte_offset": 142,
+        "byte_offset": 146,
         "bit_offset": 7,
         "snap7_type": "S7WLBit"
     },
@@ -436,7 +436,7 @@
         "default_label": "Stat VG2 Not Found",
         "short_name": "Found",
         "db_number": 10,
-        "byte_offset": 142,
+        "byte_offset": 146,
         "bit_offset": 6,
         "snap7_type": "S7WLBit"
     },
@@ -451,7 +451,7 @@
         "default_label": "Stat VG2 Rapid Rise",
         "short_name": "Rise",
         "db_number": 10,
-        "byte_offset": 143,
+        "byte_offset": 147,
         "bit_offset": 1,
         "snap7_type": "S7WLBit"
     },
@@ -466,7 +466,7 @@
         "default_label": "Stat VG3 Above SP",
         "short_name": "SP",
         "db_number": 10,
-        "byte_offset": 143,
+        "byte_offset": 147,
         "bit_offset": 4,
         "snap7_type": "S7WLBit"
     },
@@ -481,7 +481,7 @@
         "default_label": "Stat VG3 Mismatch",
         "short_name": "Mismatch",
         "db_number": 10,
-        "byte_offset": 143,
+        "byte_offset": 147,
         "bit_offset": 3,
         "snap7_type": "S7WLBit"
     },
@@ -496,7 +496,7 @@
         "default_label": "Stat VG3 Not Found",
         "short_name": "Found",
         "db_number": 10,
-        "byte_offset": 143,
+        "byte_offset": 147,
         "bit_offset": 2,
         "snap7_type": "S7WLBit"
     },
@@ -511,7 +511,7 @@
         "default_label": "Stat VG3 Rapid Rise",
         "short_name": "Rise",
         "db_number": 10,
-        "byte_offset": 143,
+        "byte_offset": 147,
         "bit_offset": 5,
         "snap7_type": "S7WLBit"
     },
@@ -526,7 +526,7 @@
         "default_label": "Stat VG4 Above SP",
         "short_name": "SP",
         "db_number": 10,
-        "byte_offset": 144,
+        "byte_offset": 148,
         "bit_offset": 0,
         "snap7_type": "S7WLBit"
     },
@@ -541,7 +541,7 @@
         "default_label": "Stat VG4 Mismatch",
         "short_name": "Mismatch",
         "db_number": 10,
-        "byte_offset": 143,
+        "byte_offset": 147,
         "bit_offset": 7,
         "snap7_type": "S7WLBit"
     },
@@ -556,7 +556,7 @@
         "default_label": "Stat VG4 Not Found",
         "short_name": "Found",
         "db_number": 10,
-        "byte_offset": 143,
+        "byte_offset": 147,
         "bit_offset": 6,
         "snap7_type": "S7WLBit"
     },
@@ -571,7 +571,7 @@
         "default_label": "Stat VG4 Rapid Rise",
         "short_name": "Rise",
         "db_number": 10,
-        "byte_offset": 144,
+        "byte_offset": 148,
         "bit_offset": 1,
         "snap7_type": "S7WLBit"
     },
@@ -586,7 +586,7 @@
         "default_label": "Stat VG5 Above SP",
         "short_name": "SP",
         "db_number": 10,
-        "byte_offset": 144,
+        "byte_offset": 148,
         "bit_offset": 4,
         "snap7_type": "S7WLBit"
     },
@@ -601,7 +601,7 @@
         "default_label": "Stat VG5 Mismatch",
         "short_name": "Mismatch",
         "db_number": 10,
-        "byte_offset": 144,
+        "byte_offset": 148,
         "bit_offset": 3,
         "snap7_type": "S7WLBit"
     },
@@ -616,7 +616,7 @@
         "default_label": "Stat VG5 Not Found",
         "short_name": "Found",
         "db_number": 10,
-        "byte_offset": 144,
+        "byte_offset": 148,
         "bit_offset": 2,
         "snap7_type": "S7WLBit"
     },
@@ -631,7 +631,7 @@
         "default_label": "Stat VG5 Rapid Rise",
         "short_name": "Rise",
         "db_number": 10,
-        "byte_offset": 144,
+        "byte_offset": 148,
         "bit_offset": 5,
         "snap7_type": "S7WLBit"
     },
@@ -646,7 +646,7 @@
         "default_label": "Stat VG6 Above SP",
         "short_name": "SP",
         "db_number": 10,
-        "byte_offset": 145,
+        "byte_offset": 149,
         "bit_offset": 0,
         "snap7_type": "S7WLBit"
     },
@@ -661,7 +661,7 @@
         "default_label": "Stat VG6 Mismatch",
         "short_name": "Mismatch",
         "db_number": 10,
-        "byte_offset": 144,
+        "byte_offset": 148,
         "bit_offset": 7,
         "snap7_type": "S7WLBit"
     },
@@ -676,7 +676,7 @@
         "default_label": "Stat VG6 Not Found",
         "short_name": "Found",
         "db_number": 10,
-        "byte_offset": 144,
+        "byte_offset": 148,
         "bit_offset": 6,
         "snap7_type": "S7WLBit"
     },
@@ -691,7 +691,7 @@
         "default_label": "Stat VG6 Rapid Rise",
         "short_name": "Rise",
         "db_number": 10,
-        "byte_offset": 145,
+        "byte_offset": 149,
         "bit_offset": 1,
         "snap7_type": "S7WLBit"
     },
@@ -730,7 +730,7 @@
         "default_label": "Stat Comms Fail",
         "short_name": "Fail",
         "db_number": 10,
-        "byte_offset": 140,
+        "byte_offset": 144,
         "bit_offset": 0,
         "snap7_type": "S7WLBit"
     },
@@ -745,7 +745,7 @@
         "default_label": "Stat Open Circuit",
         "short_name": "Circuit",
         "db_number": 10,
-        "byte_offset": 140,
+        "byte_offset": 144,
         "bit_offset": 2,
         "snap7_type": "S7WLBit"
     },
@@ -760,7 +760,7 @@
         "default_label": "Stat PSU OVC",
         "short_name": "OVC",
         "db_number": 10,
-        "byte_offset": 140,
+        "byte_offset": 144,
         "bit_offset": 7,
         "snap7_type": "S7WLBit"
     },
@@ -775,7 +775,7 @@
         "default_label": "Stat PSU Overtemp",
         "short_name": "Overtemp",
         "db_number": 10,
-        "byte_offset": 140,
+        "byte_offset": 144,
         "bit_offset": 4,
         "snap7_type": "S7WLBit"
     },
@@ -790,7 +790,7 @@
         "default_label": "Stat PSU OVP",
         "short_name": "OVP",
         "db_number": 10,
-        "byte_offset": 140,
+        "byte_offset": 144,
         "bit_offset": 6,
         "snap7_type": "S7WLBit"
     },
@@ -805,7 +805,7 @@
         "default_label": "Stat PSU PowerFail",
         "short_name": "PowerFail",
         "db_number": 10,
-        "byte_offset": 140,
+        "byte_offset": 144,
         "bit_offset": 5,
         "snap7_type": "S7WLBit"
     },
@@ -820,7 +820,7 @@
         "default_label": "Stat Short Circuit",
         "short_name": "Circuit",
         "db_number": 10,
-        "byte_offset": 140,
+        "byte_offset": 144,
         "bit_offset": 1,
         "snap7_type": "S7WLBit"
     },
@@ -835,7 +835,7 @@
         "default_label": "Stat Unexpected Res",
         "short_name": "Res",
         "db_number": 10,
-        "byte_offset": 140,
+        "byte_offset": 144,
         "bit_offset": 3,
         "snap7_type": "S7WLBit"
     },
@@ -850,7 +850,7 @@
         "default_label": "Stat Ldlk Turbo Comms Fail",
         "short_name": "Fail",
         "db_number": 10,
-        "byte_offset": 134,
+        "byte_offset": 138,
         "bit_offset": 5,
         "snap7_type": "S7WLBit"
     },
@@ -865,7 +865,7 @@
         "default_label": "Stat Ldlk Turbo Error",
         "short_name": "Error",
         "db_number": 10,
-        "byte_offset": 134,
+        "byte_offset": 138,
         "bit_offset": 6,
         "snap7_type": "S7WLBit"
     },
@@ -880,7 +880,7 @@
         "default_label": "Stat Ldlk Turbo Trip",
         "short_name": "Trip",
         "db_number": 10,
-        "byte_offset": 134,
+        "byte_offset": 138,
         "bit_offset": 4,
         "snap7_type": "S7WLBit"
     },
@@ -895,7 +895,7 @@
         "default_label": "Stat Ldlk Turbo Warning",
         "short_name": "Warning",
         "db_number": 10,
-        "byte_offset": 134,
+        "byte_offset": 138,
         "bit_offset": 7,
         "snap7_type": "S7WLBit"
     },
@@ -910,7 +910,7 @@
         "default_label": "Stat Src Turbo Comms Fail",
         "short_name": "Fail",
         "db_number": 10,
-        "byte_offset": 134,
+        "byte_offset": 138,
         "bit_offset": 1,
         "snap7_type": "S7WLBit"
     },
@@ -925,7 +925,7 @@
         "default_label": "Stat Src Turbo Error",
         "short_name": "Error",
         "db_number": 10,
-        "byte_offset": 134,
+        "byte_offset": 138,
         "bit_offset": 2,
         "snap7_type": "S7WLBit"
     },
@@ -940,7 +940,7 @@
         "default_label": "Stat Src Turbo Trip",
         "short_name": "Trip",
         "db_number": 10,
-        "byte_offset": 134,
+        "byte_offset": 138,
         "bit_offset": 0,
         "snap7_type": "S7WLBit"
     },
@@ -955,7 +955,7 @@
         "default_label": "Stat Src Turbo Warning",
         "short_name": "Warning",
         "db_number": 10,
-        "byte_offset": 134,
+        "byte_offset": 138,
         "bit_offset": 3,
         "snap7_type": "S7WLBit"
     },
@@ -970,7 +970,7 @@
         "default_label": "Cmd Stop Cooler",
         "short_name": "Cooler",
         "db_number": 10,
-        "byte_offset": 116,
+        "byte_offset": 120,
         "bit_offset": 0,
         "snap7_type": "S7WLBit"
     },
@@ -985,7 +985,7 @@
         "default_label": "RB Temp",
         "short_name": "Temp",
         "db_number": 10,
-        "byte_offset": 74,
+        "byte_offset": 78,
         "bit_offset": 0,
         "snap7_type": "S7WLReal"
     },
@@ -1000,7 +1000,7 @@
         "default_label": "SP Temp",
         "short_name": "Temp",
         "db_number": 10,
-        "byte_offset": 118,
+        "byte_offset": 122,
         "bit_offset": 0,
         "snap7_type": "S7WLReal"
     },
@@ -1015,7 +1015,7 @@
         "default_label": "Stat Enabled",
         "short_name": "Enabled",
         "db_number": 10,
-        "byte_offset": 78,
+        "byte_offset": 82,
         "bit_offset": 0,
         "snap7_type": "S7WLBit"
     },
@@ -1030,7 +1030,7 @@
         "default_label": "Cmd Open GV",
         "short_name": "GV",
         "db_number": 10,
-        "byte_offset": 122,
+        "byte_offset": 126,
         "bit_offset": 0,
         "snap7_type": "S7WLBit"
     },
@@ -1045,7 +1045,7 @@
         "default_label": "RB Body Temp",
         "short_name": "Temp",
         "db_number": 10,
-        "byte_offset": 82,
+        "byte_offset": 86,
         "bit_offset": 0,
         "snap7_type": "S7WLReal"
     },
@@ -1060,7 +1060,7 @@
         "default_label": "Stat GV Closed",
         "short_name": "Closed",
         "db_number": 10,
-        "byte_offset": 80,
+        "byte_offset": 84,
         "bit_offset": 1,
         "snap7_type": "S7WLBit"
     },
@@ -1075,7 +1075,7 @@
         "default_label": "Stat GV Open",
         "short_name": "Open",
         "db_number": 10,
-        "byte_offset": 80,
+        "byte_offset": 84,
         "bit_offset": 0,
         "snap7_type": "S7WLBit"
     },
@@ -1090,7 +1090,7 @@
         "default_label": "Stat Vac OK For GV",
         "short_name": "GV",
         "db_number": 10,
-        "byte_offset": 122,
+        "byte_offset": 126,
         "bit_offset": 1,
         "snap7_type": "S7WLBit"
     },
@@ -1105,7 +1105,7 @@
         "default_label": "Cmd Enable",
         "short_name": "Enable",
         "db_number": 10,
-        "byte_offset": 92,
+        "byte_offset": 96,
         "bit_offset": 0,
         "snap7_type": "S7WLBit"
     },
@@ -1120,7 +1120,7 @@
         "default_label": "RB Current",
         "short_name": "Current",
         "db_number": 10,
-        "byte_offset": 40,
+        "byte_offset": 44,
         "bit_offset": 0,
         "snap7_type": "S7WLReal"
     },
@@ -1135,7 +1135,7 @@
         "default_label": "RB Voltage",
         "short_name": "Voltage",
         "db_number": 10,
-        "byte_offset": 36,
+        "byte_offset": 40,
         "bit_offset": 0,
         "snap7_type": "S7WLReal"
     },
@@ -1150,7 +1150,7 @@
         "default_label": "SP Voltage",
         "short_name": "Voltage",
         "db_number": 10,
-        "byte_offset": 94,
+        "byte_offset": 98,
         "bit_offset": 0,
         "snap7_type": "S7WLReal"
     },
@@ -1165,7 +1165,7 @@
         "default_label": "Stat Enabled",
         "short_name": "Enabled",
         "db_number": 10,
-        "byte_offset": 34,
+        "byte_offset": 38,
         "bit_offset": 0,
         "snap7_type": "S7WLBit"
     },
@@ -1180,7 +1180,7 @@
         "default_label": "Cmd Enable",
         "short_name": "Enable",
         "db_number": 10,
-        "byte_offset": 104,
+        "byte_offset": 108,
         "bit_offset": 0,
         "snap7_type": "S7WLBit"
     },
@@ -1195,7 +1195,7 @@
         "default_label": "RB Current",
         "short_name": "Current",
         "db_number": 10,
-        "byte_offset": 60,
+        "byte_offset": 64,
         "bit_offset": 0,
         "snap7_type": "S7WLReal"
     },
@@ -1210,7 +1210,7 @@
         "default_label": "RB Voltage",
         "short_name": "Voltage",
         "db_number": 10,
-        "byte_offset": 56,
+        "byte_offset": 60,
         "bit_offset": 0,
         "snap7_type": "S7WLReal"
     },
@@ -1225,7 +1225,7 @@
         "default_label": "SP Current",
         "short_name": "Current",
         "db_number": 10,
-        "byte_offset": 106,
+        "byte_offset": 110,
         "bit_offset": 0,
         "snap7_type": "S7WLReal"
     },
@@ -1240,7 +1240,7 @@
         "default_label": "Stat Enabled",
         "short_name": "Enabled",
         "db_number": 10,
-        "byte_offset": 54,
+        "byte_offset": 58,
         "bit_offset": 0,
         "snap7_type": "S7WLBit"
     },
@@ -1255,7 +1255,7 @@
         "default_label": "Cmd Enable",
         "short_name": "Enable",
         "db_number": 10,
-        "byte_offset": 98,
+        "byte_offset": 102,
         "bit_offset": 0,
         "snap7_type": "S7WLBit"
     },
@@ -1270,7 +1270,7 @@
         "default_label": "RB Current",
         "short_name": "Current",
         "db_number": 10,
-        "byte_offset": 50,
+        "byte_offset": 54,
         "bit_offset": 0,
         "snap7_type": "S7WLReal"
     },
@@ -1285,7 +1285,7 @@
         "default_label": "RB Voltage",
         "short_name": "Voltage",
         "db_number": 10,
-        "byte_offset": 46,
+        "byte_offset": 50,
         "bit_offset": 0,
         "snap7_type": "S7WLReal"
     },
@@ -1300,7 +1300,7 @@
         "default_label": "SP Voltage",
         "short_name": "Voltage",
         "db_number": 10,
-        "byte_offset": 100,
+        "byte_offset": 104,
         "bit_offset": 0,
         "snap7_type": "S7WLReal"
     },
@@ -1315,7 +1315,7 @@
         "default_label": "Stat Enabled",
         "short_name": "Enabled",
         "db_number": 10,
-        "byte_offset": 44,
+        "byte_offset": 48,
         "bit_offset": 0,
         "snap7_type": "S7WLBit"
     },
@@ -1330,7 +1330,7 @@
         "default_label": "Cmd Auto Emission",
         "short_name": "Emission",
         "db_number": 10,
-        "byte_offset": 110,
+        "byte_offset": 114,
         "bit_offset": 1,
         "snap7_type": "S7WLBit"
     },
@@ -1345,7 +1345,7 @@
         "default_label": "Cmd Enable",
         "short_name": "Enable",
         "db_number": 10,
-        "byte_offset": 110,
+        "byte_offset": 114,
         "bit_offset": 0,
         "snap7_type": "S7WLBit"
     },
@@ -1360,7 +1360,7 @@
         "default_label": "RB Current",
         "short_name": "Current",
         "db_number": 10,
-        "byte_offset": 70,
+        "byte_offset": 74,
         "bit_offset": 0,
         "snap7_type": "S7WLReal"
     },
@@ -1375,7 +1375,7 @@
         "default_label": "RB Voltage",
         "short_name": "Voltage",
         "db_number": 10,
-        "byte_offset": 66,
+        "byte_offset": 70,
         "bit_offset": 0,
         "snap7_type": "S7WLReal"
     },
@@ -1390,7 +1390,7 @@
         "default_label": "SP Current",
         "short_name": "Current",
         "db_number": 10,
-        "byte_offset": 112,
+        "byte_offset": 116,
         "bit_offset": 0,
         "snap7_type": "S7WLReal"
     },
@@ -1405,7 +1405,7 @@
         "default_label": "Stat Auto Emission",
         "short_name": "Emission",
         "db_number": 10,
-        "byte_offset": 64,
+        "byte_offset": 68,
         "bit_offset": 1,
         "snap7_type": "S7WLBit"
     },
@@ -1420,7 +1420,7 @@
         "default_label": "Stat Enabled",
         "short_name": "Enabled",
         "db_number": 10,
-        "byte_offset": 64,
+        "byte_offset": 68,
         "bit_offset": 0,
         "snap7_type": "S7WLBit"
     },
@@ -1675,7 +1675,7 @@
         "default_label": "Stat Unit1 Arc Exceeded",
         "short_name": "Exceeded",
         "db_number": 10,
-        "byte_offset": 136,
+        "byte_offset": 140,
         "bit_offset": 4,
         "snap7_type": "S7WLBit"
     },
@@ -1690,7 +1690,7 @@
         "default_label": "Stat Unit1 Comms Fail",
         "short_name": "Fail",
         "db_number": 10,
-        "byte_offset": 136,
+        "byte_offset": 140,
         "bit_offset": 0,
         "snap7_type": "S7WLBit"
     },
@@ -1705,7 +1705,7 @@
         "default_label": "Stat Unit1 Fail",
         "short_name": "Fail",
         "db_number": 10,
-        "byte_offset": 136,
+        "byte_offset": 140,
         "bit_offset": 3,
         "snap7_type": "S7WLBit"
     },
@@ -1720,7 +1720,7 @@
         "default_label": "Stat Unit1 OverCurrent",
         "short_name": "OverCurrent",
         "db_number": 10,
-        "byte_offset": 136,
+        "byte_offset": 140,
         "bit_offset": 1,
         "snap7_type": "S7WLBit"
     },
@@ -1735,7 +1735,7 @@
         "default_label": "Stat Unit1 OverVoltage",
         "short_name": "OverVoltage",
         "db_number": 10,
-        "byte_offset": 136,
+        "byte_offset": 140,
         "bit_offset": 2,
         "snap7_type": "S7WLBit"
     },
@@ -1750,7 +1750,7 @@
         "default_label": "Stat Unit2 Arc Exceeded",
         "short_name": "Exceeded",
         "db_number": 10,
-        "byte_offset": 137,
+        "byte_offset": 141,
         "bit_offset": 1,
         "snap7_type": "S7WLBit"
     },
@@ -1765,7 +1765,7 @@
         "default_label": "Stat Unit2 Comms Fail",
         "short_name": "Fail",
         "db_number": 10,
-        "byte_offset": 136,
+        "byte_offset": 140,
         "bit_offset": 5,
         "snap7_type": "S7WLBit"
     },
@@ -1780,7 +1780,7 @@
         "default_label": "Stat Unit2 Fail",
         "short_name": "Fail",
         "db_number": 10,
-        "byte_offset": 137,
+        "byte_offset": 141,
         "bit_offset": 0,
         "snap7_type": "S7WLBit"
     },
@@ -1795,7 +1795,7 @@
         "default_label": "Stat Unit2 OverCurrent",
         "short_name": "OverCurrent",
         "db_number": 10,
-        "byte_offset": 136,
+        "byte_offset": 140,
         "bit_offset": 6,
         "snap7_type": "S7WLBit"
     },
@@ -1810,7 +1810,7 @@
         "default_label": "Stat Unit2 OverVoltage",
         "short_name": "OverVoltage",
         "db_number": 10,
-        "byte_offset": 136,
+        "byte_offset": 140,
         "bit_offset": 7,
         "snap7_type": "S7WLBit"
     },
@@ -1825,7 +1825,7 @@
         "default_label": "Stat Unit3 Arc Exceeded",
         "short_name": "Exceeded",
         "db_number": 10,
-        "byte_offset": 137,
+        "byte_offset": 141,
         "bit_offset": 6,
         "snap7_type": "S7WLBit"
     },
@@ -1840,7 +1840,7 @@
         "default_label": "Stat Unit3 Comms Fail",
         "short_name": "Fail",
         "db_number": 10,
-        "byte_offset": 137,
+        "byte_offset": 141,
         "bit_offset": 2,
         "snap7_type": "S7WLBit"
     },
@@ -1855,7 +1855,7 @@
         "default_label": "Stat Unit3 Fail",
         "short_name": "Fail",
         "db_number": 10,
-        "byte_offset": 137,
+        "byte_offset": 141,
         "bit_offset": 5,
         "snap7_type": "S7WLBit"
     },
@@ -1870,7 +1870,7 @@
         "default_label": "Stat Unit3 OverCurrent",
         "short_name": "OverCurrent",
         "db_number": 10,
-        "byte_offset": 137,
+        "byte_offset": 141,
         "bit_offset": 3,
         "snap7_type": "S7WLBit"
     },
@@ -1885,7 +1885,7 @@
         "default_label": "Stat Unit3 OverVoltage",
         "short_name": "OverVoltage",
         "db_number": 10,
-        "byte_offset": 137,
+        "byte_offset": 141,
         "bit_offset": 4,
         "snap7_type": "S7WLBit"
     },
@@ -1900,7 +1900,7 @@
         "default_label": "Stat Unit4 Arc Exceeded",
         "short_name": "Exceeded",
         "db_number": 10,
-        "byte_offset": 138,
+        "byte_offset": 142,
         "bit_offset": 3,
         "snap7_type": "S7WLBit"
     },
@@ -1915,7 +1915,7 @@
         "default_label": "Stat Unit4 Comms Fail",
         "short_name": "Fail",
         "db_number": 10,
-        "byte_offset": 137,
+        "byte_offset": 141,
         "bit_offset": 7,
         "snap7_type": "S7WLBit"
     },
@@ -1930,7 +1930,7 @@
         "default_label": "Stat Unit4 Fail",
         "short_name": "Fail",
         "db_number": 10,
-        "byte_offset": 138,
+        "byte_offset": 142,
         "bit_offset": 2,
         "snap7_type": "S7WLBit"
     },
@@ -1945,7 +1945,7 @@
         "default_label": "Stat Unit4 OverCurrent",
         "short_name": "OverCurrent",
         "db_number": 10,
-        "byte_offset": 138,
+        "byte_offset": 142,
         "bit_offset": 0,
         "snap7_type": "S7WLBit"
     },
@@ -1960,7 +1960,7 @@
         "default_label": "Stat Unit4 OverVoltage",
         "short_name": "OverVoltage",
         "db_number": 10,
-        "byte_offset": 138,
+        "byte_offset": 142,
         "bit_offset": 1,
         "snap7_type": "S7WLBit"
     },
@@ -1975,7 +1975,7 @@
         "default_label": "Stat Unit5 Arc Exceeded",
         "short_name": "Exceeded",
         "db_number": 10,
-        "byte_offset": 139,
+        "byte_offset": 143,
         "bit_offset": 0,
         "snap7_type": "S7WLBit"
     },
@@ -1990,7 +1990,7 @@
         "default_label": "Stat Unit5 Comms Fail",
         "short_name": "Fail",
         "db_number": 10,
-        "byte_offset": 138,
+        "byte_offset": 142,
         "bit_offset": 4,
         "snap7_type": "S7WLBit"
     },
@@ -2005,7 +2005,7 @@
         "default_label": "Stat Unit5 Fail",
         "short_name": "Fail",
         "db_number": 10,
-        "byte_offset": 138,
+        "byte_offset": 142,
         "bit_offset": 7,
         "snap7_type": "S7WLBit"
     },
@@ -2020,7 +2020,7 @@
         "default_label": "Stat Unit5 OverCurrent",
         "short_name": "OverCurrent",
         "db_number": 10,
-        "byte_offset": 138,
+        "byte_offset": 142,
         "bit_offset": 5,
         "snap7_type": "S7WLBit"
     },
@@ -2035,7 +2035,7 @@
         "default_label": "Stat Unit5 OverVoltage",
         "short_name": "OverVoltage",
         "db_number": 10,
-        "byte_offset": 138,
+        "byte_offset": 142,
         "bit_offset": 6,
         "snap7_type": "S7WLBit"
     },
@@ -2050,7 +2050,7 @@
         "default_label": "Cmd Enable Safety",
         "short_name": "Safety",
         "db_number": 10,
-        "byte_offset": 90,
+        "byte_offset": 94,
         "bit_offset": 2,
         "snap7_type": "S7WLBit"
     },
@@ -2065,7 +2065,7 @@
         "default_label": "Cmd Fault Reset",
         "short_name": "Reset",
         "db_number": 10,
-        "byte_offset": 90,
+        "byte_offset": 94,
         "bit_offset": 1,
         "snap7_type": "S7WLBit"
     },
@@ -2099,6 +2099,21 @@
         "bit_offset": 0,
         "snap7_type": "S7WLBit"
     },
+    "ion_beam.system.pc_shutdown_step": {
+        "source": "service_plc_snap7",
+        "datatype": "INT",
+        "writable": false,
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": " 0:OK, 1:Hold, 2:Cooling, 3:Tripped, 99:Latched",
+        "default_label": "PC Shutdown Step",
+        "short_name": "Step",
+        "db_number": 10,
+        "byte_offset": 10,
+        "bit_offset": 0,
+        "snap7_type": "S7WLWord"
+    },
     "ion_beam.system.plc_cycle_count": {
         "source": "service_plc_snap7",
         "datatype": "DINT",
@@ -2125,7 +2140,7 @@
         "default_label": "PLC Watchdog",
         "short_name": "Watchdog",
         "db_number": 10,
-        "byte_offset": 90,
+        "byte_offset": 94,
         "bit_offset": 0,
         "snap7_type": "S7WLBit"
     },
@@ -2143,6 +2158,21 @@
         "byte_offset": 0,
         "bit_offset": 1,
         "snap7_type": "S7WLBit"
+    },
+    "ion_beam.system.remote_shutdown_step": {
+        "source": "service_plc_snap7",
+        "datatype": "INT",
+        "writable": false,
+        "unit": "",
+        "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": " 0:OK, 1:Hold, 2:Cooling, 3:Tripped, 99:Latched",
+        "default_label": "Remote Shutdown Step",
+        "short_name": "Step",
+        "db_number": 10,
+        "byte_offset": 8,
+        "bit_offset": 0,
+        "snap7_type": "S7WLWord"
     },
     "ion_beam.system.src_auto_sdown": {
         "source": "service_plc_snap7",

@@ -1,95 +1,39 @@
 import json
 import os
 
-
 class DynamicPayloadMapper:
     def __init__(self):
-        self.vacuum_map = {}
-        self.turbo_map = {}
         self.valid_keys = set()
+        self.unknown_keys = set()
+        self._load_registry()
 
-        self.STATUS_MAP = {
-            "OK": 0.0, "NO-SEN": 1.0, "RANGE?": 2.0, "S-OFF": 3.0,
-            "ERROR-H": 4.0, "ERROR-L": 5.0, "ERROR-S": 6.0
-        }
-
-        self._build_maps()
-
-    def _build_maps(self):
-        current_dir = os.path.dirname(os.path.abspath(__file__))
-        project_root = os.path.dirname(current_dir)
-        registry_path = os.path.join(project_root, "system_tags.json")
+    def _load_registry(self):
+        registry_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '../../config/system_tags.json'))
 
         try:
             with open(registry_path, "r") as f:
                 registry = json.load(f)
+                self.valid_keys = set(registry.keys())
         except Exception as e:
-            print(f"[Mapper Error] Cannot load registry: {e}")
-            return
+            print(f"[Mapper] CRITICAL: Cannot load registry at {registry_path}: {e}")
 
-        self.valid_keys = set(registry.keys())
-        turbo_base = None
+    # --- ADDED 'topic' ARGUMENT HERE ---
+    def parse(self, payload: dict, topic: str = "UNKNOWN") -> dict:
+        parsed_data = {}
 
-        for full_tag, meta in registry.items():
-            source = meta.get("source")
-
-            # 1. Map Vacuum by Hardware Node/Channel
-            if source == "service_vacuum":
-                node = str(meta.get("hw_node"))
-                ch = str(meta.get("hw_channel"))
-                param = full_tag.rsplit('.', 1)[-1]  # "pressure" or "status"
-                self.vacuum_map[(node, ch, param)] = full_tag
-
-            # 2. Discover Turbo Base Path dynamically
-            elif source == "service_source_turbo" and not turbo_base:
-                turbo_base = full_tag.rsplit('.', 1)[0]
-
-        # 3. Build Turbo Structure Map
-        if turbo_base:
-            self.turbo_map = {
-                ("hz",): f"{turbo_base}.speed_hz",
-                ("pct",): f"{turbo_base}.speed_pct",
-                ("temps", "bearing"): f"{turbo_base}.temp_bearing",
-                ("temps", "converter"): f"{turbo_base}.temp_converter",
-                ("electrical", "volts"): f"{turbo_base}.voltage",
-                ("electrical", "amps"): f"{turbo_base}.current",
-                ("status", "turning"): f"{turbo_base}.status_turning",
-                ("status", "ready"): f"{turbo_base}.status_ready",
-                ("status", "error_active"): f"{turbo_base}.status_error",
-            }
-
-    def parse(self, data: dict) -> dict:
-        """Parses a raw ZMQ JSON payload and returns a flat dictionary of valid registry keys."""
-        flat_data = {}
-
-        # 1. Parse Vacuum Payloads
-        for node, n_data in data.items():
-            if isinstance(n_data, dict) and "channels" in n_data:
-                for ch, ch_data in n_data["channels"].items():
-                    for param in ["pressure", "status"]:
-                        if param in ch_data:
-                            full_tag = self.vacuum_map.get((str(node), str(ch), param))
-                            if full_tag:
-                                val = ch_data[param]
-                                if param == "status":
-                                    val = self.STATUS_MAP.get(str(val).strip().upper(), -1.0)
-                                flat_data[full_tag] = float(val)
-
-        # 2. Parse Turbo Payloads
-        if "temps" in data and "electrical" in data:
-            for key_tuple, full_tag in self.turbo_map.items():
-                val = data
+        for key, val in payload.items():
+            if key in self.valid_keys:
                 try:
-                    for k in key_tuple:
-                        val = val[k]
-                    # Cast booleans to 1.0 / 0.0
-                    flat_data[full_tag] = 1.0 if val is True else 0.0 if val is False else float(val)
-                except (KeyError, TypeError, ValueError):
+                    if isinstance(val, bool):
+                        parsed_data[key] = 1.0 if val else 0.0
+                    else:
+                        parsed_data[key] = float(val)
+                except (ValueError, TypeError):
                     pass
+            else:
+                # Upgraded Warning with Topic and Value Type
+                if key not in self.unknown_keys:
+                    print(f"\n[Mapper WARNING] Topic: {topic} | Dropped Key: '{key}' | Val Type: {type(val).__name__}")
+                    self.unknown_keys.add(key)
 
-        # 3. Parse Direct PLC/Flat Payloads
-        for k, v in data.items():
-            if not isinstance(v, dict) and k in self.valid_keys:
-                flat_data[k] = 1.0 if v is True else 0.0 if v is False else float(v)
-
-        return flat_data
+        return parsed_data
