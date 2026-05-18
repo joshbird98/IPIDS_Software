@@ -5,6 +5,18 @@ import json
 import snap7
 from snap7.util import get_bool, get_int, get_dint, get_real, get_dword, set_bool, set_int, set_real
 from typing import Dict, Any
+import orjson
+
+def temp_flatten_dict(d, parent_key='', sep='.'):
+    """Temporary diagnostic flattener"""
+    items = []
+    for k, v in d.items():
+        new_key = f"{parent_key}{sep}{k}" if parent_key else k
+        if isinstance(v, dict):
+            items.extend(temp_flatten_dict(v, new_key, sep=sep).items())
+        else:
+            items.append((new_key, v))
+    return dict(items)
 
 from src.core.network_config import (
     ZMQ_PORT_PLC_PUB, ZMQ_PORT_PLC_CMD, TOPIC_PLC_DATA, PLC_IP, PLC_RACK, PLC_SLOT, DB_INTERFACE_NUM,
@@ -449,7 +461,17 @@ class PlcMicroservice:
 
             try:
                 topic = TOPIC_PLC_DATA if isinstance(TOPIC_PLC_DATA, bytes) else TOPIC_PLC_DATA.encode('utf-8')
-                self.pub_socket.send_multipart([topic, json.dumps(self.state).encode('utf-8')])
+                self.pub_socket.send_multipart([b"PLC_DATA_LEGACY", json.dumps(self.state).encode('utf-8')])
+
+                flat_payload = {}
+                if "system" in self.state:
+                    flat_payload.update(temp_flatten_dict(self.state["system"]))
+                if "telemetry" in self.state:
+                    flat_payload.update(temp_flatten_dict(self.state["telemetry"]))
+                if "faults" in self.state:
+                    flat_payload.update(temp_flatten_dict(self.state["faults"]))
+                self.pub_socket.send_multipart([topic, orjson.dumps(flat_payload)])
+
             except Exception as e:
                 print(f"[PLC Service] Publish Error: {e}")
 

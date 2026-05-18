@@ -8,6 +8,7 @@ import threading
 import numpy as np
 import polars as pl
 from datetime import datetime
+import os
 
 from src.core.network_config import (
     ZMQ_PORT_PLC_PUB, ZMQ_PORT_VACUUM_PUB, ZMQ_PORT_SRC_TURBO_PUB,
@@ -178,62 +179,78 @@ class TelemetryLoggerService:
                 continue
 
     def run(self):
+        import gc
+        gc.disable()
+
         print(f"[Logger] {1.0 / self.tick_rate}Hz Parquet Logger Online. Tracking {self.num_keys} channels.")
+
+        current_time = time.perf_counter()
+        self.next_tick = current_time + self.tick_rate
+        self.last_flush = current_time
+        last_tick_time = current_time
+
+        self.perf_max_tick_delta_ms = 0.0
 
         while self.running:
             try:
-                loop_start = time.perf_counter()
-                current_time = time.time()
+                current_time = time.perf_counter()
 
+                # 1. 2Hz Heartbeat
                 if current_time - self.last_hb_time >= 0.5:
-                    self.hb_socket.send_json({"service": "service_logger", "ts": current_time})
+                    self.hb_socket.send_json({"service": "service_logger", "ts": time.time()})
                     self.last_hb_time = current_time
 
-                time_to_next_tick = max(0.0, self.next_tick - current_time)
-                timeout_ms = int(time_to_next_tick * 1000)
-
-                zmq_start = time.perf_counter()
-                socks = dict(self.poller.poll(timeout_ms))
-
-                msgs_processed = 0  # <--- ADD THIS
+                # 2. INSTANT ZMQ Poll (Do not let ZMQ handle sleeping)
+                zmq_start_drain = time.perf_counter()
+                socks = dict(self.poller.poll(timeout=0))  # <--- Changed to 0
 
                 if self.sub_socket in socks and socks[self.sub_socket] == zmq.POLLIN:
                     while True:
                         try:
                             topic, payload = self.sub_socket.recv_multipart(flags=zmq.NOBLOCK)
                             self._update_state_cache(topic, payload)
-                            msgs_processed += 1  # <--- ADD THIS
                         except zmq.Again:
                             break
 
-                zmq_duration_ms = (time.perf_counter() - zmq_start) * 1000
+                zmq_duration_ms = (time.perf_counter() - zmq_start_drain) * 1000
                 self.perf_max_zmq_drain_ms = max(self.perf_max_zmq_drain_ms, zmq_duration_ms)
 
-                # Keep track of the maximum messages drained in a single tick
-                if not hasattr(self, 'max_msgs_per_tick'): self.max_msgs_per_tick = 0
-                self.max_msgs_per_tick = max(self.max_msgs_per_tick, msgs_processed)
+                # 3. The Precision Sleep & Spin-Wait
+                sleep_time = self.next_tick - time.perf_counter()
+                if sleep_time > 0.002:
+                    # Sleep until we are 2ms away from the deadline
+                    time.sleep(sleep_time - 0.002)
 
-                current_time = time.time()
-                if current_time >= self.next_tick:
-                    self._log_current_state()
-                    self.next_tick = current_time + self.tick_rate
-                    self.tick_count += 1
+                # Burn CPU cycles for the final <2ms to hit the deadline perfectly
+                while time.perf_counter() < self.next_tick:
+                    pass
 
+                # 4. 20Hz Strict Logging Tick
+                current_time = time.perf_counter()
+                self._log_current_state()
+
+                tick_delta_ms = (current_time - last_tick_time) * 1000
+                self.perf_max_tick_delta_ms = max(self.perf_max_tick_delta_ms, tick_delta_ms)
+                last_tick_time = current_time
+
+                self.next_tick += self.tick_rate
+                self.tick_count += 1
+
+                # 5. 15-Minute Flush
                 if current_time - self.last_flush >= self.flush_interval:
                     self._queue_flush()
+                    self.last_flush = current_time
+                    gc.collect()
 
-                loop_duration_ms = (time.perf_counter() - loop_start) * 1000
-                self.perf_max_loop_ms = max(self.perf_max_loop_ms, loop_duration_ms)
-
+                    # 6. Performance Monitoring
                 if self.tick_count >= int(10.0 / self.tick_rate):
                     print(f"[Logger Health] Buffer: {self.ptr}/{self.max_rows} | "
-                          f"Max Drain: {self.perf_max_zmq_drain_ms:.2f}ms ({self.max_msgs_per_tick} msgs) | "
-                          f"Max Loop: {self.perf_max_loop_ms:.2f}ms")
+                          f"Max Drain: {self.perf_max_zmq_drain_ms:.2f}ms | "
+                          f"Max Tick Delta: {self.perf_max_tick_delta_ms:.2f}ms (Target: {self.tick_rate * 1000:.1f}ms)")
 
                     self.tick_count = 0
-                    self.perf_max_loop_ms = 0.0
+                    self.perf_max_tick_delta_ms = 0.0
                     self.perf_max_zmq_drain_ms = 0.0
-                    self.max_msgs_per_tick = 0
 
             except KeyboardInterrupt:
                 break
@@ -246,7 +263,11 @@ class TelemetryLoggerService:
         self.io_thread.join(timeout=5.0)
         print("[Logger] Shutdown complete.")
 
-
 if __name__ == "__main__":
+    # Force Windows high-resolution timers (1ms precision)
+    if os.name == 'nt':
+        import ctypes
+
+        ctypes.windll.winmm.timeBeginPeriod(1)
     svc = TelemetryLoggerService()
     svc.run()
