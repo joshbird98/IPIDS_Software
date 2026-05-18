@@ -4,12 +4,19 @@ import zmq
 import json
 import os
 from typing import Dict, Any, Optional
+import orjson
+from src.core.event_helper import EventHelper
+
+# Force Windows high-resolution timers (1ms precision)
+if os.name == 'nt':
+    import ctypes
+
+    ctypes.windll.winmm.timeBeginPeriod(1)
 
 from src.core.network_config import (
     ZMQ_PORT_VACUUM_PUB, ZMQ_PORT_VACUUM_CMD, TOPIC_VACUUM_DATA,
     NOISY_RACK_WAVESHARE_IP, NOISY_RACK_WAVESHARE_PORT,
     ZMQ_PORT_HEARTBEAT)
-
 
 # --- CONFIGURATION ---
 SOCKET_TIMEOUT = 0.3
@@ -40,6 +47,7 @@ VG_MAP = {
     (20, 1): "VG4", (20, 2): "VG5", (20, 3): "VG6"
 }
 
+
 class VacuumMicroservice:
     def __init__(self):
         self.context = zmq.Context()
@@ -62,15 +70,11 @@ class VacuumMicroservice:
 
         self.pressure_history: Dict[str, Dict[str, float]] = {}
 
-        # --- Unified Payload Structure ---
+        # --- Strict 1D Flat Payload ---
         self.state: Dict[str, Any] = {
             "timestamp": 0.0,
-            "system": {
-                "connected": False,
-                "cycle_time_ms": 0.0
-            },
-            "telemetry": {},
-            "faults": {}
+            "system.connected": 0.0,
+            "system.cycle_time_ms": 0.0
         }
 
         # --- Round-Robin Queue ---
@@ -84,11 +88,11 @@ class VacuumMicroservice:
             self.slow_tasks.append(("relay_ch", sp))
         self._slow_task_idx = 0
 
-
-        # Setup the Heartbeat Publisher
         self.hb_socket = self.context.socket(zmq.PUB)
         self.hb_socket.connect(ZMQ_PORT_HEARTBEAT)
         self.last_hb_time = 0.0
+
+        self.events = EventHelper("service_vac_gauge_controllers")
 
     def _load_config(self) -> dict:
         config_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '../../config/vac_gauges_config.json'))
@@ -96,11 +100,10 @@ class VacuumMicroservice:
             with open(config_path, "r") as f:
                 return json.load(f)
         except Exception as e:
-            print(f"[Vacuum Service] CRITICAL: Failed to load config: {e}")
+            self.events.log_general(f"[Vacuum Service] CRITICAL: Failed to load config: {e}")
             return {}
 
     def _build_tag_map(self) -> dict:
-        """Pre-computes the telemetry string prefixes for fast O(1) loop lookups."""
         mapping = {}
         for node_str, node_data in self.config.items():
             if not node_str.isdigit():
@@ -123,13 +126,13 @@ class VacuumMicroservice:
             self.sock.settimeout(SOCKET_TIMEOUT)
             self.sock.connect((NOISY_RACK_WAVESHARE_IP, NOISY_RACK_WAVESHARE_PORT))
             self.connected = True
-            self.state["system"]["connected"] = True
-            print(f"[Vacuum Service] Connected to {NOISY_RACK_WAVESHARE_IP}:{NOISY_RACK_WAVESHARE_PORT}")
+            self.state["system.connected"] = 1.0
+            self.events.log_general(f"[Vacuum Service] Connected to {NOISY_RACK_WAVESHARE_IP}:{NOISY_RACK_WAVESHARE_PORT}")
         except Exception as e:
             self.connected = False
             self.sock = None
-            self.state["system"]["connected"] = False
-            print(f"[Vacuum Service] Connection failed: {e}")
+            self.state["system.connected"] = 0.0
+            self.events.log_general(f"[Vacuum Service] Connection failed: {e}")
 
     # --- LEYBOLD HARDWARE PROTOCOL ---
     def _generate_read_frame(self, node_id: int, param_group: str, param_no: str) -> bytes:
@@ -150,7 +153,7 @@ class VacuumMicroservice:
             pass
         except Exception:
             self.connected = False
-            self.state["system"]["connected"] = False
+            self.state["system.connected"] = 0.0
         finally:
             if self.sock: self.sock.settimeout(SOCKET_TIMEOUT)
 
@@ -169,7 +172,7 @@ class VacuumMicroservice:
             return None
         except Exception:
             self.connected = False
-            self.state["system"]["connected"] = False
+            self.state["system.connected"] = 0.0
             return None
 
     def _write_transaction(self, node_id: int, param_group: str, param_no: str, value: str) -> str:
@@ -192,7 +195,7 @@ class VacuumMicroservice:
                 return "ERROR"
         except Exception:
             self.connected = False
-            self.state["system"]["connected"] = False
+            self.state["system.connected"] = 0.0
             return "ERROR"
 
     def _read_transaction_with_retry(self, node_id, param_group, param_no, max_retries=50) -> Optional[str]:
@@ -214,7 +217,6 @@ class VacuumMicroservice:
         return False
 
     def _process_commands(self):
-        """TTL-verified, Tag-Based command processor."""
         try:
             while True:
                 msg = self.sub_socket.recv_json(flags=zmq.NOBLOCK)
@@ -224,101 +226,83 @@ class VacuumMicroservice:
 
                 age = time.time() - ts
                 if age > MAX_CMD_AGE:
-                    print(f"[Vacuum Service] WARNING: Dropped stale command for '{tag}'")
+                    self.events.log_general(f"[Vacuum Service] WARNING: Dropped stale command for '{tag}'")
                     continue
 
                 parts = tag.split('.')
                 if len(parts) < 4:
                     continue
 
-                # Handle Relay Setpoints (e.g., ion_beam.vacuum.controller_10.relay_1_on_sp)
                 if "controller_" in parts[2] and "relay_" in parts[3]:
                     try:
                         node_id = int(parts[2].replace("controller_", ""))
-
-                        # Extract relay number and command type ('on_sp' or 'off_sp')
                         relay_str_parts = parts[3].split('_')
                         relay_id = int(relay_str_parts[1])
-                        cmd_type = relay_str_parts[2]  # 'on' or 'off'
+                        cmd_type = relay_str_parts[2]
 
                         if relay_id in RELAY_PARAMS:
                             param_str = RELAY_PARAMS[relay_id][cmd_type]
-                            target_val_str = f"{float(value):.1E}"  # Leybold scientific notation
+                            target_val_str = f"{float(value):.1E}"
 
                             self._write_transaction_with_retry(node_id, "4", param_str, target_val_str)
-                            print(
+                            self.events.log_general(
                                 f"[Vacuum Service] Executed Relay Command: Node {node_id}, Relay {relay_id} {cmd_type.upper()} -> {target_val_str}")
-
                     except (ValueError, IndexError):
                         pass
 
-                # Handle Channel Naming (e.g., ion_beam.source.vacuum_gauge_1.cmd_name)
                 elif "vacuum_gauge_" in parts[2] and parts[3] == "cmd_name":
-                    pass  # Insert your existing name-writing logic here if desired
+                    pass
 
         except zmq.Again:
             pass
 
     def _read_static_data(self):
-        """One-off initialization reads, routed into the flattened telemetry payload."""
-        print("[Vacuum Service] Reading static sensor profiles...")
+        self.events.log_general("[Vacuum Service] Reading static sensor profiles...")
         for node in NODE_IDS:
-            # 1. Controller Serial Number
             val = self._read_transaction_with_retry(node, "5", str(PARAM_SERIAL), 50)
             if val:
-                # The base controller doesn't have a channel prefix, so we define one
-                self.state["telemetry"][f"ion_beam.vacuum.controller_{node}.serial_number"] = val
+                self.state[f"ion_beam.vacuum.controller_{node}.serial_number"] = val
 
-            # 2. Channel Names and Types
             for ch in CHANNELS:
                 name_val = self._read_transaction_with_retry(node, str(ch), str(PARAM_NAME), 50)
                 type_val = self._read_transaction_with_retry(node, str(ch), str(PARAM_TYPE), 50)
 
-                # Fetch the exact dynamic string prefix (e.g., "ion_beam.source.vacuum_gauge_1")
                 tag_prefix = self.tag_map.get((node, ch))
 
                 if tag_prefix:
                     if name_val:
-                        self.state["telemetry"][f"{tag_prefix}.name"] = name_val
+                        self.state[f"{tag_prefix}.name"] = name_val
                     if type_val:
-                        self.state["telemetry"][f"{tag_prefix}.sensor_type"] = type_val
+                        self.state[f"{tag_prefix}.sensor_type"] = type_val
 
     def _enforce_startup_config(self):
-        """Reads the config, enforces Names and Relay setpoints if mismatched."""
-
-        # We already loaded the JSON into self.config during __init__!
         if not self.config:
-            print("[Vacuum Service] WARNING: No config loaded. Skipping enforcement.")
+            self.events.log_general("[Vacuum Service] WARNING: No config loaded. Skipping enforcement.")
             return
 
-        print("\n[Vacuum Service] --- VERIFYING STARTUP CONFIG ---")
         try:
-            config_data = self.config
-
-            for node_str, node_data in config_data.items():
+            for node_str, node_data in self.config.items():
                 if not node_str.isdigit():
                     continue
                 node_id = int(node_str)
                 if node_id not in NODE_IDS: continue
 
-                # --- 1. Enforce Channel Names ---
                 if "channels" in node_data:
                     for ch_str, ch_params in node_data["channels"].items():
                         ch = int(ch_str)
-                        target_name = str(ch_params.get("name", ""))[:10].strip()  # Leybold limit is 10 chars
+                        target_name = str(ch_params.get("name", ""))[:10].strip()
 
                         if target_name:
-                            # Group = Channel, Param = 5 (Name)
                             curr_name = self._read_transaction_with_retry(node_id, str(ch), "5", 3)
-
                             self.hb_socket.send_json({"service": "service_vac_gauge_controllers", "ts": time.time()})
+
                             if curr_name != target_name:
-                                print(f"-> Node {node_id} Ch {ch}: Name mismatch. Updating to '{target_name}'...")
+                                self.events.log_general(f"-> Node {node_id} Ch {ch}: Name mismatch. Updating to '{target_name}'...")
                                 self._write_transaction_with_retry(node_id, str(ch), "5", target_name)
-                                self.hb_socket.send_json({"service": "service_vac_gauge_controllers", "ts": time.time()})
+                                self.hb_socket.send_json(
+                                    {"service": "service_vac_gauge_controllers", "ts": time.time()})
                                 time.sleep(0.2)
 
-                # --- 2. Enforce Relay Interlocks ---
                 if "relays" in node_data:
                     for relay_str, params in node_data["relays"].items():
                         relay_id = int(relay_str)
@@ -355,59 +339,50 @@ class VacuumMicroservice:
                                 pass
 
                         if match_found:
-                            continue  # OK, skip writes
+                            continue
 
                         on_success = False
-                        print(f"-> Node {node_id} Relay {relay_id}: Mismatch found! Overwriting...")
+                        self.events.log_general(f"-> Node {node_id} Relay {relay_id}: Mismatch found! Overwriting...")
                         success = self._write_transaction_with_retry(node_id, "4", p_ch, target_ch_str)
                         self.hb_socket.send_json({"service": "service_vac_gauge_controllers", "ts": time.time()})
                         time.sleep(0.2)
 
                         if success:
-
                             current_off_float = float(curr_off) if curr_off else 1000.0
                             if float(on_val) < current_off_float:
                                 on_success = self._write_transaction_with_retry(node_id, "4", p_on, target_on_str)
-                                self.hb_socket.send_json({"service": "service_vac_gauge_controllers", "ts": time.time()})
+                                self.hb_socket.send_json(
+                                    {"service": "service_vac_gauge_controllers", "ts": time.time()})
                                 time.sleep(0.2)
                                 if on_success: self._write_transaction_with_retry(node_id, "4", p_off, target_off_str)
-                                self.hb_socket.send_json({"service": "service_vac_gauge_controllers", "ts": time.time()})
+                                self.hb_socket.send_json(
+                                    {"service": "service_vac_gauge_controllers", "ts": time.time()})
                             else:
                                 on_success = self._write_transaction_with_retry(node_id, "4", p_off, target_off_str)
-                                self.hb_socket.send_json({"service": "service_vac_gauge_controllers", "ts": time.time()})
+                                self.hb_socket.send_json(
+                                    {"service": "service_vac_gauge_controllers", "ts": time.time()})
                                 time.sleep(0.2)
                                 if on_success: self._write_transaction_with_retry(node_id, "4", p_on, target_on_str)
-                                self.hb_socket.send_json({"service": "service_vac_gauge_controllers", "ts": time.time()})
+                                self.hb_socket.send_json(
+                                    {"service": "service_vac_gauge_controllers", "ts": time.time()})
                             time.sleep(0.2)
 
                         if not (success and on_success):
-                            print("[Vacuum Service] Aborted Relay Config due to NACK on writes.\n")
+                            self.events.log_general("[Vacuum Service] Aborted Relay Config due to NACK on writes.\n")
 
-            print("[Vacuum Service] --- VERIFICATION COMPLETE ---\n")
+            self.events.log_general("[Vacuum Service] --- VERIFICATION COMPLETE ---\n")
         except Exception as e:
-            print(f"[Vacuum Service] Failed to enforce startup config: {e}")
+            self.events.log_general(f"[Vacuum Service] Failed to enforce startup config: {e}")
 
     def _evaluate_gv_permissive(self):
-        """
-        Domain Expert Logic: Evaluates Gate Valve permissive based EXCLUSIVELY on active faults.
-        If a hardware relay de-energizes, the Above_SP_Warn fault triggers, which instantly revokes this permissive.
-        """
         is_safe = False
         try:
-            faults = self.state.get("faults", {})
+            def has_fault(vg):
+                return any(self.state.get(f"ion_beam.gauges.status.stat_{vg}_{f}", 0.0) == 1.0
+                           for f in ["not_found", "mismatch", "above_sp", "rapid_rise"])
 
-            def has_fault(gauge_prefix):
-                for key, fault_data in faults.items():
-                    if gauge_prefix in key:
-                        if isinstance(fault_data, dict) and fault_data.get("active", False):
-                            return True
-                        elif fault_data is True:
-                            return True
-                return False
-
-            # Because the hardware relays assert the Above_SP_Warn, we only need to check the faults dict!
-            vg1_has_fault = has_fault("VG1")
-            vg2_has_fault = has_fault("VG2")
+            vg1_has_fault = has_fault("vg1")
+            vg2_has_fault = has_fault("vg2")
             comms_fail = not self.connected
 
             if not comms_fail and not vg1_has_fault and not vg2_has_fault:
@@ -416,12 +391,10 @@ class VacuumMicroservice:
         except Exception:
             is_safe = False
 
-        self.state["telemetry"]["ion_beam.vacuum.gv_permissive_ready"] = is_safe
+        self.state["ion_beam.vacuum.gv_permissive_ready"] = 1.0 if is_safe else 0.0
 
     def run(self):
-        print("[Vacuum Service] Daemon starting...")
-
-        # Load the global rapid rise threshold
+        self.events.log_general("[Vacuum Service] Daemon starting...")
         global_rise_limit = float(self.config.get("system_interlocks", {}).get("rapid_rise_thresh_mb_s", 5.0e-5))
 
         while True:
@@ -438,11 +411,9 @@ class VacuumMicroservice:
 
             self._process_commands()
 
-            # Identify slow task
             slow_task_name, slow_task_target = self.slow_tasks[self._slow_task_idx]
 
             for node in NODE_IDS:
-                # 1. High-Priority: Pressures
                 for ch in CHANNELS:
                     raw_p = self._read_transaction(node, str(ch), str(PARAM_PRESSURE))
                     tag_prefix = self.tag_map.get((node, ch))
@@ -451,12 +422,11 @@ class VacuumMicroservice:
                     if raw_p is not None and tag_prefix and vg_prefix:
                         try:
                             pressure_val = float(raw_p)
-                            self.state["telemetry"][f"{tag_prefix}.pressure"] = pressure_val
+                            self.state[f"{tag_prefix}.pressure"] = pressure_val
 
                             current_time = time.time()
-
-                            # --- Global Rapid Rise Warning (dp/dt) ---
                             is_rapid_rise = False
+
                             if vg_prefix in self.pressure_history:
                                 prev_p = self.pressure_history[vg_prefix]["pressure"]
                                 prev_t = self.pressure_history[vg_prefix]["time"]
@@ -464,22 +434,17 @@ class VacuumMicroservice:
 
                                 if dt > 0:
                                     dp_dt = (pressure_val - prev_p) / dt
-                                    # Trigger if rate is exceeded AND the pressure isn't sitting safely at high vacuum
                                     if dp_dt > global_rise_limit and pressure_val > 1.0e-6:
                                         is_rapid_rise = True
 
-                            self.state["faults"][f"{vg_prefix}_Rapid_Rise_Warn"] = {
-                                "active": is_rapid_rise, "severity": 1,
-                                "description": f"{vg_prefix} rapid pressure rise detected."
-                            } if is_rapid_rise else False
-
+                            self.state[
+                                f"ion_beam.gauges.status.stat_{vg_prefix.lower()}_rapid_rise"] = 1.0 if is_rapid_rise else 0.0
                             self.pressure_history[vg_prefix] = {"pressure": pressure_val, "time": current_time}
 
                         except ValueError:
                             pass
                     time.sleep(POLL_INTERVAL)
 
-                # 2. Low-Priority: Interlaced Status Tasks
                 val = None
                 if slow_task_name == "gauge_status":
                     val = self._read_transaction(node, str(slow_task_target), str(PARAM_STATUS))
@@ -489,103 +454,83 @@ class VacuumMicroservice:
                     if val and tag_prefix and vg_prefix:
                         try:
                             status_code = int(val)
-                            self.state["telemetry"][f"{tag_prefix}.status"] = status_code
+                            self.state[f"{tag_prefix}.status"] = float(status_code)
 
-                            fault_not_found = f"{vg_prefix}_Not_Found"
-                            fault_mismatch = f"{vg_prefix}_Type_Mismatch"
+                            not_found_key = f"ion_beam.gauges.status.stat_{vg_prefix.lower()}_not_found"
+                            mismatch_key = f"ion_beam.gauges.status.stat_{vg_prefix.lower()}_mismatch"
 
-                            # Leybold typical statuses: 5 = No Sensor, 6 = ID Error
                             if status_code == 5:
-                                self.state["faults"][fault_not_found] = {"active": True, "severity": 2,
-                                                                         "description": "Gauge disconnected."}
-                                self.state["faults"][fault_mismatch] = False
+                                self.state[not_found_key] = 1.0
+                                self.state[mismatch_key] = 0.0
                             elif status_code == 6:
-                                self.state["faults"][fault_not_found] = False
-                                self.state["faults"][fault_mismatch] = {"active": True, "severity": 2,
-                                                                        "description": "Gauge type mismatch."}
+                                self.state[not_found_key] = 0.0
+                                self.state[mismatch_key] = 1.0
                             elif status_code != 0:
-                                # For other general errors (underrange, etc), just flag mismatch for safety
-                                self.state["faults"][fault_not_found] = False
-                                self.state["faults"][fault_mismatch] = {"active": True, "severity": 2,
-                                                                        "description": f"Gauge error code: {status_code}"}
+                                self.state[not_found_key] = 0.0
+                                self.state[mismatch_key] = 1.0
                             else:
-                                self.state["faults"][fault_not_found] = False
-                                self.state["faults"][fault_mismatch] = False
+                                self.state[not_found_key] = 0.0
+                                self.state[mismatch_key] = 0.0
 
                         except ValueError:
                             pass
-
 
                 elif slow_task_name == "relay_status":
                     p = RELAY_PARAMS[slow_task_target]["status"]
                     val = self._read_transaction(node, "4", p)
                     if val:
                         status_int = int(val)
-                        self.state["telemetry"][
-                            f"ion_beam.vacuum.controller_{node}.relay_{slow_task_target}_status"] = status_int
+                        self.state[f"ion_beam.vacuum.controller_{node}.relay_{slow_task_target}_status"] = float(
+                            status_int)
 
                         if slow_task_target in CHANNELS:
                             vg_prefix = VG_MAP.get((node, slow_task_target))
                             if vg_prefix:
                                 is_above_sp = (status_int == 0)
-                                self.state["faults"][f"{vg_prefix}_Above_SP_Warn"] = {
-                                    "active": is_above_sp,
-                                    "severity": 1,
-                                    "description": f"{vg_prefix} hardware relay de-energized (Pressure High)."
-                                } if is_above_sp else False
+                                self.state[
+                                    f"ion_beam.gauges.status.stat_{vg_prefix.lower()}_above_sp"] = 1.0 if is_above_sp else 0.0
 
                 elif slow_task_name == "relay_on":
                     p = RELAY_PARAMS[slow_task_target]["on"]
                     val = self._read_transaction(node, "4", p)
                     if val:
-                        self.state["telemetry"][
-                            f"ion_beam.vacuum.controller_{node}.relay_{slow_task_target}_on_sp"] = float(val)
+                        self.state[f"ion_beam.vacuum.controller_{node}.relay_{slow_task_target}_on_sp"] = float(val)
 
                 elif slow_task_name == "relay_off":
                     p = RELAY_PARAMS[slow_task_target]["off"]
                     val = self._read_transaction(node, "4", p)
                     if val:
-                        self.state["telemetry"][
-                            f"ion_beam.vacuum.controller_{node}.relay_{slow_task_target}_off_sp"] = float(val)
+                        self.state[f"ion_beam.vacuum.controller_{node}.relay_{slow_task_target}_off_sp"] = float(val)
 
                 elif slow_task_name == "relay_ch":
                     p = RELAY_PARAMS[slow_task_target]["ch"]
                     val = self._read_transaction(node, "4", p)
                     if val:
-                        self.state["telemetry"][
-                            f"ion_beam.vacuum.controller_{node}.relay_{slow_task_target}_assigned_ch"] = int(val)
+                        self.state[f"ion_beam.vacuum.controller_{node}.relay_{slow_task_target}_assigned_ch"] = float(
+                            val)
 
                 time.sleep(POLL_INTERVAL)
 
             self._slow_task_idx = (self._slow_task_idx + 1) % len(self.slow_tasks)
 
-            # --- Enforce Comms Failures ---
-            comms_fault_active = not self.connected
-            self.state["faults"]["Graphix_1_Comms_Fail"] = {
-                "active": comms_fault_active, "severity": 2, "description": "TCP connection lost to Node 10."
-            } if comms_fault_active else False
-
-            self.state["faults"]["Graphix_2_Comms_Fail"] = {
-                "active": comms_fault_active, "severity": 2, "description": "TCP connection lost to Node 20."
-            } if comms_fault_active else False
+            comms_fault_active = 1.0 if not self.connected else 0.0
+            self.state["ion_beam.gauges.status.stat_graphix1_comms_fail"] = comms_fault_active
+            self.state["ion_beam.gauges.status.stat_graphix2_comms_fail"] = comms_fault_active
 
             self._evaluate_gv_permissive()
 
-            # 3. Broadcast Unified Payload
             self.state["timestamp"] = time.time()
             elapsed = time.perf_counter() - cycle_start
-            self.state["system"]["cycle_time_ms"] = elapsed * 1000
+            self.state["system.cycle_time_ms"] = elapsed * 1000
 
             try:
                 topic = TOPIC_VACUUM_DATA if isinstance(TOPIC_VACUUM_DATA, bytes) else TOPIC_VACUUM_DATA.encode('utf-8')
-                self.pub_socket.send_multipart([topic, json.dumps(self.state).encode('utf-8')])
+                self.pub_socket.send_multipart([topic, orjson.dumps(self.state)])
             except Exception as e:
-                print(f"[Vacuum Service] ZMQ Publish Error: {e}")
+                self.events.log_general(f"[Vacuum Service] ZMQ Publish Error: {e}")
 
-            # Pulse the heartbeat twice per second
             current_time = time.time()
             if current_time - self.last_hb_time >= 0.5:
-                # Ensure the "service" string exactly matches the key in SERVICES_CONFIG
                 self.hb_socket.send_json({"service": "service_vac_gauge_controllers", "ts": current_time})
                 self.last_hb_time = current_time
 

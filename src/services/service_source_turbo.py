@@ -1,8 +1,16 @@
 import socket
 import time
 import zmq
-import json
+import os
 from typing import Dict, Any
+import orjson
+from src.core.event_helper import EventHelper
+
+# Force Windows high-resolution timers (1ms precision)
+if os.name == 'nt':
+    import ctypes
+
+    ctypes.windll.winmm.timeBeginPeriod(1)
 
 # Ensure these match your network_config.py
 from src.core.network_config import (
@@ -127,19 +135,13 @@ class TurbovacMicroservice:
         self._most_recent_error_desc = "No Error"
         self._most_recent_warning_desc = "None"
 
-        # 3. Unified Payload Structure
+        # 3. Strict 1D Flat Payload
         self.state: Dict[str, Any] = {
             "timestamp": 0.0,
-            "system": {
-                "connected": False,
-                "cycle_time_ms": 0.0,
-                "safety_synced": False,
-                "serial": None,
-                "hw_version": None,
-                "service_hours": 0.0
-            },
-            "telemetry": {},
-            "faults": {}
+            "system.connected": 0.0,
+            "system.cycle_time_ms": 0.0,
+            "system.safety_synced": 0.0,
+            "system.service_hours": 0.0
         }
 
         # 4. Slow Task Queue (Round-Robin)
@@ -154,10 +156,11 @@ class TurbovacMicroservice:
         ]
         self._slow_idx = 0
 
-        # Setup the Heartbeat Publisher
         self.hb_socket = self.context.socket(zmq.PUB)
         self.hb_socket.connect(ZMQ_PORT_HEARTBEAT)
         self.last_hb_time = 0.0
+
+        self.events = EventHelper("service_src_turbo")
 
     # --- USS LOW LEVEL ---
     def _calculate_bcc(self, frame):
@@ -207,7 +210,7 @@ class TurbovacMicroservice:
             resp_pnu = resp_pke & 0x07FF
 
             if resp_pnu != pnu:
-                print(f"[!] DESYNC DETECTED! Asked for PNU {pnu}, got PNU {resp_pnu}.")
+                self.events.log_general(f"[!] DESYNC DETECTED! Asked for PNU {pnu}, got PNU {resp_pnu}.")
                 self.connected = False
                 return None, None, None
 
@@ -219,7 +222,7 @@ class TurbovacMicroservice:
         except socket.timeout:
             return None, None, None
         except Exception as e:
-            print(f"[Turbo Service] Socket error: {e}")
+            self.events.log_general(f"[Turbo Service] Socket error: {e}")
             self.connected = False
             return None, None, None
 
@@ -236,30 +239,28 @@ class TurbovacMicroservice:
             self.sock.settimeout(SOCKET_TIMEOUT)
             self.sock.connect((SRC_TURBO_WAVESHARE_IP, SRC_TURBO_WAVESHARE_PORT))
             self.connected = True
-            self.state["system"]["connected"] = True
-            print(f"[Turbo Service] Connected to {SRC_TURBO_WAVESHARE_IP}")
+            self.state["system.connected"] = 1.0
+            self.events.log_general(f"[Turbo Service] Connected to {SRC_TURBO_WAVESHARE_IP}")
         except Exception as e:
             self.connected = False
-            self.state["system"]["connected"] = False
-            print(f"[Turbo Service] Connection failed: {e}")
+            self.state["system.connected"] = 0.0
+            self.events.log_general(f"[Turbo Service] Connection failed: {e}")
 
     def _verify_safety_strategy(self):
-        print("\n" + "=" * 40)
-        print("[Turbo Service] INITIALIZING AND VERIFYING SAFETY STRATEGY...")
 
         raw_hz, ak_hz, zsw = self._transaction(PNU_ACT_FREQ, 0, control_word=0x0000)
 
         if raw_hz is not None and raw_hz > 0:
-            print(f"[Turbo Service] Pump is already SPINNING at {raw_hz} Hz. Adopting LATCHED ON state.")
+            self.events.log_general(f"[Turbo Service] Pump is already SPINNING at {raw_hz} Hz. Adopting LATCHED ON state.")
             self.active_control_word = 0x0401
         else:
-            print("[Turbo Service] Pump is STOPPED. Adopting LATCHED OFF state.")
+            self.events.log_general("[Turbo Service] Pump is STOPPED. Adopting LATCHED OFF state.")
             self.active_control_word = 0x0400
 
         ser_val, _, _ = self._transaction(PNU_SERIAL, 0, control_word=self.active_control_word)
         hw_val, _, _ = self._transaction(PNU_HW_VER, 0, control_word=self.active_control_word)
-        self.state["system"]["serial"] = ser_val
-        self.state["system"]["hw_version"] = hw_val
+        self.state["system.serial"] = ser_val
+        self.state["system.hw_version"] = hw_val
 
         m_hz, ak_m, _ = self._transaction(PNU_MAX_FREQ, 0, control_word=self.active_control_word)
         if m_hz is not None and ak_m not in [7, 8]:
@@ -272,16 +273,16 @@ class TurbovacMicroservice:
         val_wd, ak_wd, _ = self._transaction(PNU_USS_WATCHDOG, 0, ak=1, control_word=self.active_control_word)
 
         if 7 in [ak_x201, ak_relay, ak_on, ak_off]:
-            print("[!] PUMP RETURNED NACK. Pump is likely saving to flash (Error 102).")
-            self.state["system"]["safety_synced"] = False
+            self.events.log_general("[!] PUMP RETURNED NACK. Pump is likely saving to flash (Error 102).")
+            self.state["system.safety_synced"] = 0.0
             return
 
         is_synced = (val_x201 == 19 and val_relay == 4 and val_vent_on == 500 and val_vent_off == 5 and val_wd == 0)
-        self.state["system"]["safety_synced"] = is_synced
+        self.state["system.safety_synced"] = 1.0 if is_synced else 0.0
 
         if not is_synced:
             if raw_hz == 0:
-                print("[Turbo Service] Strategy out of sync. Correcting now...")
+                self.events.log_general("[Turbo Service] Strategy out of sync. Correcting now...")
                 self._transaction(PNU_X201_FUNC, 0, value=19, ak=AK_WRITE_16, control_word=self.active_control_word)
                 time.sleep(0.1)
                 self._transaction(PNU_RELAY_X1, 0, value=4, ak=AK_WRITE_FIELD_16, control_word=self.active_control_word)
@@ -293,14 +294,14 @@ class TurbovacMicroservice:
                 self._transaction(PNU_USS_WATCHDOG, 0, value=0, ak=AK_WRITE_16, control_word=self.active_control_word)
                 time.sleep(0.1)
 
-                print("[Turbo Service] Saving to flash (P8=1)...")
+                self.events.log_general("[Turbo Service] Saving to flash (P8=1)...")
                 self._transaction(8, 0, value=1, ak=AK_WRITE_16, control_word=self.active_control_word)
                 time.sleep(30)
-                print("[Turbo Service] Save complete.")
+                self.events.log_general("[Turbo Service] Save complete.")
             else:
-                print("[!] SAFETY WARNING: Pump is SPINNING but Argon strategy is not loaded!")
+                self.events.log_general("[!] SAFETY WARNING: Pump is SPINNING but Argon strategy is not loaded!")
         else:
-            print("[Turbo Service] Safety strategy verified and active.")
+            self.events.log_general("[Turbo Service] Safety strategy verified and active.")
 
     # --- LOOP TASKS ---
     def _process_commands(self):
@@ -312,26 +313,27 @@ class TurbovacMicroservice:
                 value = msg.get("value")
                 ts = msg.get("ts", 0.0)
 
-                # TTL Verification
                 if time.time() - ts > MAX_CMD_AGE:
                     continue
 
-                # Tag-Based Routing
                 if tag.endswith(".cmd_enable"):
                     if value is True:
-                        self.active_control_word = 0x0401  # Latch Remote + Start
+                        self.active_control_word = 0x0401
                     else:
-                        self.active_control_word = 0x0400  # Latch Remote + Stop
+                        self.active_control_word = 0x0400
 
                 elif tag.endswith(".cmd_reset") and value is True:
-                    # Fault resets are an edge-trigger
                     self._transaction(3, 0, control_word=0x0480)
 
         except zmq.Again:
             pass
 
     def run(self):
-        print("[Turbo Service] Starting USS Daemon...")
+        self.events.log_general("[Turbo Service] Starting USS Daemon...")
+
+        current_time_pc = time.perf_counter()
+        next_tick = current_time_pc + POLL_INTERVAL
+
         while True:
             cycle_start = time.perf_counter()
 
@@ -340,7 +342,12 @@ class TurbovacMicroservice:
                 if self.connected:
                     self._verify_safety_strategy()
                 else:
-                    time.sleep(2.0)
+                    sleep_time = next_tick - time.perf_counter()
+                    if sleep_time > 0.002:
+                        time.sleep(sleep_time - 0.002)
+                    while time.perf_counter() < next_tick:
+                        pass
+                    next_tick += POLL_INTERVAL
                     continue
 
             # 1. High-Priority Poll (Frequency & Status Word)
@@ -349,48 +356,33 @@ class TurbovacMicroservice:
             if raw_hz is not None and ak_hz not in [7, 8]:
                 self.comms_ok = True
 
-                # Extract ZSW Flags
                 ready = bool(zsw & (1 << 0))
                 error_active = bool(zsw & (1 << 3))
                 turning = bool(zsw & (1 << 11))
                 warning_active = bool(zsw & (1 << 14))
 
-                # Map Telemetry (Using explicit system_tags.json keys)
-                self.state["telemetry"]["ion_beam.source.turbo_pump.speed_hz"] = raw_hz
-                self.state["telemetry"]["ion_beam.source.turbo_pump.status_ready"] = ready
-                self.state["telemetry"]["ion_beam.source.turbo_pump.status_turning"] = turning
-                self.state["telemetry"]["ion_beam.source.turbo_pump.status_error"] = error_active
+                self.state["ion_beam.source.turbo_pump.speed_hz"] = float(raw_hz)
+                self.state["ion_beam.source.turbo_pump.status_ready"] = 1.0 if ready else 0.0
+                self.state["ion_beam.source.turbo_pump.status_turning"] = 1.0 if turning else 0.0
+                self.state["ion_beam.source.turbo_pump.status_error"] = 1.0 if error_active else 0.0
 
                 if self._max_hz > 0:
-                    self.state["telemetry"]["ion_beam.source.turbo_pump.speed_pct"] = round(
-                        (raw_hz / self._max_hz) * 100, 1)
+                    self.state["ion_beam.source.turbo_pump.speed_pct"] = round((raw_hz / self._max_hz) * 100, 1)
 
-                # Map Faults explicitly for the PLC Broker
-                self.state["faults"]["Src_Turbo_Error_Active"] = {
-                    "active": error_active, "severity": 2, "description": self._most_recent_error_desc
-                } if error_active else False
-
-                self.state["faults"]["Src_Turbo_Warning_Active"] = {
-                    "active": warning_active, "severity": 3, "description": self._most_recent_warning_desc
-                } if warning_active else False
-
-                # We map a "Trip" condition to an active error while the motor drops below ready state
                 trip_active = error_active and not ready
-                self.state["faults"]["Src_Turbo_Trip"] = {
-                    "active": trip_active, "severity": 1,
-                    "description": f"Drive Tripped: {self._most_recent_error_desc}"
-                } if trip_active else False
+
+                # Mapped exactly to PLC payload expectations
+                self.state["ion_beam.pump.status.stat_src_turbo_error"] = 1.0 if error_active else 0.0
+                self.state["ion_beam.pump.status.stat_src_turbo_warning"] = 1.0 if warning_active else 0.0
+                self.state["ion_beam.pump.status.stat_src_turbo_trip"] = 1.0 if trip_active else 0.0
 
             elif ak_hz in [7, 8]:
-                self.comms_ok = True  # Pump is talking, just busy
+                self.comms_ok = True
             else:
                 self.comms_ok = False
 
-            # Enforce Comms Fail Fault
             comms_fail = not self.connected or not self.comms_ok
-            self.state["faults"]["Src_Turbo_Comms_Fail"] = {
-                "active": comms_fail, "severity": 2, "description": "Lost RS485 communication via Waveshare."
-            } if comms_fail else False
+            self.state["ion_beam.pump.status.stat_src_turbo_comms_fail"] = 1.0 if comms_fail else 0.0
 
             # 2. Process Incoming ZMQ Commands
             self._process_commands()
@@ -401,19 +393,20 @@ class TurbovacMicroservice:
 
             if val is not None and ak_val not in [7, 8]:
                 if task_name == "bearing_temp":
-                    self.state["telemetry"]["ion_beam.source.turbo_pump.temp_bearing"] = val
+                    self.state["ion_beam.source.turbo_pump.temp_bearing"] = float(val)
                 elif task_name == "conv_temp":
-                    self.state["telemetry"]["ion_beam.source.turbo_pump.temp_converter"] = val
+                    self.state["ion_beam.source.turbo_pump.temp_converter"] = float(val)
                 elif task_name == "volts":
-                    self.state["telemetry"]["ion_beam.source.turbo_pump.voltage"] = val
+                    self.state["ion_beam.source.turbo_pump.voltage"] = float(val)
                 elif task_name == "amps":
-                    self.state["telemetry"]["ion_beam.source.turbo_pump.current"] = val * 0.1
+                    self.state["ion_beam.source.turbo_pump.current"] = val * 0.1
                 elif task_name == "op_hours":
-                    self.state["system"]["service_hours"] = round(val * 0.01, 2)
+                    self.state["system.service_hours"] = round(val * 0.01, 2)
                 elif task_name == "warnings":
                     active_warnings = [desc for bit, desc in TURBO_WARNING_DICT.items() if val & (1 << bit)]
                     self._most_recent_warning_desc = ", ".join(active_warnings) if active_warnings else "None"
                 elif task_name == "error":
+                    self.state["ion_beam.source.turbo_pump.error_code"] = float(val)
                     self._most_recent_error_desc = TURBO_ERROR_DICT.get(val, f"Unknown Error ({val})")
 
             self._slow_idx = (self._slow_idx + 1) % len(self.slow_tasks)
@@ -421,24 +414,29 @@ class TurbovacMicroservice:
             # 4. Broadcast
             self.state["timestamp"] = time.time()
             elapsed = time.perf_counter() - cycle_start
-            self.state["system"]["cycle_time_ms"] = elapsed * 1000
+            self.state["system.cycle_time_ms"] = elapsed * 1000
 
             try:
                 topic = TOPIC_SRC_TURBO_DATA if isinstance(TOPIC_SRC_TURBO_DATA,
                                                            bytes) else TOPIC_SRC_TURBO_DATA.encode('utf-8')
-                self.pub_socket.send_multipart([topic, json.dumps(self.state).encode('utf-8')])
+                self.pub_socket.send_multipart([topic, orjson.dumps(self.state)])
             except Exception as e:
-                print(f"ZMQ Publish Error: {e}")
+                self.events.log_general(f"ZMQ Publish Error: {e}")
 
-            # Pulse the heartbeat twice per second
             current_time = time.time()
             if current_time - self.last_hb_time >= 0.5:
-                # Ensure the "service" string exactly matches the key in SERVICES_CONFIG
                 self.hb_socket.send_json({"service": "service_source_turbo", "ts": current_time})
                 self.last_hb_time = current_time
 
-            # Sleep dynamically to maintain accurate 50ms polling loop
-            time.sleep(max(0.0, POLL_INTERVAL - elapsed))
+            # Strict Spin-Wait OS Scheduling
+            sleep_time = next_tick - time.perf_counter()
+            if sleep_time > 0.002:
+                time.sleep(sleep_time - 0.002)
+
+            while time.perf_counter() < next_tick:
+                pass
+
+            next_tick += POLL_INTERVAL
 
 
 if __name__ == "__main__":
