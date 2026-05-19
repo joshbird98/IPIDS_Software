@@ -33,7 +33,7 @@ class DynamicPayloadMapper:
             else:
                 # Upgraded Warning with Topic and Value Type
                 if key not in self.unknown_keys:
-                    print(f"\n[Mapper WARNING] Topic: {topic} | Dropped Key: '{key}' | Val Type: {type(val).__name__}")
+                    #print(f"\n[Mapper WARNING] Topic: {topic} | Dropped Key: '{key}' | Val Type: {type(val).__name__}")
                     self.unknown_keys.add(key)
 
         return parsed_data

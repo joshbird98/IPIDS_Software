@@ -2,10 +2,8 @@ import json
 import os
 
 # Set up to save in the project root, regardless of where this script is called from
-current_dir = os.path.dirname(os.path.abspath(__file__))
-project_root = os.path.dirname(current_dir)
-REGISTRY_FILE = os.path.join(project_root, "system_tags.json")
-CONFIG_FILE = os.path.join(project_root, "plot_settings.json")
+REGISTRY_FILE = os.path.abspath(os.path.join(os.path.dirname(__file__), '../../../config/system_tags.json'))
+CONFIG_FILE = os.path.abspath(os.path.join(os.path.dirname(__file__), '../.././/config/plot_settings.json'))
 
 def load_registry():
     """Loads the read-only master hardware registry."""

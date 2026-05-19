@@ -100,7 +100,7 @@ class VacuumMicroservice:
             with open(config_path, "r") as f:
                 return json.load(f)
         except Exception as e:
-            self.events.log_general(f"[Vacuum Service] CRITICAL: Failed to load config: {e}")
+            self.events.log_general(f"CRITICAL: Failed to load config: {e}")
             return {}
 
     def _build_tag_map(self) -> dict:
@@ -127,12 +127,12 @@ class VacuumMicroservice:
             self.sock.connect((NOISY_RACK_WAVESHARE_IP, NOISY_RACK_WAVESHARE_PORT))
             self.connected = True
             self.state["system.connected"] = 1.0
-            self.events.log_general(f"[Vacuum Service] Connected to {NOISY_RACK_WAVESHARE_IP}:{NOISY_RACK_WAVESHARE_PORT}")
+            self.events.log_general(f"Connected to {NOISY_RACK_WAVESHARE_IP}:{NOISY_RACK_WAVESHARE_PORT}")
         except Exception as e:
             self.connected = False
             self.sock = None
             self.state["system.connected"] = 0.0
-            self.events.log_general(f"[Vacuum Service] Connection failed: {e}")
+            self.events.log_general(f"Connection failed: {e}")
 
     # --- LEYBOLD HARDWARE PROTOCOL ---
     def _generate_read_frame(self, node_id: int, param_group: str, param_no: str) -> bytes:
@@ -226,7 +226,7 @@ class VacuumMicroservice:
 
                 age = time.time() - ts
                 if age > MAX_CMD_AGE:
-                    self.events.log_general(f"[Vacuum Service] WARNING: Dropped stale command for '{tag}'")
+                    self.events.log_general(f"WARNING: Dropped stale command for '{tag}'")
                     continue
 
                 parts = tag.split('.')
@@ -246,7 +246,7 @@ class VacuumMicroservice:
 
                             self._write_transaction_with_retry(node_id, "4", param_str, target_val_str)
                             self.events.log_general(
-                                f"[Vacuum Service] Executed Relay Command: Node {node_id}, Relay {relay_id} {cmd_type.upper()} -> {target_val_str}")
+                                f"Executed Relay Command: Node {node_id}, Relay {relay_id} {cmd_type.upper()} -> {target_val_str}")
                     except (ValueError, IndexError):
                         pass
 
@@ -257,7 +257,7 @@ class VacuumMicroservice:
             pass
 
     def _read_static_data(self):
-        self.events.log_general("[Vacuum Service] Reading static sensor profiles...")
+        self.events.log_general("Reading static sensor profiles...")
         for node in NODE_IDS:
             val = self._read_transaction_with_retry(node, "5", str(PARAM_SERIAL), 50)
             if val:
@@ -277,7 +277,7 @@ class VacuumMicroservice:
 
     def _enforce_startup_config(self):
         if not self.config:
-            self.events.log_general("[Vacuum Service] WARNING: No config loaded. Skipping enforcement.")
+            self.events.log_general("WARNING: No config loaded. Skipping enforcement.")
             return
 
         try:
@@ -368,11 +368,11 @@ class VacuumMicroservice:
                             time.sleep(0.2)
 
                         if not (success and on_success):
-                            self.events.log_general("[Vacuum Service] Aborted Relay Config due to NACK on writes.\n")
+                            self.events.log_general("Aborted Relay Config due to NACK on writes.\n")
 
-            self.events.log_general("[Vacuum Service] --- VERIFICATION COMPLETE ---\n")
+            self.events.log_general("--- VERIFICATION COMPLETE ---\n")
         except Exception as e:
-            self.events.log_general(f"[Vacuum Service] Failed to enforce startup config: {e}")
+            self.events.log_general(f"Failed to enforce startup config: {e}")
 
     def _evaluate_gv_permissive(self):
         is_safe = False
@@ -394,7 +394,7 @@ class VacuumMicroservice:
         self.state["ion_beam.vacuum.gv_permissive_ready"] = 1.0 if is_safe else 0.0
 
     def run(self):
-        self.events.log_general("[Vacuum Service] Daemon starting...")
+        self.events.log_general("Daemon starting...")
         global_rise_limit = float(self.config.get("system_interlocks", {}).get("rapid_rise_thresh_mb_s", 5.0e-5))
 
         while True:
@@ -527,7 +527,7 @@ class VacuumMicroservice:
                 topic = TOPIC_VACUUM_DATA if isinstance(TOPIC_VACUUM_DATA, bytes) else TOPIC_VACUUM_DATA.encode('utf-8')
                 self.pub_socket.send_multipart([topic, orjson.dumps(self.state)])
             except Exception as e:
-                self.events.log_general(f"[Vacuum Service] ZMQ Publish Error: {e}")
+                self.events.log_general(f"ZMQ Publish Error: {e}")
 
             current_time = time.time()
             if current_time - self.last_hb_time >= 0.5:

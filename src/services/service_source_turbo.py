@@ -222,7 +222,7 @@ class TurbovacMicroservice:
         except socket.timeout:
             return None, None, None
         except Exception as e:
-            self.events.log_general(f"[Turbo Service] Socket error: {e}")
+            self.events.log_general(f"Socket error: {e}")
             self.connected = False
             return None, None, None
 
@@ -240,21 +240,21 @@ class TurbovacMicroservice:
             self.sock.connect((SRC_TURBO_WAVESHARE_IP, SRC_TURBO_WAVESHARE_PORT))
             self.connected = True
             self.state["system.connected"] = 1.0
-            self.events.log_general(f"[Turbo Service] Connected to {SRC_TURBO_WAVESHARE_IP}")
+            self.events.log_general(f"Connected to {SRC_TURBO_WAVESHARE_IP}")
         except Exception as e:
             self.connected = False
             self.state["system.connected"] = 0.0
-            self.events.log_general(f"[Turbo Service] Connection failed: {e}")
+            self.events.log_general(f"Connection failed: {e}")
 
     def _verify_safety_strategy(self):
 
         raw_hz, ak_hz, zsw = self._transaction(PNU_ACT_FREQ, 0, control_word=0x0000)
 
         if raw_hz is not None and raw_hz > 0:
-            self.events.log_general(f"[Turbo Service] Pump is already SPINNING at {raw_hz} Hz. Adopting LATCHED ON state.")
+            self.events.log_general(f"Pump is already SPINNING at {raw_hz} Hz. Adopting LATCHED ON state.")
             self.active_control_word = 0x0401
         else:
-            self.events.log_general("[Turbo Service] Pump is STOPPED. Adopting LATCHED OFF state.")
+            self.events.log_general("Pump is STOPPED. Adopting LATCHED OFF state.")
             self.active_control_word = 0x0400
 
         ser_val, _, _ = self._transaction(PNU_SERIAL, 0, control_word=self.active_control_word)
@@ -282,7 +282,7 @@ class TurbovacMicroservice:
 
         if not is_synced:
             if raw_hz == 0:
-                self.events.log_general("[Turbo Service] Strategy out of sync. Correcting now...")
+                self.events.log_general("Strategy out of sync. Correcting now...")
                 self._transaction(PNU_X201_FUNC, 0, value=19, ak=AK_WRITE_16, control_word=self.active_control_word)
                 time.sleep(0.1)
                 self._transaction(PNU_RELAY_X1, 0, value=4, ak=AK_WRITE_FIELD_16, control_word=self.active_control_word)
@@ -294,14 +294,14 @@ class TurbovacMicroservice:
                 self._transaction(PNU_USS_WATCHDOG, 0, value=0, ak=AK_WRITE_16, control_word=self.active_control_word)
                 time.sleep(0.1)
 
-                self.events.log_general("[Turbo Service] Saving to flash (P8=1)...")
+                self.events.log_general("Saving to flash (P8=1)...")
                 self._transaction(8, 0, value=1, ak=AK_WRITE_16, control_word=self.active_control_word)
                 time.sleep(30)
-                self.events.log_general("[Turbo Service] Save complete.")
+                self.events.log_general("Save complete.")
             else:
                 self.events.log_general("[!] SAFETY WARNING: Pump is SPINNING but Argon strategy is not loaded!")
         else:
-            self.events.log_general("[Turbo Service] Safety strategy verified and active.")
+            self.events.log_general("Safety strategy verified and active.")
 
     # --- LOOP TASKS ---
     def _process_commands(self):
@@ -329,7 +329,7 @@ class TurbovacMicroservice:
             pass
 
     def run(self):
-        self.events.log_general("[Turbo Service] Starting USS Daemon...")
+        self.events.log_general("Starting USS Daemon...")
 
         current_time_pc = time.perf_counter()
         next_tick = current_time_pc + POLL_INTERVAL

@@ -6,14 +6,16 @@ from PyQt6.QtCore import QObject, QThread, pyqtSignal, QTimer
 
 from src.core.data_engine import TimeSeriesEngine
 from src.core.zmq_listener import ZMQLiveEngine
-from config.network_config import (
-    ZMQ_PORT_PLC_PUB, ZMQ_PORT_VACUUM_PUB, ZMQ_PORT_SRC_TURBO_PUB
-)
-from src.core.payload_mapper import DynamicPayloadMapper
 
+# Include the new ports we added during Phase 1
+from src.core.network_config import (
+    ZMQ_PORT_PLC_PUB, ZMQ_PORT_VACUUM_PUB, ZMQ_PORT_SRC_TURBO_PUB,
+    ZMQ_PORT_SPELLMAN_PUB, ZMQ_PORT_MAGNET_PUB
+)
 
 class HistoryFetchWorker(QThread):
-    """Background thread to prevent UI freezing during disk reads."""
+    """Background thread to prevent UI freezing during fast Parquet disk reads."""
+    # Signals: start_ts, end_ts, ts_array, vals_dict, stride
     data_fetched = pyqtSignal(float, float, object, object, int)
 
     def __init__(self, engine):
@@ -31,11 +33,11 @@ class HistoryFetchWorker(QThread):
 
     def run(self):
         try:
-            ts, vals = self.engine.query(self.req_start, self.req_end, stride=self.stride)
-            self.data_fetched.emit(self.req_start, self.req_end, ts, vals, self.stride)
+            ts, vals_dict = self.engine.query(self.req_start, self.req_end, stride=self.stride)
+            self.data_fetched.emit(self.req_start, self.req_end, ts, vals_dict, self.stride)
         except Exception as e:
             print(f"[HistoryWorker] Error fetching data: {e}")
-            self.data_fetched.emit(self.req_start, self.req_end, np.array([]), np.array([]), self.stride)
+            self.data_fetched.emit(self.req_start, self.req_end, np.array([]), {}, self.stride)
 
 
 class InfiniteDataCache(QObject):
@@ -50,7 +52,11 @@ class InfiniteDataCache(QObject):
         self.history_worker = HistoryFetchWorker(self.engine)
         self.history_worker.data_fetched.connect(self._on_history_fetched)
 
-        self.zmq_listener = ZMQLiveEngine(ZMQ_PORT_PLC_PUB, ZMQ_PORT_VACUUM_PUB, ZMQ_PORT_SRC_TURBO_PUB)
+        # Updated to listen to all modernized microservices
+        self.zmq_listener = ZMQLiveEngine(
+            ZMQ_PORT_PLC_PUB, ZMQ_PORT_VACUUM_PUB, ZMQ_PORT_SRC_TURBO_PUB,
+            ZMQ_PORT_SPELLMAN_PUB, ZMQ_PORT_MAGNET_PUB
+        )
         self.zmq_listener.data_ready.connect(self._on_live_data)
 
         # --- MEMORY MANAGEMENT PARAMETERS ---
@@ -63,15 +69,12 @@ class InfiniteDataCache(QObject):
 
         self.write_ptr = 0
 
-        # Initialize the shared mapper
-        self.payload_mapper = DynamicPayloadMapper()
-        self.keys = sorted(list(self.payload_mapper.valid_keys))
-        self.num_keys = len(self.keys)
-
         # 2. The UI Views (These act as windows so the UI never sees the blank trailing zeros)
         self.tags = []
         self.x_time = self._x_buffer[:0]
         self.y_data = {key: self._y_buffers[key][:0] for key in self.engine.channel_keys}
+
+        self.key_last_seen = {key: time.time() for key in self.engine.channel_keys}
 
         self.oldest_loaded_ts = time.time()
         self.is_fetching = False
@@ -79,35 +82,24 @@ class InfiniteDataCache(QObject):
 
         # --- HEALTH MONITORING ---
         self.process = psutil.Process(os.getpid())
-
-        # Initialize CPU percent baseline (first call always returns 0.0)
         self.process.cpu_percent()
 
         self.health_timer = QTimer()
         self.health_timer.timeout.connect(self._print_health_stats)
-        self.health_timer.start(60000)  # Print every 60,000 ms (1 minute)
-
-        # --- THROTTLED RENDER LOOP ---
-        self.render_timer = QTimer()
-        self.render_timer.timeout.connect(self._emit_render_signal)
-        self.render_timer.start(250)  # Emits update at 4Hz (every 250ms)
+        self.health_timer.start(60000)
 
     def notify_markers_changed(self):
-        """Tells all connected windows to reload markers from disk."""
         self.markers_changed.emit()
 
     def _emit_render_signal(self):
-        """Safely triggers a UI redraw at a controlled frame rate."""
         if self.write_ptr > 0 and not self.is_fetching:
             self.data_updated.emit()
 
     def _print_health_stats(self):
-        """Polls the OS for process-specific memory and CPU utilization."""
-        # RSS (Resident Set Size) is the non-swapped physical memory the process has used
         mem_mb = self.process.memory_info().rss / (1024 * 1024)
         cpu_pct = self.process.cpu_percent()
-
-        print(f"[Health] CPU: {cpu_pct:>4.1f}% | RAM: {mem_mb:>6.1f} MB | Buffer: {self.write_ptr}/{self.max_capacity}")
+        print(
+            f"[UI Cache] CPU: {cpu_pct:>4.1f}% | RAM: {mem_mb:>6.1f} MB | Buffer: {self.write_ptr}/{self.max_capacity}")
 
     def register_tags(self, tags: list):
         self.tags = [tag for tag in tags if tag in self.engine.channel_keys]
@@ -120,35 +112,28 @@ class InfiniteDataCache(QObject):
         self.history_worker.wait()
 
     def request_history(self, start_ts: float, end_ts: float, stride=1):
-        """Triggers a disk read ONLY if requesting data we don't already have."""
-        """Deduplicates requests from multiple windows to prevent disk spam."""
         if self.is_fetching:
             return
 
-            # 1. If the requested data is ALREADY in our Omniscient RAM, abort.
-            # We add a 1-second buffer to handle floating point jitter.
         if start_ts >= (self.oldest_loaded_ts - 1.0):
             return
 
-            # 2. Only fetch the "gap" between what we have and what is requested.
-            # This prevents loading the same data twice.
         fetch_end = min(end_ts, self.oldest_loaded_ts)
 
-        # If the gap is too small (less than a few seconds), ignore it.
         if fetch_end - start_ts < 2.0:
             return
 
         self.is_fetching = True
-        print(f"[Cache] Multi-window request gap: {fetch_end - start_ts:.1f}s. Fetching...")
+        print(f"[Cache] Multi-window request gap: {fetch_end - start_ts:.1f}s. Fetching via Polars...")
         self.history_worker.fetch(start_ts, fetch_end, stride)
 
-    def _on_history_fetched(self, req_start, req_end, ts_array, vals_array, stride):
+    def _on_history_fetched(self, req_start, req_end, ts_array, vals_dict, stride):
         if len(ts_array) == 0:
             self.is_fetching = False
             self.oldest_loaded_ts = min(self.oldest_loaded_ts, req_start)
             return
 
-        # Use the valid view (self.x_time), not the raw background buffer
+        # Find where to slice the incoming history so it seamlessly joins the RAM buffer
         if len(self.x_time) > 0:
             cutoff_idx = np.searchsorted(ts_array, self.x_time[0], side='left')
             new_x = ts_array[:cutoff_idx]
@@ -160,12 +145,18 @@ class InfiniteDataCache(QObject):
             self.is_fetching = False
             return
 
-        # Prepend to the raw background buffers
+        # Prepend times to the raw background buffer
         self._x_buffer = np.concatenate((new_x, self._x_buffer))
-        for idx, tag in enumerate(self.engine.channel_keys):
-            self._y_buffers[tag] = np.concatenate((vals_array[:cutoff_idx, idx], self._y_buffers[tag]))
 
-        # Shift the pointer to account for the new historical data
+        # Prepend dictionary values securely (O(1) hash map lookups instead of matrix indices)
+        for tag in self.engine.channel_keys:
+            if tag in vals_dict:
+                self._y_buffers[tag] = np.concatenate((vals_dict[tag][:cutoff_idx], self._y_buffers[tag]))
+            else:
+                # If a key exists in our schema but wasn't in the database, pad with NaNs
+                pad = np.full(cutoff_idx, np.nan, dtype=np.float64)
+                self._y_buffers[tag] = np.concatenate((pad, self._y_buffers[tag]))
+
         self.write_ptr += len(new_x)
 
         # Update the UI views
@@ -178,11 +169,9 @@ class InfiniteDataCache(QObject):
         self.is_fetching = False
         self.data_updated.emit()
 
-    def _on_live_data(self, raw_data_dict: dict):
+    def _on_live_data(self, flat_data: dict):
         if not self.engine.channel_keys:
             return
-
-        flat_data = self.payload_mapper.parse(raw_data_dict)
 
         # 1. Expand buffers if we hit the end
         if self.write_ptr >= len(self._x_buffer):
@@ -190,14 +179,24 @@ class InfiniteDataCache(QObject):
             for tag in self.engine.channel_keys:
                 self._y_buffers[tag] = np.concatenate((self._y_buffers[tag], np.zeros(self.chunk_size)))
 
-        # 2. Insert the live data using the pointer
-        self._x_buffer[self.write_ptr] = time.time()
+        # 2. Insert the live data
+        current_time = time.time()
+        self._x_buffer[self.write_ptr] = current_time
 
         for tag in self.engine.channel_keys:
-            val = flat_data.get(tag)
-            if val is None:
-                # Hold previous value if network drops, or NaN if it's the very first tick
+            if tag in flat_data:
+                # Good data arrived, reset the watchdog timer
+                val = flat_data[tag]
+                self.key_last_seen[tag] = current_time
+            else:
+                # Asynchronous arrival: hold the previous value
                 val = self._y_buffers[tag][self.write_ptr - 1] if self.write_ptr > 0 else np.nan
+
+                # --- LIVE WATCHDOG ---
+                # If we haven't seen this specific tag in over 1.0 seconds, force a visual NaN gap
+                if current_time - self.key_last_seen[tag] > 1.0:
+                    val = np.nan
+
             self._y_buffers[tag][self.write_ptr] = val
 
         self.write_ptr += 1
@@ -207,9 +206,9 @@ class InfiniteDataCache(QObject):
         for tag in self.engine.channel_keys:
             self.y_data[tag] = self._y_buffers[tag][:self.write_ptr]
 
-        # 4. Prune Old Memory (Indefinite Runtime Protection)
+        # 4. Prune Old Memory
         if self.write_ptr > self.max_capacity:
-            trim_amount = 50000  # Drop the oldest ~1.3 hours of data from RAM
+            trim_amount = 50000
 
             self._x_buffer = self._x_buffer[trim_amount:]
             for tag in self.engine.channel_keys:

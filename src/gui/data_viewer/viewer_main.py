@@ -6,11 +6,17 @@ import numpy as np
 import copy
 from datetime import datetime
 import textwrap
+import sqlite3
+import json
+import zmq
+import orjson
+
+from src.core.event_helper import EventHelper
 
 from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QVBoxLayout, QHBoxLayout,
     QWidget, QPushButton, QLabel, QDateTimeEdit,
-    QFileDialog
+    QFileDialog, QCheckBox
 )
 from PyQt6.QtCore import Qt, QDateTime, QTimer, QThread, pyqtSignal
 import pyqtgraph as pg
@@ -32,15 +38,21 @@ class MarkerDialog(QDialog):
 
         self.text_input = QLineEdit()
         self.color_input = QComboBox()
-        # High-visibility palette
+
+        # SYSTEM RESERVED COLORS:
+        # Red (#F44336)    = Fault Activated
+        # Blue (#2196F3)   = Fault Cleared
+        # Orange (#FF9800) = Watchdog
+        # Green (#4CAF50)  = Phase Change
+
+        # User-safe distinct palette:
         self.colors = {
             "Cyan": "#00E5FF",
             "Yellow": "#FFEA00",
             "Magenta": "#FF4081",
-            "Orange": "#FF5722",
-            "Green": "#00E676",
             "White": "#FFFFFF",
-            "Red": "#F44336"
+            "Purple": "#9C27B0",
+            "Pink": "#E91E63"
         }
 
         # Generate Icons for the ComboBox
@@ -163,6 +175,7 @@ class DataViewerApp(QMainWindow):
         # 1. Data Layer
         self.cache = shared_cache
         self.system_registry = load_registry()
+        self.events = EventHelper("viewer_main")
 
         # 2. Profiles & Config
         current_direc = os.path.dirname(os.path.abspath(__file__))
@@ -180,8 +193,9 @@ class DataViewerApp(QMainWindow):
         self._init_ui()
 
         # 4. Connect Signals
-        self.cache.data_updated.connect(self._refresh_plot)
-        self.cache.markers_changed.connect(lambda: QTimer.singleShot(50, self._refresh_event_markers))
+        self.render_timer = QTimer()
+        self.render_timer.timeout.connect(self._refresh_plot)
+        self.render_timer.start(100)  # ~10 FPS
 
         # Use the new register method so we don't wipe out other windows
         self.cache.register_tags(list(self.plot_config.keys()))
@@ -191,6 +205,14 @@ class DataViewerApp(QMainWindow):
 
         self.log_axis_widgets = {}
         self.y_auto_scale = True
+
+        self.last_ui_update = 0.0
+        self.ui_lockout = 1.0 / 30.0  # Cap at 30 FPS
+
+        # 5. Background Sync for multi-window marker updates
+        self.marker_sync_timer = QTimer()
+        self.marker_sync_timer.timeout.connect(self._refresh_event_markers)
+        self.marker_sync_timer.start(5000)  # Check SQLite every 5 seconds
 
     def _init_ui(self):
         main_widget = QWidget()
@@ -302,11 +324,47 @@ class DataViewerApp(QMainWindow):
         self.btn_export.clicked.connect(self._prepare_export)
         sidebar_layout.addWidget(self.btn_export)
 
-        self._markers_visible = True
-        self.btn_toggle_markers = QPushButton("👁 Markers: ON")
-        self.btn_toggle_markers.setCheckable(True)
-        self.btn_toggle_markers.clicked.connect(self._toggle_marker_visibility)
-        sidebar_layout.addWidget(self.btn_toggle_markers)
+        sidebar_layout.addSpacing(20)
+        sidebar_layout.addSpacing(20)
+
+        # 1. The Toggle Button
+        self.btn_overlay_toggle = QPushButton("▼ Event Overlays")
+        self.btn_overlay_toggle.setStyleSheet("text-align: left; font-weight: bold; border: none; padding: 5px;")
+        self.btn_overlay_toggle.setCheckable(True)
+        sidebar_layout.addWidget(self.btn_overlay_toggle)
+
+        # 2. The Container Frame
+        self.overlay_frame = QWidget()
+        overlay_layout = QVBoxLayout(self.overlay_frame)
+        overlay_layout.setContentsMargins(15, 0, 0, 0)  # Indent the checkboxes slightly
+
+        # Map UI labels to exact database event types (using pseudo-types for faults)
+        self.event_filters = {
+            "User Markers": ["USER_MARKER"],
+            "Faults: Activated": ["FAULT_ACTIVE"],
+            "Faults: Cleared": ["FAULT_CLEARED"],
+            "Watchdog Drops": ["WATCHDOG_TRIP", "WATCHDOG_CLEAR"],
+            "Phase Changes": ["PHASE_CHANGE"]
+        }
+        self.filter_checkboxes = {}
+
+        for label_text, types in self.event_filters.items():
+            cb = QCheckBox(label_text)
+            cb.setChecked(True) if label_text == "User Markers" else cb.setChecked(False)
+            cb.stateChanged.connect(self._refresh_event_markers)
+            self.filter_checkboxes[label_text] = cb
+            overlay_layout.addWidget(cb)
+
+        sidebar_layout.addWidget(self.overlay_frame)
+
+        # 3. Toggle Logic
+        def toggle_overlays(checked):
+            self.overlay_frame.setVisible(not checked)
+            self.btn_overlay_toggle.setText("▶ Event Overlays" if checked else "▼ Event Overlays")
+
+        self.btn_overlay_toggle.clicked.connect(toggle_overlays)
+        self.btn_overlay_toggle.setChecked(False)  # Menu starts OPEN by default
+        # ----------------------------------
 
         sidebar_layout.addStretch()
         layout.addWidget(sidebar)
@@ -475,7 +533,7 @@ class DataViewerApp(QMainWindow):
             p.addItem(v_line, ignoreBounds=True)
             self.v_lines.append(v_line)
 
-            pin_line = pg.InfiniteLine(angle=90, movable=False, pen=pg.mkPen('#FF5722', width=1.5))
+            pin_line = pg.InfiniteLine(angle=90, movable=False, pen=pg.mkPen('#FF5722', width=1.0))
             pin_line.hide()
             p.addItem(pin_line, ignoreBounds=True)
             self.pin_lines.append(pin_line)
@@ -501,6 +559,12 @@ class DataViewerApp(QMainWindow):
         pass
 
     def _refresh_plot(self):
+        now = time.perf_counter()
+        if now - self.last_ui_update < self.ui_lockout:
+            return  # Drop this request, we are refreshing too fast
+
+        self.last_ui_update = now
+
         if not self.cache.tags or not self.lanes: return
 
         for ta in self.time_axes:
@@ -526,8 +590,8 @@ class DataViewerApp(QMainWindow):
 
             if tag not in self.curves:
                 color = self._get_distinct_color(idx)
-                pen = pg.mkPen(color=color, width=1.5)
-                c = pg.PlotDataItem(pen=pen, skipFiniteCheck=True, autoDownsample=True, clipToView=True)
+                pen = pg.mkPen(color=color, width=1.0)
+                c = pg.PlotDataItem(pen=pen, autoDownsample=True, clipToView=True, connect='finite')
 
                 if cfg.get('scale') == 'log':
                     self.lane_axes[lane].addItem(c)
@@ -554,10 +618,6 @@ class DataViewerApp(QMainWindow):
             try:
                 # 1. Force booleans (True/False) to plottable floats (1.0/0.0)
                 y_raw = np.asarray(y[-min_len:], dtype=np.float64)
-
-                # 2. Eradicate NaNs. Replace them with 0.0 so the ViewBox survives.
-                if np.any(np.isnan(y_raw)):
-                    y_raw = np.nan_to_num(y_raw, nan=0.0)
 
                 y_plot = y_raw * cfg.get('multiplier', 1.0)
             except Exception as e:
@@ -1145,28 +1205,99 @@ class DataViewerApp(QMainWindow):
         self.btn_export.setText("❌ Failed")
         QTimer.singleShot(2000, lambda: self.btn_export.setText("📸 Export Snapshot"))
 
-    def _load_markers(self):
-        """Loads markers from JSON file."""
-        self.markers_file = os.path.join(os.path.dirname(self.profiles_file), "event_markers.json")
-        if os.path.exists(self.markers_file):
-            try:
-                with open(self.markers_file, 'r') as f:
-                    return json.load(f)
-            except:
-                return {}
-        return {}
 
-    def _save_markers(self, timestamp, text):
-        """Saves a new marker to the JSON file."""
-        all_markers = self._load_markers()
-        key = f"{timestamp:.3f}"
-        all_markers[key] = text
+    def _load_markers(self):
+        """Reads filtered events directly from the SQLite database."""
+        db_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '../../../data/events.db'))
+
+        # 1. Determine which event types are currently checked in the UI
+        active_types = []
+        for label, cb in self.filter_checkboxes.items():
+            if cb.isChecked():
+                active_types.extend(self.event_filters[label])
+
+        markers = {}
+        if not active_types or not os.path.exists(db_path):
+            return markers
+
+        # 2. Map UI pseudo-types back to real database types
+        db_query_types = []
+        for t in active_types:
+            if t.startswith("FAULT"):
+                if "FAULT" not in db_query_types:
+                    db_query_types.append("FAULT")
+            else:
+                db_query_types.append(t)
+
+        placeholders = ",".join("?" * len(db_query_types))
+        query = f"SELECT timestamp, event_type, message, metadata FROM events WHERE event_type IN ({placeholders})"
+
         try:
-            with open(self.markers_file, 'w') as f:
-                json.dump(all_markers, f, indent=4)
-            self.cache.notify_markers_changed()
-        except Exception as e:
-            print(f"Failed to save marker: {e}")
+            with sqlite3.connect(db_path) as conn:
+                cursor = conn.cursor()
+                cursor.execute(query, db_query_types)
+
+                for ts, e_type, msg, meta in cursor.fetchall():
+                    key = f"{ts:.3f}"
+
+                    # 3. Dynamic Filtering & Color Assignment
+                    color = "#FFFFFF"
+
+                    if e_type == "FAULT":
+                        # Extract the active state from the metadata payload
+                        try:
+                            is_active = json.loads(meta).get("is_active", True) if meta else True
+                        except:
+                            is_active = True
+
+                        # Filter against UI checkboxes
+                        if is_active and "FAULT_ACTIVE" not in active_types:
+                            continue
+                        if not is_active and "FAULT_CLEARED" not in active_types:
+                            continue
+
+                        # Red for Activated, Blue for Cleared
+                        color = "#F44336" if is_active else "#2196F3"
+
+                    elif e_type == "USER_MARKER":
+                        try:
+                            color = json.loads(meta).get("color", "#00E5FF") if meta else "#00E5FF"
+                        except:
+                            color = "#00E5FF"
+
+                    elif "WATCHDOG" in e_type:
+                        color = "#FF9800"  # Orange
+                    elif e_type == "PHASE_CHANGE":
+                        color = "#4CAF50"  # Green
+
+                    markers[key] = {
+                        "text": msg,
+                        "color": color,
+                        "type": e_type
+                    }
+        except sqlite3.Error as e:
+            print(f"[DB Error] Failed to read markers: {e}")
+
+        return markers
+
+    def _save_markers(self, timestamp, data_dict):
+        """Optimistic UI: Saves to RAM, forces checkbox ON, then publishes."""
+        key = f"{timestamp:.3f}"
+        self.event_data[key] = data_dict
+
+        # 1. OPTIMISTIC UI: Force the checkbox to be visible
+        user_cb = self.filter_checkboxes.get("User Markers")
+        if user_cb and not user_cb.isChecked():
+            # Block signals temporarily to prevent a double-refresh during the save
+            user_cb.blockSignals(True)
+            user_cb.setChecked(True)
+            user_cb.blockSignals(False)
+
+            # Explicitly refresh so the new marker renders immediately
+            self._refresh_event_markers()
+
+        # 2. Fire-and-Forget ZMQ Command to backend
+        self.events.log_user_marker(marker_ts=timestamp, text=data_dict["text"], color=data_dict["color"])
 
     def _add_marker_to_graph(self, ts_str, text, color="#00E5FF"):
         if not self.lanes: return
@@ -1195,46 +1326,53 @@ class DataViewerApp(QMainWindow):
         line.sigClicked.connect(lambda obj, ev, k=ts_str: self._confirm_delete_marker(k))
 
     def _refresh_event_markers(self):
-        """Synchronizes RAM markers with Disk using explicit string keys."""
-        if not getattr(self, '_markers_visible', True) or not self.lanes:
-            return
+        """Synchronizes RAM markers with SQLite database."""
+        if not self.lanes: return
 
         base_plot = list(self.lanes.values())[0]
+
+        # Pull fresh database state
         self.event_data = self._load_markers()
 
-        # 1. Remove deleted or off-screen markers
+        # 1. Prune deleted or off-screen markers
         view_range = base_plot.viewRange()[0]
         to_remove = []
 
         for ts_str, item in list(self.marker_items.items()):
-            # If it's gone from disk, it's a deletion sync
+            # If it was deleted by another window/service
             if ts_str not in self.event_data:
-                base_plot.removeItem(item)
+                if item.scene(): item.scene().removeItem(item)
                 to_remove.append(ts_str)
                 continue
 
-            # If it's miles off screen, prune from RAM for performance
+            # If it's too far off-screen, unload from RAM
             rel_x = float(ts_str) - self.t0
             if rel_x < (view_range[0] - self.live_span) or rel_x > (view_range[1] + self.live_span):
-                base_plot.removeItem(item)
+                if item.scene(): item.scene().removeItem(item)
                 to_remove.append(ts_str)
 
         for k in to_remove:
             del self.marker_items[k]
 
-        # 2. Add new markers found on disk
+        # 2. Add new markers
         for ts_str, data in self.event_data.items():
             rel_x = float(ts_str) - self.t0
             if view_range[0] <= rel_x <= view_range[1]:
                 if ts_str not in self.marker_items:
-                    text = data['text'] if isinstance(data, dict) else data
-                    color = data.get('color', "#00E5FF") if isinstance(data, dict) else "#00E5FF"
-                    self._add_marker_to_graph(ts_str, text, color)
+                    self._add_marker_to_graph(ts_str, data['text'], data['color'])
 
         self.layout_widget.scene().update()
 
     def _confirm_delete_marker(self, ts_key):
-        """Removes marker using the absolute string key to prevent float jitter."""
+        """Optimistic UI: Removes from screen instantly, then publishes delete command."""
+
+        if ts_key in self.event_data:
+            if self.event_data[ts_key].get("type") != "USER_MARKER":
+                from PyQt6.QtWidgets import QMessageBox
+                QMessageBox.warning(self, "Access Denied",
+                                    "System events and faults are read-only and cannot be manually deleted.")
+                return
+
         if hasattr(self, '_is_confirming_delete') and self._is_confirming_delete:
             return
 
@@ -1248,31 +1386,20 @@ class DataViewerApp(QMainWindow):
         msg.setStandardButtons(QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
 
         if msg.exec() == QMessageBox.StandardButton.Yes:
-            # 1. Update Disk
-            data = self._load_markers()
-            if ts_key in data:
-                del data[ts_key]
-                with open(self.markers_file, 'w') as f:
-                    json.dump(data, f, indent=4)
+            # 1. Optimistic visual removal
+            if ts_key in self.event_data:
+                del self.event_data[ts_key]
 
-                # 2. Notify other windows
-                self.cache.notify_markers_changed()
+            if ts_key in self.marker_items:
+                item = self.marker_items[ts_key]
+                if item.scene():
+                    item.scene().removeItem(item)
+                del self.marker_items[ts_key]
+
+            # 2. Fire-and-Forget to service_events.py
+            self.events.delete_user_marker(marker_ts=float(ts_key))
 
         self._is_confirming_delete = False
-
-    def _toggle_marker_visibility(self):
-        self._markers_visible = not self._markers_visible
-        if self._markers_visible:
-            self.btn_toggle_markers.setText("👁 Markers: ON")
-            self._refresh_event_markers()
-        else:
-            self.btn_toggle_markers.setText("👁 Markers: OFF")
-            # Batch remove from graph (Safe Scene Removal)
-            for item in self.marker_items.values():
-                scene = item.scene()
-                if scene:
-                    scene.removeItem(item)
-            self.marker_items.clear()
 
     def _show_profile_context_menu(self, pos):
         """Generates the right-click menu for items INSIDE the profile dropdown."""
@@ -1353,11 +1480,23 @@ if __name__ == "__main__":
 
     # 1. Initialize the Single Master Cache
     current_dir = os.path.dirname(os.path.abspath(__file__))
-    log_dir = os.path.join(os.path.dirname(current_dir), "telemetry")
+    project_root = os.path.abspath(os.path.join(current_dir, "../../.."))
+    log_dir = os.path.join(project_root, "data")
+    print(log_dir)
 
     print("[Launcher] Spinning up Master Data Cache...")
     master_cache = InfiniteDataCache(log_dir)
     master_cache.start()
+
+    print("[Launcher] Forcing logger RAM flush to bridge historical gap...")
+    cmd_pub = zmq.Context.instance().socket(zmq.PUB)
+    cmd_pub.connect("tcp://127.0.0.1:55555")
+    time.sleep(0.2)  # Wait 200ms for TCP handshake to connect
+    for _ in range(3):
+        cmd_pub.send_multipart([b"CMD", orjson.dumps({"command": "FORCE_FLUSH"})])
+        time.sleep(0.1)
+    time.sleep(0.5)  # Give the logger 500ms to physically write the Parquet file to disk
+    # ----------------------
 
     # Preload the last 5 minutes immediately
     now = time.time()

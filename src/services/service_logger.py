@@ -8,21 +8,20 @@ import threading
 import numpy as np
 import polars as pl
 from datetime import datetime
-import os
 
+from src.core.event_helper import EventHelper
 from src.core.network_config import (
     ZMQ_PORT_PLC_PUB, ZMQ_PORT_VACUUM_PUB, ZMQ_PORT_SRC_TURBO_PUB,
     TOPIC_PLC_DATA, TOPIC_VACUUM_DATA, TOPIC_SRC_TURBO_DATA,
-    ZMQ_PORT_HEARTBEAT
+    ZMQ_PORT_HEARTBEAT, ZMQ_PORT_LOGGER_CMD
 )
 from src.core.payload_mapper import DynamicPayloadMapper
 
 # --- Dynamic Path Resolution ---
-# Locates IPIDS_Software/ based on the location of this script (src/services/service_logger.py)
 CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
 PROJECT_ROOT = os.path.abspath(os.path.join(CURRENT_DIR, "../../"))
 
-DEFAULT_LOG_DIRECTORY = os.path.join(PROJECT_ROOT, "data", "logging")
+DEFAULT_LOG_DIRECTORY = os.path.join(PROJECT_ROOT, "data", "parquet_logs")
 LOGGER_CONFIG_PATH = os.path.join(PROJECT_ROOT, "config", "logger_config.json")
 
 
@@ -35,28 +34,45 @@ class TelemetryLoggerService:
         self.hb_socket.connect(ZMQ_PORT_HEARTBEAT)
         self.last_hb_time = 0.0
 
+
         # 2. Data Subscription Sockets
         self.sub_socket = self.context.socket(zmq.SUB)
         self.sub_socket.connect(ZMQ_PORT_PLC_PUB)
         self.sub_socket.connect(ZMQ_PORT_VACUUM_PUB)
         self.sub_socket.connect(ZMQ_PORT_SRC_TURBO_PUB)
 
-        self.sub_socket.setsockopt(zmq.SUBSCRIBE, TOPIC_PLC_DATA)
-        self.sub_socket.setsockopt(zmq.SUBSCRIBE, TOPIC_VACUUM_DATA)
+        self.last_cmd_time = 0.0
+        self.cmd_debounce = 2.0
 
-        if isinstance(TOPIC_SRC_TURBO_DATA, str):
-            self.sub_socket.setsockopt(zmq.SUBSCRIBE, TOPIC_SRC_TURBO_DATA.encode('utf-8'))
-        else:
-            self.sub_socket.setsockopt(zmq.SUBSCRIBE, TOPIC_SRC_TURBO_DATA)
+        # Ensure topics are bytes
+        def _ensure_bytes(t):
+            return t.encode('utf-8') if isinstance(t, str) else t
 
+        self.sub_socket.setsockopt(zmq.SUBSCRIBE, _ensure_bytes(TOPIC_PLC_DATA))
+        self.sub_socket.setsockopt(zmq.SUBSCRIBE, _ensure_bytes(TOPIC_VACUUM_DATA))
+        self.sub_socket.setsockopt(zmq.SUBSCRIBE, _ensure_bytes(TOPIC_SRC_TURBO_DATA))
+
+        self.events = EventHelper("service_logger")
         self.poller = zmq.Poller()
         self.poller.register(self.sub_socket, zmq.POLLIN)
 
-        # 3. Schema & State
+        self.cmd_socket = self.context.socket(zmq.SUB)
+        self.cmd_socket.bind(ZMQ_PORT_LOGGER_CMD)  # Dedicated UI command port
+        self.cmd_socket.setsockopt(zmq.SUBSCRIBE, b"CMD")
+        self.poller.register(self.cmd_socket, zmq.POLLIN)
+
+        # 3. Schema & Zero-Order Hold State
         self.payload_mapper = DynamicPayloadMapper()
         self.keys = sorted(list(self.payload_mapper.valid_keys))
         self.num_keys = len(self.keys)
+
+        # Base state initialized to NaN (will remain NaN until first packet arrives)
         self.current_state = {k: np.nan for k in self.keys}
+
+        # --- WATCHDOG TRACKING ---
+        self.topic_last_seen = {}  # topic_str -> unix_timestamp
+        self.topic_keys = {}  # topic_str -> set(keys_provided_by_this_topic)
+        self.topic_watchdog_tripped = {}  # topic_str -> bool
 
         # 4. Load Configuration
         try:
@@ -66,14 +82,13 @@ class TelemetryLoggerService:
                 self.flush_interval = cfg.get("flush_interval_seconds", 900.0)
                 overhead = cfg.get("buffer_overhead_multiplier", 1.1)
         except FileNotFoundError:
-            print(f"[Logger WARNING] Config not found at {LOGGER_CONFIG_PATH}. Using defaults.")
+            self.events.log_general(f"[Logger WARNING] Config not found at {LOGGER_CONFIG_PATH}. Using defaults.")
             self.tick_rate = 0.050
             self.flush_interval = 900.0
             overhead = 1.1
 
         # 5. High-Speed RAM Buffer
         self.max_rows = int((self.flush_interval / self.tick_rate) * overhead)
-
         self.ts_buffer = np.zeros(self.max_rows, dtype=np.float64)
         self.val_buffer = np.zeros((self.max_rows, self.num_keys), dtype=np.float32)
         self.ptr = 0
@@ -92,22 +107,61 @@ class TelemetryLoggerService:
         self.tick_count = 0
         self.perf_max_loop_ms = 0.0
         self.perf_max_zmq_drain_ms = 0.0
+        self.perf_max_tick_delta_ms = 0.0
 
     def _update_state_cache(self, topic: bytes, payload_bytes: bytes):
         try:
-            # Decode the topic for the warning printout
             topic_str = topic.decode('utf-8', errors='ignore')
             data = orjson.loads(payload_bytes)
 
-            # Pass the topic to the mapper
             flat_dict = self.payload_mapper.parse(data, topic=topic_str)
+
+            # 1. Update the state (Zero-Order Hold)
             self.current_state.update(flat_dict)
+
+            # 2. Update Watchdog timer
+            self.topic_last_seen[topic_str] = time.time()
+
+            # 3. Learn which keys belong to this topic dynamically
+            if topic_str not in self.topic_keys:
+                self.topic_keys[topic_str] = set()
+            self.topic_keys[topic_str].update(flat_dict.keys())
+
         except orjson.JSONDecodeError:
             pass
+
+    def _evaluate_watchdogs(self):
+        """Checks if any service has stopped broadcasting and injects NaNs if necessary."""
+        current_ts = time.time()
+
+        for topic_str, last_seen in self.topic_last_seen.items():
+            if current_ts - last_seen > 1.0:
+                # Trip condition: No data for 1.0 seconds
+                if not self.topic_watchdog_tripped.get(topic_str, False):
+                    self.events.log_general(
+                        message=f"Network Timeout: {topic_str} silent for >1s. Forcing NaNs.",
+                        severity="WARNING",
+                        event_type="WATCHDOG_TRIP"
+                    )
+                    self.topic_watchdog_tripped[topic_str] = True
+
+                # Actively overwrite the cached values with NaN to create visual gaps
+                for k in self.topic_keys.get(topic_str, set()):
+                    self.current_state[k] = np.nan
+            else:
+                # Recovery condition
+                if self.topic_watchdog_tripped.get(topic_str, False):
+                    self.events.log_general(
+                        message=f"Network Recovery: {topic_str} data stream restored.",
+                        severity="INFO",
+                        event_type="WATCHDOG_CLEAR"
+                    )
+                    self.topic_watchdog_tripped[topic_str] = False
 
     def _log_current_state(self):
         current_ts = time.time()
 
+        # Build the 1D array perfectly ordered to the schema
         row = np.array([float(self.current_state.get(k, np.nan)) for k in self.keys], dtype=np.float32)
 
         self.ts_buffer[self.ptr] = current_ts
@@ -115,14 +169,12 @@ class TelemetryLoggerService:
         self.ptr += 1
 
         if self.ptr >= self.max_rows:
-            print("[Logger WARNING] RAM Buffer exceeded max bounds. Forcing emergency flush.")
+            self.events.log_general("[Logger WARNING] RAM Buffer exceeded max bounds. Forcing emergency flush.")
             self._queue_flush()
 
     def _queue_flush(self):
         if self.ptr == 0:
             return
-
-        queue_start = time.perf_counter()
 
         ts_data = self.ts_buffer[:self.ptr].copy()
         val_data = self.val_buffer[:self.ptr, :].copy()
@@ -135,16 +187,11 @@ class TelemetryLoggerService:
 
         self.write_queue.put((filepath, ts_data, val_data, self.keys))
 
-        queue_time_ms = (time.perf_counter() - queue_start) * 1000
-        print(f"[Logger I/O] Array copied to write queue in {queue_time_ms:.2f} ms")
-
     def _disk_writer_loop(self):
         while self.running:
             try:
                 task = self.write_queue.get(timeout=1.0)
                 filepath, ts, data, keys = task
-
-                write_start = time.perf_counter()
 
                 try:
                     df_dict = {"timestamp": ts}
@@ -152,26 +199,19 @@ class TelemetryLoggerService:
                         df_dict[key] = data[:, i]
 
                     df = pl.DataFrame(df_dict)
-
                     temp_path = filepath.replace(".parquet", "_temp.parquet")
-                    df.write_parquet(temp_path, compression="zstd")
+
+                    # High compression to heavily shrink the repeated run-length arrays
+                    df.write_parquet(temp_path, compression="zstd", compression_level=3)
 
                     if os.path.exists(temp_path):
                         if os.path.exists(filepath):
                             os.remove(filepath)
                         os.rename(temp_path, filepath)
 
-                    write_time_ms = (time.perf_counter() - write_start) * 1000
-
-                    ram_mb = df.estimated_size("mb")
-                    file_kb = os.path.getsize(filepath) / 1024
-
-                    print(f"[Logger I/O] Flushed {len(ts)} rows. "
-                          f"RAM: {ram_mb:.1f}MB -> Disk: {file_kb:.1f}KB. "
-                          f"Time: {write_time_ms:.1f} ms -> {os.path.basename(filepath)}")
-
                 except Exception as io_err:
-                    print(f"[Logger I/O Error] Failed to write {os.path.basename(filepath)}: {io_err}")
+                    self.events.log_general(
+                        f"[Logger I/O Error] Failed to write {os.path.basename(filepath)}: {io_err}")
                 finally:
                     self.write_queue.task_done()
 
@@ -182,14 +222,16 @@ class TelemetryLoggerService:
         import gc
         gc.disable()
 
-        print(f"[Logger] {1.0 / self.tick_rate}Hz Parquet Logger Online. Tracking {self.num_keys} channels.")
+        self.events.log_general(
+            f"{1.0 / self.tick_rate}Hz Parquet Logger Online. Tracking {self.num_keys} channels.")
 
         current_time = time.perf_counter()
         self.next_tick = current_time + self.tick_rate
         self.last_flush = current_time
         last_tick_time = current_time
 
-        self.perf_max_tick_delta_ms = 0.0
+        self.events.log_general("Injecting Boot-Up Null Marker to sever historical plot lines.")
+        self._log_current_state()
 
         while self.running:
             try:
@@ -200,9 +242,9 @@ class TelemetryLoggerService:
                     self.hb_socket.send_json({"service": "service_logger", "ts": time.time()})
                     self.last_hb_time = current_time
 
-                # 2. INSTANT ZMQ Poll (Do not let ZMQ handle sleeping)
+                # 2. INSTANT ZMQ Poll
                 zmq_start_drain = time.perf_counter()
-                socks = dict(self.poller.poll(timeout=0))  # <--- Changed to 0
+                socks = dict(self.poller.poll(timeout=0))
 
                 if self.sub_socket in socks and socks[self.sub_socket] == zmq.POLLIN:
                     while True:
@@ -215,18 +257,38 @@ class TelemetryLoggerService:
                 zmq_duration_ms = (time.perf_counter() - zmq_start_drain) * 1000
                 self.perf_max_zmq_drain_ms = max(self.perf_max_zmq_drain_ms, zmq_duration_ms)
 
-                # 3. The Precision Sleep & Spin-Wait
+                # If requested by external program (like viewer) flush data
+                if self.cmd_socket in socks and socks[self.cmd_socket] == zmq.POLLIN:
+                    try:
+                        topic, payload = self.cmd_socket.recv_multipart(flags=zmq.NOBLOCK)
+                        cmd_data = orjson.loads(payload)
+                        if cmd_data.get("command") == "FORCE_FLUSH":
+                            now = time.time()
+                            # Only execute if the last flush was > 2 seconds ago
+                            if now - self.last_cmd_time > self.cmd_debounce:
+                                self.events.log_general("Remote UI requested emergency disk flush (Debounced).")
+                                self._queue_flush()
+                                self.last_cmd_time = now
+                            else:
+                                # Silently ignore the redundant pulse
+                                pass
+                    except Exception as e:
+                        print(f"Cmd Socket Error: {e}")
+
+                # 3. Precision Sleep & Spin-Wait
                 sleep_time = self.next_tick - time.perf_counter()
                 if sleep_time > 0.002:
-                    # Sleep until we are 2ms away from the deadline
                     time.sleep(sleep_time - 0.002)
 
-                # Burn CPU cycles for the final <2ms to hit the deadline perfectly
                 while time.perf_counter() < self.next_tick:
                     pass
 
-                # 4. 20Hz Strict Logging Tick
                 current_time = time.perf_counter()
+
+                # --- NEW: Evaluate Watchdogs before Logging ---
+                self._evaluate_watchdogs()
+
+                # 4. 20Hz Strict Logging Tick
                 self._log_current_state()
 
                 tick_delta_ms = (current_time - last_tick_time) * 1000
@@ -237,20 +299,9 @@ class TelemetryLoggerService:
                 self.tick_count += 1
 
                 # 5. 15-Minute Flush
-                if current_time - self.last_flush >= self.flush_interval:
+                if time.time() - self.last_flush >= self.flush_interval:
                     self._queue_flush()
-                    self.last_flush = current_time
                     gc.collect()
-
-                    # 6. Performance Monitoring
-                if self.tick_count >= int(10.0 / self.tick_rate):
-                    print(f"[Logger Health] Buffer: {self.ptr}/{self.max_rows} | "
-                          f"Max Drain: {self.perf_max_zmq_drain_ms:.2f}ms | "
-                          f"Max Tick Delta: {self.perf_max_tick_delta_ms:.2f}ms (Target: {self.tick_rate * 1000:.1f}ms)")
-
-                    self.tick_count = 0
-                    self.perf_max_tick_delta_ms = 0.0
-                    self.perf_max_zmq_drain_ms = 0.0
 
             except KeyboardInterrupt:
                 break
@@ -258,13 +309,13 @@ class TelemetryLoggerService:
                 print(f"[Logger Main Loop Error] {e}")
 
         self.running = False
-        print("[Logger] Shutdown signal received. Forcing final disk flush...")
+        self.events.log_general("Shutdown signal received. Forcing final disk flush...")
         self._queue_flush()
         self.io_thread.join(timeout=5.0)
-        print("[Logger] Shutdown complete.")
+        self.events.log_general("Shutdown complete.")
+
 
 if __name__ == "__main__":
-    # Force Windows high-resolution timers (1ms precision)
     if os.name == 'nt':
         import ctypes
 
