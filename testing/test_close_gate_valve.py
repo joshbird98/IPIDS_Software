@@ -15,7 +15,7 @@ COMMAND_PORT = COMMAND_PORT.replace("0.0.0.0", "127.0.0.1")
 # Ensure it has the tcp:// prefix
 if not COMMAND_PORT.startswith("tcp://"):
     COMMAND_PORT = f"tcp://{COMMAND_PORT}"
-def request_gate_valve_open():
+def request_gate_valve_close():
     context = zmq.Context()
     socket = context.socket(zmq.PUB)
 
@@ -41,4 +41,4 @@ def request_gate_valve_open():
     print("Command transmitted. Gate valve should close!")
 
 if __name__ == "__main__":
-    request_gate_valve_open()
+    request_gate_valve_close()

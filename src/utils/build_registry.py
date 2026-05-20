@@ -274,7 +274,15 @@ def get_plc_tags_from_scl(scl_path, db_number=10, machine_root="ion_beam"):
                     filtered_stack.append(layer.lower().replace('_', '.'))
 
             subsystem_path = ".".join(filtered_stack)
-            tag_name = f"{machine_root}.{subsystem_path}.{name.lower()}"
+
+            # --- OVERRIDE FOR FAULT MAP ALIGNMENT ---
+            if is_udt and dt.lower().startswith('udt_fault_word'):
+                # Extracts "word_0_system" from "UDT_Fault_Word_0_System"
+                fault_suffix = dt.lower().replace("udt_fault_", "")
+                tag_name = f"{machine_root}.{subsystem_path}.{fault_suffix}"
+            else:
+                tag_name = f"{machine_root}.{subsystem_path}.{name.lower()}"
+
             tag_name = tag_name.replace('..', '.')  # Cleanup if stack was empty
 
             # Parse Comments for Metadata

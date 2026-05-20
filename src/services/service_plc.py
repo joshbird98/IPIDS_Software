@@ -92,12 +92,12 @@ class PlcMicroservice:
 
         # Static mapping from 1D payload keys to the fault_map.json UDT names
         word_keys = {
-            "ion_beam.faults.word_0": "UDT_Fault_Word_0_System",
-            "ion_beam.faults.word_1": "UDT_Fault_Word_1_Pumps",
-            "ion_beam.faults.word_2": "UDT_Fault_Word_2_Source",
-            "ion_beam.faults.word_3": "UDT_Fault_Word_3_Spellman",
-            "ion_beam.faults.word_4": "UDT_Fault_Word_4_Magnet",
-            "ion_beam.faults.word_5": "UDT_Fault_Word_5_Gauges"
+            "ion_beam.faults.word_0_system": "UDT_Fault_Word_0_System",
+            "ion_beam.faults.word_1_pumps": "UDT_Fault_Word_1_Pumps",
+            "ion_beam.faults.word_2_source": "UDT_Fault_Word_2_Source",
+            "ion_beam.faults.word_3_spellman": "UDT_Fault_Word_3_Spellman",
+            "ion_beam.faults.word_4_magnet": "UDT_Fault_Word_4_Magnet",
+            "ion_beam.faults.word_5_gauges": "UDT_Fault_Word_5_Gauges"
         }
 
         # Ensure fault_map and latches exist
@@ -224,6 +224,11 @@ class PlcMicroservice:
         return None
 
     def _parse_fault_struct(self, raw_db_bytes: bytearray, byte_offset: int, tag_name: str):
+        # 1. NEW: Publish the raw 32-bit integer word for the GUI's FaultRegistry
+        raw_word_int = get_dword(raw_db_bytes, byte_offset)
+        self.state[tag_name] = float(raw_word_int)
+
+        # 2. Existing: Break out individual booleans for local use
         struct_bytes = raw_db_bytes[byte_offset: byte_offset + 4]
         for offset_str, fault_meta in self.fault_map[tag_name].items():
             byte_idx, bit_idx = map(int, offset_str.split('.'))

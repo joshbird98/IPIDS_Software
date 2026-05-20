@@ -215,7 +215,7 @@
         "bit_offset": 1,
         "snap7_type": "S7WLBit"
     },
-    "ion_beam.faults.word_0": {
+    "ion_beam.faults.word_0_system": {
         "source": "service_plc_snap7",
         "datatype": "DWORD",
         "writable": false,
@@ -230,7 +230,7 @@
         "bit_offset": 0,
         "snap7_type": "S7WLDWord"
     },
-    "ion_beam.faults.word_1": {
+    "ion_beam.faults.word_1_pumps": {
         "source": "service_plc_snap7",
         "datatype": "DWORD",
         "writable": false,
@@ -245,7 +245,7 @@
         "bit_offset": 0,
         "snap7_type": "S7WLDWord"
     },
-    "ion_beam.faults.word_2": {
+    "ion_beam.faults.word_2_source": {
         "source": "service_plc_snap7",
         "datatype": "DWORD",
         "writable": false,
@@ -260,7 +260,7 @@
         "bit_offset": 0,
         "snap7_type": "S7WLDWord"
     },
-    "ion_beam.faults.word_3": {
+    "ion_beam.faults.word_3_spellman": {
         "source": "service_plc_snap7",
         "datatype": "DWORD",
         "writable": false,
@@ -275,7 +275,7 @@
         "bit_offset": 0,
         "snap7_type": "S7WLDWord"
     },
-    "ion_beam.faults.word_4": {
+    "ion_beam.faults.word_4_magnet": {
         "source": "service_plc_snap7",
         "datatype": "DWORD",
         "writable": false,
@@ -290,7 +290,7 @@
         "bit_offset": 0,
         "snap7_type": "S7WLDWord"
     },
-    "ion_beam.faults.word_5": {
+    "ion_beam.faults.word_5_gauges": {
         "source": "service_plc_snap7",
         "datatype": "DWORD",
         "writable": false,

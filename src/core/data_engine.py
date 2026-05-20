@@ -34,13 +34,17 @@ class TimeSeriesEngine:
 
         # Get actual files that exist to prevent Polars from throwing a "no files found" error
         available_files = glob.glob(parquet_pattern) + glob.glob(daily_pattern)
+        #print(f"[Engine DEBUG] Query requested: start={start_ts}, end={end_ts}")
+        #print(f"[Engine DEBUG] Found {len(available_files)} parquet files to scan.")
 
         if not available_files:
             return np.array([]), {}
 
         try:
-            # Polars can scan a list of patterns/files seamlessly
-            lf = pl.scan_parquet(available_files)
+            # 1. SCHEMA EVOLUTION FIX:
+            # Load files individually and concatenate 'diagonally' to unify mismatched schemas
+            lfs = [pl.scan_parquet(f) for f in available_files]
+            lf = pl.concat(lfs, how="diagonal")
 
             # 2. Push down filters: Only load the specific time window
             lf = lf.filter((pl.col("timestamp") >= start_ts) & (pl.col("timestamp") <= end_ts))
@@ -53,23 +57,34 @@ class TimeSeriesEngine:
                 lf = lf.gather_every(stride)
 
             # 5. Execute the optimized query and pull into RAM
+            #print("[Engine DEBUG] Executing lf.collect()...")
             df = lf.collect()
+            #print(f"[Engine DEBUG] Collect successful. DataFrame shape: {df.shape}")
 
             if df.is_empty():
+                #print("[Engine DEBUG] DataFrame is empty after filtering by start_ts and end_ts!")
                 return np.array([]), {}
+
+            # Debug datatypes before NumPy conversion
+            null_cols = [c for c in df.columns if df[c].dtype == pl.Null]
+            # null_cols:
+                #print(f"[Engine DEBUG] WARNING: Found {len(null_cols)} columns with pl.Null datatype.")
+
 
             # 6. Convert to PyQtGraph-friendly NumPy arrays natively
             ts_array = df["timestamp"].to_numpy()
+            #print(f"[Engine DEBUG] Extracted ts_array: length={len(ts_array)}, dtype={ts_array.dtype}")
 
             vals_dict = {}
             for col in df.columns:
                 if col != "timestamp" and col in self.channel_keys:
                     vals_dict[col] = df[col].to_numpy()
 
+            #print(f"[Engine DEBUG] Returning dictionary with {len(vals_dict)} channels.")
             return ts_array, vals_dict
 
         except Exception as e:
-            print(f"[Engine] Parquet Query Error: {e}")
+            #print(f"[Engine DEBUG] Parquet Query Error: {repr(e)}")
             return np.array([]), {}
 
     @staticmethod
@@ -115,6 +130,7 @@ class TimeSeriesEngine:
         for p in patterns:
             available_files.extend(glob.glob(p))
 
+        #print(f"[Engine DEBUG] get_global_bounds: Found {len(available_files)} files to scan for min/max ts.")
         if not available_files:
             return None, None
 
@@ -125,7 +141,9 @@ class TimeSeriesEngine:
                 pl.col("timestamp").max().alias("max_ts")
             ])
             res = lf.collect()
-            return res["min_ts"][0], res["max_ts"][0]
+            min_ts, max_ts = res["min_ts"][0], res["max_ts"][0]
+            #print(f"[Engine DEBUG] get_global_bounds: Min={min_ts}, Max={max_ts}")
+            return min_ts, max_ts
         except Exception as e:
-            print(f"[Engine] Bounds error: {e}")
+            #print(f"[Engine DEBUG] Bounds error: {repr(e)}")
             return None, None
