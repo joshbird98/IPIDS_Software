@@ -27,7 +27,7 @@ SERVICES_CONFIG = {
     "service_vac_gauge_controllers": {"script": os.path.join(CURRENT_DIR, "service_vac_gauge_controllers.py"), "tier": 2, "timeout": 2.0},
     "service_source_turbo": {"script": os.path.join(CURRENT_DIR, "service_source_turbo.py"), "tier": 2, "timeout": 2.0},
     "service_magnet_psu": {"script": os.path.join(CURRENT_DIR, "service_magnet_psu.py"), "tier": 2, "timeout": 2.0},
-    "service_spellman_mpd": {"script": os.path.join(CURRENT_DIR, "service_spellman_mpd.py"), "tier": 2, "timeout": 2.0},
+    #"service_spellman_mpd": {"script": os.path.join(CURRENT_DIR, "service_spellman_mpd.py"), "tier": 2, "timeout": 2.0},
 
     # T-3: Automation & Orchestration
     # "service_conductor":    {"script": os.path.join(CURRENT_DIR, "service_conductor.py"),    "tier": 3, "timeout": 2.0}
@@ -52,6 +52,7 @@ class IpidsServiceManager:
         # State tracking
         self.running_processes = {}  # {service_name: subprocess.Popen}
         self.last_heartbeats = {}  # {service_name: timestamp}
+        self.last_self_heartbeat = 0
 
         self.events = EventHelper("service_manager")
 
@@ -176,6 +177,12 @@ class IpidsServiceManager:
                             f"🚨 HANG DETECTED: {name} unresponsive for {time_since_beat:.1f}s. Restarting...")
                         self._kill_service(name)
                         self._start_service(name)
+
+                if time.time() - self.last_self_heartbeat > 5:
+                    print("Manager heartbeat")
+                    print(self.last_heartbeats)
+                    self.last_self_heartbeat = time.time()
+
 
         except KeyboardInterrupt:
             self.events.log_general("Shutdown signal received. Terminating all services...")

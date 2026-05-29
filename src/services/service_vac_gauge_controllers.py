@@ -169,10 +169,12 @@ class VacuumMicroservice:
                 return response[ack_idx + 1:-2].decode('ascii', errors='ignore').strip()
             return None
         except socket.timeout:
+            print(f"TIMEOUT: Node {node_id}, Grp {param_group}, Param {param_no} failed after 0.3s")
             return None
         except Exception:
             self.connected = False
             self.state["system.connected"] = 0.0
+            print(f"FAULT: _read_transaction error - {e}")
             return None
 
     def _write_transaction(self, node_id: int, param_group: str, param_no: str, value: str) -> str:
@@ -435,7 +437,8 @@ class VacuumMicroservice:
                                 if dt > 0:
                                     dp_dt = (pressure_val - prev_p) / dt
                                     if dp_dt > global_rise_limit and pressure_val > 1.0e-6:
-                                        is_rapid_rise = True
+                                        if "vacuum_gauge_4" not in tag_prefix: #VG4 is extremely noisy and has spikes that cause false-triggers, VG6 monitors the same zone so safe to skip VG4
+                                            is_rapid_rise = True
 
                             self.state[
                                 f"ion_beam.gauges.status.stat_{vg_prefix.lower()}_rapid_rise"] = 1.0 if is_rapid_rise else 0.0

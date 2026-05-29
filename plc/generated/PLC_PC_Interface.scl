@@ -5,17 +5,19 @@ NON_RETAIN
    STRUCT
       // =====================================================================
       // TO PC: READ-ONLY FOR PYTHON
-      // The PLC continuously overwrites this from its internal Retain/Memory
+      // The PLC continuously overwrites this block from its internal logic.
+      // Python (HMI/Recipe Manager) reads this as the "Single Source of Truth"
+      // for the current machine state. NEVER write to this from Python.
       // =====================================================================
       To_PC : STRUCT
          System : STRUCT
-            PC_PLC_Comms_Lost : Bool;
-            Remote_IO_Lost : Bool;
-            Src_Auto_SDown : Bool;
-            Machine_State : Int;
-            PLC_Cycle_Count : DInt;
-            Remote_Shutdown_Step : Int;   // 0:OK, 1:Hold, 2:Cooling, 3:Tripped, 99:Latched
-            PC_Shutdown_Step : Int;       // 0:OK, 1:Hold, 2:Cooling, 3:Tripped, 99:Latched
+            PC_PLC_Comms_Lost : Bool;     // TRUE if watchdog fails
+            Remote_IO_Lost : Bool;        // TRUE if Profinet/EtherCAT node drops
+            Src_Auto_SDown : Bool;        // TRUE if automated shutdown sequence is active
+            Machine_State : Int;          // 0=Init, 1=Safe/Not Ready, 2=Ready, 3=Live/HV, 99=Fault
+            PLC_Cycle_Count : DInt;       // Heartbeat counter for PC to monitor PLC health
+            Remote_Shutdown_Step : Int;   // 0=OK, 1=Hold, 2=Cooling, 3=Tripped, 99=Latched
+            PC_Shutdown_Step : Int;       // 0=OK, 1=Hold, 2=Cooling, 3=Tripped, 99=Latched
          END_STRUCT;
 
          Faults : STRUCT
@@ -28,105 +30,136 @@ NON_RETAIN
          END_STRUCT;
 
          Facilities : STRUCT
-            Safety_Relay_Active : Bool;
-            Stat_Src_Coolant_OK : Bool;
-            Stat_Air_Press_OK : Bool;
-            Stat_Mag_Coolant_OK : Bool;
+            Safety_Relay_Active : Bool;   // TRUE when physical safety contactors are closed
+            Stat_Src_Coolant_OK : Bool;   // Source syltherm flow switch OK
+            Stat_Air_Press_OK : Bool;     // Compressed air pressure switch OK
+            Stat_Mag_Coolant_OK : Bool;   // Magnet water flow and thermal-cutoff switch OK
          END_STRUCT;
 
          Source_Extraction : STRUCT
-            Stat_Enabled : Bool;
-            RB_Voltage : Real;
-            RB_Current : Real;
+            Stat_Enabled : Bool;          // Hardware state: TRUE = HV Contactor Closed
+            RB_Voltage : Real;            // Physical Readback (ADC) in kV
+            RB_Current : Real;            // Physical Readback (ADC) in mA
+            SP_Actual_Voltage : Real;     // Active Setpoint currently driving the DAC
+            Ctrl_Mode : Int;              // 0=Manual, 1=PLC Auto, 2=Recipe, 4=Arc-Quench
+            Stat_Lockout : Bool;          // TRUE if interlock blocks enabling/changing SP
          END_STRUCT;
 
          Source_Target : STRUCT
-            Stat_Enabled : Bool;
-            RB_Voltage : Real;
-            RB_Current : Real;
+            Stat_Enabled : Bool;          // Hardware state: TRUE = HV Contactor Closed
+            RB_Voltage : Real;            // Physical Readback (ADC) in kV
+            RB_Current : Real;            // Physical Readback (ADC) in mA
+            SP_Actual_Voltage : Real;     // Active Setpoint currently driving the DAC
+            Ctrl_Mode : Int;              // 0=Manual, 1=PLC Auto, 2=Recipe, 4=Arc-Quench
+            Stat_Lockout : Bool;          // TRUE if interlock blocks enabling/changing SP
          END_STRUCT;
 
          Source_Filament : STRUCT
-            Stat_Enabled : Bool;
-            RB_Voltage : Real;
-            RB_Current : Real;
+            Stat_Enabled : Bool;          // Hardware state: TRUE = Contactor Closed
+            RB_Voltage : Real;            // Physical Readback (ADC) in V
+            RB_Current : Real;            // Physical Readback (ADC) in A
+            SP_Actual_Current : Real;     // Active Setpoint currently driving the DAC
+            Ctrl_Mode : Int;              // 0=Manual, 1=PLC Auto, 2=Recipe, 3=Cascaded (PID Slave)
+            Stat_Lockout : Bool;          // TRUE if interlock blocks enabling/changing SP
+            Out_CV_Current : Real;        // Raw PID Control Variable output for diagnostics
          END_STRUCT;
 
          Source_Thermionic : STRUCT
-            Stat_Enabled : Bool;
-            Stat_Auto_Emission : Bool;
-            RB_Voltage : Real;
-            RB_Current : Real;
+            Stat_Enabled : Bool;          // Hardware state: TRUE = Contactor Closed
+            Stat_Auto_Emission : Bool;    // TRUE = PID loop is controlling Filament
+            RB_Voltage : Real;            // Physical Readback (ADC) in V
+            RB_Current : Real;            // Physical Readback (ADC) in mA (Emission Current)
+            SP_Actual_Current : Real;     // Active Setpoint currently driving the DAC
+            Ctrl_Mode : Int;              // 0=Manual, 1=PLC Auto, 2=Recipe, 4=Arc-Quench
+            Stat_Lockout : Bool;          // TRUE if interlock blocks enabling/changing SP
          END_STRUCT;
 
          Source_Cesium : STRUCT
-            RB_Temp : Real;
-            Stat_Enabled : Bool;
+            Stat_Enabled : Bool;          // Hardware state: TRUE = Heater Contactor Closed
+            RB_Temp : Real;               // Physical Readback (Thermocouple) in °C
+            SP_Actual_Temp : Real;        // Active Setpoint currently driving the PID
+            Ctrl_Mode : Int;              // 0=Manual, 1=PLC Auto, 2=Recipe
+            Stat_Lockout : Bool;          // TRUE if interlock blocks enabling/changing SP
+            Out_CV_Heating : Real;        // PID Heating Duty Cycle (0.0 to 100.0 %)
+            Stat_Cooling_Active: Bool;    // TRUE if pneumatic cooler valve is energized
+            Stat_Cooling_Wait: Bool;      // TRUE if cooling is demanded but air compressor is resting
          END_STRUCT;
 
          Source_Chamber : STRUCT
-            Stat_GV_Open : Bool;
-            Stat_GV_Closed : Bool;
-            RB_Body_Temp : Real;
+            Stat_GV_Open : Bool;                // Limit switch: Gate Valve is fully open
+            Stat_GV_Closed : Bool;              // Limit switch: Gate Valve is fully closed
+            Stat_GV_Open_Permissive : Bool;     // TRUE if vacuum differential allows opening
+            Stat_GV_Close_Permissive : Bool;    // TRUE if beam is dead and safe to close
+            RB_Body_Temp : Real;                // Physical Readback (Thermocouple) in °C
          END_STRUCT;
 
          Endstation : STRUCT
-            RB_Dose_Count : Real;
+            RB_Dose_Count : Real;         // Integrated fluence/dose calculation
          END_STRUCT;
       END_STRUCT;
 
       // =====================================================================
       // FROM PC: WRITE-ONLY FOR PYTHON
-      // The PLC reads this, but NEVER blindly overwrites it.
+      // Python writes HMI demands and Recipe commands here.
+      // The PLC evaluates these (checking interlocks/modes) before executing.
       // =====================================================================
       From_PC : STRUCT
          System : STRUCT
-            PLC_Watchdog : Bool;
-            Cmd_Fault_Reset : Bool;
-            Cmd_Enable_Safety : Bool;
+            PLC_Watchdog : Int;           // PC increments this to prove it hasn't crashed
+            Cmd_Fault_Reset : Bool;       // One-shot pulse to clear latched faults
+            Cmd_Enable_Safety : Bool;     // Request to pull in the hardware safety relay
+            Cmd_Source_Shutdown : Bool;   // Request to shutdown the ion source
+            Cmd_Cancel_Shutdown : Bool;   // Request to cancel ion source shutdown procedure
          END_STRUCT;
 
          Source_Extraction : STRUCT
-            Cmd_Enable : Bool;
-            SP_Voltage : Real;
+            Cmd_Enable : Bool;            // Request to energize output
+            SP_Requested_Voltage : Real;  // Setpoint demanded by HMI / Recipe
+            Cmd_Ctrl_Mode : Int;          // Request authority (0=Manual, 1=PLC, 2=Recipe)
          END_STRUCT;
 
          Source_Target : STRUCT
-            Cmd_Enable : Bool;
-            SP_Voltage : Real;
+            Cmd_Enable : Bool;            // Request to energize output
+            SP_Requested_Voltage : Real;  // Setpoint demanded by HMI / Recipe
+            Cmd_Ctrl_Mode : Int;          // Request authority (0=Manual, 1=PLC, 2=Recipe)
          END_STRUCT;
 
          Source_Filament : STRUCT
-            Cmd_Enable : Bool;
-            SP_Current : Real;
+            Cmd_Enable : Bool;            // Request to energize output
+            SP_Requested_Current : Real;  // Setpoint demanded by HMI / Recipe
+            Cmd_Ctrl_Mode : Int;          // Request authority (0=Manual, 1=PLC, 2=Recipe)
          END_STRUCT;
 
          Source_Thermionic : STRUCT
-            Cmd_Enable : Bool;
-            Cmd_Auto_Emission : Bool;
-            SP_Current : Real;
+            Cmd_Enable : Bool;            // Request to energize output
+            Cmd_Auto_Emission : Bool;     // Request to engage closed-loop emission PID
+            SP_Requested_Current : Real;  // Setpoint demanded by HMI / Recipe
+            Cmd_Ctrl_Mode : Int;          // Request authority (0=Manual, 1=PLC, 2=Recipe)
          END_STRUCT;
 
          Source_Cesium : STRUCT
-            Cmd_Stop_Cooler : Bool;
-            SP_Temp : Real;
+            Cmd_Force_Cooling : Bool;     // Request to activate cooling air solenoid
+            SP_Requested_Temp : Real;     // Setpoint demanded by HMI / Recipe
+            Cmd_Ctrl_Mode : Int;          // Request authority (0=Manual, 1=PLC, 2=Recipe)
          END_STRUCT;
 
          Source_Chamber : STRUCT
-            Cmd_Open_GV : Bool;
-            Stat_Vac_OK_For_GV : Bool; // Python writes TRUE if VG1 & VG2 are safe
+            Cmd_Open_GV : Bool;           // Request to actuate Source Gate Valve
+            Stat_Vac_OK_For_GV : Bool;    // PC evaluates VG1/VG2 delta and grants permissive
          END_STRUCT;
 
          Beamline_Steering : STRUCT
-            SP_X_Volts : Real;
-            SP_Y_Volts : Real;
+            SP_Requested_X_Volts : Real;  // Requested X-axis steering (-200V to +200V)
+            SP_Requested_Y_Volts : Real;  // Requested Y-axis steering (-200V to +200V)
          END_STRUCT;
 
          Beamline_Diagnostics : STRUCT
-            Cmd_Insert_FC : Bool;
+            Cmd_Insert_FC : Bool;         // Request to insert Faraday Cup pneumatics
          END_STRUCT;
 
-         // PC evaluates serial/network data and writes Bools here for PLC to latch
+         // ==================================================================
+         // DEVICE STATUS FLAGS (Evaluated by PC via Serial/TCP, latched here)
+         // ==================================================================
          Pump_Status : STRUCT
             Stat_Src_Turbo_Trip : Bool;
             Stat_Src_Turbo_Comms_Fail : Bool;
@@ -211,18 +244,40 @@ NON_RETAIN
          END_STRUCT;
 
       END_STRUCT;
+
+      // =====================================================================
+      // INTERNAL MACHINE STATE
+      // Used for cross-block communication. Not used by Python.
+      // =====================================================================
+      Internal : STRUCT
+         Target_Min_Voltage : Real;
+         Cs_Heating_Permissive : Bool;
+         Cs_Is_Hot : Bool;
+         Seq_Cmd_Kill_Relay : Bool;
+         Seq_Cmd_Force_Cooler : Bool;
+         Seq_Cmd_Open_GV : Bool;
+         Seq_Ext_SP : Real;
+         Seq_Tgt_SP : Real;
+         Seq_Fil_SP : Real;
+         Req_Cs_Active_Cooling : Bool;
+         Ext_Is_Quenching : Bool;
+         Tgt_Is_Quenching : Bool;
+         Thm_Is_Quenching : Bool;
+      END_STRUCT;
    END_STRUCT;
 BEGIN
 END_DATA_BLOCK
+
 
 DATA_BLOCK "DB_PC_Retain"
 { S7_Optimized_Access := 'FALSE' }
 VERSION : 0.1
    STRUCT
       // =====================================================================
-      // NON-VOLATILE MEMORY
-      // Python NEVER reads or writes to this block. It is purely for the PLC
-      // to store setpoints and faults during power loss.
+      // NON-VOLATILE MEMORY (RETAINED)
+      // Python NEVER reads or writes to this block.
+      // Used by PLC to restore modes/setpoints after a power cycle (Warm Start)
+      // so the operator/Recipe Manager doesn't lose context.
       // =====================================================================
       Faults : STRUCT
             Word_0 : "UDT_Fault_Word_0_System";
@@ -234,17 +289,28 @@ VERSION : 0.1
       END_STRUCT;
 
       Settings : STRUCT
-         Ext_Voltage_SP : Real;
-         Target_Voltage_SP : Real;
-         Filament_Current_SP : Real;
-         Thermionic_Current_SP : Real;
-         Cesium_Temp_SP : Real;
-         Steering_X_SP : Real;
-         Steering_Y_SP : Real;
+         // Retained Requested Setpoints
+         Ext_SP_Requested_Voltage : Real;
+         Target_SP_Requested_Voltage : Real;
+         Filament_SP_Requested_Current : Real;
+         Thermionic_SP_Requested_Current : Real;
+         Cesium_SP_Requested_Temp : Real;
+         Steering_SP_Requested_X : Real;
+         Steering_SP_Requested_Y : Real;
+
+         // Retained Control Modes (Prevents Recipe Manager from dropping out)
+         Ext_Ctrl_Mode : Int;
+         Target_Ctrl_Mode : Int;
+         Filament_Ctrl_Mode : Int;
+         Thermionic_Ctrl_Mode : Int;
+         Cesium_Ctrl_Mode : Int;
+
+         // Retained last known readbacks
+         Cs_Last_Valid_Temp : Real;
       END_STRUCT;
 
       Endstation : STRUCT
-         RB_Dose_Count : Real;
+         RB_Dose_Count : Real;            // Retain integrated dose to prevent data loss
       END_STRUCT;
    END_STRUCT;
 BEGIN

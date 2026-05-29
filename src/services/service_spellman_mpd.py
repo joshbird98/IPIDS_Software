@@ -170,6 +170,7 @@ class SpellmanMicroservice:
 
             if bus_id not in self.buses:
                 ws_config = SPELLMAN_WAVESHARES.get(bus_id, {})
+                print(ws_config)
                 ip = ws_config.get("ip")
                 port = ws_config.get("port")
 

@@ -24,7 +24,7 @@
             "1": {"channel": 1, "on_val": 5.0e-6, "off_val": 8.0e-6},
             "2": {"channel": 2, "on_val": 1.0e-6, "off_val": 5.0e-6},
             "3": {"channel": 3, "on_val": 1.0e-6, "off_val": 5.0e-6},
-            "4": {"channel": 1, "on_val": 1.0e-6, "off_val": 5.0e-6},
+            "4": {"channel": 1, "on_val": 5.0e-6, "off_val": 8.0e-6},
             "5": {"channel": 2, "on_val": 1.0e-6, "off_val": 5.0e-6},
             "6": {"channel": 3, "on_val": 1.0e-6, "off_val": 5.0e-6}
         }
@@ -48,10 +48,10 @@
             }
         },
         "relays": {
-            "1": {"channel": 1, "on_val": 1.0e-6, "off_val": 5.0e-6},
+            "1": {"channel": 1, "on_val": 2.0e-5, "off_val": 5.0e-5},
             "2": {"channel": 2, "on_val": 1.0e-6, "off_val": 5.0e-6},
             "3": {"channel": 3, "on_val": 1.0e-6, "off_val": 5.0e-6},
-            "4": {"channel": 1, "on_val": 1.0e-6, "off_val": 5.0e-6},
+            "4": {"channel": 1, "on_val": 2.0e-5, "off_val": 5.0e-5},
             "5": {"channel": 2, "on_val": 1.0e-6, "off_val": 5.0e-6},
             "6": {"channel": 3, "on_val": 1.0e-6, "off_val": 5.0e-6}
         }

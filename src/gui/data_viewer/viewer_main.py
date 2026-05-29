@@ -21,13 +21,16 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtCore import Qt, QDateTime, QTimer, QThread, pyqtSignal
 import pyqtgraph as pg
 
+from src.core.network_config import ZMQ_PORT_LOGGER_CMD
 from src.gui.data_viewer.config_manager import load_registry
 from src.gui.data_viewer.channel_selector import ChannelSelectorDialog
-from src.core.data_cache import InfiniteDataCache
+from src.core.data_cache import DualPipelineCache
 
 from PyQt6.QtWidgets import QDialog, QFormLayout, QLineEdit, QComboBox, QDialogButtonBox
 from PyQt6.QtGui import QIcon, QPixmap, QColor
 from PyQt6.QtCore import QSize
+
+from src.core.perf_utils import PerfTracker
 
 class MarkerDialog(QDialog):
     def __init__(self, parent=None):
@@ -172,6 +175,9 @@ class DataViewerApp(QMainWindow):
         self.resize(1200, 800)
         self.showMaximized()
 
+        self.client_id = id(self)  # Unique memory address ID for this window
+        self.pending_hist_id = -1
+
         # 1. Data Layer
         self.cache = shared_cache
         self.system_registry = load_registry()
@@ -184,7 +190,17 @@ class DataViewerApp(QMainWindow):
         self.plot_config = copy.deepcopy(self.profiles.get("Default", {}))
 
         # 3. State
-        self.curves = {}
+        self.curves = {}  # For Live Data
+        self.hist_curves = {}  # For Stateless Historical Data
+
+        # Connect the two pipelines
+        self.cache.live_updated.connect(self._refresh_plot_live)
+        self.cache.historical_updated.connect(self._refresh_plot_historical)
+
+        self.historical_x = np.array([])
+        self.historical_y = {}
+        self.is_historical_mode = False
+
         self.auto_scroll = True
         self._auto_panning = False
         self.t0 = time.time()
@@ -193,12 +209,15 @@ class DataViewerApp(QMainWindow):
         self._init_ui()
 
         # 4. Connect Signals
-        self.render_timer = QTimer()
-        self.render_timer.timeout.connect(self._refresh_plot)
-        self.render_timer.start(100)  # ~10 FPS
+        self.cache.live_updated.connect(self._refresh_plot_live)
+        self.cache.historical_updated.connect(self._refresh_plot_historical)
+
+        self.historical_x = np.array([])
+        self.historical_y = {}
+        self.is_historical_mode = False
 
         # Use the new register method so we don't wipe out other windows
-        self.cache.register_tags(list(self.plot_config.keys()))
+        self.cache.register_client_tags(self.client_id, list(self.plot_config.keys()))
 
         self.pin_idx = None
         self.pin_x = None
@@ -207,12 +226,12 @@ class DataViewerApp(QMainWindow):
         self.y_auto_scale = True
 
         self.last_ui_update = 0.0
-        self.ui_lockout = 1.0 / 30.0  # Cap at 30 FPS
+        self.ui_lockout = 1.0 / 5.0  # Cap at 5 FPS
 
         # 5. Background Sync for multi-window marker updates
         self.marker_sync_timer = QTimer()
         self.marker_sync_timer.timeout.connect(self._refresh_event_markers)
-        self.marker_sync_timer.start(5000)  # Check SQLite every 5 seconds
+        self.marker_sync_timer.start(1000)  # Check SQLite every 1 second
 
     def _init_ui(self):
         main_widget = QWidget()
@@ -394,7 +413,7 @@ class DataViewerApp(QMainWindow):
         self.layout_widget.scene().sigMouseClicked.connect(self._handle_click_events)
 
         # Build the initial grid
-        self._build_lanes()
+        QTimer.singleShot(200, self.request_ui_refresh)
 
     def _toggle_y_lock(self):
         self.y_auto_scale = not self.y_auto_scale
@@ -440,6 +459,7 @@ class DataViewerApp(QMainWindow):
         self.pin_lines.clear()
         self.delta_labels.clear()
         self.curves.clear()
+        self.hist_curves.clear()
         self.marker_items.clear()
         self.time_axes = []
 
@@ -558,19 +578,100 @@ class DataViewerApp(QMainWindow):
         """Signals received from cache. Redraw handled by render_timer."""
         pass
 
-    def _refresh_plot(self):
+    def _refresh_plot_live(self):
         now = time.perf_counter()
-        if now - self.last_ui_update < self.ui_lockout:
-            return  # Drop this request, we are refreshing too fast
-
+        if now - self.last_ui_update < self.ui_lockout: return
         self.last_ui_update = now
 
-        if not self.cache.tags or not self.lanes: return
+        if not self.cache.tags or not getattr(self, 'lanes', None): return
+        for ta in getattr(self, 'time_axes', []): ta.set_offset(self.t0)
 
-        for ta in self.time_axes:
-            ta.set_offset(self.t0)
+        # Grab the raw reference without allocating any new memory
+        x_raw = self.cache.x_live_view
+        if len(x_raw) == 0: return
 
-        x = self.cache.x_time - self.t0
+        t_slice = time.perf_counter()
+
+        # 1. DYNAMIC VIEWPORT SLICING (No Array Math Yet!)
+        base_plot = list(self.lanes.values())[0]
+        view_start, view_end = base_plot.viewRange()[0]
+        span = view_end - view_start
+
+        # Convert UI view bounds into absolute time to match the raw backend array
+        abs_slice_start = (view_start - span) + self.t0
+        abs_slice_end = (view_end + span) + self.t0
+
+        # Search the raw O(1) view directly
+        start_idx = np.searchsorted(x_raw, abs_slice_start)
+        end_idx = np.searchsorted(x_raw, abs_slice_end, side='right')
+
+        x_slice = x_raw[start_idx:end_idx] - self.t0
+
+        y_slice_dict = {}
+        for tag in self.cache.tags:
+            y_arr = self.cache.y_live_view.get(tag)
+            if y_arr is not None:
+                # Slice Y-data using the same indices
+                y_slice_dict[tag] = y_arr[start_idx:end_idx]
+
+        MAX_LIVE_RENDER_POINTS = 10000
+        if len(x_slice) > MAX_LIVE_RENDER_POINTS and len(y_slice_dict) > 0:
+            from src.core.data_engine import TimeSeriesEngine  # Import your engine
+
+            # Use the first tag to align the decimated time axis
+            first_tag = list(y_slice_dict.keys())[0]
+            x_decimated, _ = TimeSeriesEngine.downsample_minmax(
+                x_slice, y_slice_dict[first_tag], target_points=MAX_LIVE_RENDER_POINTS
+            )
+
+            new_y_dict = {}
+            for tag, y_arr in y_slice_dict.items():
+                _, y_decimated = TimeSeriesEngine.downsample_minmax(
+                    x_slice, y_arr, target_points=MAX_LIVE_RENDER_POINTS
+                )
+                new_y_dict[tag] = y_decimated
+
+            # Replace the massive raw arrays with the protected decimated arrays
+            x_slice = x_decimated
+            y_slice_dict = new_y_dict
+
+        PerfTracker.slice_size = len(x_slice)
+        PerfTracker.log("slice", t_slice)
+
+        # --- START TRACKING RENDER TIME ---
+        t_render = time.perf_counter()
+
+        self._render_curves(self.curves, x_slice, y_slice_dict, is_historical=False)
+
+        PerfTracker.log("render", t_render)
+
+        if self.is_historical_mode and len(self.historical_x) > 0:
+            self._render_curves(self.hist_curves, self.historical_x, self.historical_y, is_historical=True)
+
+        if self.auto_scroll:
+            self._auto_panning = True
+            current_width = view_end - view_start
+            self.live_span = current_width
+
+            # Use raw absolute time to find the newest edge
+            latest_x_relative = x_raw[-1] - self.t0
+            base_plot.setXRange(latest_x_relative - current_width, latest_x_relative, padding=0)
+            self._auto_panning = False
+
+    def _refresh_plot_historical(self, ts_array, vals_dict, req_id=None):
+        if req_id is not None and req_id != self.pending_hist_id:
+            return
+        # if not self.is_historical_mode: return  ### not used right now?
+        #t_start = time.perf_counter()
+        self.historical_x = ts_array - self.t0
+        self.historical_y = vals_dict
+        #t_prep = time.perf_counter()
+        self._render_curves(self.hist_curves, self.historical_x, self.historical_y, is_historical=True)
+
+        #t_end = time.perf_counter()
+        #print(f"[UI] Historical Render Complete: {(t_end - t_prep) * 1000:.1f} ms (Total UI block: {(t_end - t_start) * 1000:.1f} ms)")
+
+    def _render_curves(self, target_dict, x_array, y_dict, is_historical):
         sorted_tags = sorted(self.cache.tags)
         active_axes = {lane: {'linear': False, 'log': False} for lane in self.lanes}
 
@@ -579,50 +680,38 @@ class DataViewerApp(QMainWindow):
             lane = cfg.get('lane', 'Lane 1')
 
             if not cfg.get('selected') or lane not in self.lanes:
-                if tag in self.curves:
-                    c = self.curves.pop(tag)
-                    scene = c.scene()
-                    if scene: scene.removeItem(c)
-                    # FIX 3: Ensure deselected channels are scrubbed from legends
-                    for legend in self.lane_legends.values():
-                        legend.removeItem(c)
+                if tag in target_dict:
+                    target_dict[tag].setVisible(False)
                 continue
 
-            if tag not in self.curves:
+            if tag not in target_dict:
                 color = self._get_distinct_color(idx)
                 pen = pg.mkPen(color=color, width=1.0)
                 c = pg.PlotDataItem(pen=pen, autoDownsample=True, clipToView=True, connect='finite')
 
-                if cfg.get('scale') == 'log':
-                    self.lane_axes[lane].addItem(c)
-                else:
-                    self.lanes[lane].addItem(c)
+                if cfg.get('scale') == 'log': self.lane_axes[lane].addItem(c)
+                else: self.lanes[lane].addItem(c)
 
-                # --- UNIT INJECTION FOR INITIAL DRAW ---
-                label_text = cfg.get('label', tag)
-                unit = getattr(self, 'system_registry', {}).get(tag, {}).get("unit", "")
-                unit_str = f" [{unit}]" if unit else ""
-                display_name = f"{label_text}{unit_str}"
+                if not is_historical:
+                    label_text = cfg.get('label', tag)
+                    unit = getattr(self, 'system_registry', {}).get(tag, {}).get("unit", "")
+                    unit_str = f" [{unit}]" if unit else ""
+                    self.lane_legends[lane].addItem(c, name=f"{label_text}{unit_str}")
+                target_dict[tag] = c
 
-                # Pass the dynamically constructed string to the legend
-                self.lane_legends[lane].addItem(c, name=display_name)
-                self.curves[tag] = c
+            target_dict[tag].setVisible(True)
 
-            y = self.cache.y_data.get(tag, np.array([]))
-            if len(y) == 0: continue
-
-            min_len = min(len(x), len(y))
-            x_plot = x[-min_len:]
-
-            # --- NaN SANITIZATION AND TYPE CASTING ---
-            try:
-                # 1. Force booleans (True/False) to plottable floats (1.0/0.0)
-                y_raw = np.asarray(y[-min_len:], dtype=np.float64)
-
-                y_plot = y_raw * cfg.get('multiplier', 1.0)
-            except Exception as e:
-                print(f"[Plot Error] Skipping {tag}: Data cast failed - {e}")
+            y = y_dict.get(tag, np.array([]))
+            if len(y) == 0:
+                target_dict[tag].setData([], [])
                 continue
+
+            min_len = min(len(x_array), len(y))
+            x_plot = x_array[-min_len:]
+            try:
+                y_raw = np.asarray(y[-min_len:], dtype=np.float64)
+                y_plot = y_raw * cfg.get('multiplier', 1.0)
+            except: continue
 
             if cfg.get('scale') == 'log':
                 active_axes[lane]['log'] = True
@@ -631,49 +720,15 @@ class DataViewerApp(QMainWindow):
             else:
                 active_axes[lane]['linear'] = True
 
-            self.curves[tag].setData(x_plot, y_plot)
-
-        # --- Smart Auto-Scroll (Preserves Zoom) ---
-        if self.auto_scroll and len(x) > 0:
-            self._auto_panning = True
-            base_plot = list(self.lanes.values())[0]
-
-            # Capture current width
-            view_range = base_plot.viewRange()[0]
-            current_width = view_range[1] - view_range[0]
-
-            # Keep live_span in sync so the 1m/15m buttons remain relevant
-            self.live_span = current_width
-
-            # Snap to live edge
-            base_plot.setXRange(x[-1] - current_width, x[-1], padding=0)
-            self._auto_panning = False
+            target_dict[tag].setData(x_plot, y_plot)
 
         for lane, states in active_axes.items():
             left_axis = self.lanes[lane].getAxis('left')
-            left_axis.show() # Force axis ON so grid renders
-
+            left_axis.show()
             show_log = states['log']
             self.lane_axes[lane].setVisible(show_log)
-            if lane in self.log_axis_widgets:
-                self.log_axis_widgets[lane].setVisible(show_log)
-
-            if states['linear']:
-                left_axis.setStyle(showValues=True)
-            else:
-                left_axis.setStyle(showValues=False)
-
-    def _silent_preload(self):
-        """Quietly loads historical data into RAM so zooming out doesn't lag."""
-        now = time.time()
-
-        # Preload the last 24 hours.
-        fetch_start = now - 86400  # 24 hours ago
-        fetch_end = now - 300  # 5 minutes ago (already loaded on boot)
-
-        # This will hit your InfiniteDataCache worker thread without blocking the mouse
-        self.cache.request_history(fetch_start, fetch_end, stride=1)
-        print("[Preload] Silent 24-hour backfill dispatched.")
+            if lane in self.log_axis_widgets: self.log_axis_widgets[lane].setVisible(show_log)
+            left_axis.setStyle(showValues=states['linear'])
 
     # --- Event Handlers ---
 
@@ -699,6 +754,24 @@ class DataViewerApp(QMainWindow):
             self.live_span = vr[1] - vr[0]
 
         self._check_and_fetch_history()
+        self._refresh_plot_live()
+
+    def request_ui_refresh(self):
+        """
+        The one true entry point for updating data after any UI change.
+        Calls this after loading profiles, changing channels, or startup.
+        """
+        # 1. Clear existing items and rebuild layout
+        self._build_lanes()
+
+        # 2. Reset inspector and legends
+        self._ensure_inspector_items()
+        self._reset_legend_text()
+        self._refresh_event_markers()
+
+        # 3. Delay the fetch by 200ms to allow the layout to stabilize
+        # This prevents the 'clash' where signals fire before lanes are built.
+        QTimer.singleShot(200, self._check_and_fetch_history)
 
     def _toggle_scroll_lock(self, manual_break=False):
         if manual_break:
@@ -783,23 +856,18 @@ class DataViewerApp(QMainWindow):
         name = self.combo_profiles.currentText()
         if name in self.profiles:
             self.plot_config = copy.deepcopy(self.profiles[name])
-            self.cache.register_tags(list(self.plot_config.keys()))
+            self.cache.register_client_tags(self.client_id, list(self.plot_config.keys()))
 
-            self._build_lanes()
-            self._ensure_inspector_items()
-            self._refresh_event_markers()
+            self.request_ui_refresh()
 
     def open_channel_config(self):
         available_tags = {k: None for k in self.system_registry.keys()}
         dlg = ChannelSelectorDialog(available_tags, self.plot_config, self.system_registry, self)
         if dlg.exec():
             self.plot_config = dlg.get_selection()
-            self.cache.register_tags(list(self.plot_config.keys()))
+            self.cache.register_client_tags(self.client_id,list(self.plot_config.keys()))
 
-        self._build_lanes()
-        self._ensure_inspector_items()
-        self._refresh_event_markers()
-        self._reset_legend_text()
+        self.request_ui_refresh()
 
     def _get_distinct_color(self, index):
         """Returns a high-contrast color based on the golden ratio."""
@@ -831,66 +899,53 @@ class DataViewerApp(QMainWindow):
         right_edge = view_range[1]
 
         # If we are live, snap to the very end of the cache
-        if self.auto_scroll and len(self.cache.x_time) > 0:
-            right_edge = self.cache.x_time[-1] - self.t0
+        if self.auto_scroll and len(self.cache.x_live_view) > 0:
+            right_edge = self.cache.x_live_view[-1] - self.t0
 
         base_plot.setXRange(right_edge - span_seconds, right_edge, padding=0)
         self._check_and_fetch_history()  # History load happens under shield
         self._auto_panning = False
 
     def _check_and_fetch_history(self):
-        """Unified logic for checking if the current view needs a disk read."""
         if not self.lanes: return
         base_plot = list(self.lanes.values())[0]
 
         view_start, view_end = base_plot.viewRange()[0]
-        span_seconds = view_end - view_start
         start_ts = self.t0 + view_start
         end_ts = self.t0 + view_end
 
-        # 1. Determine Resolution (Stride)
-        if span_seconds > 86400 * 7:
-            target_stride = 100
-        elif span_seconds > 86400:
-            target_stride = 10
+        oldest_live_ts = self.cache.x_live_view[0] if len(self.cache.x_live_view) > 0 else time.time() - (3600 * 12)
+        # DEBUG: See what the UI is asking for
+        print(f"[UI State] View Span: {start_ts:.1f} to {end_ts:.1f} (Duration: {(end_ts - start_ts) / 3600:.2f} hrs | Oldest Live: {oldest_live_ts:.1f}")
+
+        # Are we looking at data older than the 1-hour live tail?
+        oldest_live_ts = self.cache.x_live_view[0] if len(self.cache.x_live_view) > 0 else time.time() - (3600 * 12)
+
+        if start_ts < oldest_live_ts:
+            #print(f"[UI State] Historical Mode Triggered. Oldest Live: {oldest_live_ts:.1f}")
+            self.is_historical_mode = True
+            currently_selected = [tag for tag in self.cache.tags if self.plot_config.get(tag, {}).get('selected')]
+            self.pending_hist_id = self.cache.request_historical_window(start_ts, end_ts, selected_tags=currently_selected)
         else:
-            target_stride = 1
+            self.is_historical_mode = False
+            self._clear_historical_curves()
 
-        # 2. Handle Resolution Increase (Clear old data to prevent stacking)
-        if target_stride < self.cache.current_stride:
-            for c in self.curves.values():
-                scene = c.scene()
-                if scene: scene.removeItem(c)
-                for legend in self.lane_legends.values():
-                    legend.removeItem(c)
-
-            self.curves.clear()
-            self.marker_items.clear()
-
-            self.cache.request_history(start_ts, end_ts, stride=target_stride)
-            self._refresh_event_markers()
-            return
-
-        # 3. Handle Panning Left (Fetch older data)
-        if start_ts < self.cache.oldest_loaded_ts:
-            fetch_start = start_ts - span_seconds
-            self.cache.request_history(fetch_start, self.cache.oldest_loaded_ts, stride=target_stride)
-
-        # 4. Final UI Sync
         self._refresh_event_markers()
 
+    def _clear_historical_curves(self):
+        for c in self.hist_curves.values():
+            c.setData([], [])
+
     def _on_mouse_moved(self, pos):
-        if not self.btn_inspector.isChecked() or len(self.cache.x_time) == 0:
+        if not self.btn_inspector.isChecked():
             return
 
-        # 1. IMPROVED HOVER DETECTION
-        # Instead of just 'contains', we find the plot the mouse is vertically closest to
+        # 1. HOVER DETECTION
         hovered_plot = None
         min_dist = float('inf')
 
         for p in self.lanes.values():
             rect = p.sceneBoundingRect()
-            # If mouse is inside the horizontal bounds of the plots
             if rect.left() <= pos.x() <= rect.right():
                 dist = abs(pos.y() - rect.center().y())
                 if dist < min_dist:
@@ -900,69 +955,66 @@ class DataViewerApp(QMainWindow):
         if not self.lanes: return
         ref_plot = hovered_plot if hovered_plot else list(self.lanes.values())[0]
 
-        # Map to plot coordinates
         mouse_point = ref_plot.vb.mapSceneToView(pos)
         mouse_x = mouse_point.x()
 
-        norm_x = self.cache.x_time - self.t0
-        idx = np.searchsorted(norm_x, mouse_x, side='right') - 1
-        idx = np.clip(idx, 0, len(norm_x) - 1)
-        actual_x = norm_x[idx]
+        # 2. DYNAMIC PIPELINE ROUTER
+        # Determine the physical X-coordinate where Live Data begins
+        live_start_x = (self.cache.x_live_view[0] - self.t0) if len(self.cache.x_live_view) > 0 else float('inf')
 
-        # Update crosshairs for ALL lanes
+        # If history is loaded AND mouse is to the left of the live boundary, read from Polars
+        if self.is_historical_mode and mouse_x < live_start_x and len(self.historical_x) > 0:
+            x_source = self.historical_x
+            y_source = self.historical_y
+            ts_source = self.historical_x + self.t0
+        else:
+            if len(self.cache.x_live_view) == 0: return
+            x_source = self.cache.x_live_view - self.t0
+            y_source = self.cache.y_live_view
+            ts_source = self.cache.x_live_view
+
+        # 3. SNAP TO CLOSEST DATA POINT
+        idx = np.searchsorted(x_source, mouse_x, side='right') - 1
+        idx = np.clip(idx, 0, len(x_source) - 1)
+        actual_x = x_source[idx]
+
         for v_line in self.v_lines:
             v_line.setPos(actual_x)
             v_line.setVisible(True)
 
-        # --- DYNAMIC ANCHORING WITH VERTICAL OFFSET ---
+        # --- DYNAMIC ANCHORING ---
         view_rect = ref_plot.vb.viewRect()
         x_pct = (mouse_point.x() - view_rect.left()) / view_rect.width()
         y_pct = (mouse_point.y() - view_rect.bottom()) / view_rect.height()
 
-        # Horizontal: Flip if near the right edge
         anchor_x = 1.1 if x_pct > 0.8 else -0.1
-
-        # Vertical: If mouse is in the top half of the lane, show text BELOW.
-        # If in bottom half, show text ABOVE.
         anchor_y = -0.2 if y_pct > 0.5 else 1.2
 
-        delta_msg = ""
-        # 1. Only generate a message if we have an active pin timestamp
         active_pin = getattr(self, 'pin_timestamp', None)
+        delta_msg = ""
 
         if active_pin is not None:
-            actual_ts = self.cache.x_time[idx]
+            actual_ts = ts_source[idx]
             dt = actual_ts - active_pin
             delta_msg = f"Δt: {self._format_delta_time(dt)}"
 
         for i, p in enumerate(self.lanes.values()):
             label = self.delta_labels[i]
-            # 2. Only show the label if we are hovering a plot AND have a message
             if p == hovered_plot and delta_msg != "":
                 label.setAnchor((anchor_x, anchor_y))
                 label.setPos(actual_x, mouse_point.y())
                 label.setText(delta_msg)
                 label.show()
             else:
-                # If no message or not hovering, force hide
                 label.hide()
 
-            # --- DYNAMIC LEGEND UPDATES ---
-            active_pin_ts = getattr(self, 'pin_timestamp', None)
-            pin_idx_resolved = None
-
-            # If a pin exists, find its current index in the RAM cache
-            if active_pin_ts is not None:
-                # We search the cache for the index closest to our absolute timestamp
-                pin_idx_resolved = np.searchsorted(self.cache.x_time, active_pin_ts, side='right') - 1
-                # Ensure the pin hasn't been pruned out of RAM (index < 0)
-                if pin_idx_resolved < 0:
-                    pin_idx_resolved = None
-
-            for tag, curve in self.curves.items():
+            # --- LEGEND UPDATES ---
+            for tag, curve in self.curves.items():  # We update the base live curves legends
                 cfg = self.plot_config.get(tag, {})
                 lane = cfg.get('lane', 'Lane 1')
-                y_data = self.cache.y_data.get(tag, np.array([]))
+
+                # Pull data from the dynamically selected source
+                y_data = y_source.get(tag, np.array([]))
 
                 if len(y_data) <= idx or lane not in self.lane_legends:
                     continue
@@ -971,20 +1023,20 @@ class DataViewerApp(QMainWindow):
                 label_text = cfg.get('label', tag)
                 fmt = ".2e" if cfg.get('scale') == 'log' else ".2f"
 
-                # 1. Reconstruct 'Label [Unit]'
                 unit = getattr(self, 'system_registry', {}).get(tag, {}).get("unit", "")
                 unit_bracket = f" [{unit}]" if unit else ""
                 display_name = f"{label_text}{unit_bracket}"
 
-                # 2. Format base readout
                 legend_text = f"{display_name}: {val:{fmt}}"
 
-                # 3. Format Delta readout with units
-                if pin_idx_resolved is not None and pin_idx_resolved < len(y_data):
-                    dy = val - y_data[pin_idx_resolved]
-                    # Append unit specifically to the delta value
-                    unit_suffix = f" {unit}" if unit else ""
-                    legend_text += f" (Δ: {dy:{fmt}}{unit_suffix})"
+                # 4. CROSS-DOMAIN DELTA MATH
+                if active_pin is not None:
+                    # Look up the exact value we cached when the pin was dropped
+                    pin_val = getattr(self, 'pinned_values', {}).get(tag)
+                    if pin_val is not None:
+                        dy = val - pin_val
+                        unit_suffix = f" {unit}" if unit else ""
+                        legend_text += f" (Δ: {dy:{fmt}}{unit_suffix})"
 
                 lbl_item = self.lane_legends[lane].getLabel(curve)
                 if lbl_item:
@@ -1007,18 +1059,35 @@ class DataViewerApp(QMainWindow):
         if event.button() == Qt.MouseButton.LeftButton and QApplication.keyboardModifiers() == Qt.KeyboardModifier.ControlModifier:
             if not self.btn_inspector.isChecked(): return
 
-            ref_plot = list(self.lanes.values())[0]
-            mouse_point = ref_plot.vb.mapSceneToView(event.scenePos())
+            mouse_x = mouse_point.x()
 
-            # Find the closest data point in time
-            norm_x = self.cache.x_time - self.t0
-            idx = np.searchsorted(norm_x, mouse_point.x(), side='right') - 1
-            idx = np.clip(idx, 0, len(norm_x) - 1)
+            # DYNAMIC PIPELINE ROUTER
+            live_start_x = (self.cache.x_live_view[0] - self.t0) if len(self.cache.x_live_view) > 0 else float('inf')
 
-            # CRITICAL: Store the ABSOLUTE timestamp, not the index
-            self.pin_timestamp = self.cache.x_time[idx]
+            if self.is_historical_mode and mouse_x < live_start_x and len(self.historical_x) > 0:
+                x_source = self.historical_x
+                y_source = self.historical_y
+                ts_source = self.historical_x + self.t0
+            else:
+                if len(self.cache.x_live_view) == 0: return
+                x_source = self.cache.x_live_view - self.t0
+                y_source = self.cache.y_live_view
+                ts_source = self.cache.x_live_view
 
-            # Update the red line position for all lanes
+            idx = np.searchsorted(x_source, mouse_x, side='right') - 1
+            idx = np.clip(idx, 0, len(x_source) - 1)
+
+            # Store the absolute timestamp
+            self.pin_timestamp = ts_source[idx]
+
+            # CACHE THE EXACT Y-VALUES AT THE PIN LOCATION
+            # This allows flawless delta math even if the mouse crosses into a different pipeline
+            self.pinned_values = {}
+            for tag in self.cache.tags:
+                y_data = y_source.get(tag, np.array([]))
+                self.pinned_values[tag] = y_data[idx] if len(y_data) > idx else None
+
+            # Update visual pin lines
             for pin_line in self.pin_lines:
                 pin_line.setPos(self.pin_timestamp - self.t0)
                 pin_line.show()
@@ -1026,6 +1095,7 @@ class DataViewerApp(QMainWindow):
         # Right Click: Clear Pin
         elif event.button() == Qt.MouseButton.RightButton:
             self.pin_timestamp = None
+            self.pinned_values = {}
             for pin_line in self.pin_lines: pin_line.hide()
             for label in self.delta_labels: label.hide()
 
@@ -1153,12 +1223,12 @@ class DataViewerApp(QMainWindow):
         # Get range from top lane
         base_plot = list(self.lanes.values())[0]
         view_start, view_end = base_plot.viewRange()[0]
-        norm_x = self.cache.x_time - self.t0
+        norm_x = self.cache.x_live_view - self.t0
         indices = np.where((norm_x >= view_start) & (norm_x <= view_end))[0]
         if len(indices) == 0: return
 
-        x_slice = self.cache.x_time[indices]
-        y_slices = {tag: self.cache.y_data[tag][indices] for tag in selected_tags}
+        x_slice = self.cache.x_live_view[indices]
+        y_slices = {tag: self.cache.y_live_view[tag][indices] for tag in selected_tags}
 
         from PyQt6 import QtSvg
         from PyQt6.QtCore import QBuffer, QIODevice, QRectF
@@ -1475,6 +1545,8 @@ class DataViewerApp(QMainWindow):
 
 if __name__ == "__main__":
     import json
+    import zmq
+    import orjson
 
     app = QApplication(sys.argv)
 
@@ -1485,37 +1557,36 @@ if __name__ == "__main__":
     print(log_dir)
 
     print("[Launcher] Spinning up Master Data Cache...")
-    master_cache = InfiniteDataCache(log_dir)
+    master_cache = DualPipelineCache(log_dir)
     master_cache.start()
 
     print("[Launcher] Forcing logger RAM flush to bridge historical gap...")
-    cmd_pub = zmq.Context.instance().socket(zmq.PUB)
-    cmd_pub.connect("tcp://127.0.0.1:55555")
-    time.sleep(0.2)  # Wait 200ms for TCP handshake to connect
-    for _ in range(3):
-        cmd_pub.send_multipart([b"CMD", orjson.dumps({"command": "FORCE_FLUSH"})])
-        time.sleep(0.1)
-    time.sleep(0.5)  # Give the logger 500ms to physically write the Parquet file to disk
-    # ----------------------
+    try:
+        cmd_req = zmq.Context.instance().socket(zmq.REQ)
+        cmd_req.setsockopt(zmq.RCVTIMEO, 2000)  # 2-second timeout prevents infinite hang
+        cmd_req.connect(ZMQ_PORT_LOGGER_CMD)
 
-    # Preload the last 5 minutes immediately
-    now = time.time()
-    master_cache.request_history(now - 300, now, stride=1)
+        # Send the command
+        cmd_req.send_string("FORCE_FLUSH")
+
+        # This blocks execution until the logger replies, eliminating the race condition
+        reply = cmd_req.recv_string()
+        print(f"[Launcher] Logger confirmed: {reply}")
+
+    except zmq.error.Again:
+        print("[Launcher] WARNING: Logger flush timed out. Historical gap may be present.")
+    except Exception as e:
+        print(f"[Launcher] WARNING: Flush failed - {e}")
 
     # 2. Launch Multiple Thin-Client Windows
-    # Both windows are passed the exact same master_cache memory reference
+    # The windows will automatically fetch their required data the moment they render
     window_1 = DataViewerApp(master_cache, window_title="IPIDS Data Viewer - Window 1")
     window_2 = DataViewerApp(master_cache, window_title="IPIDS Data Viewer - Window 2")
-    #window_3 = DataViewerApp(master_cache, window_title="IPIDS Data Viewer - Window 3")
-    #window_4 = DataViewerApp(master_cache, window_title="IPIDS Data Viewer - Window 4")
 
     window_1.show()
     window_2.show()
-    #window_3.show()
-    #window_4.show()
 
     # 3. Execute Application Loop
-    # The code will block here until the user closes ALL open windows
     exit_code = app.exec()
 
     # 4. Graceful Teardown

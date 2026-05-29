@@ -6,16 +6,15 @@ from PyQt6.QtCore import QObject, QThread, pyqtSignal, QTimer
 
 from src.core.data_engine import TimeSeriesEngine
 from src.core.zmq_listener import ZMQLiveEngine
-
-# Include the new ports we added during Phase 1
 from src.core.network_config import (
     ZMQ_PORT_PLC_PUB, ZMQ_PORT_VACUUM_PUB, ZMQ_PORT_SRC_TURBO_PUB,
     ZMQ_PORT_SPELLMAN_PUB, ZMQ_PORT_MAGNET_PUB
 )
 
-class HistoryFetchWorker(QThread):
-    """Background thread to prevent UI freezing during fast Parquet disk reads."""
-    # Signals: start_ts, end_ts, ts_array, vals_dict, stride
+from src.core.perf_utils import PerfTracker
+
+
+class StatelessQueryWorker(QThread):
     data_fetched = pyqtSignal(float, float, object, object, int)
 
     def __init__(self, engine):
@@ -23,199 +22,180 @@ class HistoryFetchWorker(QThread):
         self.engine = engine
         self.req_start = 0.0
         self.req_end = 0.0
-        self.stride = 1
+        self.req_id = 0
+        self.selected_tags = []
 
-    def fetch(self, start_ts: float, end_ts: float, stride: int = 1):
+    def fetch(self, start_ts: float, end_ts: float, request_id: int, selected_tags: list):
         self.req_start = start_ts
         self.req_end = end_ts
-        self.stride = stride
-        self.start()
+        self.req_id = request_id
+        self.selected_tags = selected_tags  # Save the tags to the instance
+        self.start()  # This triggers the run() method below
+
+    def apply_safety_downsample(self, ts, vals_dict, target=4000):
+        """Processes the dict through downsample_minmax in the thread."""
+        if len(ts) <= target:
+            return ts, vals_dict
+
+        new_vals = {}
+        # Decimate the time array using the first key (all channels share the time axis)
+        first_key = list(vals_dict.keys())[0]
+        final_times, _ = self.engine.downsample_minmax(ts, vals_dict[first_key], target_points=target)
+
+        # Apply to all
+        for k, v in vals_dict.items():
+            _, final_vals = self.engine.downsample_minmax(ts, v, target_points=target)
+            new_vals[k] = final_vals
+
+        return final_times, new_vals
 
     def run(self):
         try:
-            ts, vals_dict = self.engine.query(self.req_start, self.req_end, stride=self.stride)
-            self.data_fetched.emit(self.req_start, self.req_end, ts, vals_dict, self.stride)
+            # Pass the tags through to the engine here
+            ts, vals_dict = self.engine.query_stateless(
+                self.req_start,
+                self.req_end,
+                self.selected_tags
+            )
+            # 2. Safety Valve Downsampling
+            decimated_ts, decimated_vals = self.apply_safety_downsample(ts, vals_dict)
+
+            # 3. Emit the decimated data
+            self.data_fetched.emit(self.req_start, self.req_end, decimated_ts, decimated_vals, self.req_id)
         except Exception as e:
-            print(f"[HistoryWorker] Error fetching data: {e}")
-            self.data_fetched.emit(self.req_start, self.req_end, np.array([]), {}, self.stride)
+            print(f"[Worker] Error during fetch: {e}")
+            self.data_fetched.emit(self.req_start, self.req_end, np.array([]), {}, self.req_id)
 
 
-class InfiniteDataCache(QObject):
-    """Unified RAM buffer managing both live ZMQ streams and historical disk data."""
-    data_updated = pyqtSignal()
+class DualPipelineCache(QObject):
+    live_updated = pyqtSignal()
+    historical_updated = pyqtSignal(object, object, int)
     markers_changed = pyqtSignal()
 
     def __init__(self, log_dir: str):
         super().__init__()
         self.engine = TimeSeriesEngine(log_dir)
+        self.query_worker = StatelessQueryWorker(self.engine)
 
-        self.history_worker = HistoryFetchWorker(self.engine)
-        self.history_worker.data_fetched.connect(self._on_history_fetched)
+        # Connect BOTH the data signal and the thread lifecycle signal
+        self.query_worker.data_fetched.connect(self._on_historical_fetched)
+        self.query_worker.finished.connect(self._on_worker_finished)
 
-        # Updated to listen to all modernized microservices
         self.zmq_listener = ZMQLiveEngine(
             ZMQ_PORT_PLC_PUB, ZMQ_PORT_VACUUM_PUB, ZMQ_PORT_SRC_TURBO_PUB,
             ZMQ_PORT_SPELLMAN_PUB, ZMQ_PORT_MAGNET_PUB
         )
         self.zmq_listener.data_ready.connect(self._on_live_data)
 
-        # --- MEMORY MANAGEMENT PARAMETERS ---
-        self.max_capacity = 200000  # Max points kept in RAM (~5.5 hours at 10Hz)
-        self.chunk_size = 5000  # Block allocation size (~8.3 minutes of space)
-
-        # 1. The Background Buffers (The true memory)
-        self._x_buffer = np.zeros(self.chunk_size, dtype=np.float64)
-        self._y_buffers = {key: np.zeros(self.chunk_size, dtype=np.float64) for key in self.engine.channel_keys}
-
-        self.write_ptr = 0
-
-        # 2. The UI Views (These act as windows so the UI never sees the blank trailing zeros)
-        self.tags = []
-        self.x_time = self._x_buffer[:0]
-        self.y_data = {key: self._y_buffers[key][:0] for key in self.engine.channel_keys}
-
+        # LIVE DOMAIN: Fixed 1-Hour Rolling Buffer (10Hz = 36,000 points)
+        self.live_capacity = 5000000 # was 432000
+        self._x_live = np.zeros(self.live_capacity, dtype=np.float64)
+        self._y_live = {key: np.zeros(self.live_capacity, dtype=np.float64) for key in self.engine.channel_keys}
+        self.live_ptr = 0
         self.key_last_seen = {key: time.time() for key in self.engine.channel_keys}
 
-        self.oldest_loaded_ts = time.time()
+        # VIEWER WINDOWS
+        self.client_tags = {}
+        self.tags = set()
+        self.x_live_view = self._x_live[:0]
+        self.y_live_view = {key: self._y_live[key][:0] for key in self.engine.channel_keys}
+
+        self.current_request_id = 0
         self.is_fetching = False
-        self.current_stride = 1
 
-        # --- HEALTH MONITORING ---
         self.process = psutil.Process(os.getpid())
-        self.process.cpu_percent()
-
         self.health_timer = QTimer()
         self.health_timer.timeout.connect(self._print_health_stats)
         self.health_timer.start(60000)
 
-    def notify_markers_changed(self):
-        self.markers_changed.emit()
-
-    def _emit_render_signal(self):
-        if self.write_ptr > 0 and not self.is_fetching:
-            self.data_updated.emit()
-
     def _print_health_stats(self):
         mem_mb = self.process.memory_info().rss / (1024 * 1024)
-        cpu_pct = self.process.cpu_percent()
-        print(
-            f"[UI Cache] CPU: {cpu_pct:>4.1f}% | RAM: {mem_mb:>6.1f} MB | Buffer: {self.write_ptr}/{self.max_capacity}")
+        perf = PerfTracker.get_stats()
+        print(f"[UI] Time {time.time()} | CPU: {self.process.cpu_percent():>4.1f}% | RAM: {mem_mb:>6.1f} MB | {perf} | Buffer: {self.live_ptr}")
 
-    def register_tags(self, tags: list):
-        self.tags = [tag for tag in tags if tag in self.engine.channel_keys]
+    def register_client_tags(self, client_id: int, tags: list):
+        ## self.tags = [tag for tag in tags if tag in self.engine.channel_keys] ## OLD LINE
+        """Allows multiple windows to request different live streams safely."""
+        self.client_tags[client_id] = set(tags)
+        # The cache will subscribe to the UNION of all requested tags
+        self.tags = set().union(*self.client_tags.values())
 
     def start(self):
         self.zmq_listener.start()
 
     def stop(self):
-        self.zmq_listener.stop()
-        self.history_worker.wait()
+        self.zmq_listener.stop(); self.query_worker.wait()
 
-    def request_history(self, start_ts: float, end_ts: float, stride=1):
-        if self.is_fetching:
+    def request_historical_window(self, start_ts: float, end_ts: float, selected_tags: list):
+        """Queues the newest time window requested by the UI."""
+        self.current_request_id += 1
+        # Store the selected_tags in the request tuple so _dispatch_pending can access it
+        self.pending_request = (start_ts, end_ts, self.current_request_id, selected_tags)
+
+        # If the worker is free, dispatch it immediately
+        if not self.is_fetching:
+            self._dispatch_pending()
+
+        return self.current_request_id
+
+    def _dispatch_pending(self):
+        if not hasattr(self, 'pending_request') or self.pending_request is None:
             return
 
-        if start_ts >= (self.oldest_loaded_ts - 1.0):
-            return
-
-        fetch_end = min(end_ts, self.oldest_loaded_ts)
-
-        if fetch_end - start_ts < 2.0:
-            return
+        start_ts, end_ts, req_id, selected_tags = self.pending_request
+        self.pending_request = None  # Clear queue
 
         self.is_fetching = True
-        print(f"[Cache] Multi-window request gap: {fetch_end - start_ts:.1f}s. Fetching via Polars...")
-        self.history_worker.fetch(start_ts, fetch_end, stride)
+        self.active_request_id = req_id
+        #print(f"[Cache] Dispatching Stateless Request ID: {req_id}...")
+        self.query_worker.fetch(start_ts, end_ts, req_id, selected_tags)
 
-    def _on_history_fetched(self, req_start, req_end, ts_array, vals_dict, stride):
-        if len(ts_array) == 0:
-            self.is_fetching = False
-            self.oldest_loaded_ts = min(self.oldest_loaded_ts, req_start)
-            return
+    def _on_historical_fetched(self, req_start, req_end, ts_array, vals_dict, req_id):
+        # This slot ONLY handles data delivery
+        if req_id == getattr(self, 'active_request_id', -1):
+            self.historical_updated.emit(ts_array, vals_dict, req_id)
 
-        # Find where to slice the incoming history so it seamlessly joins the RAM buffer
-        if len(self.x_time) > 0:
-            cutoff_idx = np.searchsorted(ts_array, self.x_time[0], side='left')
-            new_x = ts_array[:cutoff_idx]
-        else:
-            cutoff_idx = len(ts_array)
-            new_x = ts_array
-
-        if len(new_x) == 0:
-            self.is_fetching = False
-            return
-
-        # Prepend times to the raw background buffer
-        self._x_buffer = np.concatenate((new_x, self._x_buffer))
-
-        # Prepend dictionary values securely (O(1) hash map lookups instead of matrix indices)
-        for tag in self.engine.channel_keys:
-            if tag in vals_dict:
-                self._y_buffers[tag] = np.concatenate((vals_dict[tag][:cutoff_idx], self._y_buffers[tag]))
-            else:
-                # If a key exists in our schema but wasn't in the database, pad with NaNs
-                pad = np.full(cutoff_idx, np.nan, dtype=np.float64)
-                self._y_buffers[tag] = np.concatenate((pad, self._y_buffers[tag]))
-
-        self.write_ptr += len(new_x)
-
-        # Update the UI views
-        self.x_time = self._x_buffer[:self.write_ptr]
-        for tag in self.engine.channel_keys:
-            self.y_data[tag] = self._y_buffers[tag][:self.write_ptr]
-
-        self.oldest_loaded_ts = min(self.oldest_loaded_ts, req_start)
-        self.current_stride = min(self.current_stride, stride)
+    def _on_worker_finished(self):
+        # This slot guarantees the thread is fully dead and safe to restart
         self.is_fetching = False
-        self.data_updated.emit()
+
+        # If the user scrolled while we were busy, immediately fetch the new bounds
+        if getattr(self, 'pending_request', None) is not None:
+            self._dispatch_pending()
 
     def _on_live_data(self, flat_data: dict):
-        if not self.engine.channel_keys:
-            return
+        t0 = time.perf_counter()
+        if not self.engine.channel_keys: return
 
-        # 1. Expand buffers if we hit the end
-        if self.write_ptr >= len(self._x_buffer):
-            self._x_buffer = np.concatenate((self._x_buffer, np.zeros(self.chunk_size)))
+        # 1. Roll the buffer if full (Ring Buffer style)
+        if self.live_ptr >= self.live_capacity:
+            shift = int(self.live_capacity * 0.1)  # Shift left by 10%
+            self._x_live = np.roll(self._x_live, -shift)
             for tag in self.engine.channel_keys:
-                self._y_buffers[tag] = np.concatenate((self._y_buffers[tag], np.zeros(self.chunk_size)))
+                self._y_live[tag] = np.roll(self._y_live[tag], -shift)
+            self.live_ptr -= shift
 
-        # 2. Insert the live data
+        # 2. Insert Live Data
         current_time = time.time()
-        self._x_buffer[self.write_ptr] = current_time
+        self._x_live[self.live_ptr] = current_time
 
         for tag in self.engine.channel_keys:
             if tag in flat_data:
-                # Good data arrived, reset the watchdog timer
                 val = flat_data[tag]
                 self.key_last_seen[tag] = current_time
             else:
-                # Asynchronous arrival: hold the previous value
-                val = self._y_buffers[tag][self.write_ptr - 1] if self.write_ptr > 0 else np.nan
+                val = self._y_live[tag][self.live_ptr - 1] if self.live_ptr > 0 else np.nan
+                if current_time - self.key_last_seen[tag] > 1.0: val = np.nan
+            self._y_live[tag][self.live_ptr] = val
 
-                # --- LIVE WATCHDOG ---
-                # If we haven't seen this specific tag in over 1.0 seconds, force a visual NaN gap
-                if current_time - self.key_last_seen[tag] > 1.0:
-                    val = np.nan
+        self.live_ptr += 1
 
-            self._y_buffers[tag][self.write_ptr] = val
-
-        self.write_ptr += 1
-
-        # 3. Update the windows for the UI to read
-        self.x_time = self._x_buffer[:self.write_ptr]
+        # 3. Update Views
+        self.x_live_view = self._x_live[:self.live_ptr]
         for tag in self.engine.channel_keys:
-            self.y_data[tag] = self._y_buffers[tag][:self.write_ptr]
+            self.y_live_view[tag] = self._y_live[tag][:self.live_ptr]
 
-        # 4. Prune Old Memory
-        if self.write_ptr > self.max_capacity:
-            trim_amount = 50000
+        if not self.is_fetching:
+            self.live_updated.emit()
 
-            self._x_buffer = self._x_buffer[trim_amount:]
-            for tag in self.engine.channel_keys:
-                self._y_buffers[tag] = self._y_buffers[tag][trim_amount:]
-
-            self.write_ptr -= trim_amount
-
-            self.x_time = self._x_buffer[:self.write_ptr]
-            for tag in self.engine.channel_keys:
-                self.y_data[tag] = self._y_buffers[tag][:self.write_ptr]
+        PerfTracker.log("ingest", t0)

@@ -1,50 +1,64 @@
 import zmq
 import time
-import json
+import orjson
+import sys
 
 # Ensure these match your network_config.py exactly
-ZMQ_PORT_PLC_PUB = "tcp://127.0.0.1:5550"
-TOPIC_PLC_DATA = b"PLC_DATA"
-
+from src.core.network_config import ZMQ_PORT_VACUUM_PUB, TOPIC_VACUUM_DATA
 
 def main():
     context = zmq.Context()
-    socket = context.socket(zmq.SUB)
+    sub_socket = context.socket(zmq.SUB)
 
-    print(f"Connecting to ZMQ Publisher at {ZMQ_PORT_PLC_PUB}...")
-    socket.connect(ZMQ_PORT_PLC_PUB)
-
-    # Subscribe to the specific topic (must be bytes)
-    socket.setsockopt(zmq.SUBSCRIBE, TOPIC_PLC_DATA)
-
-    print("Listening for PLC_DATA. Press Ctrl+C to exit.\n")
-
-    last_time = time.time()
+    print(f"Connecting to ZMQ Publisher at {ZMQ_PORT_VACUUM_PUB}...")
 
     try:
+        sub_socket.connect(ZMQ_PORT_VACUUM_PUB)
+    except Exception as e:
+        print(f"Connection error to {ZMQ_PORT_VACUUM_PUB}: {e}")
+        sys.exit(1)
+
+    # Standardize topic type for setsockopt_string
+    topic_str = TOPIC_VACUUM_DATA.decode('utf-8') if isinstance(TOPIC_VACUUM_DATA, bytes) else TOPIC_VACUUM_DATA
+    sub_socket.setsockopt_string(zmq.SUBSCRIBE, topic_str)
+
+    print(f"Spying on {ZMQ_PORT_VACUUM_PUB} | Topic: '{topic_str}'")
+    print("Waiting for broadcasts (Ctrl+C to exit)...")
+
+    tally = 0
+    lates = 0
+    times = []
+    try:
         while True:
-            # recv_multipart() blocks until a message arrives
-            topic, payload = socket.recv_multipart()
+            # Block until multipart payload is received
+            multipart_msg = sub_socket.recv_multipart()
+            tally += 1
+            if len(multipart_msg) == 2:
+                recv_topic, payload = multipart_msg
+                state_data = orjson.loads(payload)
+                cycle_time = state_data["system.cycle_time_ms"]
+                times.append(cycle_time)
 
-            # Calculate frequency
-            current_time = time.time()
-            delta_t = current_time - last_time
-            hz = 1.0 / delta_t if delta_t > 0 else 0.0
-            last_time = current_time
+                if cycle_time > 700:
+                    print(f"\n--- SLOW ARRIVING {recv_topic.decode('utf-8')} ---")
+                    print(state_data)
+                    lates += 1
 
-            # Parse payload
-            data = json.loads(payload.decode('utf-8'))
+                if tally > 50:
+                    print(f"Time: {time.time()} | 50 messages received: With {lates} lates. | Average cycle time: {sum(times) / len(times)}ms")
+                    print(times)
+                    tally = 0
+                    lates = 0
+                    times = []
 
-            # Print metrics and a truncated view of the data dictionary
-            print(
-                f"[{hz:5.1f} Hz] Topic: {topic.decode('utf-8')} | Tags Received: {len(data)} | Data: {str(data)[:80]}...")
+            else:
+                print(f"Warning: Unexpected multipart length ({len(multipart_msg)} frames). Raw: {multipart_msg}")
 
     except KeyboardInterrupt:
-        print("\nTest terminated by user.")
+        print("\nTerminating spy process.")
     finally:
-        socket.close()
+        sub_socket.close(linger=0)
         context.term()
-
 
 if __name__ == "__main__":
     main()

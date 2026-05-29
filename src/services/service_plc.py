@@ -20,7 +20,7 @@ from src.core.network_config import (
     ZMQ_PORT_HEARTBEAT)
 
 POLL_INTERVAL = 0.1  # 100ms cycle (10Hz)
-HEARTBEAT_INTERVAL = 1.0  # 1Hz Watchdog
+HEARTBEAT_INTERVAL = 0.5  # 2Hz Watchdog
 MAX_CMD_AGE = 0.5  # TTL: Reject incoming commands older than 500ms
 
 
@@ -60,6 +60,7 @@ class PlcMicroservice:
         self.watchdog_state = False
         self.last_heartbeat = time.time()
         self.plc_cycle_count = 0
+        self.heartbeat_count = 0
 
         # --- Tag Registry ---
         self.tags = self._load_tag_registry()
@@ -81,7 +82,7 @@ class PlcMicroservice:
             "SPELLMAN": time.time(),
             "MAGNET": time.time()
         }
-        self.SERVICE_TIMEOUT_SEC = 1.0
+        self.SERVICE_TIMEOUT_SEC = 2.0
 
         self.hb_socket = self.context.socket(zmq.PUB)
         self.hb_socket.connect(ZMQ_PORT_HEARTBEAT)
@@ -203,12 +204,14 @@ class PlcMicroservice:
             self.state["system.cpu_state"] = "DISCONNECTED"
             self.events.log_general(f"Connection failed: {e}")
 
-    def _toggle_watchdog(self):
+    def _increment_watchdog(self):
         watchdog_tag = "ion_beam.system.plc_watchdog"
         if watchdog_tag not in self.tags:
             return
-        self.watchdog_state = not self.watchdog_state
-        self._write_tag(watchdog_tag, self.watchdog_state)
+        self.heartbeat_count += 1
+        if self.heartbeat_count > 1000:
+            self.heartbeat_count = 0
+        self._write_tag(watchdog_tag, self.heartbeat_count)
 
     def _parse_bytearray(self, data: bytearray, byte_idx: int, bit_idx: int, dtype: str):
         if dtype == "BOOL":
@@ -288,6 +291,10 @@ class PlcMicroservice:
             if dtype == "BOOL":
                 data = self.client.db_read(db_num, byte_offset, 1)
                 set_bool(data, 0, bit_offset, bool(new_value))
+                print(data)
+                print(byte_offset)
+                print(bit_offset)
+                print(new_value)
                 self.client.db_write(db_num, byte_offset, data)
             elif dtype == "REAL":
                 data = bytearray(4)
@@ -401,6 +408,7 @@ class PlcMicroservice:
         try:
             while True:
                 msg = self.sub_socket.recv_json(flags=zmq.NOBLOCK)
+                print(msg)
                 tag = msg.get("tag")
                 value = msg.get("value")
                 timestamp = msg.get("ts", 0.0)
@@ -411,6 +419,7 @@ class PlcMicroservice:
                     continue
 
                 if tag in self.tags and value is not None:
+                    print("writing")
                     self._write_tag(tag, value)
         except zmq.Again:
             pass
@@ -444,7 +453,7 @@ class PlcMicroservice:
 
             current_time_unix = time.time()
             if current_time_unix - self.last_heartbeat >= HEARTBEAT_INTERVAL:
-                self._toggle_watchdog()
+                self._increment_watchdog()
                 self.last_heartbeat = current_time_unix
 
             self.state["timestamp"] = current_time_unix

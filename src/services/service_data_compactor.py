@@ -52,20 +52,70 @@ class DataCompactor:
             try:
                 print(f"[Compactor] Processing {d_str} ({len(fragments)} fragments)...")
 
-                # Use scan_parquet for all fragments
-                df = pl.scan_parquet(fragments)
-                df = df.sort("timestamp")
+                # --- NEW CODE (Diagonal Merge for Schema Evolution) ---
+                print(f"[Compactor] Processing {d_str} ({len(fragments)} fragments)...")
 
-                # High compression level for long-term storage
-                df.collect().write_parquet(output_file, compression="zstd", compression_level=10)
+                lfs = [pl.scan_parquet(f) for f in fragments]
+                df = pl.concat(lfs, how="diagonal").sort("timestamp")
 
-                # 4. Clean up ONLY after successful write
+                # 1. Collect into RAM ONCE
+                daily_df = df.collect()
+
+                # 2. Write the high-resolution raw file
+                daily_df.write_parquet(output_file, compression="zstd", compression_level=10)
+
+                # 3. Generate the UI rollups using the data already sitting in RAM
+                # Note: We pass the base filename "day_YYYYMMDD" so the macro
+                # files get named day_YYYYMMDD_macro_1m.parquet, etc.
+                self.generate_macro_rollups(daily_df, f"day_{d_str}", DAILY_DIR)
+
+                # 4. Clean up ONLY after successful writes
                 for f in fragments:
                     os.remove(f)
                 print(f"[Compactor] Finished {d_str}.")
 
             except Exception as e:
                 print(f"[Compactor] Error on date {d_str}: {e}")
+
+    def generate_macro_rollups(self, df: pl.DataFrame, base_filename: str, output_dir: str):
+        """
+        Takes the massive 24hr raw DataFrame and generates two tiered min/max
+        aggregations to guarantee instant UI rendering at any zoom level.
+        """
+        # 1. Identify valid sensor channels (ignoring strings/booleans)
+        numeric_cols = [col for col in df.columns if
+                        df[col].dtype in [pl.Float64, pl.Float32, pl.Int64, pl.Int32] and col != "timestamp"]
+
+        # Define rollups (Key: Suffix, Value: Window in Seconds)
+        tiers = {
+            "macro_1m": 60.0,
+            "macro_20m": 1200.0
+        }
+
+        for suffix, window_sec in tiers.items():
+            print(f"Generating {suffix} rollup...")
+
+            # Calculate time bins based on the window size
+            lf = df.lazy().with_columns(
+                (pl.col("timestamp") / window_sec).floor().alias("bin")
+            )
+
+            agg_exprs = [
+                pl.col("timestamp").min().alias("timestamp_min"),
+                pl.col("timestamp").max().alias("timestamp_max"),
+            ]
+
+            for col in numeric_cols:
+                agg_exprs.append(pl.col(col).min().cast(pl.Float64, strict=False).alias(f"{col}_min"))
+                agg_exprs.append(pl.col(col).max().cast(pl.Float64, strict=False).alias(f"{col}_max"))
+
+            # Execute aggregation and drop the temporary 'bin' column
+            macro_df = lf.group_by("bin").agg(agg_exprs).sort("bin").drop("bin").collect()
+
+            # Save to disk
+            out_path = os.path.join(output_dir, f"{base_filename}_{suffix}.parquet")
+            macro_df.write_parquet(out_path)
+            print(f"Saved {out_path} ({len(macro_df)} rows)")
 
     def run(self):
         print(f"[Compactor] Service Online. Scheduled for {COMPACTION_TIME} daily.")

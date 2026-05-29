@@ -8,6 +8,7 @@ import threading
 import numpy as np
 import polars as pl
 from datetime import datetime
+import threading
 
 from src.core.event_helper import EventHelper
 from src.core.network_config import (
@@ -56,9 +57,8 @@ class TelemetryLoggerService:
         self.poller = zmq.Poller()
         self.poller.register(self.sub_socket, zmq.POLLIN)
 
-        self.cmd_socket = self.context.socket(zmq.SUB)
+        self.cmd_socket = self.context.socket(zmq.REP)
         self.cmd_socket.bind(ZMQ_PORT_LOGGER_CMD)  # Dedicated UI command port
-        self.cmd_socket.setsockopt(zmq.SUBSCRIBE, b"CMD")
         self.poller.register(self.cmd_socket, zmq.POLLIN)
 
         # 3. Schema & Zero-Order Hold State
@@ -172,9 +172,9 @@ class TelemetryLoggerService:
             self.events.log_general("[Logger WARNING] RAM Buffer exceeded max bounds. Forcing emergency flush.")
             self._queue_flush()
 
-    def _queue_flush(self):
+    def _queue_flush(self, wait_for_completion=False):
         if self.ptr == 0:
-            return
+            return True  # Nothing to flush
 
         ts_data = self.ts_buffer[:self.ptr].copy()
         val_data = self.val_buffer[:self.ptr, :].copy()
@@ -185,19 +185,34 @@ class TelemetryLoggerService:
         filename = f"chunk_{datetime.now().strftime('%Y%m%d_%H%M%S')}.parquet"
         filepath = os.path.join(DEFAULT_LOG_DIRECTORY, filename)
 
-        self.write_queue.put((filepath, ts_data, val_data, self.keys))
+        if wait_for_completion:
+            completion_event = threading.Event()
+            # Pass the event as the 5th item in the tuple
+            self.write_queue.put((filepath, ts_data, val_data, self.keys, completion_event))
+
+            # Pause here until the background thread sets the event (Max 2 seconds)
+            success = completion_event.wait(timeout=2.0)
+            return success
+        else:
+            # Standard fire-and-forget background flush
+            self.write_queue.put((filepath, ts_data, val_data, self.keys, None))
+            return True
 
     def _disk_writer_loop(self):
         while self.running:
             try:
                 task = self.write_queue.get(timeout=1.0)
-                filepath, ts, data, keys = task
+
+                # Safely unpack the tuple (handles both normal 4-item and forced 5-item flushes)
+                filepath, ts, data, keys = task[:4]
+                completion_event = task[4] if len(task) > 4 else None
 
                 try:
                     df_dict = {"timestamp": ts}
                     for i, key in enumerate(keys):
                         df_dict[key] = data[:, i]
 
+                    import polars as pl
                     df = pl.DataFrame(df_dict)
                     temp_path = filepath.replace(".parquet", "_temp.parquet")
 
@@ -213,6 +228,10 @@ class TelemetryLoggerService:
                     self.events.log_general(
                         f"[Logger I/O Error] Failed to write {os.path.basename(filepath)}: {io_err}")
                 finally:
+                    # Wake up the main ZMQ thread immediately after the file is safe on disk
+                    if completion_event:
+                        completion_event.set()
+
                     self.write_queue.task_done()
 
             except queue.Empty:
@@ -260,20 +279,37 @@ class TelemetryLoggerService:
                 # If requested by external program (like viewer) flush data
                 if self.cmd_socket in socks and socks[self.cmd_socket] == zmq.POLLIN:
                     try:
-                        topic, payload = self.cmd_socket.recv_multipart(flags=zmq.NOBLOCK)
-                        cmd_data = orjson.loads(payload)
-                        if cmd_data.get("command") == "FORCE_FLUSH":
+                        # 1. Read the simple string command (no longer multipart JSON)
+                        msg = self.cmd_socket.recv_string(flags=zmq.NOBLOCK)
+
+                        if msg == "FORCE_FLUSH":
                             now = time.time()
-                            # Only execute if the last flush was > 2 seconds ago
+
                             if now - self.last_cmd_time > self.cmd_debounce:
-                                self.events.log_general("Remote UI requested emergency disk flush (Debounced).")
-                                self._queue_flush()
+                                self.events.log_general("Remote UI requested emergency disk flush.")
+
+                                # 1. Ask for a flush and wait for the background thread to confirm it
+                                success = self._queue_flush(wait_for_completion=True)
                                 self.last_cmd_time = now
+
+                                # 2. Reply to the UI based on the exact outcome
+                                if success:
+                                    self.cmd_socket.send_string("FLUSH_COMPLETE")
+                                else:
+                                    self.cmd_socket.send_string("FLUSH_TIMEOUT")
                             else:
-                                # Silently ignore the redundant pulse
-                                pass
+                                self.cmd_socket.send_string("FLUSH_DEBOUNCED")
+                        else:
+                            # Always reply to unknown commands to prevent state machine lockups
+                            self.cmd_socket.send_string("UNKNOWN_COMMAND")
+
                     except Exception as e:
                         print(f"Cmd Socket Error: {e}")
+                        # Attempt to release the lock if an error occurred after receiving the message
+                        try:
+                            self.cmd_socket.send_string("ERROR_DURING_FLUSH")
+                        except:
+                            pass
 
                 # 3. Precision Sleep & Spin-Wait
                 sleep_time = self.next_tick - time.perf_counter()
