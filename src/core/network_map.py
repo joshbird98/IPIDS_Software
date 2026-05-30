@@ -2,7 +2,7 @@ import os
 import json
 
 # Define absolute path to the config file relative to this script
-CONFIG_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), '../../config/network_map.json'))
+CONFIG_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), '../../config/network_config.json'))
 
 # Load the JSON map into memory
 with open(CONFIG_PATH, 'r') as f:
@@ -61,6 +61,9 @@ ZMQ_PORT_HEARTBEAT = f"{HOST}:{_cfg['zmq_ports']['heartbeat_pub']}"
 
 ZMQ_PORT_EVENTS_SUB = f"{HOST}:{_cfg['zmq_ports']['events_pub']}"
 ZMQ_PORT_EVENTS_PUB = f"{HOST}:{_cfg['zmq_ports']['events_pub']}"
+
+ZMQ_PORT_MANAGER_PUB = f"{HOST}:{_cfg['zmq_ports']['manager_pub']}"
+ZMQ_PORT_MANAGER_CMD = f"{HOST}:{_cfg['zmq_ports']['manager_cmd']}"
 
 # --- ZMQ Topics ---
 TOPIC_PLC_DATA = b"PLC_DATA"

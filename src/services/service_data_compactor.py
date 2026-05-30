@@ -2,7 +2,7 @@ import os
 import time
 import glob
 import zmq
-from src.core.network_config import ZMQ_PORT_HEARTBEAT, ZMQ_PORT_EVENTS_PUB
+from src.core.network_map import ZMQ_PORT_HEARTBEAT, ZMQ_PORT_EVENTS_PUB
 import re
 import polars as pl
 from datetime import datetime

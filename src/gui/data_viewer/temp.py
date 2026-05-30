@@ -21,7 +21,7 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtCore import Qt, QDateTime, QTimer, QThread, pyqtSignal
 import pyqtgraph as pg
 
-from src.core.network_config import ZMQ_PORT_LOGGER_CMD
+from src.core.network_map import ZMQ_PORT_LOGGER_CMD
 from src.gui.data_viewer.config_manager import load_registry
 from src.gui.data_viewer.channel_selector import ChannelSelectorDialog
 from src.core.data_cache import DualPipelineCache

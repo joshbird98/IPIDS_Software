@@ -12,8 +12,8 @@ if os.name == 'nt':
 
     ctypes.windll.winmm.timeBeginPeriod(1)
 
-# Ensure these match your network_config.py
-from src.core.network_config import (
+# Ensure these match your network_map.py
+from src.core.network_map import (
     ZMQ_PORT_SRC_TURBO_PUB, ZMQ_PORT_SRC_TURBO_CMD, TOPIC_SRC_TURBO_DATA,
     SRC_TURBO_WAVESHARE_IP, SRC_TURBO_WAVESHARE_PORT,
     ZMQ_PORT_HEARTBEAT)

@@ -3,7 +3,7 @@ import os
 import zmq
 import orjson
 import time
-from src.core.network_config import ZMQ_PORT_EVENTS_SUB, ZMQ_PORT_HEARTBEAT
+from src.core.network_map import ZMQ_PORT_EVENTS_SUB, ZMQ_PORT_HEARTBEAT
 
 # --- CONFIGURATION ---
 DB_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), '../../data/events.db'))

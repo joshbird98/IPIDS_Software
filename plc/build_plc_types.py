@@ -2,7 +2,7 @@ import json
 import os
 
 # Define absolute paths relative to this script's location
-CONFIG_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), '../config/fault_map.json'))
+CONFIG_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), '../config/fault_config.json'))
 OUTPUT_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), 'generated/faults.udt'))
 
 

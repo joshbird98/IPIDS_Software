@@ -13,7 +13,7 @@ if os.name == 'nt':
 
     ctypes.windll.winmm.timeBeginPeriod(1)
 
-from src.core.network_config import (
+from src.core.network_map import (
     ZMQ_PORT_VACUUM_PUB, ZMQ_PORT_VACUUM_CMD, TOPIC_VACUUM_DATA,
     NOISY_RACK_WAVESHARE_IP, NOISY_RACK_WAVESHARE_PORT,
     ZMQ_PORT_HEARTBEAT)

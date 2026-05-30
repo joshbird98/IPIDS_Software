@@ -4,8 +4,8 @@ import threading
 import time
 
 # --- CONFIGURATION ---
-# Adjust these to match your actual network_config.py
-from src.core.network_config import ZMQ_PORT_VACUUM_PUB, ZMQ_PORT_VACUUM_CMD, TOPIC_VACUUM_DATA
+# Adjust these to match your actual network_map.py
+from src.core.network_map import ZMQ_PORT_VACUUM_PUB, ZMQ_PORT_VACUUM_CMD, TOPIC_VACUUM_DATA
 
 
 def monitor_stream():

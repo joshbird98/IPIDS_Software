@@ -21,11 +21,11 @@
             "port": 4196
         },
         "spellman": {
-            "beamline": {
+            "source": {
                 "ip": "192.168.1.203",
                 "port": 4196
             },
-            "endstation": {
+            "beamline": {
                 "ip": "192.168.1.204",
                 "port": 4196
             }
@@ -53,6 +53,8 @@
         "magnet_pub": 5564,
         "magnet_cmd": 5565,
         "heartbeat_pub": 5566,
-        "events_pub": 5567
+        "events_pub": 5567,
+        "manager_pub": 5568,
+        "manager_cmd": 5569
     }
 }

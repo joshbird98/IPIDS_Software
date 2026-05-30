@@ -1,7 +1,7 @@
 import zmq
 import json
 
-# Ensure this matches ZMQ_PORT_LOGGER_CMD in network_config.py
+# Ensure this matches ZMQ_PORT_LOGGER_CMD in network_map.py
 PORT = "tcp://127.0.0.1:5554"
 
 

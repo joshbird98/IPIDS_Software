@@ -16,7 +16,7 @@ if os.name == 'nt':
 from pymodbus.client import ModbusTcpClient
 from pymodbus.framer import FramerType
 
-from src.core.network_config import (
+from src.core.network_map import (
     MAGNET_IP, MAGNET_PORT, ZMQ_PORT_MAGNET_PUB, ZMQ_PORT_MAGNET_CMD, TOPIC_MAGNET_DATA, ZMQ_PORT_PLC_PUB,
     ZMQ_PORT_HEARTBEAT)
 

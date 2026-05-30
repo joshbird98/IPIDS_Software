@@ -6,7 +6,7 @@ from PyQt6.QtCore import QObject, QThread, pyqtSignal, QTimer
 
 from src.core.data_engine import TimeSeriesEngine
 from src.core.zmq_listener import ZMQLiveEngine
-from src.core.network_config import (
+from src.core.network_map import (
     ZMQ_PORT_PLC_PUB, ZMQ_PORT_VACUUM_PUB, ZMQ_PORT_SRC_TURBO_PUB,
     ZMQ_PORT_SPELLMAN_PUB, ZMQ_PORT_MAGNET_PUB
 )

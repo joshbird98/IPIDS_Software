@@ -11,7 +11,7 @@ from datetime import datetime
 import threading
 
 from src.core.event_helper import EventHelper
-from src.core.network_config import (
+from src.core.network_map import (
     ZMQ_PORT_PLC_PUB, ZMQ_PORT_VACUUM_PUB, ZMQ_PORT_SRC_TURBO_PUB,
     TOPIC_PLC_DATA, TOPIC_VACUUM_DATA, TOPIC_SRC_TURBO_DATA,
     ZMQ_PORT_HEARTBEAT, ZMQ_PORT_LOGGER_CMD

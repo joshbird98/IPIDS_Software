@@ -15,9 +15,12 @@ if os.name == 'nt':
     ctypes.windll.winmm.timeBeginPeriod(1)
 
 from src.core.network_config import (
-    ZMQ_PORT_SPELLMAN_PUB, ZMQ_PORT_SPELLMAN_CMD, TOPIC_SPELLMAN_DATA, ZMQ_PORT_PLC_PUB,
-    SPELLMAN_WAVESHARES,
-    ZMQ_PORT_HEARTBEAT)
+    ZMQ_PORT_SPELLMAN_PUB, ZMQ_PORT_SPELLMAN_CMD, ZMQ_PORT_PLC_PUB,
+    ZMQ_PORT_HEARTBEAT
+)
+
+# Note: Ensure SPELLMAN_WAVESHARES is actually exposed in network_config,
+# or load it directly from network_config.json dynamically below.
 
 # Protocol Constants
 STX = "\x02"
@@ -75,8 +78,7 @@ class SpellmanMPDProtocol:
         return f"{STX}{payload}{csum}{LF}".encode('ascii')
 
     def transaction(self, address: str, dev_type: str, cmd: str, operator: str = "", data: str = "") -> Optional[str]:
-        if not self.connected:
-            return None
+        if not self.connected: return None
         try:
             while select.select([self.sock], [], [], 0.0)[0]:
                 self.sock.recv(1024)
@@ -97,7 +99,6 @@ class SpellmanMPDProtocol:
             if res_str.startswith(STX) and res_str.endswith(LF):
                 return res_str[1:-3]
             return None
-
         except socket.timeout:
             return None
         except Exception:
@@ -109,7 +110,6 @@ class SpellmanMicroservice:
     def __init__(self):
         self.context = zmq.Context()
 
-        # 1. ZMQ Setup
         self.pub_socket = self.context.socket(zmq.PUB)
         self.pub_socket.setsockopt(zmq.SNDHWM, 5)
         self.pub_socket.bind(ZMQ_PORT_SPELLMAN_PUB)
@@ -118,42 +118,26 @@ class SpellmanMicroservice:
         self.plc_socket.connect(ZMQ_PORT_PLC_PUB)
         self.plc_socket.setsockopt_string(zmq.SUBSCRIBE, "")
 
-        self.safety_relay_active = False
-
         self.sub_socket = self.context.socket(zmq.SUB)
         self.sub_socket.setsockopt(zmq.RCVHWM, 5)
         self.sub_socket.bind(ZMQ_PORT_SPELLMAN_CMD)
         self.sub_socket.setsockopt_string(zmq.SUBSCRIBE, "")
 
-
-        # 2. Dynamic Hardware Topology
-        self.config = self._load_config()
-        self.buses: Dict[str, SpellmanMPDProtocol] = {}
-
-        # 3. Strict 1D Flat Payload
-        self.state: Dict[str, Any] = {
-            "timestamp": 0.0,
-            "system.cycle_time_ms": 0.0
-        }
-
         self.hb_socket = self.context.socket(zmq.PUB)
         self.hb_socket.connect(ZMQ_PORT_HEARTBEAT)
+
+        self.safety_relay_active = False
+        self.config = self._load_config()
+        self.net_config = self._load_net_config()
+        self.buses: Dict[str, SpellmanMPDProtocol] = {}
+
+        self.state: Dict[str, Any] = {"timestamp": 0.0, "system.cycle_time_ms": 0.0}
+
+        # NEW: Cache setpoints to echo back to the GUI
+        self.sp_cache: Dict[str, float] = {}
+
         self.last_hb_time = 0.0
-
         self.events = EventHelper("service_spellman_mpd")
-
-    def _update_safety_permissives(self):
-        try:
-            while True:
-                topic, msg = self.plc_socket.recv_multipart(flags=zmq.NOBLOCK)
-                payload = orjson.loads(msg)
-
-                relay_state = payload.get("ion_beam.facilities.safety_relay_active")
-                if relay_state is not None:
-                    self.safety_relay_active = bool(relay_state)
-
-        except zmq.Again:
-            pass
 
     def _load_config(self) -> dict:
         config_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '../../config/mpd_config.json'))
@@ -161,23 +145,39 @@ class SpellmanMicroservice:
             with open(config_path, "r") as f:
                 return json.load(f)
         except Exception as e:
-            self.events.log_general(f"[Spellman Service] CRITICAL: Failed to load mpd_config.json: {e}")
+            self.events.log_general(f"[Spellman] CRITICAL: Failed to load mpd_config.json: {e}")
             return {"buses": []}
 
+    def _load_net_config(self) -> dict:
+        config_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '../../config/network_config.json'))
+        try:
+            with open(config_path, "r") as f:
+                return json.load(f)
+        except:
+            return {}
+
+    def _update_safety_permissives(self):
+        try:
+            while True:
+                topic, msg = self.plc_socket.recv_multipart(flags=zmq.NOBLOCK)
+                payload = orjson.loads(msg)
+                relay_state = payload.get("ion_beam.facilities.safety_relay_active")
+                if relay_state is not None:
+                    self.safety_relay_active = bool(relay_state)
+        except zmq.Again:
+            pass
+
     def _manage_connections(self):
+        ws_list = self.net_config.get("waveshares", {}).get("spellman", {})
+
         for bus in self.config.get("buses", []):
             bus_id = bus["bus_id"]
-
             if bus_id not in self.buses:
-                ws_config = SPELLMAN_WAVESHARES.get(bus_id, {})
-                print(ws_config)
-                ip = ws_config.get("ip")
-                port = ws_config.get("port")
-
-                if ip and port:
-                    self.buses[bus_id] = SpellmanMPDProtocol(ip, port, bus_id)
+                # E.g. "beamline" or "chamber_waveshare" mappings
+                target_net = ws_list.get(bus_id.replace("_waveshare", ""))
+                if target_net:
+                    self.buses[bus_id] = SpellmanMPDProtocol(target_net["ip"], target_net["port"], bus_id)
                 else:
-                    self.events.log_general(f"[Spellman Service] WARNING: {bus_id} IP/Port not found in network_map.json")
                     continue
 
             if not self.buses[bus_id].connected:
@@ -187,23 +187,19 @@ class SpellmanMicroservice:
         try:
             while True:
                 msg = self.sub_socket.recv_json(flags=zmq.NOBLOCK)
-
                 tag = msg.get("tag", "")
                 value = msg.get("value", 0)
                 ts = msg.get("ts", 0.0)
 
-                if time.time() - ts > MAX_CMD_AGE:
-                    continue
+                if time.time() - ts > MAX_CMD_AGE: continue
 
                 parts = tag.split('.')
-                if len(parts) < 4 or parts[1] != "spellman":
-                    continue
+                if len(parts) < 4 or parts[1] != "spellman": continue
 
                 target_dev = parts[2]
                 cmd_type = parts[3]
 
-                target_bus = None
-                dev_info = None
+                target_bus, dev_info = None, None
                 for bus in self.config.get("buses", []):
                     if target_dev in bus.get("devices", {}):
                         target_bus = bus["bus_id"]
@@ -214,26 +210,27 @@ class SpellmanMicroservice:
                     hw = self.buses[target_bus]
                     addr = dev_info["address"]
                     dtype = dev_info["dev_type"]
+                    prefix = f"ion_beam.spellman.{target_dev}"
 
-                    if cmd_type == "voltage_sp":
-                        hw.transaction(addr, dtype, CMD_SET_KV, ",", str(value))
-                    elif cmd_type == "current_sp":
-                        hw.transaction(addr, dtype, CMD_SET_MA, ",", str(value))
+                    # NEW: Adjusted command routing to match GUI's standard suffixes
+                    if cmd_type == "sp_requested_voltage":
+                        if hw.transaction(addr, dtype, CMD_SET_KV, ",", str(value)) is not None:
+                            self.sp_cache[f"{prefix}.sp_actual_voltage"] = float(value)
+                    elif cmd_type == "sp_requested_current":
+                        if hw.transaction(addr, dtype, CMD_SET_MA, ",", str(value)) is not None:
+                            self.sp_cache[f"{prefix}.sp_actual_current"] = float(value)
                     elif cmd_type == "cmd_enable":
                         enable_str = "1" if value else "0"
                         hw.transaction(addr, dtype, CMD_HV_ENABLE, ",", enable_str)
-
         except zmq.Again:
             pass
 
     def _poll_device(self, bus_id: str, dev_name: str, dev_info: dict):
-        addr = dev_info["address"]
-        dtype = dev_info["dev_type"]
+        addr, dtype = dev_info["address"], dev_info["dev_type"]
         plc_unit = dev_info.get("plc_unit", 1)
 
         hw = self.buses.get(bus_id)
-        if not hw or not hw.connected:
-            return
+        if not hw or not hw.connected: return
 
         prefix = f"ion_beam.spellman.{dev_name}"
 
@@ -242,84 +239,70 @@ class SpellmanMicroservice:
         raw_status = hw.transaction(addr, dtype, CMD_REQ_STATUS, "?")
 
         comms_fail = raw_kv is None or raw_status is None
-
         self.state[f"ion_beam.spellman.status.stat_unit{plc_unit}_comms_fail"] = 1.0 if comms_fail else 0.0
-
         if comms_fail: return
 
         try:
-            if raw_kv:
-                self.state[f"{prefix}.voltage_rb"] = float(raw_kv.split(',')[-1])
-            if raw_ma:
-                self.state[f"{prefix}.current_rb"] = float(raw_ma.split(',')[-1])
+            # NEW: Adjusted to GUI standards (rb_voltage instead of voltage_rb)
+            if raw_kv: self.state[f"{prefix}.rb_voltage"] = float(raw_kv.split(',')[-1])
+            if raw_ma: self.state[f"{prefix}.rb_current"] = float(raw_ma.split(',')[-1])
+
+            # Echo cached setpoints
+            if f"{prefix}.sp_actual_voltage" in self.sp_cache:
+                self.state[f"{prefix}.sp_actual_voltage"] = self.sp_cache[f"{prefix}.sp_actual_voltage"]
+            if f"{prefix}.sp_actual_current" in self.sp_cache:
+                self.state[f"{prefix}.sp_actual_current"] = self.sp_cache[f"{prefix}.sp_actual_current"]
+
         except ValueError:
             pass
 
         if raw_status:
             status_parts = raw_status.split(',')
-
             if len(status_parts) >= 4:
-                hv_enabled = status_parts[0] == "1"
-                overcurrent = status_parts[1] == "1"
-                undervoltage = status_parts[2] == "1"
-                arc_exceeded = status_parts[3] == "1"
-
-                self.state[f"{prefix}.stat_enabled"] = 1.0 if hv_enabled else 0.0
-
-                self.state[f"ion_beam.spellman.status.stat_unit{plc_unit}_overcurrent"] = 1.0 if overcurrent else 0.0
-                self.state[f"ion_beam.spellman.status.stat_unit{plc_unit}_undervoltage"] = 1.0 if undervoltage else 0.0
-                self.state[f"ion_beam.spellman.status.stat_unit{plc_unit}_arc_exceeded"] = 1.0 if arc_exceeded else 0.0
+                self.state[f"{prefix}.stat_enabled"] = 1.0 if status_parts[0] == "1" else 0.0
+                self.state[f"ion_beam.spellman.status.stat_unit{plc_unit}_overcurrent"] = 1.0 if status_parts[
+                                                                                                     1] == "1" else 0.0
+                self.state[f"ion_beam.spellman.status.stat_unit{plc_unit}_undervoltage"] = 1.0 if status_parts[
+                                                                                                      2] == "1" else 0.0
+                self.state[f"ion_beam.spellman.status.stat_unit{plc_unit}_arc_exceeded"] = 1.0 if status_parts[
+                                                                                                      3] == "1" else 0.0
 
     def run(self):
         self.events.log_general("[Spellman Service] Daemon Starting...")
-
-        current_time_pc = time.perf_counter()
-        next_tick = current_time_pc + POLL_INTERVAL
+        next_tick = time.perf_counter() + POLL_INTERVAL
 
         while True:
             cycle_start = time.perf_counter()
-
             self._update_safety_permissives()
 
             if self.safety_relay_active:
                 self._manage_connections()
                 self._process_commands()
-
                 for bus in self.config.get("buses", []):
-                    bus_id = bus["bus_id"]
                     for dev_name, dev_info in bus.get("devices", {}).items():
-                        self._poll_device(bus_id, dev_name, dev_info)
+                        self._poll_device(bus["bus_id"], dev_name, dev_info)
                         time.sleep(0.01)
-
             else:
-                for bus_id, hw in self.buses.items():
+                for hw in self.buses.values():
                     if hw.connected and hw.sock:
                         hw.sock.close()
                         hw.connected = False
 
             self.state["timestamp"] = time.time()
-            elapsed = time.perf_counter() - cycle_start
-            self.state["system.cycle_time_ms"] = elapsed * 1000
+            self.state["system.cycle_time_ms"] = (time.perf_counter() - cycle_start) * 1000
 
             try:
-                topic = TOPIC_SPELLMAN_DATA if isinstance(TOPIC_SPELLMAN_DATA, bytes) else TOPIC_SPELLMAN_DATA.encode(
-                    'utf-8')
-                self.pub_socket.send_multipart([topic, orjson.dumps(self.state)])
+                self.pub_socket.send_multipart([b"SPELLMAN", orjson.dumps(self.state)])
             except Exception as e:
-                self.events.log_general(f"[Spellman Service] ZMQ Publish Error: {e}")
-
-            current_time = time.time()
-            if current_time - self.last_hb_time >= 0.5:
-                self.hb_socket.send_json({"service": "service_spellman_mpd", "ts": current_time})
-                self.last_hb_time = current_time
-
-            sleep_time = next_tick - time.perf_counter()
-            if sleep_time > 0.002:
-                time.sleep(sleep_time - 0.002)
-
-            while time.perf_counter() < next_tick:
                 pass
 
+            if time.time() - self.last_hb_time >= 0.5:
+                self.hb_socket.send_json({"service": "service_spellman_mpd", "ts": time.time()})
+                self.last_hb_time = time.time()
+
+            sleep_time = next_tick - time.perf_counter()
+            if sleep_time > 0.002: time.sleep(sleep_time - 0.002)
+            while time.perf_counter() < next_tick: pass
             next_tick += POLL_INTERVAL
 
 

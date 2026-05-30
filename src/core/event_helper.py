@@ -3,7 +3,7 @@ import zmq
 import orjson
 import os
 import json
-from src.core.network_config import ZMQ_PORT_EVENTS_PUB
+from src.core.network_map import ZMQ_PORT_EVENTS_PUB
 
 
 class EventHelper:
@@ -20,7 +20,7 @@ class EventHelper:
         self.fault_map = self._load_fault_map()
 
     def _load_fault_map(self):
-        config_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '../../config/fault_map.json'))
+        config_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '../../config/fault_config.json'))
         flat_map = {}
         try:
             with open(config_path, "r") as f:

@@ -3,7 +3,7 @@ import time
 
 # 1. Correct import path for your project structure
 try:
-    from src.core.network_config import ZMQ_PORT_PLC_CMD
+    from src.core.network_map import ZMQ_PORT_PLC_CMD
     COMMAND_PORT = ZMQ_PORT_PLC_CMD
 except ImportError as e:
     print(f"ERROR: Could not import network_config. Make sure you are running from the project root. ({e})")

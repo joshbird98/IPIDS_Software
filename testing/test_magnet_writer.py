@@ -2,7 +2,7 @@ import zmq
 import time
 
 # Adjust import path if running from a different directory level
-from src.core.network_config import ZMQ_PORT_MAGNET_CMD
+from src.core.network_map import ZMQ_PORT_MAGNET_CMD
 
 
 def send_command(pub_socket: zmq.Socket, cmd_type: str, value: float):

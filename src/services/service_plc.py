@@ -14,7 +14,7 @@ if os.name == 'nt':
 
     ctypes.windll.winmm.timeBeginPeriod(1)
 
-from src.core.network_config import (
+from src.core.network_map import (
     ZMQ_PORT_PLC_PUB, ZMQ_PORT_PLC_CMD, TOPIC_PLC_DATA, PLC_IP, PLC_RACK, PLC_SLOT, DB_INTERFACE_NUM,
     ZMQ_PORT_VACUUM_PUB, ZMQ_PORT_SPELLMAN_PUB, ZMQ_PORT_MAGNET_PUB, ZMQ_PORT_SRC_TURBO_PUB,
     ZMQ_PORT_HEARTBEAT)
@@ -91,7 +91,7 @@ class PlcMicroservice:
     def _evaluate_word_faults(self):
         """Unpacks Siemens 32-bit DWORDs and logs edge transitions via EventHelper."""
 
-        # Static mapping from 1D payload keys to the fault_map.json UDT names
+        # Static mapping from 1D payload keys to the fault_config.json UDT names
         word_keys = {
             "ion_beam.faults.word_0_system": "UDT_Fault_Word_0_System",
             "ion_beam.faults.word_1_pumps": "UDT_Fault_Word_1_Pumps",
@@ -103,7 +103,7 @@ class PlcMicroservice:
 
         # Ensure fault_map and latches exist
         if not hasattr(self, "raw_fault_map"):
-            config_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '../../config/fault_map.json'))
+            config_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '../../config/fault_config.json'))
             try:
                 with open(config_path, "r") as f:
                     self.raw_fault_map = json.load(f)
@@ -143,7 +143,7 @@ class PlcMicroservice:
                     self.fault_latches[fault_name] = is_active
 
     def _load_fault_map(self) -> dict:
-        config_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '../../config/fault_map.json'))
+        config_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '../../config/fault_config.json'))
         try:
             with open(config_path, "r") as f:
                 raw_json = json.load(f)

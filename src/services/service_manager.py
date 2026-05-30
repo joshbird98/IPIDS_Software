@@ -8,7 +8,7 @@ import socket
 from src.core.event_helper import EventHelper
 
 # --- Configuration ---
-from src.core.network_config import ZMQ_PORT_HEARTBEAT
+from src.core.network_map import ZMQ_PORT_HEARTBEAT, ZMQ_PORT_MANAGER_PUB, ZMQ_PORT_MANAGER_CMD
 
 CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
 
@@ -45,6 +45,13 @@ class IpidsServiceManager:
         self.heartbeat_sub = self.context.socket(zmq.SUB)
         self.heartbeat_sub.bind(ZMQ_PORT_HEARTBEAT)  # Manager acts as the server here
         self.heartbeat_sub.setsockopt_string(zmq.SUBSCRIBE, "")
+
+        self.health_pub = self.context.socket(zmq.PUB)
+        self.health_pub.bind(ZMQ_PORT_MANAGER_PUB)
+
+        self.cmd_sub = self.context.socket(zmq.SUB)
+        self.cmd_sub.bind(ZMQ_PORT_MANAGER_CMD)
+        self.cmd_sub.setsockopt_string(zmq.SUBSCRIBE, "")
 
         self.poller = zmq.Poller()
         self.poller.register(self.heartbeat_sub, zmq.POLLIN)
@@ -143,10 +150,24 @@ class IpidsServiceManager:
         self.events.log_general("Infrastructure Online. Monitoring Heartbeats...\n")
         try:
             while True:
-                # 1. Listen for heartbeats (1000ms timeout)
-                socks = dict(self.poller.poll(timeout=1000))
+                socks = dict(self.poller.poll(timeout=100))
+
+                # --- NEW: Process GUI Commands (Restarts) ---
+                if self.cmd_sub in socks:
+                    while True:
+                        try:
+                            msg = self.cmd_sub.recv_json(zmq.NOBLOCK)
+                            if msg.get("command") == "restart":
+                                target_svc = msg.get("service")
+                                if target_svc in SERVICES_CONFIG:
+                                    self.events.log_general(f"🛠️ GUI requested manual restart of {target_svc}")
+                                    self._kill_service(target_svc)
+                                    self._start_service(target_svc)
+                        except zmq.Again:
+                            break
+
+                # --- Process Heartbeats ---
                 if self.heartbeat_sub in socks:
-                    # Drain the queue of all pending heartbeats
                     while True:
                         try:
                             msg = self.heartbeat_sub.recv_json(zmq.NOBLOCK)
@@ -156,32 +177,42 @@ class IpidsServiceManager:
                         except zmq.Again:
                             break
 
-                            # 2. Audit Process Health
+                # --- Audit Health & Auto-Restart ---
                 current_time = time.time()
                 for name, cfg in SERVICES_CONFIG.items():
                     if name not in self.running_processes:
-                        continue  # Skipped during boot (e.g., file not found)
-
+                        continue
                     proc = self.running_processes[name]
 
-                    # Scenario A: Fatal Exception (Process died)
                     if proc.poll() is not None:
                         self.events.log_general(f"🚨 CRASH DETECTED: {name} (PID {proc.pid}) died. Restarting...")
                         self._start_service(name)
                         continue
 
-                    # Scenario B: Silent Hang (Process alive, but 10Hz loop is blocked)
-                    time_since_beat = current_time - self.last_heartbeats[name]
+                    time_since_beat = current_time - self.last_heartbeats.get(name, 0)
                     if time_since_beat > cfg["timeout"]:
                         self.events.log_general(
                             f"🚨 HANG DETECTED: {name} unresponsive for {time_since_beat:.1f}s. Restarting...")
                         self._kill_service(name)
                         self._start_service(name)
 
-                if time.time() - self.last_self_heartbeat > 5:
-                    print("Manager heartbeat")
-                    print(self.last_heartbeats)
-                    self.last_self_heartbeat = time.time()
+                # --- Broadcast Health to GUI ---
+                if current_time - self.last_self_heartbeat > 1.0:
+                    service_states = {}
+                    for name, cfg in SERVICES_CONFIG.items():
+                        if name not in self.running_processes:
+                            service_states[name] = "OFFLINE"
+                        else:
+                            proc = self.running_processes[name]
+                            if proc.poll() is not None:
+                                service_states[name] = "CRASHED"
+                            elif current_time - self.last_heartbeats.get(name, 0) > cfg["timeout"]:
+                                service_states[name] = "HANGING"
+                            else:
+                                service_states[name] = "ONLINE"
+
+                    self.health_pub.send_json({"manager.services": service_states})
+                    self.last_self_heartbeat = current_time
 
 
         except KeyboardInterrupt:

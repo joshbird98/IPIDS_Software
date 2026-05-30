@@ -93,6 +93,12 @@ NON_RETAIN
             RB_Body_Temp : Real;                // Physical Readback (Thermocouple) in °C
          END_STRUCT;
 
+         Beamline_Diagnostics : STRUCT
+            Stat_FC_Inserted : Bool;        // Mapped from inferred state model
+            Stat_FC_Retracted : Bool;       // Mapped from inferred state model
+            Stat_Lockout : Bool;            // True when the PLC forces control
+         END_STRUCT;
+
          Endstation : STRUCT
             RB_Dose_Count : Real;         // Integrated fluence/dose calculation
          END_STRUCT;

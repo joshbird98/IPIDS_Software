@@ -3,8 +3,8 @@ import time
 import orjson
 import sys
 
-# Ensure these match your network_config.py exactly
-from src.core.network_config import ZMQ_PORT_VACUUM_PUB, TOPIC_VACUUM_DATA
+# Ensure these match your network_map.py exactly
+from src.core.network_map import ZMQ_PORT_VACUUM_PUB, TOPIC_VACUUM_DATA
 
 def main():
     context = zmq.Context()
