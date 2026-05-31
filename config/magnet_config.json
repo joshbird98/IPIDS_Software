@@ -6,5 +6,8 @@
   "nominal_resistance": 0.16,
   "resistance_tolerance": 0.05,
   "short_circuit_threshold": 0.05,
-  "open_circuit_threshold": 5.0
+  "open_circuit_threshold": 5.0,
+  "mass_calibration_poly": [0.0, 1.25, -0.005, 0.0],
+  "degauss_steps_amps": [30.0, 0.0, 20.0, 0.0, 10.0, 0.0, 5.0, 0.0],
+  "degauss_step_time_sec": 1.5
 }

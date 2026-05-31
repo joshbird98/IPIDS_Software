@@ -3,6 +3,7 @@ import time
 from collections import deque
 import zmq
 import orjson
+import json
 import pyqtgraph as pg
 import queue
 import os
@@ -1168,6 +1169,322 @@ class IonSourceWidget(QWidget):
                 lbl_badge.hide()
 
 
+# --- Beamline Optics Subsystem Component ---
+
+class BeamlineOpticsWidget(QWidget):
+    def __init__(self, cmd_thread, event_helper):
+        super().__init__()
+        self.cmd_thread = cmd_thread
+        self.event_helper = event_helper
+
+        self.config_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../../config"))
+        self.magnet_config = self._load_magnet_config()
+
+        self.main_layout = QVBoxLayout(self)
+
+        self._init_pre_magnet_ui()
+        self._init_magnet_ui()
+        self._init_post_magnet_ui()
+        self._init_downstream_optics_ui()
+
+        self.main_layout.addStretch()
+
+    def _load_magnet_config(self):
+        try:
+            path = os.path.join(self.config_dir, "magnet_config.json")
+            with open(path, "r") as f:
+                return json.load(f)
+        except Exception:
+            return {"mass_calibration_poly": [0.0, 1.0, 0.0, 0.0]}
+
+    def _dispatch_command(self, tag: str, value):
+        if "spellman" in tag:
+            target = "spellman"
+        elif "magnet" in tag:
+            target = "magnet"
+        else:
+            target = "plc"
+        self.cmd_thread.send_command(target, tag, value)
+
+    def _log_manual_slit(self, position_name: str, spinbox: QDoubleSpinBox):
+        val = spinbox.value()
+        self.event_helper.log_user_marker(time.time(), f"Manual Adjustment: {position_name} set to {val} mm", "#9C27B0")
+
+        # Dispatch dummy tag to ZMQ so build_registry.py picks it up for the future automated service
+        tag_name = position_name.lower().replace(" ", "_").replace("-", "_")
+        self._dispatch_command(f"ion_beam.beamline.slits.{tag_name}", val)
+
+    def _init_pre_magnet_ui(self):
+        group = QGroupBox("1. Pre-Magnet Tuning")
+        layout = QGridLayout()
+
+        layout.addWidget(QLabel("<b>Y-Steerer Voltage:</b>"), 0, 0)
+        self.sp_y_steer = QDoubleSpinBox()
+        self.sp_y_steer.setRange(-200.0, 200.0)
+        self.sp_y_steer.setSuffix(" V")
+        self.sp_y_steer.setDecimals(1)
+        self.sp_y_steer.editingFinished.connect(
+            lambda: self._dispatch_command("ion_beam.beamline.steering.sp_y_volts", self.sp_y_steer.value()))
+        layout.addWidget(self.sp_y_steer, 0, 1)
+
+        layout.addWidget(QLabel("<b>Object Slits (L / R):</b>"), 1, 0)
+        slit_layout = QHBoxLayout()
+        self.sp_obj_l = QDoubleSpinBox()
+        self.sp_obj_l.setSuffix(" mm")
+        self.sp_obj_l.editingFinished.connect(lambda: self._log_manual_slit("Object Slit Left", self.sp_obj_l))
+
+        self.sp_obj_r = QDoubleSpinBox()
+        self.sp_obj_r.setSuffix(" mm")
+        self.sp_obj_r.editingFinished.connect(lambda: self._log_manual_slit("Object Slit Right", self.sp_obj_r))
+
+        slit_layout.addWidget(self.sp_obj_l)
+        slit_layout.addWidget(self.sp_obj_r)
+        layout.addLayout(slit_layout, 1, 1)
+
+        group.setLayout(layout)
+        self.main_layout.addWidget(group)
+
+    def _init_magnet_ui(self):
+        group = QGroupBox("2. Mass Analyzer Magnet")
+        layout = QGridLayout()
+
+        self.lbl_mag_cooling = QLabel("COOLING: UNKNOWN")
+        self.lbl_mag_cooling.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.lbl_mag_cooling.setStyleSheet(COLOR_INACTIVE)
+        layout.addWidget(self.lbl_mag_cooling, 0, 0, 1, 2)
+
+        layout.addWidget(QLabel("<b>Magnet Current:</b>"), 1, 0)
+        self.lbl_mag_rb = QLabel("RB: --- A | --- V")
+        layout.addWidget(self.lbl_mag_rb, 1, 1)
+
+        self.sp_mag_current = QDoubleSpinBox()
+        self.sp_mag_current.setRange(0.0, 50.0)
+        self.sp_mag_current.setSuffix(" A")
+        self.sp_mag_current.setDecimals(2)
+        self.sp_mag_current.editingFinished.connect(
+            lambda: self._dispatch_command("ion_beam.beamline.magnet.sp_requested_current",
+                                           self.sp_mag_current.value()))
+        layout.addWidget(self.sp_mag_current, 1, 2)
+
+        self.btn_mag_en = QPushButton("ENABLE MAGNET")
+        self.btn_mag_en.setCheckable(True)
+        self.btn_mag_en.setStyleSheet(COLOR_BUTTON_STANDARD)
+        self.btn_mag_en.clicked.connect(
+            lambda *args: self._dispatch_command("ion_beam.beamline.magnet.cmd_enable", self.btn_mag_en.isChecked()))
+        layout.addWidget(self.btn_mag_en, 1, 3)
+
+        self.btn_mag_deg = QPushButton("DEGAUSS ROUTINE")
+        self.btn_mag_deg.setStyleSheet("background-color: #9C27B0; color: white; font-weight: bold;")
+        self.btn_mag_deg.clicked.connect(
+            lambda *args: self._dispatch_command("ion_beam.beamline.magnet.cmd_degauss", True))
+        layout.addWidget(self.btn_mag_deg, 1, 4)
+
+        calc_frame = QFrame()
+        calc_frame.setStyleSheet("background-color: #E3F2FD; border-radius: 4px; padding: 4px;")
+        calc_layout = QHBoxLayout(calc_frame)
+        calc_layout.setContentsMargins(4, 4, 4, 4)
+
+        calc_layout.addWidget(QLabel("<b>Auto-Tune Mass (amu):</b>"))
+        self.sp_mass = QDoubleSpinBox()
+        self.sp_mass.setRange(1.0, 250.0)
+        self.sp_mass.setDecimals(1)
+        calc_layout.addWidget(self.sp_mass)
+
+        self.btn_calc_mass = QPushButton("CALCULATE & SET AMPS")
+        self.btn_calc_mass.setStyleSheet("background-color: #2196F3; color: white; font-weight: bold;")
+        self.btn_calc_mass.clicked.connect(self._calculate_mass)
+        calc_layout.addWidget(self.btn_calc_mass)
+
+        layout.addWidget(calc_frame, 2, 0, 1, 5)
+        group.setLayout(layout)
+        self.main_layout.addWidget(group)
+
+    def _calculate_mass(self):
+        """
+        Uses Polynomial Calibration: I = a0 + a1*X + a2*X^2 + a3*X^3  (where X = sqrt(mass * extraction_kV))
+        """
+        target_amu = self.sp_mass.value()
+
+        app = QApplication.instance()
+        main_win = next(w for w in app.topLevelWidgets() if isinstance(w, QMainWindow))
+        cache = main_win.master_telemetry_cache
+
+        extr_kv = cache.get("ion_beam.source.extraction.rb_voltage", 0.0)
+
+        if extr_kv <= 0:
+            QMessageBox.warning(self, "Calculation Error", "Beam energy is 0V. Cannot resolve mass.")
+            return
+
+        poly_coeffs = self.magnet_config.get("mass_calibration_poly", [0.0, 1.0, 0.0, 0.0])
+        x_factor = (target_amu * extr_kv) ** 0.5
+
+        required_amps = sum(coeff * (x_factor ** idx) for idx, coeff in enumerate(poly_coeffs))
+        required_amps = max(0.0, min(required_amps, self.sp_mag_current.maximum()))
+
+        self.sp_mag_current.setValue(required_amps)
+        self._dispatch_command("ion_beam.beamline.magnet.sp_requested_current", required_amps)
+
+        self.event_helper.log_user_marker(time.time(),
+                                          f"Auto-Tuned Magnet to {required_amps:.2f} A for {target_amu} amu at {extr_kv:.2f} kV",
+                                          "#2196F3")
+
+    def _init_post_magnet_ui(self):
+        group = QGroupBox("3. Post-Magnet Tuning")
+        layout = QGridLayout()
+
+        layout.addWidget(QLabel("<b>X-Steerer Voltage:</b>"), 0, 0)
+        self.sp_x_steer = QDoubleSpinBox()
+        self.sp_x_steer.setRange(-200.0, 200.0)
+        self.sp_x_steer.setSuffix(" V")
+        self.sp_x_steer.setDecimals(1)
+        self.sp_x_steer.editingFinished.connect(
+            lambda: self._dispatch_command("ion_beam.beamline.steering.sp_x_volts", self.sp_x_steer.value()))
+        layout.addWidget(self.sp_x_steer, 0, 1)
+
+        layout.addWidget(QLabel("<b>Image Slits (L / R):</b>"), 1, 0)
+        slit_layout = QHBoxLayout()
+        self.sp_img_l = QDoubleSpinBox()
+        self.sp_img_l.setSuffix(" mm")
+        self.sp_img_l.editingFinished.connect(lambda: self._log_manual_slit("Image Slit Left", self.sp_img_l))
+
+        self.sp_img_r = QDoubleSpinBox()
+        self.sp_img_r.setSuffix(" mm")
+        self.sp_img_r.editingFinished.connect(lambda: self._log_manual_slit("Image Slit Right", self.sp_img_r))
+
+        slit_layout.addWidget(self.sp_img_l)
+        slit_layout.addWidget(self.sp_img_r)
+        layout.addLayout(slit_layout, 1, 1)
+
+        group.setLayout(layout)
+        self.main_layout.addWidget(group)
+
+    def _init_downstream_optics_ui(self):
+        group = QGroupBox("4. Downstream Lenses & Filters")
+        self.optics_layout = QGridLayout()
+        self.psu_controls = {}
+
+        self._build_psu_row(0, "Beamline Einzel", "ion_beam.spellman.beamline_einzel", "kV", "mA", 0.0, 30.0)
+        self._build_psu_row(1, "Neutral Trap (Pos)", "ion_beam.spellman.neutral_trap_pos", "kV", "mA", 0.0, 5.0)
+        self._build_psu_row(2, "Neutral Trap (Neg)", "ion_beam.spellman.neutral_trap_neg", "kV", "mA", 0.0, 5.0)
+
+        group.setLayout(self.optics_layout)
+        self.main_layout.addWidget(group)
+
+    def _build_psu_row(self, row, name, base_tag, pri_unit, sec_unit, min_v, max_v):
+        lbl_name = QLabel(f"<b>{name}</b>")
+        lbl_rb = QLabel(f"RB: --- {pri_unit} | --- {sec_unit}")
+        lbl_rb.setMinimumWidth(180)
+
+        btn_enable = QPushButton("ENABLE")
+        btn_enable.setCheckable(True)
+        btn_enable.setStyleSheet(COLOR_BUTTON_STANDARD)
+        btn_enable.clicked.connect(
+            lambda *args, b=btn_enable, t=base_tag: self._dispatch_command(f"{t}.cmd_enable", b.isChecked()))
+
+        sp_box = QDoubleSpinBox()
+        sp_box.setRange(min_v, max_v)
+        sp_box.setSuffix(f" {pri_unit}")
+        sp_box.setDecimals(2)
+        sp_box.editingFinished.connect(
+            lambda t=base_tag, b=sp_box: self._dispatch_command(f"{t}.sp_requested_voltage", b.value()))
+
+        self.optics_layout.addWidget(lbl_name, row, 0)
+        self.optics_layout.addWidget(lbl_rb, row, 1)
+        self.optics_layout.addWidget(sp_box, row, 2)
+        self.optics_layout.addWidget(btn_enable, row, 3)
+
+        self.psu_controls[name] = {"lbl_rb": lbl_rb, "sp_box": sp_box, "btn_enable": btn_enable, "base_tag": base_tag,
+                                   "pri_unit": pri_unit, "sec_unit": sec_unit}
+
+    def update_telemetry(self, data: dict):
+        master_comms_lost = not bool(data.get("system.connected", False)) or bool(
+            data.get("ion_beam.system.pc_plc_comms_lost", False))
+        relay_active = bool(data.get("ion_beam.facilities.safety_relay_active", False))
+
+        # 1. Update Magnet State
+        mag_cool = data.get("ion_beam.beamline.magnet.stat_cooling_ok")
+        if master_comms_lost:
+            self.lbl_mag_cooling.setText("COOLING: UNKNOWN")
+            self.lbl_mag_cooling.setStyleSheet(COLOR_INACTIVE)
+        elif mag_cool is True:
+            self.lbl_mag_cooling.setText("COOLING: FLOW & TEMP OK")
+            self.lbl_mag_cooling.setStyleSheet(COLOR_OK)
+        else:
+            self.lbl_mag_cooling.setText("COOLING: FAULT")
+            self.lbl_mag_cooling.setStyleSheet(COLOR_FAULT)
+
+        mag_comms_dead = data.get("manager.services", {}).get("service_magnet_psu", "OFFLINE") != "ONLINE"
+
+        mag_v = data.get("ion_beam.beamline.magnet.rb_voltage")
+        mag_i = data.get("ion_beam.beamline.magnet.rb_current")
+        if mag_v is not None and mag_i is not None:
+            self.lbl_mag_rb.setText(f"RB: {mag_i:.2f} A | {mag_v:.2f} V")
+
+        mag_en = data.get("ion_beam.beamline.magnet.stat_enabled")
+        mag_deg = data.get("ion_beam.beamline.magnet.stat_degaussing")
+
+        if mag_en is not None:
+            self.btn_mag_en.setChecked(bool(mag_en))
+            self.btn_mag_en.setStyleSheet(COLOR_OK if mag_en else COLOR_BUTTON_STANDARD)
+
+        mag_lockout = mag_comms_dead or master_comms_lost or not relay_active or not mag_cool
+        self.btn_mag_en.setEnabled(not mag_lockout)
+        self.sp_mag_current.setEnabled(not mag_lockout)
+        self.btn_mag_deg.setEnabled(not mag_lockout)
+        self.btn_calc_mass.setEnabled(not mag_lockout)
+
+        if mag_deg:
+            self.btn_mag_deg.setText("DEGAUSSING...")
+            self.btn_mag_deg.setStyleSheet("background-color: #E91E63; color: white; font-weight: bold;")
+        else:
+            self.btn_mag_deg.setText("DEGAUSS ROUTINE")
+            self.btn_mag_deg.setStyleSheet("background-color: #9C27B0; color: white; font-weight: bold;")
+
+        # 2. Update Steerers
+        y_val = data.get("ion_beam.beamline.steering.sp_y_volts")
+        if y_val is not None and not self.sp_y_steer.hasFocus():
+            self.sp_y_steer.blockSignals(True)
+            self.sp_y_steer.setValue(float(y_val))
+            self.sp_y_steer.blockSignals(False)
+
+        x_val = data.get("ion_beam.beamline.steering.sp_x_volts")
+        if x_val is not None and not self.sp_x_steer.hasFocus():
+            self.sp_x_steer.blockSignals(True)
+            self.sp_x_steer.setValue(float(x_val))
+            self.sp_x_steer.blockSignals(False)
+
+        steer_lockout = master_comms_lost or not relay_active
+        self.sp_y_steer.setEnabled(not steer_lockout)
+        self.sp_x_steer.setEnabled(not steer_lockout)
+
+        # 3. Update Spellman Downstream Optics
+        spellman_comms_dead = data.get("manager.services", {}).get("service_spellman_mpd", "OFFLINE") != "ONLINE"
+        spell_lockout = spellman_comms_dead or master_comms_lost or not relay_active
+
+        for name, ctrl in self.psu_controls.items():
+            base_tag = ctrl["base_tag"]
+
+            rb_v = data.get(f"{base_tag}.rb_voltage")
+            rb_i = data.get(f"{base_tag}.rb_current")
+            v_str = f"{rb_v:.2f}" if rb_v is not None else "---"
+            i_str = f"{rb_i:.2f}" if rb_i is not None else "---"
+            ctrl["lbl_rb"].setText(f"RB: {v_str} {ctrl['pri_unit']} | {i_str} {ctrl['sec_unit']}")
+
+            sp_val = data.get(f"{base_tag}.sp_actual_voltage")
+            if sp_val is not None and not ctrl["sp_box"].hasFocus():
+                ctrl["sp_box"].blockSignals(True)
+                ctrl["sp_box"].setValue(float(sp_val))
+                ctrl["sp_box"].blockSignals(False)
+
+            stat_en = data.get(f"{base_tag}.stat_enabled")
+            if stat_en is not None:
+                ctrl["btn_enable"].setChecked(bool(stat_en))
+                ctrl["btn_enable"].setStyleSheet(COLOR_OK if stat_en else COLOR_BUTTON_STANDARD)
+
+            ctrl["btn_enable"].setEnabled(not spell_lockout)
+            ctrl["sp_box"].setEnabled(not spell_lockout)
+
+
 # --- System Diagnostics Subsystem Component ---
 
 class DiagnosticsWidget(QWidget):
@@ -1641,6 +1958,14 @@ class ControlMainWindow(QMainWindow):
         self.addDockWidget(Qt.DockWidgetArea.BottomDockWidgetArea, diag_dock)
         self.subsystems["diagnostics"] = self.diag_widget
 
+        # Beamline Optics Dock
+        optics_dock = QDockWidget("Beamline Optics", self)
+        optics_dock.setObjectName("OpticsDock")
+        self.optics_widget = BeamlineOpticsWidget(self.cmd_thread, self.fault_engine)
+        optics_dock.setWidget(self.optics_widget)
+        self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, optics_dock)
+        self.subsystems["optics"] = self.optics_widget
+
     def _route_telemetry(self, fresh_data: dict):
         now = time.time()
 
@@ -1677,6 +2002,7 @@ class ControlMainWindow(QMainWindow):
         self.src_widget.update_telemetry(self.master_telemetry_cache)
         self.diag_widget.update_telemetry(self.master_telemetry_cache)
         self.log_widget.update_telemetry(self.master_telemetry_cache)
+        self.optics_widget.update_telemetry(self.master_telemetry_cache)
 
     def closeEvent(self, event):
         self.telemetry_thread.stop()
