@@ -22,7 +22,8 @@ from src.core.network_map import (
     ZMQ_PORT_VACUUM_PUB,
     ZMQ_PORT_SRC_TURBO_PUB, ZMQ_PORT_SRC_TURBO_CMD,
     ZMQ_PORT_MANAGER_PUB, ZMQ_PORT_MANAGER_CMD,
-    ZMQ_PORT_SPELLMAN_PUB, ZMQ_PORT_SPELLMAN_CMD
+    ZMQ_PORT_SPELLMAN_PUB, ZMQ_PORT_SPELLMAN_CMD,
+    ZMQ_PORT_MAGNET_PUB, ZMQ_PORT_MAGNET_CMD
 )
 
 from src.core.event_helper import EventHelper
@@ -130,12 +131,14 @@ class ZMQCommandThread(QThread):
             "plc": ctx.socket(zmq.PUB),
             "src_turbo": ctx.socket(zmq.PUB),
             "manager": ctx.socket(zmq.PUB),
-            "spellman": ctx.socket(zmq.PUB)
+            "spellman": ctx.socket(zmq.PUB),
+            "magnet": ctx.socket(zmq.PUB)
         }
         sockets["plc"].connect(ZMQ_PORT_PLC_CMD)
         sockets["src_turbo"].connect(ZMQ_PORT_SRC_TURBO_CMD)
         sockets["manager"].connect(ZMQ_PORT_MANAGER_CMD)
         sockets["spellman"].connect(ZMQ_PORT_SPELLMAN_CMD)
+        sockets["magnet"].connect(ZMQ_PORT_MAGNET_CMD)
 
         try:
             while self.running:
@@ -1288,9 +1291,12 @@ class BeamlineOpticsWidget(QWidget):
         self.sp_mass = QDoubleSpinBox()
         self.sp_mass.setRange(1.0, 250.0)
         self.sp_mass.setDecimals(1)
+        self.sp_mass.setSingleStep(1.0)  # FIX 1: Explicit step size
+        self.sp_mass.setValue(28.0)  # FIX 2: Start at Silicon-28, not 1.0
+        self.sp_mass.setKeyboardTracking(False)  # FIX 3: Stop text-highlighting evaluation bugs
         calc_layout.addWidget(self.sp_mass)
 
-        self.btn_calc_mass = QPushButton("CALCULATE & SET AMPS")
+        self.btn_calc_mass = QPushButton("CALCULATE && SET AMPS")
         self.btn_calc_mass.setStyleSheet("background-color: #2196F3; color: white; font-weight: bold;")
         self.btn_calc_mass.clicked.connect(self._calculate_mass)
         calc_layout.addWidget(self.btn_calc_mass)
@@ -1359,7 +1365,7 @@ class BeamlineOpticsWidget(QWidget):
         self.main_layout.addWidget(group)
 
     def _init_downstream_optics_ui(self):
-        group = QGroupBox("4. Downstream Lenses & Filters")
+        group = QGroupBox("4. Downstream Lenses && Filters")
         self.optics_layout = QGridLayout()
         self.psu_controls = {}
 
@@ -1401,7 +1407,12 @@ class BeamlineOpticsWidget(QWidget):
             data.get("ion_beam.system.pc_plc_comms_lost", False))
         relay_active = bool(data.get("ion_beam.facilities.safety_relay_active", False))
 
-        # 1. Update Magnet State
+        services = data.get("manager.services", {})
+        mag_state = services.get("service_magnet_psu", "OFFLINE")
+        spellman_state = services.get("service_spellman_mpd", "OFFLINE")
+        events_state = services.get("service_events", "OFFLINE")
+
+        # --- 1. Update Magnet State ---
         mag_cool = data.get("ion_beam.beamline.magnet.stat_cooling_ok")
         if master_comms_lost:
             self.lbl_mag_cooling.setText("COOLING: UNKNOWN")
@@ -1412,8 +1423,6 @@ class BeamlineOpticsWidget(QWidget):
         else:
             self.lbl_mag_cooling.setText("COOLING: FAULT")
             self.lbl_mag_cooling.setStyleSheet(COLOR_FAULT)
-
-        mag_comms_dead = data.get("manager.services", {}).get("service_magnet_psu", "OFFLINE") != "ONLINE"
 
         mag_v = data.get("ion_beam.beamline.magnet.rb_voltage")
         mag_i = data.get("ion_beam.beamline.magnet.rb_current")
@@ -1427,11 +1436,30 @@ class BeamlineOpticsWidget(QWidget):
             self.btn_mag_en.setChecked(bool(mag_en))
             self.btn_mag_en.setStyleSheet(COLOR_OK if mag_en else COLOR_BUTTON_STANDARD)
 
-        mag_lockout = mag_comms_dead or master_comms_lost or not relay_active or not mag_cool
+        # Build precise Magnet lockout string
+        mag_lock_reason = ""
+        if mag_state != "ONLINE":
+            mag_lock_reason = "Magnet microservice is offline."
+        elif master_comms_lost:
+            mag_lock_reason = "Safety Relay state is unknown (PLC offline)."
+        elif not relay_active:
+            mag_lock_reason = "Safety Relay is De-Energized."
+        elif mag_cool is False:
+            mag_lock_reason = "Magnet hardware interlock/cooling fault."
+
+        mag_lockout = bool(mag_lock_reason)
+        mag_tt = f"Disabled: {mag_lock_reason}" if mag_lockout else "Click to enable Magnet Output"
+
         self.btn_mag_en.setEnabled(not mag_lockout)
+        self.btn_mag_en.setToolTip(mag_tt)
         self.sp_mag_current.setEnabled(not mag_lockout)
+        self.sp_mag_current.setToolTip(mag_tt)
         self.btn_mag_deg.setEnabled(not mag_lockout)
+        self.btn_mag_deg.setToolTip(
+            f"Disabled: {mag_lock_reason}" if mag_lockout else "Click to trigger autonomous degaussing sequence")
         self.btn_calc_mass.setEnabled(not mag_lockout)
+        self.btn_calc_mass.setToolTip(
+            f"Disabled: {mag_lock_reason}" if mag_lockout else "Click to auto-tune magnet current for target mass")
 
         if mag_deg:
             self.btn_mag_deg.setText("DEGAUSSING...")
@@ -1440,7 +1468,7 @@ class BeamlineOpticsWidget(QWidget):
             self.btn_mag_deg.setText("DEGAUSS ROUTINE")
             self.btn_mag_deg.setStyleSheet("background-color: #9C27B0; color: white; font-weight: bold;")
 
-        # 2. Update Steerers
+        # --- 2. Update Steerers ---
         y_val = data.get("ion_beam.beamline.steering.sp_y_volts")
         if y_val is not None and not self.sp_y_steer.hasFocus():
             self.sp_y_steer.blockSignals(True)
@@ -1453,13 +1481,40 @@ class BeamlineOpticsWidget(QWidget):
             self.sp_x_steer.setValue(float(x_val))
             self.sp_x_steer.blockSignals(False)
 
-        steer_lockout = master_comms_lost or not relay_active
-        self.sp_y_steer.setEnabled(not steer_lockout)
-        self.sp_x_steer.setEnabled(not steer_lockout)
+        steer_lock_reason = ""
+        if master_comms_lost:
+            steer_lock_reason = "PLC communications are offline."
+        elif not relay_active:
+            steer_lock_reason = "Safety Relay is De-Energized."
 
-        # 3. Update Spellman Downstream Optics
-        spellman_comms_dead = data.get("manager.services", {}).get("service_spellman_mpd", "OFFLINE") != "ONLINE"
-        spell_lockout = spellman_comms_dead or master_comms_lost or not relay_active
+        steer_lockout = bool(steer_lock_reason)
+        steer_tt = f"Disabled: {steer_lock_reason}" if steer_lockout else "Adjust Beam Steerer Deflection Voltage"
+
+        self.sp_y_steer.setEnabled(not steer_lockout)
+        self.sp_y_steer.setToolTip(steer_tt)
+        self.sp_x_steer.setEnabled(not steer_lockout)
+        self.sp_x_steer.setToolTip(steer_tt)
+
+        # --- 3. Update Manual Slit Inputs ---
+        slit_lock_reason = "Events microservice is offline (Cannot log manual adjustments)."
+        slit_lockout = (events_state != "ONLINE")
+        slit_tt = f"Disabled: {slit_lock_reason}" if slit_lockout else "Update Database Log with physical slit dimensions"
+
+        for slit_sp in [self.sp_obj_l, self.sp_obj_r, self.sp_img_l, self.sp_img_r]:
+            slit_sp.setEnabled(not slit_lockout)
+            slit_sp.setToolTip(slit_tt)
+
+        # --- 4. Update Spellman Downstream Optics ---
+        spell_lock_reason = ""
+        if spellman_state != "ONLINE":
+            spell_lock_reason = "Spellman microservice is offline."
+        elif master_comms_lost:
+            spell_lock_reason = "Safety Relay state is unknown (PLC offline)."
+        elif not relay_active:
+            spell_lock_reason = "Safety Relay is De-Energized."
+
+        spell_lockout = bool(spell_lock_reason)
+        spell_tt = f"Disabled: {spell_lock_reason}" if spell_lockout else ""
 
         for name, ctrl in self.psu_controls.items():
             base_tag = ctrl["base_tag"]
@@ -1482,7 +1537,9 @@ class BeamlineOpticsWidget(QWidget):
                 ctrl["btn_enable"].setStyleSheet(COLOR_OK if stat_en else COLOR_BUTTON_STANDARD)
 
             ctrl["btn_enable"].setEnabled(not spell_lockout)
+            ctrl["btn_enable"].setToolTip(spell_tt if spell_lockout else "Click to toggle power output")
             ctrl["sp_box"].setEnabled(not spell_lockout)
+            ctrl["sp_box"].setToolTip(spell_tt)
 
 
 # --- System Diagnostics Subsystem Component ---
@@ -1875,6 +1932,8 @@ class ConfigEditorDialog(QDialog):
 
 # --- Master Framework ---
 
+# --- Master Framework ---
+
 class ControlMainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
@@ -1901,8 +1960,12 @@ class ControlMainWindow(QMainWindow):
 
         self.master_telemetry_cache = {}
 
-        telemetry_ports = [ZMQ_PORT_PLC_PUB, ZMQ_PORT_VACUUM_PUB, ZMQ_PORT_SRC_TURBO_PUB, ZMQ_PORT_MANAGER_PUB,
-                           ZMQ_PORT_SPELLMAN_PUB]
+        # 1. ADD MAGNET PUB PORT HERE
+        telemetry_ports = [
+            ZMQ_PORT_PLC_PUB, ZMQ_PORT_VACUUM_PUB,
+            ZMQ_PORT_SRC_TURBO_PUB, ZMQ_PORT_MANAGER_PUB,
+            ZMQ_PORT_SPELLMAN_PUB, ZMQ_PORT_MAGNET_PUB
+        ]
         self.telemetry_thread = ZMQTelemetryThread(telemetry_ports)
         self.telemetry_thread.data_received.connect(self._route_telemetry)
         self.telemetry_thread.start()
@@ -1910,10 +1973,12 @@ class ControlMainWindow(QMainWindow):
         self.subsystems = {}
         self._init_docks()
 
+        # 2. ADD MAGNET TO WATCHDOG TRACKER
         self.last_seen = {
             "plc": 0.0,
             "vacuum": 0.0,
-            "src_turbo": 0.0
+            "src_turbo": 0.0,
+            "magnet": 0.0
         }
 
         self.watchdog_timer = QTimer(self)
@@ -1951,20 +2016,20 @@ class ControlMainWindow(QMainWindow):
         self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, src_dock)
         self.subsystems["source"] = self.src_widget
 
+        # 3. FIX THE INSTANTIATION BUG (Changed self.fault_engine to self.event_helper)
+        optics_dock = QDockWidget("Beamline Optics", self)
+        optics_dock.setObjectName("OpticsDock")
+        self.optics_widget = BeamlineOpticsWidget(self.cmd_thread, self.event_helper)
+        optics_dock.setWidget(self.optics_widget)
+        self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, optics_dock)
+        self.subsystems["optics"] = self.optics_widget
+
         diag_dock = QDockWidget("System Diagnostics", self)
         diag_dock.setObjectName("DiagDock")
         self.diag_widget = DiagnosticsWidget(self.cmd_thread, self.fault_engine)
         diag_dock.setWidget(self.diag_widget)
         self.addDockWidget(Qt.DockWidgetArea.BottomDockWidgetArea, diag_dock)
         self.subsystems["diagnostics"] = self.diag_widget
-
-        # Beamline Optics Dock
-        optics_dock = QDockWidget("Beamline Optics", self)
-        optics_dock.setObjectName("OpticsDock")
-        self.optics_widget = BeamlineOpticsWidget(self.cmd_thread, self.fault_engine)
-        optics_dock.setWidget(self.optics_widget)
-        self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, optics_dock)
-        self.subsystems["optics"] = self.optics_widget
 
     def _route_telemetry(self, fresh_data: dict):
         now = time.time()
@@ -1980,6 +2045,11 @@ class ControlMainWindow(QMainWindow):
         if any("vacuum_gauge" in key for key in fresh_data.keys()):
             self.last_seen["vacuum"] = now
             fresh_data["vacuum.connected"] = True
+
+        # 4. TRACK MAGNET HEARTBEATS
+        if "ion_beam.beamline.magnet.rb_voltage" in fresh_data:
+            self.last_seen["magnet"] = now
+            fresh_data["magnet.connected"] = True
 
         self.master_telemetry_cache.update(fresh_data)
 
@@ -1998,11 +2068,16 @@ class ControlMainWindow(QMainWindow):
             print("[Watchdog] Vacuum Gauge ZMQ stream lost!")
             self.master_telemetry_cache["vacuum.connected"] = False
 
+        # 5. MAGNET WATCHDOG TIMEOUT
+        if now - self.last_seen["magnet"] > 2.5 and self.master_telemetry_cache.get("magnet.connected", True):
+            print("[Watchdog] Magnet ZMQ stream lost!")
+            self.master_telemetry_cache["magnet.connected"] = False
+
         self.vac_widget.update_telemetry(self.master_telemetry_cache)
         self.src_widget.update_telemetry(self.master_telemetry_cache)
+        self.optics_widget.update_telemetry(self.master_telemetry_cache)
         self.diag_widget.update_telemetry(self.master_telemetry_cache)
         self.log_widget.update_telemetry(self.master_telemetry_cache)
-        self.optics_widget.update_telemetry(self.master_telemetry_cache)
 
     def closeEvent(self, event):
         self.telemetry_thread.stop()
