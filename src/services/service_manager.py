@@ -5,34 +5,24 @@ import subprocess
 import psutil
 import zmq
 import socket
+import json
 from src.core.event_helper import EventHelper
-
-# --- Configuration ---
 from src.core.network_map import ZMQ_PORT_HEARTBEAT, ZMQ_PORT_MANAGER_PUB, ZMQ_PORT_MANAGER_CMD
+from src.core.os_helper import harden_windows_process
 
 CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
 
-# Master Registry of IPIDS Services.
-# Tiers dictate the boot order (T0 boots first, T3 last).
 SERVICES_CONFIG = {
-    # T-0: Infrastructure & Data Pipelines
-    "service_events": {"script": os.path.join(CURRENT_DIR, "service_events.py"), "tier": 0, "timeout": 2.0},
-    "service_logger": {"script": os.path.join(CURRENT_DIR, "service_logger.py"), "tier": 0, "timeout": 2.0},
-    "service_data_compactor": {"script": os.path.join(CURRENT_DIR, "service_data_compactor.py"), "tier": 0, "timeout": 215.0},
-
-    # T-1: Core Safety & Master Data Broker
-    "service_plc": {"script": os.path.join(CURRENT_DIR, "service_plc.py"), "tier": 1, "timeout": 2.0},
-
-    # T-2: Hardware Peripherals
-    "service_vac_gauge_controllers": {"script": os.path.join(CURRENT_DIR, "service_vac_gauge_controllers.py"), "tier": 2, "timeout": 2.0},
-    "service_source_turbo": {"script": os.path.join(CURRENT_DIR, "service_source_turbo.py"), "tier": 2, "timeout": 2.0},
-    "service_magnet_psu": {"script": os.path.join(CURRENT_DIR, "service_magnet_psu.py"), "tier": 2, "timeout": 2.0},
-    #"service_spellman_mpd": {"script": os.path.join(CURRENT_DIR, "service_spellman_mpd.py"), "tier": 2, "timeout": 2.0},
-
-    # T-3: Automation & Orchestration
-    # "service_conductor":    {"script": os.path.join(CURRENT_DIR, "service_conductor.py"),    "tier": 3, "timeout": 2.0}
-
-    #"service_dummy": {"script": os.path.join(CURRENT_DIR, "service_dummy.py"), "args": ["crash"], "tier": 2, "timeout": 2.0},
+    "service_events": {"script": os.path.join(CURRENT_DIR, "service_events.py"), "tier": 0, "timeout": 2.0, "boot_grace": 15.0},
+    "service_logger": {"script": os.path.join(CURRENT_DIR, "service_logger.py"), "tier": 0, "timeout": 2.0, "boot_grace": 15.0},
+    "service_data_compactor": {"script": os.path.join(CURRENT_DIR, "service_data_compactor.py"), "tier": 0,
+                               "timeout": 215.0, "boot_grace": 215.0},
+    "service_plc": {"script": os.path.join(CURRENT_DIR, "service_plc.py"), "tier": 1, "timeout": 2.0, "boot_grace": 15.0},
+    "service_vac_gauge_controllers": {"script": os.path.join(CURRENT_DIR, "service_vac_gauge_controllers.py"),
+                                      "tier": 2, "timeout": 2.0, "boot_grace": 15.0},
+    "service_source_turbo": {"script": os.path.join(CURRENT_DIR, "service_source_turbo.py"), "tier": 2, "timeout": 2.0, "boot_grace": 15.0},
+    "service_magnet_psu": {"script": os.path.join(CURRENT_DIR, "service_magnet_psu.py"), "tier": 2, "timeout": 2.0, "boot_grace": 15.0},
+    #"service_spellman_mpd": {"script": os.path.join(CURRENT_DIR, "service_spellman_mpd.py"), "tier": 2, "timeout": 2.0, "boot_grace": 15.0},
 }
 
 
@@ -40,10 +30,10 @@ class IpidsServiceManager:
     def __init__(self):
         self._enforce_singleton()
 
-        # ZMQ Heartbeat Setup
         self.context = zmq.Context()
+
         self.heartbeat_sub = self.context.socket(zmq.SUB)
-        self.heartbeat_sub.bind(ZMQ_PORT_HEARTBEAT)  # Manager acts as the server here
+        self.heartbeat_sub.bind(ZMQ_PORT_HEARTBEAT)
         self.heartbeat_sub.setsockopt_string(zmq.SUBSCRIBE, "")
 
         self.health_pub = self.context.socket(zmq.PUB)
@@ -55,29 +45,25 @@ class IpidsServiceManager:
 
         self.poller = zmq.Poller()
         self.poller.register(self.heartbeat_sub, zmq.POLLIN)
+        self.poller.register(self.cmd_sub, zmq.POLLIN)
 
-        # State tracking
-        self.running_processes = {}  # {service_name: subprocess.Popen}
-        self.last_heartbeats = {}  # {service_name: timestamp}
+        self.running_processes = {}
+        self.launch_times = {}  # Track when the process was spawned
+        self.last_heartbeats = {}  # Track the last *actual* received heartbeat
         self.last_self_heartbeat = 0
 
         self.events = EventHelper("service_manager")
 
     def _enforce_singleton(self):
-        """Prevents multiple instances of the Service Manager from binding to the ports."""
         self.lock_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         try:
-            # Bind to an obscure port. If it fails, another manager is holding it.
             self.lock_socket.bind(('localhost', 65432))
         except socket.error:
             self.events.log_general("CRITICAL: Another instance is already running. Aborting.")
             sys.exit(1)
 
     def _purge_zombies(self):
-        """Hunts down and terminates any orphaned services from previous crashes."""
-        #print("[IPIDS Manager] Executing Pre-Flight Zombie Purge...")
         script_names = [os.path.basename(cfg["script"]) for cfg in SERVICES_CONFIG.values()]
-
         killed_count = 0
         for proc in psutil.process_iter(['pid', 'name', 'cmdline']):
             try:
@@ -90,15 +76,37 @@ class IpidsServiceManager:
                             killed_count += 1
             except (psutil.NoSuchProcess, psutil.AccessDenied):
                 pass
-
         if killed_count == 0:
             self.events.log_general("Airspace clear. No zombies found.")
         else:
             self.events.log_general(f"Purged {killed_count} orphaned processes.")
-            time.sleep(1.0)  # Give the OS a moment to free up the COM ports
+            time.sleep(1.0)
+
+    def _broadcast_state(self):
+        """Calculates current states and instantly pushes to GUI."""
+        current_time = time.time()
+        service_states = {}
+
+        for name, cfg in SERVICES_CONFIG.items():
+            if name not in self.running_processes:
+                service_states[name] = "OFFLINE"
+            else:
+                proc = self.running_processes[name]
+                if proc.poll() is not None:
+                    service_states[name] = "CRASHED"
+                elif self.last_heartbeats.get(name, 0) == 0.0:
+                    # Process is running, but hasn't sent a heartbeat yet
+                    service_states[name] = "STARTING"
+                elif current_time - self.last_heartbeats.get(name, 0) > cfg["timeout"]:
+                    service_states[name] = "HANGING"
+                else:
+                    service_states[name] = "ONLINE"
+
+        payload = json.dumps({"manager.services": service_states}).encode('utf-8')
+        self.health_pub.send_multipart([b"MANAGER", payload])
+        self.last_self_heartbeat = current_time
 
     def _start_service(self, name):
-        """Spawns a service using the exact same Python interpreter running this manager."""
         cfg = SERVICES_CONFIG[name]
         script_path = cfg["script"]
 
@@ -107,42 +115,38 @@ class IpidsServiceManager:
             return
 
         self.events.log_general(f"Launching {name}...")
-
-        # Launch independently. (In the future, you can pipe stdout/stderr to a master log here)
         args = cfg.get("args", [])
         proc = subprocess.Popen([sys.executable, script_path] + args)
 
         self.running_processes[name] = proc
-        self.last_heartbeats[name] = time.time() + cfg["timeout"]
+        self.launch_times[name] = time.time()
+        self.last_heartbeats[name] = 0.0  # Reset actual heartbeat tracker
+
+        self._broadcast_state()  # Force GUI to instantly show 'STARTING'
 
     def _kill_service(self, name):
-        """Forcefully terminates a managed service."""
         proc = self.running_processes.get(name)
         if proc:
             self.events.log_general(f"❌ Terminating {name} (PID {proc.pid})...")
             proc.kill()
-            proc.wait()  # Block until the OS confirms the PID is dead
+            proc.wait()
             del self.running_processes[name]
+            self._broadcast_state()  # Force GUI to instantly show 'OFFLINE'
 
     def start_all(self):
         self._purge_zombies()
         self.events.log_general("Commencing Staggered Boot Sequence...")
 
-        # Group services by tier
         tiers = {}
         for name, cfg in SERVICES_CONFIG.items():
             t = cfg["tier"]
-            if t not in tiers:
-                tiers[t] = []
+            if t not in tiers: tiers[t] = []
             tiers[t].append(name)
 
-        # Boot in order T-0 to T-3
         for current_tier in sorted(tiers.keys()):
             self.events.log_general(f"--- Booting Tier {current_tier} ---")
             for name in tiers[current_tier]:
                 self._start_service(name)
-
-            # Wait for the current tier to initialize before starting the next
             if current_tier < max(tiers.keys()):
                 time.sleep(2.0)
 
@@ -152,7 +156,7 @@ class IpidsServiceManager:
             while True:
                 socks = dict(self.poller.poll(timeout=100))
 
-                # --- NEW: Process GUI Commands (Restarts) ---
+                # GUI Commands
                 if self.cmd_sub in socks:
                     while True:
                         try:
@@ -166,22 +170,21 @@ class IpidsServiceManager:
                         except zmq.Again:
                             break
 
-                # --- Process Heartbeats ---
+                # Process Heartbeats
                 if self.heartbeat_sub in socks:
                     while True:
                         try:
                             msg = self.heartbeat_sub.recv_json(zmq.NOBLOCK)
                             svc_name = msg.get("service")
-                            if svc_name in self.last_heartbeats:
+                            if svc_name in self.running_processes:
                                 self.last_heartbeats[svc_name] = time.time()
                         except zmq.Again:
                             break
 
-                # --- Audit Health & Auto-Restart ---
+                # --- DETERMINISTIC NON-BLOCKING HEALTH AUDIT ---
                 current_time = time.time()
                 for name, cfg in SERVICES_CONFIG.items():
-                    if name not in self.running_processes:
-                        continue
+                    if name not in self.running_processes: continue
                     proc = self.running_processes[name]
 
                     if proc.poll() is not None:
@@ -189,31 +192,28 @@ class IpidsServiceManager:
                         self._start_service(name)
                         continue
 
-                    time_since_beat = current_time - self.last_heartbeats.get(name, 0)
-                    if time_since_beat > cfg["timeout"]:
-                        self.events.log_general(
-                            f"🚨 HANG DETECTED: {name} unresponsive for {time_since_beat:.1f}s. Restarting...")
-                        self._kill_service(name)
-                        self._start_service(name)
+                    last_hb = self.last_heartbeats.get(name, 0)
 
-                # --- Broadcast Health to GUI ---
-                if current_time - self.last_self_heartbeat > 1.0:
-                    service_states = {}
-                    for name, cfg in SERVICES_CONFIG.items():
-                        if name not in self.running_processes:
-                            service_states[name] = "OFFLINE"
-                        else:
-                            proc = self.running_processes[name]
-                            if proc.poll() is not None:
-                                service_states[name] = "CRASHED"
-                            elif current_time - self.last_heartbeats.get(name, 0) > cfg["timeout"]:
-                                service_states[name] = "HANGING"
-                            else:
-                                service_states[name] = "ONLINE"
+                    if last_hb == 0.0:
+                        # Service is still booting up during the tiered launch sequence
+                        # Evaluate strictly against a loose boot grace time (15s)
+                        if current_time - self.launch_times.get(name, 0) > 15.0:
+                            self.events.log_general(
+                                f"🚨 INITIALIZATION FAILURE: {name} failed to spin up within grace period. Restarting...")
+                            self._kill_service(name)
+                            self._start_service(name)
+                    else:
+                        # Service is alive and actively cycling.
+                        # Enforce your high-responsiveness runtime watchdog limit natively.
+                        if current_time - last_hb > cfg["timeout"]:
+                            self.events.log_general(
+                                f"🚨 HANG DETECTED: {name} failed fast watchdog threshold ({cfg['timeout']}s). Restarting...")
+                            self._kill_service(name)
+                            self._start_service(name)
 
-                    self.health_pub.send_json({"manager.services": service_states})
-                    self.last_self_heartbeat = current_time
-
+                # Broadcast loop (5Hz status update)
+                if current_time - self.last_self_heartbeat > 0.2:
+                    self._broadcast_state()
 
         except KeyboardInterrupt:
             self.events.log_general("Shutdown signal received. Terminating all services...")
@@ -223,6 +223,7 @@ class IpidsServiceManager:
 
 
 if __name__ == "__main__":
+    harden_windows_process()
     manager = IpidsServiceManager()
     manager.start_all()
     manager.run()

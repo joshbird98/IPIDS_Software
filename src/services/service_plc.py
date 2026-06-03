@@ -3,15 +3,15 @@ import os
 import zmq
 import json
 import snap7
-from snap7.util import get_bool, get_int, get_dint, get_real, get_dword, set_bool, set_int, set_real
+from snap7.util import get_bool, get_int, get_dint, get_real, get_dword, set_bool, set_int, set_real, set_dint
 from typing import Dict, Any
 import orjson
 from src.core.event_helper import EventHelper
+from src.core.os_helper import harden_windows_process
 
 # Force Windows high-resolution timers (1ms precision) for OS sleep accuracy
 if os.name == 'nt':
     import ctypes
-
     ctypes.windll.winmm.timeBeginPeriod(1)
 
 from src.core.network_map import (
@@ -22,7 +22,6 @@ from src.core.network_map import (
 POLL_INTERVAL = 0.1  # 100ms cycle (10Hz)
 HEARTBEAT_INTERVAL = 0.5  # 2Hz Watchdog
 MAX_CMD_AGE = 0.5  # TTL: Reject incoming commands older than 500ms
-
 
 
 class PlcMicroservice:
@@ -90,8 +89,6 @@ class PlcMicroservice:
 
     def _evaluate_word_faults(self):
         """Unpacks Siemens 32-bit DWORDs and logs edge transitions via EventHelper."""
-
-        # Static mapping from 1D payload keys to the fault_config.json UDT names
         word_keys = {
             "ion_beam.faults.word_0_system": "UDT_Fault_Word_0_System",
             "ion_beam.faults.word_1_pumps": "UDT_Fault_Word_1_Pumps",
@@ -101,7 +98,6 @@ class PlcMicroservice:
             "ion_beam.faults.word_5_gauges": "UDT_Fault_Word_5_Gauges"
         }
 
-        # Ensure fault_map and latches exist
         if not hasattr(self, "raw_fault_map"):
             config_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '../../config/fault_config.json'))
             try:
@@ -113,7 +109,6 @@ class PlcMicroservice:
         if not hasattr(self, "fault_latches"):
             self.fault_latches = {}
 
-        # Evaluate each word
         for tag, udt_name in word_keys.items():
             word_val = self.state.get(tag)
             if word_val is None:
@@ -124,19 +119,14 @@ class PlcMicroservice:
 
             for offset_str, meta in bits_dict.items():
                 byte_idx, bit_idx = map(int, offset_str.split('.'))
-
-                # Siemens Big-Endian: Byte 0 is the highest byte (shifted 24 bits left)
                 shift_amount = (3 - byte_idx) * 8 + bit_idx
                 is_active = bool((word_int >> shift_amount) & 1)
 
                 fault_name = meta["name"]
-
-                # Silent initialization on first cycle
                 if fault_name not in self.fault_latches:
                     self.fault_latches[fault_name] = is_active
                     continue
 
-                # Edge detection
                 if is_active != self.fault_latches[fault_name]:
                     print(f"Logging {fault_name}")
                     self.events.log_fault(fault_name, active=is_active)
@@ -227,17 +217,13 @@ class PlcMicroservice:
         return None
 
     def _parse_fault_struct(self, raw_db_bytes: bytearray, byte_offset: int, tag_name: str):
-        # 1. NEW: Publish the raw 32-bit integer word for the GUI's FaultRegistry
         raw_word_int = get_dword(raw_db_bytes, byte_offset)
         self.state[tag_name] = float(raw_word_int)
 
-        # 2. Existing: Break out individual booleans for local use
         struct_bytes = raw_db_bytes[byte_offset: byte_offset + 4]
         for offset_str, fault_meta in self.fault_map[tag_name].items():
             byte_idx, bit_idx = map(int, offset_str.split('.'))
             is_active = get_bool(struct_bytes, byte_idx, bit_idx)
-
-            # Map directly to 1D numeric array format
             fault_name = fault_meta["name"]
             self.state[f"faults.{fault_name}"] = 1.0 if is_active else 0.0
 
@@ -286,15 +272,10 @@ class PlcMicroservice:
         bit_offset = meta.get("bit_offset", 0)
         dtype = meta.get("datatype", "UNKNOWN")
         db_num = meta.get("db_number")
-
         try:
             if dtype == "BOOL":
                 data = self.client.db_read(db_num, byte_offset, 1)
                 set_bool(data, 0, bit_offset, bool(new_value))
-                print(data)
-                print(byte_offset)
-                print(bit_offset)
-                print(new_value)
                 self.client.db_write(db_num, byte_offset, data)
             elif dtype == "REAL":
                 data = bytearray(4)
@@ -310,14 +291,76 @@ class PlcMicroservice:
             self.connected = False
             return False
 
-    def _update_plc_mailbox(self, tag: str, new_value: bool):
-        if self.mailbox_cache.get(tag) != new_value:
-            success = self._write_tag(tag, new_value)
-            if success:
-                self.mailbox_cache[tag] = new_value
+    def _write_tags_batched(self, updates: Dict[str, Any]):
+        """Groups modifications dynamically by DB number, calculating true data-type sizes
+
+        to prevent network write-avalanches and memory footprint truncation.
+        """
+        type_sizes = {
+            "BOOL": 1, "BYTE": 1, "CHAR": 1,
+            "INT": 2, "UINT": 2, "WORD": 2,
+            "DINT": 4, "UDINT": 4, "DWORD": 4, "REAL": 4
+        }
+
+        changes_by_db = {}
+        for tag, new_value in updates.items():
+            if tag not in self.tags:
+                continue
+            if self.mailbox_cache.get(tag) != new_value:
+                meta = self.tags[tag]
+                db_num = meta.get("db_number")
+                if db_num not in changes_by_db:
+                    changes_by_db[db_num] = []
+                changes_by_db[db_num].append((tag, meta, new_value))
+
+        for db_num, tag_list in changes_by_db.items():
+            try:
+                # Calculate absolute minimum byte boundary
+                min_byte = min(item[1].get("byte_offset", 0) for item in tag_list)
+
+                # Calculate absolute maximum byte boundary incorporating actual data type widths
+                max_end_byte = max(
+                    item[1].get("byte_offset", 0) + type_sizes.get(item[1].get("datatype", "BOOL"), 1)
+                    for item in tag_list
+                )
+
+                length = max_end_byte - min_byte
+                if length % 2 != 0:
+                    length += 1  # Force even byte alignment requirements for S7 memory blocks
+
+                # Read entire memory span containing all variations
+                db_data = self.client.db_read(db_num, min_byte, length)
+
+                # Process mutations according to specific data types safely
+                for tag, meta, value in tag_list:
+                    rel_byte = meta.get("byte_offset", 0) - min_byte
+                    dtype = meta.get("datatype", "BOOL")
+
+                    if dtype == "BOOL":
+                        set_bool(db_data, rel_byte, meta.get("bit_offset", 0), bool(value))
+                    elif dtype == "REAL":
+                        set_real(db_data, rel_byte, float(value))
+                    elif dtype in ["INT", "UINT"]:
+                        set_int(db_data, rel_byte, int(value))
+                    elif dtype in ["DINT", "UDINT"]:
+                        set_dint(db_data, rel_byte, int(value))
+                    else:
+                        self.events.log_general(
+                            f"WARNING: Batch writer skipped unsupported datatype '{dtype}' on tag '{tag}'")
+                        continue
+
+                # Commit unified changes simultaneously
+                self.client.db_write(db_num, min_byte, db_data)
+
+                for tag, _, value in tag_list:
+                    self.mailbox_cache[tag] = value
+            except Exception as e:
+                self.events.log_general(f"Batched write failed on DB {db_num}: {e}")
+                self.connected = False
 
     def _process_external_telemetry(self):
-        """Expects 1D Flat payloads mapped directly to registry tags."""
+        """Processes and stages flat payloads before batching to avoid write floods."""
+        pending_updates = {}
         try:
             while True:
                 topic, msg = self.telem_socket.recv_multipart(flags=zmq.NOBLOCK)
@@ -329,104 +372,82 @@ class PlcMicroservice:
                         self.last_seen[service] = time.time()
 
                 if "TURBO" in topic_str:
-                    self._update_plc_mailbox("ion_beam.pump.status.stat_src_turbo_comms_fail",
-                                             bool(payload.get("ion_beam.pump.status.stat_src_turbo_comms_fail", 0.0)))
-                    self._update_plc_mailbox("ion_beam.pump.status.stat_src_turbo_error",
-                                             bool(payload.get("ion_beam.pump.status.stat_src_turbo_error", 0.0)))
-                    self._update_plc_mailbox("ion_beam.pump.status.stat_src_turbo_warning",
-                                             bool(payload.get("ion_beam.pump.status.stat_src_turbo_warning", 0.0)))
-                    self._update_plc_mailbox("ion_beam.pump.status.stat_src_turbo_trip",
-                                             bool(payload.get("ion_beam.pump.status.stat_src_turbo_trip", 0.0)))
+                    pending_updates["ion_beam.pump.status.stat_src_turbo_comms_fail"] = bool(payload.get("ion_beam.pump.status.stat_src_turbo_comms_fail", 0.0))
+                    pending_updates["ion_beam.pump.status.stat_src_turbo_error"] = bool(payload.get("ion_beam.pump.status.stat_src_turbo_error", 0.0))
+                    pending_updates["ion_beam.pump.status.stat_src_turbo_warning"] = bool(payload.get("ion_beam.pump.status.stat_src_turbo_warning", 0.0))
+                    pending_updates["ion_beam.pump.status.stat_src_turbo_trip"] = bool(payload.get("ion_beam.pump.status.stat_src_turbo_trip", 0.0))
 
                 elif "VACUUM" in topic_str:
-                    self._update_plc_mailbox("ion_beam.gauges.status.stat_graphix1_comms_fail",
-                                             bool(payload.get("ion_beam.gauges.status.stat_graphix1_comms_fail", 0.0)))
-                    self._update_plc_mailbox("ion_beam.gauges.status.stat_graphix2_comms_fail",
-                                             bool(payload.get("ion_beam.gauges.status.stat_graphix2_comms_fail", 0.0)))
+                    pending_updates["ion_beam.gauges.status.stat_graphix1_comms_fail"] = bool(payload.get("ion_beam.gauges.status.stat_graphix1_comms_fail", 0.0))
+                    pending_updates["ion_beam.gauges.status.stat_graphix2_comms_fail"] = bool(payload.get("ion_beam.gauges.status.stat_graphix2_comms_fail", 0.0))
 
                     for i in range(1, 7):
-                        self._update_plc_mailbox(f"ion_beam.gauges.status.stat_vg{i}_not_found",
-                                                 bool(payload.get(f"ion_beam.gauges.status.stat_vg{i}_not_found", 0.0)))
-                        self._update_plc_mailbox(f"ion_beam.gauges.status.stat_vg{i}_mismatch",
-                                                 bool(payload.get(f"ion_beam.gauges.status.stat_vg{i}_mismatch", 0.0)))
-                        self._update_plc_mailbox(f"ion_beam.gauges.status.stat_vg{i}_above_sp",
-                                                 bool(payload.get(f"ion_beam.gauges.status.stat_vg{i}_above_sp", 0.0)))
-                        self._update_plc_mailbox(f"ion_beam.gauges.status.stat_vg{i}_rapid_rise", bool(
-                            payload.get(f"ion_beam.gauges.status.stat_vg{i}_rapid_rise", 0.0)))
+                        pending_updates[f"ion_beam.gauges.status.stat_vg{i}_not_found"] = bool(payload.get(f"ion_beam.gauges.status.stat_vg{i}_not_found", 0.0))
+                        pending_updates[f"ion_beam.gauges.status.stat_vg{i}_mismatch"] = bool(payload.get(f"ion_beam.gauges.status.stat_vg{i}_mismatch", 0.0))
+                        pending_updates[f"ion_beam.gauges.status.stat_vg{i}_above_sp"] = bool(payload.get(f"ion_beam.gauges.status.stat_vg{i}_above_sp", 0.0))
+                        pending_updates[f"ion_beam.gauges.status.stat_vg{i}_rapid_rise"] = bool(payload.get(f"ion_beam.gauges.status.stat_vg{i}_rapid_rise", 0.0))
 
-                    gv_safe = bool(payload.get("ion_beam.vacuum.gv_permissive_ready", 0.0))
-                    self._update_plc_mailbox("ion_beam.source.chamber.stat_vac_ok_for_gv", gv_safe)
+                    pending_updates["ion_beam.source.chamber.stat_vac_ok_for_gv"] = bool(payload.get("ion_beam.vacuum.gv_permissive_ready", 0.0))
 
                 elif "SPELLMAN" in topic_str:
                     for i in range(1, 6):
-                        self._update_plc_mailbox(f"ion_beam.spellman.status.stat_unit{i}_comms_fail", bool(
-                            payload.get(f"ion_beam.spellman.status.stat_unit{i}_comms_fail", 0.0)))
-                        self._update_plc_mailbox(f"ion_beam.spellman.status.stat_unit{i}_overcurrent", bool(
-                            payload.get(f"ion_beam.spellman.status.stat_unit{i}_overcurrent", 0.0)))
-                        self._update_plc_mailbox(f"ion_beam.spellman.status.stat_unit{i}_undervoltage", bool(
-                            payload.get(f"ion_beam.spellman.status.stat_unit{i}_undervoltage", 0.0)))
-                        self._update_plc_mailbox(f"ion_beam.spellman.status.stat_unit{i}_arc_exceeded", bool(
-                            payload.get(f"ion_beam.spellman.status.stat_unit{i}_arc_exceeded", 0.0)))
+                        pending_updates[f"ion_beam.spellman.status.stat_unit{i}_comms_fail"] = bool(payload.get(f"ion_beam.spellman.status.stat_unit{i}_comms_fail", 0.0))
+                        pending_updates[f"ion_beam.spellman.status.stat_unit{i}_overcurrent"] = bool(payload.get(f"ion_beam.spellman.status.stat_unit{i}_overcurrent", 0.0))
+                        pending_updates[f"ion_beam.spellman.status.stat_unit{i}_undervoltage"] = bool(payload.get(f"ion_beam.spellman.status.stat_unit{i}_undervoltage", 0.0))
+                        pending_updates[f"ion_beam.spellman.status.stat_unit{i}_arc_exceeded"] = bool(payload.get(f"ion_beam.spellman.status.stat_unit{i}_arc_exceeded", 0.0))
 
                 elif "MAGNET" in topic_str:
-                    self._update_plc_mailbox("ion_beam.magnet.status.stat_comms_fail",
-                                             bool(payload.get("ion_beam.magnet.status.stat_comms_fail", 0.0)))
-                    self._update_plc_mailbox("ion_beam.magnet.status.stat_open_circuit",
-                                             bool(payload.get("ion_beam.magnet.status.stat_open_circuit", 0.0)))
-                    self._update_plc_mailbox("ion_beam.magnet.status.stat_short_circuit",
-                                             bool(payload.get("ion_beam.magnet.status.stat_short_circuit", 0.0)))
-                    self._update_plc_mailbox("ion_beam.magnet.status.stat_unexpected_res",
-                                             bool(payload.get("ion_beam.magnet.status.stat_unexpected_res", 0.0)))
-                    self._update_plc_mailbox("ion_beam.magnet.status.stat_psu_overtemp",
-                                             bool(payload.get("ion_beam.magnet.status.stat_psu_overtemp", 0.0)))
-                    self._update_plc_mailbox("ion_beam.magnet.status.stat_psu_powerfail",
-                                             bool(payload.get("ion_beam.magnet.status.stat_psu_powerfail", 0.0)))
-                    self._update_plc_mailbox("ion_beam.magnet.status.stat_psu_ovc",
-                                             bool(payload.get("ion_beam.magnet.status.stat_psu_ovc", 0.0)))
-                    self._update_plc_mailbox("ion_beam.magnet.status.stat_psu_ovp",
-                                             bool(payload.get("ion_beam.magnet.status.stat_psu_ovp", 0.0)))
+                    pending_updates["ion_beam.magnet.status.stat_comms_fail"] = bool(payload.get("ion_beam.magnet.status.stat_comms_fail", 0.0))
+                    pending_updates["ion_beam.magnet.status.stat_open_circuit"] = bool(payload.get("ion_beam.magnet.status.stat_open_circuit", 0.0))
+                    pending_updates["ion_beam.magnet.status.stat_short_circuit"] = bool(payload.get("ion_beam.magnet.status.stat_short_circuit", 0.0))
+                    pending_updates["ion_beam.magnet.status.stat_unexpected_res"] = bool(payload.get("ion_beam.magnet.status.stat_unexpected_res", 0.0))
+                    pending_updates["ion_beam.magnet.status.stat_psu_overtemp"] = bool(payload.get("ion_beam.magnet.status.stat_psu_overtemp", 0.0))
+                    pending_updates["ion_beam.magnet.status.stat_psu_powerfail"] = bool(payload.get("ion_beam.magnet.status.stat_psu_powerfail", 0.0))
+                    pending_updates["ion_beam.magnet.status.stat_psu_ovc"] = bool(payload.get("ion_beam.magnet.status.stat_psu_ovc", 0.0))
+                    pending_updates["ion_beam.magnet.status.stat_psu_ovp"] = bool(payload.get("ion_beam.magnet.status.stat_psu_ovp", 0.0))
 
         except zmq.Again:
-            pass
+            if pending_updates:
+                self._write_tags_batched(pending_updates)
 
     def _enforce_it_watchdogs(self):
         current_time = time.time()
+        fallback_updates = {}
 
         if current_time - self.last_seen["VACUUM"] > self.SERVICE_TIMEOUT_SEC:
-            self._update_plc_mailbox("ion_beam.source.chamber.stat_vac_ok_for_gv", False)
-            self._update_plc_mailbox("ion_beam.gauges.status.stat_graphix1_comms_fail", True)
-            self._update_plc_mailbox("ion_beam.gauges.status.stat_graphix2_comms_fail", True)
+            fallback_updates["ion_beam.source.chamber.stat_vac_ok_for_gv"] = False
+            fallback_updates["ion_beam.gauges.status.stat_graphix1_comms_fail"] = True
+            fallback_updates["ion_beam.gauges.status.stat_graphix2_comms_fail"] = True
 
         if current_time - self.last_seen["TURBO"] > self.SERVICE_TIMEOUT_SEC:
-            self._update_plc_mailbox("ion_beam.pump.status.stat_src_turbo_comms_fail", True)
+            fallback_updates["ion_beam.pump.status.stat_src_turbo_comms_fail"] = True
 
         if current_time - self.last_seen["SPELLMAN"] > self.SERVICE_TIMEOUT_SEC:
             for i in range(1, 6):
-                self._update_plc_mailbox(f"ion_beam.spellman.status.stat_unit{i}_comms_fail", True)
+                fallback_updates[f"ion_beam.spellman.status.stat_unit{i}_comms_fail"] = True
+
+        if fallback_updates:
+            self._write_tags_batched(fallback_updates)
 
     def _process_commands(self):
         try:
             while True:
                 msg = self.sub_socket.recv_json(flags=zmq.NOBLOCK)
-                print(msg)
                 tag = msg.get("tag")
                 value = msg.get("value")
                 timestamp = msg.get("ts", 0.0)
 
-                age = time.time() - timestamp
-                if age > MAX_CMD_AGE:
-                    self.events.log_general(f"WARNING: Dropped stale command '{tag}' (Age: {age:.2f}s)")
+                if (time.time() - timestamp) > MAX_CMD_AGE:
+                    self.events.log_general(f"WARNING: Dropped stale command '{tag}'")
                     continue
 
                 if tag in self.tags and value is not None:
-                    print("writing")
                     self._write_tag(tag, value)
         except zmq.Again:
             pass
 
     def run(self):
         self.events.log_general("Starting Daemon...")
-
         current_time_pc = time.perf_counter()
         next_tick = current_time_pc + POLL_INTERVAL
 
@@ -436,7 +457,6 @@ class PlcMicroservice:
             if not self.connected:
                 self._connect_plc()
                 if not self.connected:
-                    # Connection failed spin-wait
                     sleep_time = next_tick - time.perf_counter()
                     if sleep_time > 0.002:
                         time.sleep(sleep_time - 0.002)
@@ -468,16 +488,15 @@ class PlcMicroservice:
                 self.hb_socket.send_json({"service": "service_plc", "ts": current_time_unix})
                 self.last_hb_time = current_time_unix
 
-            # Strict 10Hz OS Scheduling (Spin-Wait)
             sleep_time = next_tick - time.perf_counter()
             if sleep_time > 0.002:
                 time.sleep(sleep_time - 0.002)
 
             while time.perf_counter() < next_tick:
                 pass
-
             next_tick += POLL_INTERVAL
 
 
 if __name__ == "__main__":
+    harden_windows_process()
     PlcMicroservice().run()

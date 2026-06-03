@@ -6,6 +6,7 @@ from typing import Dict, Any, Optional, Tuple
 import orjson
 import json
 from src.core.event_helper import EventHelper
+from src.core.os_helper import harden_windows_process
 
 if os.name == 'nt':
     import ctypes
@@ -376,4 +377,5 @@ class MagnetMicroservice:
 
 
 if __name__ == "__main__":
+    harden_windows_process()
     MagnetMicroservice().run()

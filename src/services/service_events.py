@@ -4,6 +4,7 @@ import zmq
 import orjson
 import time
 from src.core.network_map import ZMQ_PORT_EVENTS_SUB, ZMQ_PORT_HEARTBEAT
+from src.core.os_helper import harden_windows_process
 
 # --- CONFIGURATION ---
 DB_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), '../../data/events.db'))
@@ -113,4 +114,5 @@ class EventLogger:
 
 
 if __name__ == "__main__":
+    harden_windows_process()
     EventLogger().run()

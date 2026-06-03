@@ -7,6 +7,7 @@ import json
 from typing import Dict, Any, Optional
 import orjson
 from src.core.event_helper import EventHelper
+from src.core.os_helper import harden_windows_process
 
 # Force Windows high-resolution timers (1ms precision)
 if os.name == 'nt':
@@ -14,7 +15,7 @@ if os.name == 'nt':
 
     ctypes.windll.winmm.timeBeginPeriod(1)
 
-from src.core.network_config import (
+from src.core.network_map import (
     ZMQ_PORT_SPELLMAN_PUB, ZMQ_PORT_SPELLMAN_CMD, ZMQ_PORT_PLC_PUB,
     ZMQ_PORT_HEARTBEAT
 )
@@ -307,4 +308,5 @@ class SpellmanMicroservice:
 
 
 if __name__ == "__main__":
+    harden_windows_process()
     SpellmanMicroservice().run()

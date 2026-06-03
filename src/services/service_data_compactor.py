@@ -6,6 +6,7 @@ from src.core.network_map import ZMQ_PORT_HEARTBEAT, ZMQ_PORT_EVENTS_PUB
 import re
 import polars as pl
 from datetime import datetime
+from src.core.os_helper import harden_windows_process
 
 # --- CONFIGURATION ---
 DATA_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), '../../data/parquet_logs'))
@@ -136,4 +137,5 @@ class DataCompactor:
 
 
 if __name__ == "__main__":
+    harden_windows_process()
     DataCompactor().run()

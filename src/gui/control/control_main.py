@@ -27,6 +27,7 @@ from src.core.network_map import (
 )
 
 from src.core.event_helper import EventHelper
+from src.core.os_helper import harden_windows_process
 
 # --- SCADA Standard Colors ---
 COLOR_OK = "background-color: #4CAF50; color: white; font-weight: bold; border-radius: 4px; padding: 4px;"
@@ -105,7 +106,8 @@ class ZMQTelemetryThread(QThread):
                     try:
                         topic, payload = sub_socket.recv_multipart(flags=zmq.NOBLOCK)
                         self.data_received.emit(orjson.loads(payload))
-                    except:
+                    except Exception as e:
+                        print(f"[ZMQ Telemetry Error] {e}") # This will print exact decoding/unpacking errors
                         continue
         finally:
             sub_socket.setsockopt(zmq.LINGER, 0)
@@ -526,10 +528,12 @@ class VacuumControlWidget(QWidget):
                     self.btn_gv_open.setEnabled(False)
                     self.btn_gv_close.setEnabled(False)
                     self.btn_gv_open.setText("FAULT LOCKOUT")
+                    self.btn_gv_close.setText("FAULT LOCKOUT")
                     self.btn_gv_open.setToolTip("Disabled: Gate valve hardware fault detected.")
                     self.btn_gv_close.setToolTip("Disabled: Gate valve hardware fault detected.")
                 else:
                     self.btn_gv_open.setText("OPEN")
+                    self.btn_gv_close.setText("CLOSE")
                     self.btn_gv_open.setEnabled(gv_open_perm and not gv_is_open)
                     self.btn_gv_close.setEnabled(gv_close_perm and not gv_is_closed)
 
@@ -595,7 +599,7 @@ class IonSourceWidget(QWidget):
         self.main_layout.addWidget(self.lbl_alarm_banner)
 
     def _init_safety_ui(self):
-        safety_group = QGroupBox("Master Safety & Sequence Control")
+        safety_group = QGroupBox("Master Safety && Sequence Control")
         sl = QGridLayout()
 
         self.lbl_comms = QLabel("PLC COMMS: WAITING FOR DATA...")
@@ -838,10 +842,8 @@ class IonSourceWidget(QWidget):
     def _update_alarms_and_safety_state(self, data: dict, master_comms_lost: bool) -> tuple[bool, bool]:
         active_alarms = []
         first_out = int(data.get("ion_beam.settings.first_out_code", 0))
-        if first_out == 10:
-            active_alarms.append("SAFETY TRIP: PROBABLE VACUUM SPIKE")
-        elif first_out == 11:
-            active_alarms.append("SAFETY TRIP: PHYSICAL INTERLOCK OR POWER SAG")
+        if first_out == 10: active_alarms.append("SAFETY TRIP: PROBABLE VACUUM SPIKE")
+        elif first_out == 11: active_alarms.append("SAFETY TRIP: PHYSICAL INTERLOCK OR POWER SAG")
 
         w2_raw = data.get("ion_beam.faults.word_2_source")
         if w2_raw:
@@ -861,21 +863,22 @@ class IonSourceWidget(QWidget):
 
         sr_tripped = any(f["name"] == "Safety_Relay_Tripped" for f in w0_faults)
         sr_refused = any(f["name"] == "Safety_Relay_Refused" for f in w0_faults)
-        remote_lost = any(f["name"] == "Remote_IO_Lost" for f in w0_faults) or bool(
-            data.get("ion_beam.system.remote_io_lost", 0.0))
+        remote_lost = any(f["name"] == "Remote_IO_Lost" for f in w0_faults) or bool(data.get("ion_beam.system.remote_io_lost", 0.0))
 
+        # --- UPDATED LOGIC HIERARCHY ---
         if master_comms_lost:
             self.lbl_safety_state.setText("SAFETY: UNKNOWN")
             self.lbl_safety_state.setStyleSheet(COLOR_INACTIVE)
+        elif relay_active:
+            # If the relay is physically in, it's definitively LIVE, regardless of software flags.
+            self.lbl_safety_state.setText("SAFETY: LIVE")
+            self.lbl_safety_state.setStyleSheet(COLOR_WARNING)
         elif sr_tripped or sr_refused:
             self.lbl_safety_state.setText("SAFETY: TRIPPED/REFUSED")
             self.lbl_safety_state.setStyleSheet(COLOR_FAULT)
         elif remote_lost:
             self.lbl_safety_state.setText("SAFETY: NO REMOTE IO")
             self.lbl_safety_state.setStyleSheet(COLOR_FAULT)
-        elif relay_active:
-            self.lbl_safety_state.setText("SAFETY: LIVE")
-            self.lbl_safety_state.setStyleSheet(COLOR_WARNING)
         else:
             self.lbl_safety_state.setText("SAFETY: DE-ENERGIZED")
             self.lbl_safety_state.setStyleSheet(COLOR_OK)
@@ -892,34 +895,73 @@ class IonSourceWidget(QWidget):
         self.btn_reset_faults.setToolTip(
             "Disabled: GUI to PLC communications are offline." if master_comms_lost else "Click to clear latched software and hardware faults.")
 
-        self.btn_enable_safety.blockSignals(True)
-        self.btn_enable_safety.setChecked(relay_active)
-        self.btn_enable_safety.blockSignals(False)
+        # --- THE DYNAMIC SWEEPING TIMER LOGIC ---
+        timer_elapsed_ms = float(data.get("ion_beam.system.safety_timer_elapsed_ms", 0.0))
+        timer_total_ms = float(data.get("ion_beam.system.safety_timer_total_ms", 5000.0))  # Fallback if tag is missing
 
-        if master_comms_lost:
-            self.btn_enable_safety.setEnabled(False)
-            self.btn_enable_safety.setToolTip("Disabled: GUI to PLC communications are offline.")
-        elif not relay_active:
-            if not gv_is_open:
-                self.btn_enable_safety.setEnabled(False)
-                self.btn_enable_safety.setText("ENABLE SAFETY RELAY")
-                self.btn_enable_safety.setToolTip(
-                    "Disabled: The Gate Valve must be fully OPEN before the safety circuit can be energized.")
-            else:
-                self.btn_enable_safety.setEnabled(True)
-                self.btn_enable_safety.setText("ENABLE SAFETY RELAY")
-                self.btn_enable_safety.setToolTip("Click to energize the Master Safety Relay.")
+        # Valid timing out state: Elapsed is greater than 0, but less than the Total PT.
+        is_timing_out = (0 < timer_elapsed_ms < timer_total_ms) and not relay_active
+
+        if is_timing_out and timer_total_ms > 0:
+            remaining_sec = (timer_total_ms - timer_elapsed_ms) / 1000.0
+            total_sec = timer_total_ms / 1000.0
+            fill_ratio = max(0.0, min(1.0, remaining_sec / total_sec))  # Sweeps from 1.0 down to 0.0
+
+            sweep_style = f"""
+                QPushButton {{
+                    background: qlineargradient(x1:1, y1:0, x2:0, y2:0, 
+                                                stop:0 #F44336, 
+                                                stop:{fill_ratio:.3f} #F44336, 
+                                                stop:{min(1.0, fill_ratio + 0.001):.3f} #2196F3);
+                    color: white; font-weight: bold; border-radius: 4px; padding: 6px;
+                }}
+            """
+            self.btn_enable_safety.blockSignals(True)
+            self.btn_enable_safety.setChecked(True)
+            self.btn_enable_safety.blockSignals(False)
+
+            self.btn_enable_safety.setText(f"PRESS PANEL START ({int(remaining_sec) + 1}s)")
+            self.btn_enable_safety.setStyleSheet(sweep_style)
+            self.btn_enable_safety.setEnabled(True)
+            self.btn_enable_safety.setToolTip(f"Awaiting physical panel button press... ({total_sec}s timeout)")
+
         else:
-            if not source_is_cold:
-                self.btn_enable_safety.setEnabled(False)
-                self.btn_enable_safety.setText("RELAY ENERGIZED (LOCKED)")
-                self.btn_enable_safety.setToolTip(
-                    "Disabled: You cannot drop the safety relay while the source is hot or active. Run a shutdown first.")
-            else:
-                self.btn_enable_safety.setEnabled(True)
-                self.btn_enable_safety.setText("DISABLE SAFETY RELAY")
-                self.btn_enable_safety.setToolTip("Click to manually de-energize the Master Safety Relay.")
+            # --- STANDARD LOGIC RESTORED ---
+            self.btn_enable_safety.blockSignals(True)
+            self.btn_enable_safety.setChecked(relay_active)
+            self.btn_enable_safety.blockSignals(False)
 
+            self.btn_enable_safety.setStyleSheet("""
+                QPushButton { background-color: #2196F3; color: white; font-weight: bold; border-radius: 4px; padding: 6px; }
+                QPushButton:checked { background-color: #F44336; color: white; }
+                QPushButton:disabled { background-color: #757575; color: #B0B0B0; font-weight: bold; }
+            """)
+
+            if master_comms_lost:
+                self.btn_enable_safety.setEnabled(False)
+                self.btn_enable_safety.setToolTip("Disabled: GUI to PLC communications are offline.")
+            elif not relay_active:
+                if not gv_is_open:
+                    self.btn_enable_safety.setEnabled(False)
+                    self.btn_enable_safety.setText("ENABLE SAFETY RELAY")
+                    self.btn_enable_safety.setToolTip(
+                        "Disabled: The Gate Valve must be fully OPEN before the safety circuit can be energized.")
+                else:
+                    self.btn_enable_safety.setEnabled(True)
+                    self.btn_enable_safety.setText("ENABLE SAFETY RELAY")
+                    self.btn_enable_safety.setToolTip("Click to energize the Master Safety Relay.")
+            else:
+                if not source_is_cold:
+                    self.btn_enable_safety.setEnabled(False)
+                    self.btn_enable_safety.setText("RELAY ENERGIZED (LOCKED)")
+                    self.btn_enable_safety.setToolTip(
+                        "Disabled: You cannot drop the safety relay while the source is hot or active. Run a shutdown first.")
+                else:
+                    self.btn_enable_safety.setEnabled(True)
+                    self.btn_enable_safety.setText("DISABLE SAFETY RELAY")
+                    self.btn_enable_safety.setToolTip("Click to manually de-energize the Master Safety Relay.")
+
+        # --- SHUTDOWN LOGIC ---
         can_shutdown = (active_step == 0) and relay_active and any_psu_active
         self.btn_shutdown.setEnabled(can_shutdown and not master_comms_lost)
 
@@ -1110,13 +1152,33 @@ class IonSourceWidget(QWidget):
             else:
                 if "btn_enable" in ctrl:
                     stat_en = data.get(f"{base_tag}.stat_enabled")
-                    if stat_en is not None:
-                        ctrl["btn_enable"].setChecked(bool(stat_en))
-                        ctrl["btn_enable"].setStyleSheet(COLOR_OK if stat_en else COLOR_BUTTON_STANDARD)
 
-                    ctrl["btn_enable"].setEnabled(not comp_lockout)
-                    ctrl["btn_enable"].setToolTip(
-                        f"Disabled: {comp_lock_reason}" if comp_lockout else f"Click to toggle {name} power output.")
+                    # Intercept loop explicitly for the Filament safe-disarm sequence
+                    stat_disarming = bool(data.get(f"{base_tag}.stat_disarming", False))
+
+                    if name == "Filament" and stat_disarming:
+                        ctrl["btn_enable"].blockSignals(True)
+                        ctrl["btn_enable"].setChecked(True)
+                        ctrl["btn_enable"].blockSignals(False)
+
+                        ctrl["btn_enable"].setText("DISARMING...")
+                        ctrl["btn_enable"].setStyleSheet(
+                            "background-color: #FF9800; color: black; font-weight: bold; border-radius: 4px;")
+                        ctrl["btn_enable"].setEnabled(False)
+                        ctrl["btn_enable"].setToolTip(
+                            "Contactor remains closed while safe step-down ramp drops current to 0A.")
+                    else:
+                        # Restore normal properties if not in disarm state
+                        if name == "Filament":
+                            ctrl["btn_enable"].setText("ENABLE")
+
+                        if stat_en is not None:
+                            ctrl["btn_enable"].setChecked(bool(stat_en))
+                            ctrl["btn_enable"].setStyleSheet(COLOR_OK if stat_en else COLOR_BUTTON_STANDARD)
+
+                        ctrl["btn_enable"].setEnabled(not comp_lockout)
+                        ctrl["btn_enable"].setToolTip(
+                            f"Disabled: {comp_lock_reason}" if comp_lockout else f"Click to toggle {name} power output.")
 
                 if name == "Thermionic" and "btn_auto" in ctrl:
                     auto_em_stat = data.get(f"{base_tag}.stat_auto_emission")
@@ -1171,9 +1233,6 @@ class IonSourceWidget(QWidget):
                 sp_box.setToolTip(f"Disabled: {comp_lock_reason}" if comp_lockout else "")
                 lbl_badge.hide()
 
-
-# --- Beamline Optics Subsystem Component ---
-
 class BeamlineOpticsWidget(QWidget):
     def __init__(self, cmd_thread, event_helper):
         super().__init__()
@@ -1212,8 +1271,6 @@ class BeamlineOpticsWidget(QWidget):
     def _log_manual_slit(self, position_name: str, spinbox: QDoubleSpinBox):
         val = spinbox.value()
         self.event_helper.log_user_marker(time.time(), f"Manual Adjustment: {position_name} set to {val} mm", "#9C27B0")
-
-        # Dispatch dummy tag to ZMQ so build_registry.py picks it up for the future automated service
         tag_name = position_name.lower().replace(" ", "_").replace("-", "_")
         self._dispatch_command(f"ion_beam.beamline.slits.{tag_name}", val)
 
@@ -1221,28 +1278,48 @@ class BeamlineOpticsWidget(QWidget):
         group = QGroupBox("1. Pre-Magnet Tuning")
         layout = QGridLayout()
 
+        # Y-Steerer
         layout.addWidget(QLabel("<b>Y-Steerer Voltage:</b>"), 0, 0)
+
+        self.lbl_y_rb = QLabel("RB: --- V")
+        self.lbl_y_rb.setMinimumWidth(80)
+        layout.addWidget(self.lbl_y_rb, 0, 1)
+
         self.sp_y_steer = QDoubleSpinBox()
         self.sp_y_steer.setRange(-200.0, 200.0)
         self.sp_y_steer.setSuffix(" V")
         self.sp_y_steer.setDecimals(1)
+        self.sp_y_steer.setKeyboardTracking(False)
         self.sp_y_steer.editingFinished.connect(
-            lambda: self._dispatch_command("ion_beam.beamline.steering.sp_y_volts", self.sp_y_steer.value()))
-        layout.addWidget(self.sp_y_steer, 0, 1)
+            lambda: self._dispatch_command("ion_beam.beamline.steering.sp_requested_y_volts", self.sp_y_steer.value()))
+        layout.addWidget(self.sp_y_steer, 0, 2)
 
+        # Master Steering Enable (Applies to both X and Y)
+        self.btn_steer_en = QPushButton("ENABLE STEERING")
+        self.btn_steer_en.setCheckable(True)
+        self.btn_steer_en.setStyleSheet(COLOR_BUTTON_STANDARD)
+        self.btn_steer_en.clicked.connect(
+            lambda *args: self._dispatch_command("ion_beam.beamline.steering.cmd_enable",
+                                                 self.btn_steer_en.isChecked()))
+        layout.addWidget(self.btn_steer_en, 0, 3)
+
+        # Object Slits
         layout.addWidget(QLabel("<b>Object Slits (L / R):</b>"), 1, 0)
         slit_layout = QHBoxLayout()
+
         self.sp_obj_l = QDoubleSpinBox()
         self.sp_obj_l.setSuffix(" mm")
+        self.sp_obj_l.setKeyboardTracking(False)
         self.sp_obj_l.editingFinished.connect(lambda: self._log_manual_slit("Object Slit Left", self.sp_obj_l))
 
         self.sp_obj_r = QDoubleSpinBox()
         self.sp_obj_r.setSuffix(" mm")
+        self.sp_obj_r.setKeyboardTracking(False)
         self.sp_obj_r.editingFinished.connect(lambda: self._log_manual_slit("Object Slit Right", self.sp_obj_r))
 
         slit_layout.addWidget(self.sp_obj_l)
         slit_layout.addWidget(self.sp_obj_r)
-        layout.addLayout(slit_layout, 1, 1)
+        layout.addLayout(slit_layout, 1, 1, 1, 2)
 
         group.setLayout(layout)
         self.main_layout.addWidget(group)
@@ -1264,6 +1341,7 @@ class BeamlineOpticsWidget(QWidget):
         self.sp_mag_current.setRange(0.0, 50.0)
         self.sp_mag_current.setSuffix(" A")
         self.sp_mag_current.setDecimals(2)
+        self.sp_mag_current.setKeyboardTracking(False)
         self.sp_mag_current.editingFinished.connect(
             lambda: self._dispatch_command("ion_beam.beamline.magnet.sp_requested_current",
                                            self.sp_mag_current.value()))
@@ -1291,9 +1369,9 @@ class BeamlineOpticsWidget(QWidget):
         self.sp_mass = QDoubleSpinBox()
         self.sp_mass.setRange(1.0, 250.0)
         self.sp_mass.setDecimals(1)
-        self.sp_mass.setSingleStep(1.0)  # FIX 1: Explicit step size
-        self.sp_mass.setValue(28.0)  # FIX 2: Start at Silicon-28, not 1.0
-        self.sp_mass.setKeyboardTracking(False)  # FIX 3: Stop text-highlighting evaluation bugs
+        self.sp_mass.setSingleStep(1.0)
+        self.sp_mass.setValue(28.0)
+        self.sp_mass.setKeyboardTracking(False)
         calc_layout.addWidget(self.sp_mass)
 
         self.btn_calc_mass = QPushButton("CALCULATE && SET AMPS")
@@ -1306,9 +1384,6 @@ class BeamlineOpticsWidget(QWidget):
         self.main_layout.addWidget(group)
 
     def _calculate_mass(self):
-        """
-        Uses Polynomial Calibration: I = a0 + a1*X + a2*X^2 + a3*X^3  (where X = sqrt(mass * extraction_kV))
-        """
         target_amu = self.sp_mass.value()
 
         app = QApplication.instance()
@@ -1338,28 +1413,39 @@ class BeamlineOpticsWidget(QWidget):
         group = QGroupBox("3. Post-Magnet Tuning")
         layout = QGridLayout()
 
+        # X-Steerer
         layout.addWidget(QLabel("<b>X-Steerer Voltage:</b>"), 0, 0)
+
+        self.lbl_x_rb = QLabel("RB: --- V")
+        self.lbl_x_rb.setMinimumWidth(80)
+        layout.addWidget(self.lbl_x_rb, 0, 1)
+
         self.sp_x_steer = QDoubleSpinBox()
         self.sp_x_steer.setRange(-200.0, 200.0)
         self.sp_x_steer.setSuffix(" V")
         self.sp_x_steer.setDecimals(1)
+        self.sp_x_steer.setKeyboardTracking(False)
         self.sp_x_steer.editingFinished.connect(
-            lambda: self._dispatch_command("ion_beam.beamline.steering.sp_x_volts", self.sp_x_steer.value()))
-        layout.addWidget(self.sp_x_steer, 0, 1)
+            lambda: self._dispatch_command("ion_beam.beamline.steering.sp_requested_x_volts", self.sp_x_steer.value()))
+        layout.addWidget(self.sp_x_steer, 0, 2)
 
+        # Image Slits
         layout.addWidget(QLabel("<b>Image Slits (L / R):</b>"), 1, 0)
         slit_layout = QHBoxLayout()
+
         self.sp_img_l = QDoubleSpinBox()
         self.sp_img_l.setSuffix(" mm")
+        self.sp_img_l.setKeyboardTracking(False)
         self.sp_img_l.editingFinished.connect(lambda: self._log_manual_slit("Image Slit Left", self.sp_img_l))
 
         self.sp_img_r = QDoubleSpinBox()
         self.sp_img_r.setSuffix(" mm")
+        self.sp_img_r.setKeyboardTracking(False)
         self.sp_img_r.editingFinished.connect(lambda: self._log_manual_slit("Image Slit Right", self.sp_img_r))
 
         slit_layout.addWidget(self.sp_img_l)
         slit_layout.addWidget(self.sp_img_r)
-        layout.addLayout(slit_layout, 1, 1)
+        layout.addLayout(slit_layout, 1, 1, 1, 2)
 
         group.setLayout(layout)
         self.main_layout.addWidget(group)
@@ -1391,6 +1477,7 @@ class BeamlineOpticsWidget(QWidget):
         sp_box.setRange(min_v, max_v)
         sp_box.setSuffix(f" {pri_unit}")
         sp_box.setDecimals(2)
+        sp_box.setKeyboardTracking(False)
         sp_box.editingFinished.connect(
             lambda t=base_tag, b=sp_box: self._dispatch_command(f"{t}.sp_requested_voltage", b.value()))
 
@@ -1413,15 +1500,16 @@ class BeamlineOpticsWidget(QWidget):
         events_state = services.get("service_events", "OFFLINE")
 
         # --- 1. Update Magnet State ---
-        mag_cool = data.get("ion_beam.beamline.magnet.stat_cooling_ok")
+        mag_cool = data.get("ion_beam.facilities.stat_mag_coolant_ok")
+
         if master_comms_lost:
-            self.lbl_mag_cooling.setText("COOLING: UNKNOWN")
+            self.lbl_mag_cooling.setText("MAG COOLING: UNKNOWN")
             self.lbl_mag_cooling.setStyleSheet(COLOR_INACTIVE)
-        elif mag_cool is True:
-            self.lbl_mag_cooling.setText("COOLING: FLOW & TEMP OK")
+        elif mag_cool == True:
+            self.lbl_mag_cooling.setText("MAG COOLING: FLOW & TEMP OK")
             self.lbl_mag_cooling.setStyleSheet(COLOR_OK)
         else:
-            self.lbl_mag_cooling.setText("COOLING: FAULT")
+            self.lbl_mag_cooling.setText("MAG COOLING: FAULT")
             self.lbl_mag_cooling.setStyleSheet(COLOR_FAULT)
 
         mag_v = data.get("ion_beam.beamline.magnet.rb_voltage")
@@ -1436,7 +1524,6 @@ class BeamlineOpticsWidget(QWidget):
             self.btn_mag_en.setChecked(bool(mag_en))
             self.btn_mag_en.setStyleSheet(COLOR_OK if mag_en else COLOR_BUTTON_STANDARD)
 
-        # Build precise Magnet lockout string
         mag_lock_reason = ""
         if mag_state != "ONLINE":
             mag_lock_reason = "Magnet microservice is offline."
@@ -1469,18 +1556,32 @@ class BeamlineOpticsWidget(QWidget):
             self.btn_mag_deg.setStyleSheet("background-color: #9C27B0; color: white; font-weight: bold;")
 
         # --- 2. Update Steerers ---
-        y_val = data.get("ion_beam.beamline.steering.sp_y_volts")
-        if y_val is not None and not self.sp_y_steer.hasFocus():
+        # PLC Telemetry handling
+        steer_en = bool(data.get("ion_beam.beamline.steering.stat_enabled", False))
+        self.btn_steer_en.setChecked(steer_en)
+        self.btn_steer_en.setStyleSheet(COLOR_OK if steer_en else COLOR_BUTTON_STANDARD)
+
+        # Read the Actual Setpoints active in the PLC
+        y_rb = data.get("ion_beam.beamline.steering.sp_actual_y_volts")
+        x_rb = data.get("ion_beam.beamline.steering.sp_actual_x_volts")
+
+        # The text label ALWAYS tracks the true PLC output
+        self.lbl_y_rb.setText(f"RB: {y_rb:.1f} V" if y_rb is not None else "RB: --- V")
+        self.lbl_x_rb.setText(f"RB: {x_rb:.1f} V" if x_rb is not None else "RB: --- V")
+
+        # The Spinbox ONLY syncs to the PLC if the steerer is enabled.
+        # This prevents your typed setpoint from zeroing out when the output drops.
+        if y_rb is not None and steer_en and not self.sp_y_steer.hasFocus():
             self.sp_y_steer.blockSignals(True)
-            self.sp_y_steer.setValue(float(y_val))
+            self.sp_y_steer.setValue(float(y_rb))
             self.sp_y_steer.blockSignals(False)
 
-        x_val = data.get("ion_beam.beamline.steering.sp_x_volts")
-        if x_val is not None and not self.sp_x_steer.hasFocus():
+        if x_rb is not None and steer_en and not self.sp_x_steer.hasFocus():
             self.sp_x_steer.blockSignals(True)
-            self.sp_x_steer.setValue(float(x_val))
+            self.sp_x_steer.setValue(float(x_rb))
             self.sp_x_steer.blockSignals(False)
 
+        # Steerer Lockouts
         steer_lock_reason = ""
         if master_comms_lost:
             steer_lock_reason = "PLC communications are offline."
@@ -1488,12 +1589,16 @@ class BeamlineOpticsWidget(QWidget):
             steer_lock_reason = "Safety Relay is De-Energized."
 
         steer_lockout = bool(steer_lock_reason)
-        steer_tt = f"Disabled: {steer_lock_reason}" if steer_lockout else "Adjust Beam Steerer Deflection Voltage"
 
+        self.btn_steer_en.setEnabled(not steer_lockout)
+        self.btn_steer_en.setToolTip(
+            f"Disabled: {steer_lock_reason}" if steer_lockout else "Enable Beam Steerer Outputs")
         self.sp_y_steer.setEnabled(not steer_lockout)
-        self.sp_y_steer.setToolTip(steer_tt)
+        self.sp_y_steer.setToolTip(
+            f"Disabled: {steer_lock_reason}" if steer_lockout else "Adjust Y-Axis Beam Deflection")
         self.sp_x_steer.setEnabled(not steer_lockout)
-        self.sp_x_steer.setToolTip(steer_tt)
+        self.sp_x_steer.setToolTip(
+            f"Disabled: {steer_lock_reason}" if steer_lockout else "Adjust X-Axis Beam Deflection")
 
         # --- 3. Update Manual Slit Inputs ---
         slit_lock_reason = "Events microservice is offline (Cannot log manual adjustments)."
@@ -1541,7 +1646,6 @@ class BeamlineOpticsWidget(QWidget):
             ctrl["sp_box"].setEnabled(not spell_lockout)
             ctrl["sp_box"].setToolTip(spell_tt)
 
-
 # --- System Diagnostics Subsystem Component ---
 
 class DiagnosticsWidget(QWidget):
@@ -1564,7 +1668,7 @@ class DiagnosticsWidget(QWidget):
         self.svc_layout.addStretch()
         svc_group.setLayout(self.svc_layout)
 
-        fault_group = QGroupBox("Hardware & Software Fault Registry")
+        fault_group = QGroupBox("Hardware && Software Fault Registry")
         fault_layout = QVBoxLayout()
 
         fault_layout.addWidget(QLabel("<b>ACTIVE ALARMS:</b>"))
@@ -1649,11 +1753,14 @@ class DiagnosticsWidget(QWidget):
                 lbl = self.service_rows[svc_name]["label"]
                 lbl.setText(f"<b>{svc_name}:</b> {state}")
                 if state == "ONLINE":
-                    lbl.setStyleSheet("color: #4CAF50;")
+                    lbl.setStyleSheet("color: #4CAF50;")  # Green
+                elif state == "STARTING":
+                    # Flashes a vibrant Blue/Orange color to clearly indicate initialization
+                    lbl.setStyleSheet("color: #2196F3; font-weight: bold;")
                 elif state in ["CRASHED", "HANGING"]:
-                    lbl.setStyleSheet("color: #F44336; font-weight: bold;")
+                    lbl.setStyleSheet("color: #F44336; font-weight: bold;")  # Red
                 else:
-                    lbl.setStyleSheet("color: #757575;")
+                    lbl.setStyleSheet("color: #757575;")  # Gray
 
         if now - self.last_manager_beat > 2.5:
             self.lbl_manager_status.setText("<b>SERVICE MANAGER:</b> OFFLINE")
@@ -1915,13 +2022,13 @@ class ConfigEditorDialog(QDialog):
                     self.cmd_thread.send_command("manager", "manager_cmd", {"command": "restart", "service": svc})
                     time.sleep(0.02)
 
-                msg = f"Saved {filename} & Rebuilt Tags!" if filename in registry_triggers else f"Saved {filename}!"
+                msg = f"Saved {filename} && Rebuilt Tags!" if filename in registry_triggers else f"Saved {filename}!"
                 QMessageBox.information(self, "Success", f"{msg}\nMass restart broadcasted to ALL SERVICES.")
             else:
                 payload = {"command": "restart", "service": target_svc}
                 self.cmd_thread.send_command("manager", "manager_cmd", payload)
 
-                msg = f"Saved {filename} & Rebuilt Tags!" if filename in registry_triggers else f"Saved {filename}!"
+                msg = f"Saved {filename} && Rebuilt Tags!" if filename in registry_triggers else f"Saved {filename}!"
                 QMessageBox.information(self, "Success", f"{msg}\nRestart command sent to {target_svc}.")
 
             self.accept()
@@ -1960,11 +2067,10 @@ class ControlMainWindow(QMainWindow):
 
         self.master_telemetry_cache = {}
 
-        # 1. ADD MAGNET PUB PORT HERE
         telemetry_ports = [
             ZMQ_PORT_PLC_PUB, ZMQ_PORT_VACUUM_PUB,
             ZMQ_PORT_SRC_TURBO_PUB, ZMQ_PORT_MANAGER_PUB,
-            ZMQ_PORT_SPELLMAN_PUB, ZMQ_PORT_MAGNET_PUB
+            ZMQ_PORT_SPELLMAN_PUB, ZMQ_PORT_MAGNET_PUB,
         ]
         self.telemetry_thread = ZMQTelemetryThread(telemetry_ports)
         self.telemetry_thread.data_received.connect(self._route_telemetry)
@@ -2085,7 +2191,9 @@ class ControlMainWindow(QMainWindow):
         super().closeEvent(event)
 
 
+# Enforce non-pageable high-priority scheduling class immediately upon thread launch
 if __name__ == "__main__":
+    harden_windows_process()
     app = QApplication(sys.argv)
     window = ControlMainWindow()
     window.show()

@@ -1,11 +1,15 @@
 import socket
 import time
+from errno import WSAEWOULDBLOCK
+
 import zmq
 import json
 import os
 from typing import Dict, Any, Optional
 import orjson
+import re
 from src.core.event_helper import EventHelper
+from src.core.os_helper import harden_windows_process
 
 # Force Windows high-resolution timers (1ms precision)
 if os.name == 'nt':
@@ -92,6 +96,12 @@ class VacuumMicroservice:
         self.hb_socket.connect(ZMQ_PORT_HEARTBEAT)
         self.last_hb_time = 0.0
 
+        self.stats_time = time.time()
+        self.stats_read_attempts = 0
+        self.stats_read_fails = 0
+        self.stats_loop_times = []
+        self.stats_detailed = {}
+
         self.events = EventHelper("service_vac_gauge_controllers")
 
     def _load_config(self) -> dict:
@@ -149,33 +159,89 @@ class VacuumMicroservice:
             while True:
                 discarded = self.sock.recv(1024)
                 if not discarded: break
-        except BlockingIOError:
+        except (BlockingIOError, OSError):
+            # Safe: Windows WSAEWOULDBLOCK raises an OSError when a non-blocking socket is empty
             pass
-        except Exception:
+        except Exception as e:
             self.connected = False
             self.state["system.connected"] = 0.0
+            print(f"[NET DISCONNECT] Stale buffer clear error: {e}")
         finally:
-            if self.sock: self.sock.settimeout(SOCKET_TIMEOUT)
+            if self.sock:
+                self.sock.settimeout(SOCKET_TIMEOUT)
 
     def _read_transaction(self, node_id: int, param_group: str, param_no: str) -> Optional[str]:
-        if not self.connected: return None
+        stat_key = f"Node{node_id}_Grp{param_group}"
+        if stat_key not in self.stats_detailed:
+            self.stats_detailed[stat_key] = {"attempts": 0, "timeouts": 0, "garbage": 0}
+
+        self.stats_detailed[stat_key]["attempts"] += 1
+
+        if not self.connected or not self.sock:
+            self.stats_detailed[stat_key]["timeouts"] += 1
+            return None
+
         self._clear_stale_buffer()
         payload = self._generate_read_frame(node_id, param_group, param_no)
+
         try:
             self.sock.sendall(payload)
-            response = self.sock.recv(1024)
-            if b"\x06" in response:
-                ack_idx = response.find(b"\x06")
-                return response[ack_idx + 1:-2].decode('ascii', errors='ignore').strip()
-            return None
+
+            # Continuous stream buffer reconstruction based on EOT (\x04)
+            buffer = b""
+            start_recv = time.perf_counter()
+            while b"\x04" not in buffer:
+                chunk = self.sock.recv(128)
+                if not chunk:
+                    break
+                buffer += chunk
+                if (time.perf_counter() - start_recv) > SOCKET_TIMEOUT:
+                    raise socket.timeout
+
+            if b"\x04" in buffer:
+                eot_idx = buffer.find(b"\x04")
+
+                if b"\x06" in buffer:
+                    # CASE A: Standard Valid Transmission Path
+                    ack_idx = buffer.find(b"\x06")
+                    result = buffer[ack_idx + 1:eot_idx - 1].decode('ascii', errors='ignore').strip()
+                    #print(f"[DIAG GOOD] {stat_key} -> Hex: {buffer.hex(' ').upper()} | Value: '{result}'")
+                    time.sleep(0.02)
+                    return result
+                else:
+                    # CASE B: Collided Turnaround Path (Start Bit Missed)
+                    # Enforce strict parameter bounds: ONLY attempt to scavenge raw pressure telemetry channels
+                    if param_group in ["1", "2", "3"] and param_no == str(PARAM_PRESSURE):
+                        raw_tail = buffer[:eot_idx - 1]
+                        decoded_tail = raw_tail.decode('ascii', errors='ignore').strip()
+
+                        scavenged_str = ""
+                        for i in range(len(decoded_tail)):
+                            test_str = decoded_tail[i:].strip()
+                            if len(test_str) > 0 and all(32 <= ord(c) <= 126 for c in test_str):
+                                scavenged_str = test_str
+                                break
+
+                        # Strict scientific notation match formatting (e.g., 1.12e-07)
+                        if re.match(r'^\d\.\d{2}[eE][+-]\d{2}>?$', scavenged_str):
+                            scavenged_str = scavenged_str.replace(">", "")
+                            #print(f"[DIAG SCAV] {stat_key} -> Recovered Telemetry: '{scavenged_str}'")
+                            time.sleep(0.02)
+                            return scavenged_str
+
+                    # Discard immediately if it is a configuration register or fails validation
+                    self.stats_detailed[stat_key]["garbage"] += 1
+                    #print(f"[DIAG BAD]  {stat_key} -> Rejected Hex: {buffer.hex(' ').upper()}")
+
         except socket.timeout:
-            print(f"TIMEOUT: Node {node_id}, Grp {param_group}, Param {param_no} failed after 0.3s")
-            return None
+            self.stats_detailed[stat_key]["timeouts"] += 1
         except Exception:
             self.connected = False
             self.state["system.connected"] = 0.0
-            print(f"FAULT: _read_transaction error - {e}")
-            return None
+            self.stats_detailed[stat_key]["garbage"] += 1
+
+        time.sleep(0.02)
+        return None
 
     def _write_transaction(self, node_id: int, param_group: str, param_no: str, value: str) -> str:
         if not self.connected: return "ERROR"
@@ -186,21 +252,24 @@ class VacuumMicroservice:
         crc_val = 255 - (sum(body) % 256)
         if crc_val < 32: crc_val += 32
         payload = address + body + bytes([crc_val]) + b'\x04'
+
+        status = "ERROR"
         try:
             self.sock.sendall(payload)
             response = self.sock.recv(1024)
             if b"\x06" in response:
-                return "ACK"
+                status = "ACK"
             elif b"\x15" in response:
-                return "NACK"
-            else:
-                return "ERROR"
+                status = "NACK"
         except Exception:
             self.connected = False
             self.state["system.connected"] = 0.0
-            return "ERROR"
 
-    def _read_transaction_with_retry(self, node_id, param_group, param_no, max_retries=50) -> Optional[str]:
+        # Mandatory RS485 Inter-Frame Pacing
+        time.sleep(0.02)
+        return status
+
+    def _read_transaction_with_retry(self, node_id, param_group, param_no, max_retries=5) -> Optional[str]:
         for _ in range(max_retries):
             val = self._read_transaction(node_id, param_group, param_no)
             if val is not None: return val
@@ -399,6 +468,10 @@ class VacuumMicroservice:
         self.events.log_general("Daemon starting...")
         global_rise_limit = float(self.config.get("system_interlocks", {}).get("rapid_rise_thresh_mb_s", 5.0e-5))
 
+        # Reduce poll interval so write retries are extremely fast
+        global POLL_INTERVAL
+        POLL_INTERVAL = 0.005
+
         while True:
             cycle_start = time.perf_counter()
 
@@ -412,7 +485,6 @@ class VacuumMicroservice:
                     continue
 
             self._process_commands()
-
             slow_task_name, slow_task_target = self.slow_tasks[self._slow_task_idx]
 
             for node in NODE_IDS:
@@ -434,19 +506,25 @@ class VacuumMicroservice:
                                 prev_t = self.pressure_history[vg_prefix]["time"]
                                 dt = current_time - prev_t
 
-                                if dt > 0:
+                                # FIX: Only calculate derivative if at least 0.5s has passed.
+                                # This acts as a low-pass filter against high-frequency ADC noise.
+                                if dt > 0.5:
                                     dp_dt = (pressure_val - prev_p) / dt
                                     if dp_dt > global_rise_limit and pressure_val > 1.0e-6:
-                                        if "vacuum_gauge_4" not in tag_prefix: #VG4 is extremely noisy and has spikes that cause false-triggers, VG6 monitors the same zone so safe to skip VG4
+                                        if "vacuum_gauge_4" not in tag_prefix:
                                             is_rapid_rise = True
+
+                                    # Update history ONLY when we've taken a valid derivative snapshot
+                                    self.pressure_history[vg_prefix] = {"pressure": pressure_val, "time": current_time}
+                            else:
+                                self.pressure_history[vg_prefix] = {"pressure": pressure_val, "time": current_time}
 
                             self.state[
                                 f"ion_beam.gauges.status.stat_{vg_prefix.lower()}_rapid_rise"] = 1.0 if is_rapid_rise else 0.0
-                            self.pressure_history[vg_prefix] = {"pressure": pressure_val, "time": current_time}
 
                         except ValueError:
                             pass
-                    time.sleep(POLL_INTERVAL)
+                    # REMOVED: time.sleep(POLL_INTERVAL) - Let the serial server pace the loop!
 
                 val = None
                 if slow_task_name == "gauge_status":
@@ -463,56 +541,45 @@ class VacuumMicroservice:
                             mismatch_key = f"ion_beam.gauges.status.stat_{vg_prefix.lower()}_mismatch"
 
                             if status_code == 5:
-                                self.state[not_found_key] = 1.0
-                                self.state[mismatch_key] = 0.0
+                                self.state[not_found_key], self.state[mismatch_key] = 1.0, 0.0
                             elif status_code == 6:
-                                self.state[not_found_key] = 0.0
-                                self.state[mismatch_key] = 1.0
+                                self.state[not_found_key], self.state[mismatch_key] = 0.0, 1.0
                             elif status_code != 0:
-                                self.state[not_found_key] = 0.0
-                                self.state[mismatch_key] = 1.0
+                                self.state[not_found_key], self.state[mismatch_key] = 0.0, 1.0
                             else:
-                                self.state[not_found_key] = 0.0
-                                self.state[mismatch_key] = 0.0
-
+                                self.state[not_found_key], self.state[mismatch_key] = 0.0, 0.0
                         except ValueError:
                             pass
+
 
                 elif slow_task_name == "relay_status":
                     p = RELAY_PARAMS[slow_task_target]["status"]
                     val = self._read_transaction(node, "4", p)
                     if val:
-                        status_int = int(val)
-                        self.state[f"ion_beam.vacuum.controller_{node}.relay_{slow_task_target}_status"] = float(
-                            status_int)
+                        try:
+                            status_int = int(val)
+                            self.state[f"ion_beam.vacuum.controller_{node}.relay_{slow_task_target}_status"] = float(
+                                status_int)
+                            if slow_task_target in CHANNELS:
+                                vg_prefix = VG_MAP.get((node, slow_task_target))
+                                if vg_prefix:
+                                    self.state[
+                                        f"ion_beam.gauges.status.stat_{vg_prefix.lower()}_above_sp"] = 1.0 if status_int == 0 else 0.0
+                        except ValueError:
+                            pass  # Intercepts and discards corrupt string casts safely
 
-                        if slow_task_target in CHANNELS:
-                            vg_prefix = VG_MAP.get((node, slow_task_target))
-                            if vg_prefix:
-                                is_above_sp = (status_int == 0)
-                                self.state[
-                                    f"ion_beam.gauges.status.stat_{vg_prefix.lower()}_above_sp"] = 1.0 if is_above_sp else 0.0
-
-                elif slow_task_name == "relay_on":
-                    p = RELAY_PARAMS[slow_task_target]["on"]
+                elif slow_task_name in ["relay_on", "relay_off", "relay_ch"]:
+                    p = RELAY_PARAMS[slow_task_target][slow_task_name.split("_")[1]]
                     val = self._read_transaction(node, "4", p)
                     if val:
-                        self.state[f"ion_beam.vacuum.controller_{node}.relay_{slow_task_target}_on_sp"] = float(val)
+                        try:
+                            self.state[
+                                f"ion_beam.vacuum.controller_{node}.relay_{slow_task_target}_{slow_task_name.split('_')[1]}_sp"] = float(
+                                val)
+                        except ValueError:
+                            pass  # Prevent unhandled runtime exception crashes if raw string is bad
 
-                elif slow_task_name == "relay_off":
-                    p = RELAY_PARAMS[slow_task_target]["off"]
-                    val = self._read_transaction(node, "4", p)
-                    if val:
-                        self.state[f"ion_beam.vacuum.controller_{node}.relay_{slow_task_target}_off_sp"] = float(val)
-
-                elif slow_task_name == "relay_ch":
-                    p = RELAY_PARAMS[slow_task_target]["ch"]
-                    val = self._read_transaction(node, "4", p)
-                    if val:
-                        self.state[f"ion_beam.vacuum.controller_{node}.relay_{slow_task_target}_assigned_ch"] = float(
-                            val)
-
-                time.sleep(POLL_INTERVAL)
+                # REMOVED: time.sleep(POLL_INTERVAL)
 
             self._slow_task_idx = (self._slow_task_idx + 1) % len(self.slow_tasks)
 
@@ -521,7 +588,6 @@ class VacuumMicroservice:
             self.state["ion_beam.gauges.status.stat_graphix2_comms_fail"] = comms_fault_active
 
             self._evaluate_gv_permissive()
-
             self.state["timestamp"] = time.time()
             elapsed = time.perf_counter() - cycle_start
             self.state["system.cycle_time_ms"] = elapsed * 1000
@@ -537,9 +603,17 @@ class VacuumMicroservice:
                 self.hb_socket.send_json({"service": "service_vac_gauge_controllers", "ts": current_time})
                 self.last_hb_time = current_time
 
+
+                # Reset counters
+                self.stats_time = current_time
+                self.stats_detailed.clear()
+                self.stats_loop_times.clear()
+
+            # Dynamically sleep only the remainder of a 50ms cycle to prevent CPU thrashing
             time.sleep(max(0.0, 0.05 - elapsed))
 
 
 if __name__ == "__main__":
+    harden_windows_process()
     service = VacuumMicroservice()
     service.run()

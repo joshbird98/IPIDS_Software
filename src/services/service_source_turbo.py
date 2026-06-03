@@ -5,6 +5,7 @@ import os
 from typing import Dict, Any
 import orjson
 from src.core.event_helper import EventHelper
+from src.core.os_helper import harden_windows_process
 
 # Force Windows high-resolution timers (1ms precision)
 if os.name == 'nt':
@@ -440,4 +441,5 @@ class TurbovacMicroservice:
 
 
 if __name__ == "__main__":
+    harden_windows_process()
     TurbovacMicroservice().run()

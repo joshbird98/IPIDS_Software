@@ -12,6 +12,7 @@ import zmq
 import orjson
 
 from src.core.event_helper import EventHelper
+from src.core.os_helper import harden_windows_process
 
 from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QVBoxLayout, QHBoxLayout,
@@ -1544,10 +1545,8 @@ class DataViewerApp(QMainWindow):
 
 
 if __name__ == "__main__":
-    import json
-    import zmq
-    import orjson
 
+    harden_windows_process()
     app = QApplication(sys.argv)
 
     # 1. Initialize the Single Master Cache

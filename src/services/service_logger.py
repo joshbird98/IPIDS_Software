@@ -17,6 +17,7 @@ from src.core.network_map import (
     ZMQ_PORT_HEARTBEAT, ZMQ_PORT_LOGGER_CMD
 )
 from src.core.payload_mapper import DynamicPayloadMapper
+from src.core.os_helper import harden_windows_process
 
 # --- Dynamic Path Resolution ---
 CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -352,6 +353,7 @@ class TelemetryLoggerService:
 
 
 if __name__ == "__main__":
+    harden_windows_process()
     if os.name == 'nt':
         import ctypes
 

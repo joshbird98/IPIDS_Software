@@ -11,13 +11,15 @@ NON_RETAIN
       // =====================================================================
       To_PC : STRUCT
          System : STRUCT
-            PC_PLC_Comms_Lost : Bool;     // TRUE if watchdog fails
-            Remote_IO_Lost : Bool;        // TRUE if Profinet/EtherCAT node drops
-            Src_Auto_SDown : Bool;        // TRUE if automated shutdown sequence is active
-            Machine_State : Int;          // 0=Init, 1=Safe/Not Ready, 2=Ready, 3=Live/HV, 99=Fault
-            PLC_Cycle_Count : DInt;       // Heartbeat counter for PC to monitor PLC health
-            Remote_Shutdown_Step : Int;   // 0=OK, 1=Hold, 2=Cooling, 3=Tripped, 99=Latched
-            PC_Shutdown_Step : Int;       // 0=OK, 1=Hold, 2=Cooling, 3=Tripped, 99=Latched
+            PC_PLC_Comms_Lost : Bool;           // TRUE if watchdog fails
+            Remote_IO_Lost : Bool;              // TRUE if Profinet/EtherCAT node drops
+            Src_Auto_SDown : Bool;              // TRUE if automated shutdown sequence is active
+            Machine_State : Int;                // 0=Init, 1=Safe/Not Ready, 2=Ready, 3=Live/HV, 99=Fault
+            PLC_Cycle_Count : DInt;             // Heartbeat counter for PC to monitor PLC health
+            Remote_Shutdown_Step : Int;         // 0=OK, 1=Hold, 2=Cooling, 3=Tripped, 99=Latched
+            PC_Shutdown_Step : Int;             // 0=OK, 1=Hold, 2=Cooling, 3=Tripped, 99=Latched
+            Safety_Timer_Elapsed_ms : DInt;     // The elapsed time for the safety relay timer
+            Safety_Timer_Total_ms : DInt;       // The total time the enable safety relay command latches for
          END_STRUCT;
 
          Faults : STRUCT
@@ -56,6 +58,7 @@ NON_RETAIN
 
          Source_Filament : STRUCT
             Stat_Enabled : Bool;          // Hardware state: TRUE = Contactor Closed
+            Stat_Disarming : Bool;        // Rampdown happening
             RB_Voltage : Real;            // Physical Readback (ADC) in V
             RB_Current : Real;            // Physical Readback (ADC) in A
             SP_Actual_Current : Real;     // Active Setpoint currently driving the DAC
@@ -91,6 +94,12 @@ NON_RETAIN
             Stat_GV_Open_Permissive : Bool;     // TRUE if vacuum differential allows opening
             Stat_GV_Close_Permissive : Bool;    // TRUE if beam is dead and safe to close
             RB_Body_Temp : Real;                // Physical Readback (Thermocouple) in °C
+         END_STRUCT;
+
+         Beamline_Steering : STRUCT
+            Stat_Enabled : Bool;            // True, analog output enabled
+            SP_Actual_X_Volts : Real;       // Active setpoint currently driving the AO
+            SP_Actual_Y_Volts : Real;       // Active setpoint currently driving the AO
          END_STRUCT;
 
          Beamline_Diagnostics : STRUCT
@@ -155,6 +164,7 @@ NON_RETAIN
          END_STRUCT;
 
          Beamline_Steering : STRUCT
+            Cmd_Enable : Bool;            // Request to energise output
             SP_Requested_X_Volts : Real;  // Requested X-axis steering (-200V to +200V)
             SP_Requested_Y_Volts : Real;  // Requested Y-axis steering (-200V to +200V)
          END_STRUCT;
@@ -259,6 +269,7 @@ NON_RETAIN
          Target_Min_Voltage : Real;
          Cs_Heating_Permissive : Bool;
          Cs_Is_Hot : Bool;
+         Fil_Is_Hot : Bool;
          Seq_Cmd_Kill_Relay : Bool;
          Seq_Cmd_Force_Cooler : Bool;
          Seq_Cmd_Open_GV : Bool;
@@ -312,11 +323,16 @@ VERSION : 0.1
          Cesium_Ctrl_Mode : Int;
 
          // Retained last known readbacks
-         Cs_Last_Valid_Temp : Real;
+         Fil_Thermal_Amps : Real;       // Virtual thermal mass of the filament
+         Cs_Thermal_Temp : Real;        // Virtual thermal mass of the Cesium oven
       END_STRUCT;
 
       Endstation : STRUCT
          RB_Dose_Count : Real;            // Retain integrated dose to prevent data loss
+      END_STRUCT;
+
+      System : STRUCT
+        Safety_Relay_Prev_State : Bool;
       END_STRUCT;
    END_STRUCT;
 BEGIN
