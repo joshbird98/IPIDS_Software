@@ -15,7 +15,8 @@ from PyQt6.QtWidgets import (
     QCheckBox, QSpinBox, QLineEdit, QInputDialog, QToolBar
 )
 from PyQt6.QtGui import QColor, QPixmap, QIcon
-from PyQt6.QtCore import Qt, QThread, pyqtSignal, QTimer, QSize
+from PyQt6.QtCore import Qt, QThread, pyqtSignal, QTimer, QSize, QUrl
+from PyQt6.QtMultimedia import QSoundEffect
 
 from src.core.network_map import (
     ZMQ_PORT_PLC_PUB, ZMQ_PORT_PLC_CMD,
@@ -78,6 +79,35 @@ class FaultRegistry:
                 continue
         return active_faults
 
+# --- Audio Manager ---
+class AudioManager:
+    def __init__(self):
+        self.sounds = {}
+
+        # Resolve the absolute path to the directory containing control_main.py
+        self.base_dir = os.path.dirname(os.path.abspath(__file__))
+        self.sounds_dir = os.path.join(self.base_dir, "assets", "sounds")
+
+        self._load_sound("warning", "warning.wav", volume=0.7)
+        self._load_sound("fault", "fault.wav", volume=1.0)
+        self._load_sound("critical", "critical_comms_loss.wav", volume=1.0)
+        self._load_sound("trip", "relay_trip.wav", volume=0.8)
+
+    def _load_sound(self, name: str, filename: str, volume: float):
+        filepath = os.path.join(self.sounds_dir, filename)
+
+        if not os.path.exists(filepath):
+            print(f"[Audio] Missing asset: {filepath}")
+            return
+
+        effect = QSoundEffect()
+        effect.setSource(QUrl.fromLocalFile(filepath))
+        effect.setVolume(volume)
+        self.sounds[name] = effect
+
+    def play(self, name: str):
+        if name in self.sounds:
+            self.sounds[name].play()
 
 # --- Background Network Workers ---
 
@@ -409,8 +439,14 @@ class VacuumControlWidget(QWidget):
                 loc = gauge_locations[i]
                 pressure = data.get(f"ion_beam.{loc}.vacuum_gauge_{i}.pressure")
                 status = data.get(f"ion_beam.{loc}.vacuum_gauge_{i}.status")
+
                 rapid_rise = data.get(f"ion_beam.gauges.status.stat_vg{i}_rapid_rise", False)
                 not_found = data.get(f"ion_beam.gauges.status.stat_vg{i}_not_found", False)
+
+                # Fetch dynamic relay states
+                approaching_sp = data.get(f"ion_beam.gauges.status.stat_vg{i}_approaching_sp", False)
+                relay_active = data.get(f"ion_beam.gauges.status.stat_vg{i}_relay_active", False)
+                above_sp = data.get(f"ion_beam.gauges.status.stat_vg{i}_above_sp", False)
 
                 if pressure is not None:
                     self.gauges[i]["val"].setText(f"{pressure:.2e} mbar")
@@ -423,15 +459,35 @@ class VacuumControlWidget(QWidget):
                     elif rapid_rise:
                         self.gauges[i]["status"].setText("RAPID RISE")
                         self.gauges[i]["status"].setStyleSheet(COLOR_FAULT)
-                    elif status == 1:
-                        self.gauges[i]["status"].setText("ONLINE")
-                        self.gauges[i]["status"].setStyleSheet(COLOR_OK)
                     elif status == 3:
                         self.gauges[i]["status"].setText("SENSOR OFF")
                         self.gauges[i]["status"].setStyleSheet(COLOR_INACTIVE)
-                    else:
-                        self.gauges[i]["status"].setText(f"FAULT ({status})")
+                    elif status != 1:
+                        self.gauges[i]["status"].setText(f"FAULT ({int(status)})")
                         self.gauges[i]["status"].setStyleSheet(COLOR_FAULT)
+                    else:
+                        # Status is 1 (Online) - Evaluate dynamic fail-safe relay states
+
+                        # If the gauge has no relay assigned in JSON, both will be 0.0 (False)
+                        has_relay = bool(relay_active or above_sp)
+
+                        if has_relay:
+                            if above_sp:
+                                # Relay is OPEN (Pressure too high)
+                                self.gauges[i]["status"].setText("TRIPPED")
+                                self.gauges[i]["status"].setStyleSheet(COLOR_FAULT)
+                            elif approaching_sp:
+                                # Relay is CLOSED, but within 80% of opening threshold
+                                self.gauges[i]["status"].setText("WARNING")
+                                self.gauges[i]["status"].setStyleSheet(COLOR_WARNING)
+                            else:
+                                # Relay is CLOSED and pressure is well below setpoint
+                                self.gauges[i]["status"].setText("HEALTHY")
+                                self.gauges[i]["status"].setStyleSheet(COLOR_OK)
+                        else:
+                            # Gauge is online but has no interlock relays mapped to it
+                            self.gauges[i]["status"].setText("ONLINE")
+                            self.gauges[i]["status"].setStyleSheet(COLOR_OK)
 
     def _update_turbo(self, data: dict, turbo_connected: bool):
         if not turbo_connected:
@@ -557,7 +613,6 @@ class VacuumControlWidget(QWidget):
                             "Disabled: Source must be cold (HV, Filament, and Cesium OFF) to close manually.")
                     else:
                         self.btn_gv_close.setToolTip("Click to command the gate valve CLOSED.")
-
 
 # --- Ion Source Subsystem Component ---
 
@@ -705,7 +760,6 @@ class IonSourceWidget(QWidget):
         self.psu_layout = QGridLayout()
         self.psu_controls = {}
 
-        # DUAL READBACKS IMPLEMENTED HERE
         self._build_psu_row(0, "Source Einzel", "ion_beam.spellman.source_einzel", "kV", "mA", 0.0, 30.0,
                             is_voltage=True)
         self._build_psu_row(1, "Extraction", "ion_beam.source.extraction", "kV", "mA", 0.0, 20.0, is_voltage=True)
@@ -720,8 +774,14 @@ class IonSourceWidget(QWidget):
 
     def _build_psu_row(self, row, name, base_tag, pri_unit, sec_unit, min_v, max_v, is_voltage):
         lbl_name = QLabel(f"<b>{name}</b>")
-        lbl_rb = QLabel(f"RB: --- {pri_unit} | --- {sec_unit}")
-        lbl_rb.setMinimumWidth(180)  # Prevent jitter when numbers change
+
+        # Dynamically widen the label and append W if it's one of the four upgraded structures
+        if name in ["Extraction", "Target", "Filament", "Thermionic"]:
+            lbl_rb = QLabel(f"RB: --- {pri_unit} | --- {sec_unit} | --- W")
+            lbl_rb.setMinimumWidth(250)
+        else:
+            lbl_rb = QLabel(f"RB: --- {pri_unit} | --- {sec_unit}")
+            lbl_rb.setMinimumWidth(180)
 
         lbl_badge = QLabel("")
         lbl_badge.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -842,8 +902,10 @@ class IonSourceWidget(QWidget):
     def _update_alarms_and_safety_state(self, data: dict, master_comms_lost: bool) -> tuple[bool, bool]:
         active_alarms = []
         first_out = int(data.get("ion_beam.settings.first_out_code", 0))
-        if first_out == 10: active_alarms.append("SAFETY TRIP: PROBABLE VACUUM SPIKE")
-        elif first_out == 11: active_alarms.append("SAFETY TRIP: PHYSICAL INTERLOCK OR POWER SAG")
+        if first_out == 10:
+            active_alarms.append("SAFETY TRIP: PROBABLE VACUUM SPIKE")
+        elif first_out == 11:
+            active_alarms.append("SAFETY TRIP: PHYSICAL INTERLOCK OR POWER SAG")
 
         w2_raw = data.get("ion_beam.faults.word_2_source")
         if w2_raw:
@@ -863,14 +925,13 @@ class IonSourceWidget(QWidget):
 
         sr_tripped = any(f["name"] == "Safety_Relay_Tripped" for f in w0_faults)
         sr_refused = any(f["name"] == "Safety_Relay_Refused" for f in w0_faults)
-        remote_lost = any(f["name"] == "Remote_IO_Lost" for f in w0_faults) or bool(data.get("ion_beam.system.remote_io_lost", 0.0))
+        remote_lost = any(f["name"] == "Remote_IO_Lost" for f in w0_faults) or bool(
+            data.get("ion_beam.system.remote_io_lost", 0.0))
 
-        # --- UPDATED LOGIC HIERARCHY ---
         if master_comms_lost:
             self.lbl_safety_state.setText("SAFETY: UNKNOWN")
             self.lbl_safety_state.setStyleSheet(COLOR_INACTIVE)
         elif relay_active:
-            # If the relay is physically in, it's definitively LIVE, regardless of software flags.
             self.lbl_safety_state.setText("SAFETY: LIVE")
             self.lbl_safety_state.setStyleSheet(COLOR_WARNING)
         elif sr_tripped or sr_refused:
@@ -895,17 +956,15 @@ class IonSourceWidget(QWidget):
         self.btn_reset_faults.setToolTip(
             "Disabled: GUI to PLC communications are offline." if master_comms_lost else "Click to clear latched software and hardware faults.")
 
-        # --- THE DYNAMIC SWEEPING TIMER LOGIC ---
         timer_elapsed_ms = float(data.get("ion_beam.system.safety_timer_elapsed_ms", 0.0))
-        timer_total_ms = float(data.get("ion_beam.system.safety_timer_total_ms", 5000.0))  # Fallback if tag is missing
+        timer_total_ms = float(data.get("ion_beam.system.safety_timer_total_ms", 5000.0))
 
-        # Valid timing out state: Elapsed is greater than 0, but less than the Total PT.
         is_timing_out = (0 < timer_elapsed_ms < timer_total_ms) and not relay_active
 
         if is_timing_out and timer_total_ms > 0:
             remaining_sec = (timer_total_ms - timer_elapsed_ms) / 1000.0
             total_sec = timer_total_ms / 1000.0
-            fill_ratio = max(0.0, min(1.0, remaining_sec / total_sec))  # Sweeps from 1.0 down to 0.0
+            fill_ratio = max(0.0, min(1.0, remaining_sec / total_sec))
 
             sweep_style = f"""
                 QPushButton {{
@@ -926,7 +985,6 @@ class IonSourceWidget(QWidget):
             self.btn_enable_safety.setToolTip(f"Awaiting physical panel button press... ({total_sec}s timeout)")
 
         else:
-            # --- STANDARD LOGIC RESTORED ---
             self.btn_enable_safety.blockSignals(True)
             self.btn_enable_safety.setChecked(relay_active)
             self.btn_enable_safety.blockSignals(False)
@@ -961,7 +1019,6 @@ class IonSourceWidget(QWidget):
                     self.btn_enable_safety.setText("DISABLE SAFETY RELAY")
                     self.btn_enable_safety.setToolTip("Click to manually de-energize the Master Safety Relay.")
 
-        # --- SHUTDOWN LOGIC ---
         can_shutdown = (active_step == 0) and relay_active and any_psu_active
         self.btn_shutdown.setEnabled(can_shutdown and not master_comms_lost)
 
@@ -1074,7 +1131,6 @@ class IonSourceWidget(QWidget):
             lbl_badge = ctrl["lbl_badge"]
             is_spellman = "spellman" in base_tag
 
-            # Dynamic Contextual Lockout Logic
             comp_lock_reason = ""
             if is_spellman and spellman_comms_lost:
                 comp_lock_reason = "Spellman microservice is offline."
@@ -1089,7 +1145,7 @@ class IonSourceWidget(QWidget):
 
             comp_lockout = bool(comp_lock_reason)
 
-            # A. Dual Readbacks (PV)
+            # A. Readbacks (PV) with Dynamic Power Append
             if name == "Cesium":
                 rb_val = data.get(f"{base_tag}.rb_temp")
                 duty_cycle = data.get(f"{base_tag}.out_cv_heating")
@@ -1098,14 +1154,18 @@ class IonSourceWidget(QWidget):
             else:
                 rb_v = data.get(f"{base_tag}.rb_voltage")
                 rb_i = data.get(f"{base_tag}.rb_current")
+                rb_p = data.get(f"{base_tag}.rb_power")
 
                 v_str = f"{rb_v:.2f}" if rb_v is not None else "---"
                 i_str = f"{rb_i:.2f}" if rb_i is not None else "---"
 
+                # Append wattage conditionally if present
+                p_str = f" | {rb_p:.1f} W" if rb_p is not None else ""
+
                 if ctrl["is_voltage"]:
-                    ctrl["lbl_rb"].setText(f"RB: {v_str} {pri_unit} | {i_str} {sec_unit}")
+                    ctrl["lbl_rb"].setText(f"RB: {v_str} {pri_unit} | {i_str} {sec_unit}{p_str}")
                 else:
-                    ctrl["lbl_rb"].setText(f"RB: {i_str} {pri_unit} | {v_str} {sec_unit}")
+                    ctrl["lbl_rb"].setText(f"RB: {i_str} {pri_unit} | {v_str} {sec_unit}{p_str}")
 
             # B. Active Setpoint Synchronization
             sp_tag = "sp_actual_temp" if name == "Cesium" else (
@@ -1152,8 +1212,6 @@ class IonSourceWidget(QWidget):
             else:
                 if "btn_enable" in ctrl:
                     stat_en = data.get(f"{base_tag}.stat_enabled")
-
-                    # Intercept loop explicitly for the Filament safe-disarm sequence
                     stat_disarming = bool(data.get(f"{base_tag}.stat_disarming", False))
 
                     if name == "Filament" and stat_disarming:
@@ -1168,7 +1226,6 @@ class IonSourceWidget(QWidget):
                         ctrl["btn_enable"].setToolTip(
                             "Contactor remains closed while safe step-down ramp drops current to 0A.")
                     else:
-                        # Restore normal properties if not in disarm state
                         if name == "Filament":
                             ctrl["btn_enable"].setText("ENABLE")
 
@@ -1182,13 +1239,29 @@ class IonSourceWidget(QWidget):
 
                 if name == "Thermionic" and "btn_auto" in ctrl:
                     auto_em_stat = data.get(f"{base_tag}.stat_auto_emission")
+
                     if auto_em_stat is not None:
-                        ctrl["btn_auto"].setChecked(bool(auto_em_stat))
-                        ctrl["btn_auto"].setStyleSheet(COLOR_OK if auto_em_stat else COLOR_BUTTON_STANDARD)
+                        is_auto = bool(auto_em_stat)
+
+                        # Block signals to prevent the UI update from accidentally triggering a ZMQ command
+                        ctrl["btn_auto"].blockSignals(True)
+                        ctrl["btn_auto"].setChecked(is_auto)
+
+                        if is_auto:
+                            ctrl["btn_auto"].setText("AUTO EMISSION: ON")
+                            ctrl["btn_auto"].setStyleSheet(COLOR_OK)
+                            tt = f"Disabled: {comp_lock_reason}" if comp_lockout else "Auto-Emission ACTIVE. Click to revert to Manual Filament Control."
+                        else:
+                            ctrl["btn_auto"].setText("AUTO EMISSION")
+                            ctrl["btn_auto"].setStyleSheet(COLOR_BUTTON_STANDARD)
+                            tt = f"Disabled: {comp_lock_reason}" if comp_lockout else "Click to engage closed-loop Auto-Emission control (Cascades Filament output)."
+
+                        ctrl["btn_auto"].setToolTip(tt)
+                        ctrl["btn_auto"].blockSignals(False)
 
                     ctrl["btn_auto"].setEnabled(not comp_lockout)
-                    ctrl["btn_auto"].setToolTip(
-                        f"Disabled: {comp_lock_reason}" if comp_lockout else "Click to toggle closed-loop Auto-Emission control.")
+                    if comp_lockout and auto_em_stat is None:
+                        ctrl["btn_auto"].setToolTip(f"Disabled: {comp_lock_reason}")
 
             # D. Control Authority Badges & Spinbox Lockouts
             if hw_lockout:
@@ -2039,14 +2112,21 @@ class ConfigEditorDialog(QDialog):
 
 # --- Master Framework ---
 
-# --- Master Framework ---
-
 class ControlMainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("IPIDS Operator HMI")
         self.resize(1600, 900)
         self.setDockOptions(QMainWindow.DockOption.AllowNestedDocks | QMainWindow.DockOption.AllowTabbedDocks)
+
+        # --- AUDIO SUBSYSTEM ---
+        self.audio = AudioManager()
+
+        # --- EDGE DETECTION MEMORY ---
+        self.memory_active_faults = set()
+        self.memory_vg_warnings = {i: False for i in range(1, 7)}
+        self.memory_vg_trips = {i: False for i in range(1, 7)}
+        self.memory_comms_lost = False
 
         toolbar = QToolBar("Main Toolbar")
         self.addToolBar(toolbar)
@@ -2184,6 +2264,59 @@ class ControlMainWindow(QMainWindow):
         self.optics_widget.update_telemetry(self.master_telemetry_cache)
         self.diag_widget.update_telemetry(self.master_telemetry_cache)
         self.log_widget.update_telemetry(self.master_telemetry_cache)
+
+        # Evaluate audio triggers after UI components process data
+        self._evaluate_audio_triggers()
+
+    def _evaluate_audio_triggers(self):
+        data = self.master_telemetry_cache
+
+        # 1. Critical Comms Loss
+        comms_lost = not bool(data.get("system.connected", False)) or bool(
+            data.get("ion_beam.system.pc_plc_comms_lost", False))
+        if comms_lost and not self.memory_comms_lost:
+            self.audio.play("critical")
+        self.memory_comms_lost = comms_lost
+
+        if comms_lost:
+            return  # Suppress secondary alarms if master comms drop
+
+        # 2. Vacuum Approaching Setpoints & Relay Trips
+        for i in range(1, 7):
+            approaching = bool(data.get(f"ion_beam.gauges.status.stat_vg{i}_approaching_sp", False))
+            tripped = bool(data.get(f"ion_beam.gauges.status.stat_vg{i}_above_sp", False))
+
+            # Rising edge on 80% warning
+            if approaching and not self.memory_vg_warnings[i]:
+                self.audio.play("warning")
+            self.memory_vg_warnings[i] = approaching
+
+            # Rising edge on physical relay trip
+            if tripped and not self.memory_vg_trips[i]:
+                self.audio.play("trip")
+            self.memory_vg_trips[i] = tripped
+
+        # 3. Global UDT Fault Registry Evaluation
+        current_active_faults = set()
+        word_mapping = {
+            "ion_beam.faults.word_0_system": "UDT_Fault_Word_0_System",
+            "ion_beam.faults.word_1_vacuum": "UDT_Fault_Word_1_Vacuum",
+            "ion_beam.faults.word_2_source": "UDT_Fault_Word_2_Source",
+        }
+
+        for tag, udt_key in word_mapping.items():
+            raw_word = data.get(tag)
+            if raw_word is not None:
+                faults = self.fault_engine.get_active_faults(udt_key, int(raw_word))
+                for f in faults:
+                    current_active_faults.add(f["name"])
+
+        # Detect new faults not present in the previous 100ms cycle
+        new_faults = current_active_faults - self.memory_active_faults
+        if new_faults:
+            self.audio.play("fault")
+
+        self.memory_active_faults = current_active_faults
 
     def closeEvent(self, event):
         self.telemetry_thread.stop()

@@ -42,6 +42,7 @@ NON_RETAIN
             Stat_Enabled : Bool;          // Hardware state: TRUE = HV Contactor Closed
             RB_Voltage : Real;            // Physical Readback (ADC) in kV
             RB_Current : Real;            // Physical Readback (ADC) in mA
+            RB_Power : Real;              // Calculated power, in W
             SP_Actual_Voltage : Real;     // Active Setpoint currently driving the DAC
             Ctrl_Mode : Int;              // 0=Manual, 1=PLC Auto, 2=Recipe, 4=Arc-Quench
             Stat_Lockout : Bool;          // TRUE if interlock blocks enabling/changing SP
@@ -51,6 +52,7 @@ NON_RETAIN
             Stat_Enabled : Bool;          // Hardware state: TRUE = HV Contactor Closed
             RB_Voltage : Real;            // Physical Readback (ADC) in kV
             RB_Current : Real;            // Physical Readback (ADC) in mA
+            RB_Power : Real;              // Calculated power, in W
             SP_Actual_Voltage : Real;     // Active Setpoint currently driving the DAC
             Ctrl_Mode : Int;              // 0=Manual, 1=PLC Auto, 2=Recipe, 4=Arc-Quench
             Stat_Lockout : Bool;          // TRUE if interlock blocks enabling/changing SP
@@ -61,6 +63,8 @@ NON_RETAIN
             Stat_Disarming : Bool;        // Rampdown happening
             RB_Voltage : Real;            // Physical Readback (ADC) in V
             RB_Current : Real;            // Physical Readback (ADC) in A
+            RB_Power : Real;              // Calculated power, in W
+            Resistance : Real;            // Calculated resistance of filament, milli-ohms
             SP_Actual_Current : Real;     // Active Setpoint currently driving the DAC
             Ctrl_Mode : Int;              // 0=Manual, 1=PLC Auto, 2=Recipe, 3=Cascaded (PID Slave)
             Stat_Lockout : Bool;          // TRUE if interlock blocks enabling/changing SP
@@ -72,6 +76,7 @@ NON_RETAIN
             Stat_Auto_Emission : Bool;    // TRUE = PID loop is controlling Filament
             RB_Voltage : Real;            // Physical Readback (ADC) in V
             RB_Current : Real;            // Physical Readback (ADC) in mA (Emission Current)
+            RB_Power : Real;              // Calculated power, in W
             SP_Actual_Current : Real;     // Active Setpoint currently driving the DAC
             Ctrl_Mode : Int;              // 0=Manual, 1=PLC Auto, 2=Recipe, 4=Arc-Quench
             Stat_Lockout : Bool;          // TRUE if interlock blocks enabling/changing SP
@@ -156,6 +161,8 @@ NON_RETAIN
             Cmd_Force_Cooling : Bool;     // Request to activate cooling air solenoid
             SP_Requested_Temp : Real;     // Setpoint demanded by HMI / Recipe
             Cmd_Ctrl_Mode : Int;          // Request authority (0=Manual, 1=PLC, 2=Recipe)
+            Testing_Cmd_Force_Duty_Cycle : Bool;
+            Testing_Cmd_Duty_Cycle_Value : Real;
          END_STRUCT;
 
          Source_Chamber : STRUCT
