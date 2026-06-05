@@ -13,7 +13,7 @@ import threading
 from src.core.event_helper import EventHelper
 from src.core.network_map import (
     ZMQ_PORT_PLC_PUB, ZMQ_PORT_VACUUM_PUB, ZMQ_PORT_SRC_TURBO_PUB,
-    TOPIC_PLC_DATA, TOPIC_VACUUM_DATA, TOPIC_SRC_TURBO_DATA,
+    TOPIC_PLC_DATA, TOPIC_VACUUM_DATA, TOPIC_SRC_TURBO_DATA, TOPIC_SPELLMAN_DATA, ZMQ_PORT_SPELLMAN_PUB,
     ZMQ_PORT_HEARTBEAT, ZMQ_PORT_LOGGER_CMD
 )
 from src.core.payload_mapper import DynamicPayloadMapper
@@ -42,6 +42,7 @@ class TelemetryLoggerService:
         self.sub_socket.connect(ZMQ_PORT_PLC_PUB)
         self.sub_socket.connect(ZMQ_PORT_VACUUM_PUB)
         self.sub_socket.connect(ZMQ_PORT_SRC_TURBO_PUB)
+        self.sub_socket.connect(ZMQ_PORT_SPELLMAN_PUB)
 
         self.last_cmd_time = 0.0
         self.cmd_debounce = 2.0
@@ -53,6 +54,7 @@ class TelemetryLoggerService:
         self.sub_socket.setsockopt(zmq.SUBSCRIBE, _ensure_bytes(TOPIC_PLC_DATA))
         self.sub_socket.setsockopt(zmq.SUBSCRIBE, _ensure_bytes(TOPIC_VACUUM_DATA))
         self.sub_socket.setsockopt(zmq.SUBSCRIBE, _ensure_bytes(TOPIC_SRC_TURBO_DATA))
+        self.sub_socket.setsockopt(zmq.SUBSCRIBE, _ensure_bytes(TOPIC_SPELLMAN_DATA))
 
         self.events = EventHelper("service_logger")
         self.poller = zmq.Poller()

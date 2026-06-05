@@ -10,7 +10,6 @@ from src.core.os_helper import harden_windows_process
 
 if os.name == 'nt':
     import ctypes
-
     ctypes.windll.winmm.timeBeginPeriod(1)
 
 from pymodbus.client import ModbusTcpClient
@@ -174,6 +173,31 @@ class MagnetMicroservice:
             pass
         return default_config
 
+    def _apply_smart_setpoint(self, target_current: float):
+        nom_res = self.limits.get("nominal_resistance", 0.16)
+        max_v = self.limits.get("max_voltage", 10.0)
+
+        # Calculate required voltage (Current * Resistance * 1.20 for 20% overhead)
+        # Enforce an absolute minimum of 1.0V and cap at hardware maximum
+        target_voltage = max(1.0, target_current * nom_res * 1.20)
+        target_voltage = min(target_voltage, max_v)
+
+        # Get the currently requested current to determine the direction of travel
+        current_sp_i = self.sp_cache.get("ion_beam.beamline.magnet.sp_actual_current", 0.0)
+
+        if target_current >= current_sp_i:
+            # RAMPING UP: Raise Voltage limit FIRST, then push current
+            self.hw.set_voltage(target_voltage)
+            self.hw.set_current(target_current)
+        else:
+            # RAMPING DOWN: Drop current FIRST, then lower Voltage limit
+            self.hw.set_current(target_current)
+            self.hw.set_voltage(target_voltage)
+
+        # Update cache to reflect the new hardware state
+        self.sp_cache["ion_beam.beamline.magnet.sp_actual_voltage"] = target_voltage
+        self.sp_cache["ion_beam.beamline.magnet.sp_actual_current"] = target_current
+
     def _update_safety_permissives(self):
         try:
             while True:
@@ -200,12 +224,13 @@ class MagnetMicroservice:
         if now - self.degauss_last_step_ts > step_delay:
             if self.degauss_step_idx < len(steps):
                 target_amps = steps[self.degauss_step_idx]
-                self.hw.set_current(target_amps)
-                self.sp_cache["ion_beam.beamline.magnet.sp_actual_current"] = target_amps
+
+                # Route degauss steps through the smart sequencer
+                self._apply_smart_setpoint(target_amps)
+
                 self.degauss_last_step_ts = now
                 self.degauss_step_idx += 1
             else:
-                # Finished
                 self.degauss_active = False
                 self.events.log_general("Degaussing cycle completed.")
 
@@ -226,7 +251,6 @@ class MagnetMicroservice:
         # Execute automated degauss sequence if active
         self._execute_degauss_cycle()
 
-        max_v = self.limits.get("max_voltage", 0.0)
         max_i = self.limits.get("max_current", 0.0)
 
         try:
@@ -239,7 +263,7 @@ class MagnetMicroservice:
                 if time.time() - ts > MAX_CMD_AGE: continue
                 parts = tag.split('.')
                 if len(parts) < 3 or parts[1] != "beamline": continue
-                cmd_type = parts[-1]  # Grabs the command suffix
+                cmd_type = parts[-1]
 
                 try:
                     value = float(raw_value)
@@ -247,19 +271,18 @@ class MagnetMicroservice:
                     continue
 
                 if cmd_type == "sp_requested_voltage":
-                    if 0.0 <= value <= max_v:
-                        self.hw.set_voltage(value)
-                        self.sp_cache["ion_beam.beamline.magnet.sp_actual_voltage"] = value
-                        self.last_setpoint_ts = time.time()
+                    pass
+
                 elif cmd_type == "sp_requested_current":
                     if 0.0 <= value <= max_i:
-                        self.degauss_active = False  # Manual input aborts degauss
-                        self.hw.set_current(value)
-                        self.sp_cache["ion_beam.beamline.magnet.sp_actual_current"] = value
+                        self.degauss_active = False
+                        self._apply_smart_setpoint(value)
                         self.last_setpoint_ts = time.time()
+
                 elif cmd_type == "cmd_enable":
                     self.hw.set_output(bool(value))
                     self.last_setpoint_ts = time.time()
+
                 elif cmd_type == "cmd_degauss" and bool(value):
                     self.events.log_general("Initiating autonomous Degauss sequence...")
                     self.degauss_active = True
@@ -275,34 +298,31 @@ class MagnetMicroservice:
         telemetry_data = self.hw.read_telemetry()
         comms_fail = telemetry_data is None
 
-        self.state["ion_beam.magnet.status.stat_comms_fail"] = 1.0 if comms_fail else 0.0
+        self.state["ion_beam.beamline.magnet.stat_comms_fail"] = 1.0 if comms_fail else 0.0
         if comms_fail: return
 
         v_rb, i_rb, outp_enabled, internal_alarms = telemetry_data
 
-        # Sync readbacks and GUI setpoint caches
         self.state["ion_beam.beamline.magnet.rb_voltage"] = round(v_rb, 3)
         self.state["ion_beam.beamline.magnet.rb_current"] = round(i_rb, 3)
         self.state["ion_beam.beamline.magnet.stat_enabled"] = 1.0 if outp_enabled else 0.0
         self.state["ion_beam.beamline.magnet.stat_degaussing"] = 1.0 if self.degauss_active else 0.0
 
         if "ion_beam.beamline.magnet.sp_actual_voltage" in self.sp_cache:
-            self.state["ion_beam.beamline.magnet.sp_actual_voltage"] = self.sp_cache[
-                "ion_beam.beamline.magnet.sp_actual_voltage"]
+            self.state["ion_beam.beamline.magnet.sp_actual_voltage"] = self.sp_cache["ion_beam.beamline.magnet.sp_actual_voltage"]
         if "ion_beam.beamline.magnet.sp_actual_current" in self.sp_cache:
-            self.state["ion_beam.beamline.magnet.sp_actual_current"] = self.sp_cache[
-                "ion_beam.beamline.magnet.sp_actual_current"]
+            self.state["ion_beam.beamline.magnet.sp_actual_current"] = self.sp_cache["ion_beam.beamline.magnet.sp_actual_current"]
 
-        # Hardware Alarms
-        self.state["ion_beam.magnet.status.stat_psu_overtemp"] = 1.0 if internal_alarms["OT"] else 0.0
-        self.state["ion_beam.magnet.status.stat_psu_powerfail"] = 1.0 if internal_alarms["PF"] else 0.0
-        self.state["ion_beam.magnet.status.stat_psu_ovp"] = 1.0 if internal_alarms["OVP"] else 0.0
-        self.state["ion_beam.magnet.status.stat_psu_ovc"] = 1.0 if internal_alarms["OCP"] else 0.0
+        # Hardware Alarms - Flattened into Equipment Root
+        self.state["ion_beam.beamline.magnet.stat_psu_overtemp"] = 1.0 if internal_alarms["OT"] else 0.0
+        self.state["ion_beam.beamline.magnet.stat_psu_powerfail"] = 1.0 if internal_alarms["PF"] else 0.0
+        self.state["ion_beam.beamline.magnet.stat_psu_ovp"] = 1.0 if internal_alarms["OVP"] else 0.0
+        self.state["ion_beam.beamline.magnet.stat_psu_ovc"] = 1.0 if internal_alarms["OCP"] else 0.0
 
         if any(internal_alarms.values()): self.hw.clear_alarms()
 
         short_fault, open_fault, unexp_fault = False, False, False
-        is_settled = (time.time() - self.last_setpoint_ts) > 0.250
+        is_settled = (time.time() - self.last_setpoint_ts) > 1.500
 
         if outp_enabled and i_rb > self.limits["min_current_for_calc"] and is_settled:
             resistance = v_rb / i_rb
@@ -316,9 +336,9 @@ class MagnetMicroservice:
         else:
             self.state["ion_beam.beamline.magnet.rb_resistance"] = 0.0
 
-        self.state["ion_beam.magnet.status.stat_short_circuit"] = 1.0 if short_fault else 0.0
-        self.state["ion_beam.magnet.status.stat_open_circuit"] = 1.0 if open_fault else 0.0
-        self.state["ion_beam.magnet.status.stat_unexpected_res"] = 1.0 if unexp_fault else 0.0
+        self.state["ion_beam.beamline.magnet.stat_short_circuit"] = 1.0 if short_fault else 0.0
+        self.state["ion_beam.beamline.magnet.stat_open_circuit"] = 1.0 if open_fault else 0.0
+        self.state["ion_beam.beamline.magnet.stat_unexpected_res"] = 1.0 if unexp_fault else 0.0
 
     def run(self):
         self.events.log_general("[Magnet Service] Daemon Starting (Modbus Architecture)...")
@@ -351,8 +371,7 @@ class MagnetMicroservice:
                 self.state["system.cycle_time_ms"] = round((time.perf_counter() - cycle_start) * 1000, 2)
 
                 try:
-                    topic = TOPIC_MAGNET_DATA if isinstance(TOPIC_MAGNET_DATA, bytes) else TOPIC_MAGNET_DATA.encode(
-                        'utf-8')
+                    topic = TOPIC_MAGNET_DATA if isinstance(TOPIC_MAGNET_DATA, bytes) else TOPIC_MAGNET_DATA.encode('utf-8')
                     self.pub_socket.send_multipart([topic, orjson.dumps(self.state)])
                 except Exception:
                     pass

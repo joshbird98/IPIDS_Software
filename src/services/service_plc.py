@@ -292,10 +292,6 @@ class PlcMicroservice:
             return False
 
     def _write_tags_batched(self, updates: Dict[str, Any]):
-        """Groups modifications dynamically by DB number, calculating true data-type sizes
-
-        to prevent network write-avalanches and memory footprint truncation.
-        """
         type_sizes = {
             "BOOL": 1, "BYTE": 1, "CHAR": 1,
             "INT": 2, "UINT": 2, "WORD": 2,
@@ -315,10 +311,7 @@ class PlcMicroservice:
 
         for db_num, tag_list in changes_by_db.items():
             try:
-                # Calculate absolute minimum byte boundary
                 min_byte = min(item[1].get("byte_offset", 0) for item in tag_list)
-
-                # Calculate absolute maximum byte boundary incorporating actual data type widths
                 max_end_byte = max(
                     item[1].get("byte_offset", 0) + type_sizes.get(item[1].get("datatype", "BOOL"), 1)
                     for item in tag_list
@@ -326,12 +319,10 @@ class PlcMicroservice:
 
                 length = max_end_byte - min_byte
                 if length % 2 != 0:
-                    length += 1  # Force even byte alignment requirements for S7 memory blocks
+                    length += 1
 
-                # Read entire memory span containing all variations
                 db_data = self.client.db_read(db_num, min_byte, length)
 
-                # Process mutations according to specific data types safely
                 for tag, meta, value in tag_list:
                     rel_byte = meta.get("byte_offset", 0) - min_byte
                     dtype = meta.get("datatype", "BOOL")
@@ -344,12 +335,7 @@ class PlcMicroservice:
                         set_int(db_data, rel_byte, int(value))
                     elif dtype in ["DINT", "UDINT"]:
                         set_dint(db_data, rel_byte, int(value))
-                    else:
-                        self.events.log_general(
-                            f"WARNING: Batch writer skipped unsupported datatype '{dtype}' on tag '{tag}'")
-                        continue
 
-                # Commit unified changes simultaneously
                 self.client.db_write(db_num, min_byte, db_data)
 
                 for tag, _, value in tag_list:
@@ -372,39 +358,55 @@ class PlcMicroservice:
                         self.last_seen[service] = time.time()
 
                 if "TURBO" in topic_str:
-                    pending_updates["ion_beam.pump.status.stat_src_turbo_comms_fail"] = bool(payload.get("ion_beam.pump.status.stat_src_turbo_comms_fail", 0.0))
-                    pending_updates["ion_beam.pump.status.stat_src_turbo_error"] = bool(payload.get("ion_beam.pump.status.stat_src_turbo_error", 0.0))
-                    pending_updates["ion_beam.pump.status.stat_src_turbo_warning"] = bool(payload.get("ion_beam.pump.status.stat_src_turbo_warning", 0.0))
-                    pending_updates["ion_beam.pump.status.stat_src_turbo_trip"] = bool(payload.get("ion_beam.pump.status.stat_src_turbo_trip", 0.0))
+                    base = "ion_beam.source.turbo_pump"
+                    pending_updates[f"{base}.stat_comms_fail"] = bool(payload.get(f"{base}.stat_comms_fail", 0.0))
+                    pending_updates[f"{base}.stat_error"] = bool(payload.get(f"{base}.stat_error", 0.0))
+                    pending_updates[f"{base}.stat_warning"] = bool(payload.get(f"{base}.stat_warning", 0.0))
+                    pending_updates[f"{base}.stat_trip"] = bool(payload.get(f"{base}.stat_trip", 0.0))
 
                 elif "VACUUM" in topic_str:
-                    pending_updates["ion_beam.gauges.status.stat_graphix1_comms_fail"] = bool(payload.get("ion_beam.gauges.status.stat_graphix1_comms_fail", 0.0))
-                    pending_updates["ion_beam.gauges.status.stat_graphix2_comms_fail"] = bool(payload.get("ion_beam.gauges.status.stat_graphix2_comms_fail", 0.0))
-
-                    for i in range(1, 7):
-                        pending_updates[f"ion_beam.gauges.status.stat_vg{i}_not_found"] = bool(payload.get(f"ion_beam.gauges.status.stat_vg{i}_not_found", 0.0))
-                        pending_updates[f"ion_beam.gauges.status.stat_vg{i}_mismatch"] = bool(payload.get(f"ion_beam.gauges.status.stat_vg{i}_mismatch", 0.0))
-                        pending_updates[f"ion_beam.gauges.status.stat_vg{i}_above_sp"] = bool(payload.get(f"ion_beam.gauges.status.stat_vg{i}_above_sp", 0.0))
-                        pending_updates[f"ion_beam.gauges.status.stat_vg{i}_rapid_rise"] = bool(payload.get(f"ion_beam.gauges.status.stat_vg{i}_rapid_rise", 0.0))
-
+                    pending_updates["ion_beam.facilities.graphix1.stat_comms_fail"] = bool(payload.get("ion_beam.facilities.graphix1.stat_comms_fail", 0.0))
+                    pending_updates["ion_beam.facilities.graphix2.stat_comms_fail"] = bool(payload.get("ion_beam.facilities.graphix2.stat_comms_fail", 0.0))
                     pending_updates["ion_beam.source.chamber.stat_vac_ok_for_gv"] = bool(payload.get("ion_beam.vacuum.gv_permissive_ready", 0.0))
 
+                    vg_paths = [
+                        "ion_beam.source.vacuum_gauge_1",
+                        "ion_beam.beamline.vacuum_gauge_2",
+                        "ion_beam.beamline.vacuum_gauge_3",
+                        "ion_beam.endstation.vacuum_gauge_4",
+                        "ion_beam.loadlock.vacuum_gauge_5",
+                        "ion_beam.endstation.vacuum_gauge_6"
+                    ]
+                    for path in vg_paths:
+                        pending_updates[f"{path}.stat_not_found"] = bool(payload.get(f"{path}.stat_not_found", 0.0))
+                        pending_updates[f"{path}.stat_mismatch"] = bool(payload.get(f"{path}.stat_mismatch", 0.0))
+                        pending_updates[f"{path}.stat_above_sp"] = bool(payload.get(f"{path}.stat_above_sp", 0.0))
+                        pending_updates[f"{path}.stat_rapid_rise"] = bool(payload.get(f"{path}.stat_rapid_rise", 0.0))
+
                 elif "SPELLMAN" in topic_str:
-                    for i in range(1, 6):
-                        pending_updates[f"ion_beam.spellman.status.stat_unit{i}_comms_fail"] = bool(payload.get(f"ion_beam.spellman.status.stat_unit{i}_comms_fail", 0.0))
-                        pending_updates[f"ion_beam.spellman.status.stat_unit{i}_overcurrent"] = bool(payload.get(f"ion_beam.spellman.status.stat_unit{i}_overcurrent", 0.0))
-                        pending_updates[f"ion_beam.spellman.status.stat_unit{i}_undervoltage"] = bool(payload.get(f"ion_beam.spellman.status.stat_unit{i}_undervoltage", 0.0))
-                        pending_updates[f"ion_beam.spellman.status.stat_unit{i}_arc_exceeded"] = bool(payload.get(f"ion_beam.spellman.status.stat_unit{i}_arc_exceeded", 0.0))
+                    spellman_paths = [
+                        "ion_beam.source.einzel",
+                        "ion_beam.beamline.einzel",
+                        "ion_beam.beamline.neutral_trap_pos",
+                        "ion_beam.beamline.neutral_trap_neg"
+                    ]
+                    for path in spellman_paths:
+                        pending_updates[f"{path}.stat_comms_fail"] = bool(payload.get(f"{path}.stat_comms_fail", 0.0))
+                        pending_updates[f"{path}.stat_overcurrent"] = bool(payload.get(f"{path}.stat_overcurrent", 0.0))
+                        pending_updates[f"{path}.stat_overvoltage"] = bool(payload.get(f"{path}.stat_overvoltage", 0.0))
+                        pending_updates[f"{path}.stat_fail"] = bool(payload.get(f"{path}.stat_fail", 0.0))
+                        pending_updates[f"{path}.stat_arc_exceeded"] = bool(payload.get(f"{path}.stat_arc_exceeded", 0.0))
 
                 elif "MAGNET" in topic_str:
-                    pending_updates["ion_beam.magnet.status.stat_comms_fail"] = bool(payload.get("ion_beam.magnet.status.stat_comms_fail", 0.0))
-                    pending_updates["ion_beam.magnet.status.stat_open_circuit"] = bool(payload.get("ion_beam.magnet.status.stat_open_circuit", 0.0))
-                    pending_updates["ion_beam.magnet.status.stat_short_circuit"] = bool(payload.get("ion_beam.magnet.status.stat_short_circuit", 0.0))
-                    pending_updates["ion_beam.magnet.status.stat_unexpected_res"] = bool(payload.get("ion_beam.magnet.status.stat_unexpected_res", 0.0))
-                    pending_updates["ion_beam.magnet.status.stat_psu_overtemp"] = bool(payload.get("ion_beam.magnet.status.stat_psu_overtemp", 0.0))
-                    pending_updates["ion_beam.magnet.status.stat_psu_powerfail"] = bool(payload.get("ion_beam.magnet.status.stat_psu_powerfail", 0.0))
-                    pending_updates["ion_beam.magnet.status.stat_psu_ovc"] = bool(payload.get("ion_beam.magnet.status.stat_psu_ovc", 0.0))
-                    pending_updates["ion_beam.magnet.status.stat_psu_ovp"] = bool(payload.get("ion_beam.magnet.status.stat_psu_ovp", 0.0))
+                    base = "ion_beam.beamline.magnet"
+                    pending_updates[f"{base}.stat_comms_fail"] = bool(payload.get(f"{base}.stat_comms_fail", 0.0))
+                    pending_updates[f"{base}.stat_open_circuit"] = bool(payload.get(f"{base}.stat_open_circuit", 0.0))
+                    pending_updates[f"{base}.stat_short_circuit"] = bool(payload.get(f"{base}.stat_short_circuit", 0.0))
+                    pending_updates[f"{base}.stat_unexpected_res"] = bool(payload.get(f"{base}.stat_unexpected_res", 0.0))
+                    pending_updates[f"{base}.stat_psu_overtemp"] = bool(payload.get(f"{base}.stat_psu_overtemp", 0.0))
+                    pending_updates[f"{base}.stat_psu_powerfail"] = bool(payload.get(f"{base}.stat_psu_powerfail", 0.0))
+                    pending_updates[f"{base}.stat_psu_ovc"] = bool(payload.get(f"{base}.stat_psu_ovc", 0.0))
+                    pending_updates[f"{base}.stat_psu_ovp"] = bool(payload.get(f"{base}.stat_psu_ovp", 0.0))
 
         except zmq.Again:
             if pending_updates:
@@ -416,15 +418,24 @@ class PlcMicroservice:
 
         if current_time - self.last_seen["VACUUM"] > self.SERVICE_TIMEOUT_SEC:
             fallback_updates["ion_beam.source.chamber.stat_vac_ok_for_gv"] = False
-            fallback_updates["ion_beam.gauges.status.stat_graphix1_comms_fail"] = True
-            fallback_updates["ion_beam.gauges.status.stat_graphix2_comms_fail"] = True
+            fallback_updates["ion_beam.facilities.graphix1.stat_comms_fail"] = True
+            fallback_updates["ion_beam.facilities.graphix2.stat_comms_fail"] = True
 
         if current_time - self.last_seen["TURBO"] > self.SERVICE_TIMEOUT_SEC:
-            fallback_updates["ion_beam.pump.status.stat_src_turbo_comms_fail"] = True
+            fallback_updates["ion_beam.source.turbo_pump.stat_comms_fail"] = True
 
         if current_time - self.last_seen["SPELLMAN"] > self.SERVICE_TIMEOUT_SEC:
-            for i in range(1, 6):
-                fallback_updates[f"ion_beam.spellman.status.stat_unit{i}_comms_fail"] = True
+            spellman_paths = [
+                "ion_beam.source.einzel",
+                "ion_beam.beamline.einzel",
+                "ion_beam.beamline.neutral_trap_pos",
+                "ion_beam.beamline.neutral_trap_neg"
+            ]
+            for path in spellman_paths:
+                fallback_updates[f"{path}.stat_comms_fail"] = True
+
+        if current_time - self.last_seen["MAGNET"] > self.SERVICE_TIMEOUT_SEC:
+            fallback_updates["ion_beam.beamline.magnet.stat_comms_fail"] = True
 
         if fallback_updates:
             self._write_tags_batched(fallback_updates)

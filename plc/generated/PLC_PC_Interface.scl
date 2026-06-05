@@ -89,8 +89,9 @@ NON_RETAIN
             Ctrl_Mode : Int;              // 0=Manual, 1=PLC Auto, 2=Recipe
             Stat_Lockout : Bool;          // TRUE if interlock blocks enabling/changing SP
             Out_CV_Heating : Real;        // PID Heating Duty Cycle (0.0 to 100.0 %)
-            Stat_Cooling_Active: Bool;    // TRUE if pneumatic cooler valve is energized
-            Stat_Cooling_Wait: Bool;      // TRUE if cooling is demanded but air compressor is resting
+            Stat_Cooling_Active : Bool;   // TRUE if pneumatic cooler valve is energized
+            Stat_Cooling_Wait : Bool;     // TRUE if cooling is demanded but air compressor is resting
+            Estimated_Temp : Real;        // Estimated temperature from internal model, used if readback unavailable
          END_STRUCT;
 
          Source_Chamber : STRUCT
@@ -133,100 +134,105 @@ NON_RETAIN
          END_STRUCT;
 
          Source_Extraction : STRUCT
-            Cmd_Enable : Bool;            // Request to energize output
-            SP_Requested_Voltage : Real;  // Setpoint demanded by HMI / Recipe
-            Cmd_Ctrl_Mode : Int;          // Request authority (0=Manual, 1=PLC, 2=Recipe)
+            Cmd_Enable : Bool;
+            SP_Requested_Voltage : Real;
+            Cmd_Ctrl_Mode : Int;
          END_STRUCT;
 
          Source_Target : STRUCT
-            Cmd_Enable : Bool;            // Request to energize output
-            SP_Requested_Voltage : Real;  // Setpoint demanded by HMI / Recipe
-            Cmd_Ctrl_Mode : Int;          // Request authority (0=Manual, 1=PLC, 2=Recipe)
+            Cmd_Enable : Bool;
+            SP_Requested_Voltage : Real;
+            Cmd_Ctrl_Mode : Int;
          END_STRUCT;
 
          Source_Filament : STRUCT
-            Cmd_Enable : Bool;            // Request to energize output
-            SP_Requested_Current : Real;  // Setpoint demanded by HMI / Recipe
-            Cmd_Ctrl_Mode : Int;          // Request authority (0=Manual, 1=PLC, 2=Recipe)
+            Cmd_Enable : Bool;
+            SP_Requested_Current : Real;
+            Cmd_Ctrl_Mode : Int;
          END_STRUCT;
 
          Source_Thermionic : STRUCT
-            Cmd_Enable : Bool;            // Request to energize output
-            Cmd_Auto_Emission : Bool;     // Request to engage closed-loop emission PID
-            SP_Requested_Current : Real;  // Setpoint demanded by HMI / Recipe
-            Cmd_Ctrl_Mode : Int;          // Request authority (0=Manual, 1=PLC, 2=Recipe)
+            Cmd_Enable : Bool;
+            Cmd_Auto_Emission : Bool;
+            SP_Requested_Current : Real;
+            Cmd_Ctrl_Mode : Int;
          END_STRUCT;
 
          Source_Cesium : STRUCT
-            Cmd_Force_Cooling : Bool;     // Request to activate cooling air solenoid
-            SP_Requested_Temp : Real;     // Setpoint demanded by HMI / Recipe
-            Cmd_Ctrl_Mode : Int;          // Request authority (0=Manual, 1=PLC, 2=Recipe)
+            Cmd_Force_Cooling : Bool;
+            SP_Requested_Temp : Real;
+            Cmd_Ctrl_Mode : Int;
             Testing_Cmd_Force_Duty_Cycle : Bool;
             Testing_Cmd_Duty_Cycle_Value : Real;
          END_STRUCT;
 
          Source_Chamber : STRUCT
-            Cmd_Open_GV : Bool;           // Request to actuate Source Gate Valve
-            Stat_Vac_OK_For_GV : Bool;    // PC evaluates VG1/VG2 delta and grants permissive
+            Cmd_Open_GV : Bool;
+            Stat_Vac_OK_For_GV : Bool;
          END_STRUCT;
 
          Beamline_Steering : STRUCT
-            Cmd_Enable : Bool;            // Request to energise output
-            SP_Requested_X_Volts : Real;  // Requested X-axis steering (-200V to +200V)
-            SP_Requested_Y_Volts : Real;  // Requested Y-axis steering (-200V to +200V)
+            Cmd_Enable : Bool;
+            SP_Requested_X_Volts : Real;
+            SP_Requested_Y_Volts : Real;
          END_STRUCT;
 
          Beamline_Diagnostics : STRUCT
-            Cmd_Insert_FC : Bool;         // Request to insert Faraday Cup pneumatics
+            Cmd_Insert_FC : Bool;
          END_STRUCT;
 
          // ==================================================================
-         // DEVICE STATUS FLAGS (Evaluated by PC via Serial/TCP, latched here)
+         // CONSOLIDATED EQUIPMENT STATUS FLAGS (Vertical ISA-95 Layout)
+         // Evaluated by PC Microservices via Serial/TCP, latched here
          // ==================================================================
-         Pump_Status : STRUCT
-            Stat_Src_Turbo_Trip : Bool;
-            Stat_Src_Turbo_Comms_Fail : Bool;
-            Stat_Src_Turbo_Error : Bool;
-            Stat_Src_Turbo_Warning : Bool;
-            Stat_Ldlk_Turbo_Trip : Bool;
-            Stat_Ldlk_Turbo_Comms_Fail : Bool;
-            Stat_Ldlk_Turbo_Error : Bool;
-            Stat_Ldlk_Turbo_Warning : Bool;
+
+         Source_Turbo_Pump : STRUCT
+            Stat_Trip : Bool;
+            Stat_Comms_Fail : Bool;
+            Stat_Error : Bool;
+            Stat_Warning : Bool;
          END_STRUCT;
 
-         Spellman_Status : STRUCT
-            Stat_Unit1_Comms_Fail : Bool;
-            Stat_Unit1_OverCurrent : Bool;
-            Stat_Unit1_OverVoltage : Bool;
-            Stat_Unit1_Fail : Bool;
-            Stat_Unit1_Arc_Exceeded : Bool;
-
-            Stat_Unit2_Comms_Fail : Bool;
-            Stat_Unit2_OverCurrent : Bool;
-            Stat_Unit2_OverVoltage : Bool;
-            Stat_Unit2_Fail : Bool;
-            Stat_Unit2_Arc_Exceeded : Bool;
-
-            Stat_Unit3_Comms_Fail : Bool;
-            Stat_Unit3_OverCurrent : Bool;
-            Stat_Unit3_OverVoltage : Bool;
-            Stat_Unit3_Fail : Bool;
-            Stat_Unit3_Arc_Exceeded : Bool;
-
-            Stat_Unit4_Comms_Fail : Bool;
-            Stat_Unit4_OverCurrent : Bool;
-            Stat_Unit4_OverVoltage : Bool;
-            Stat_Unit4_Fail : Bool;
-            Stat_Unit4_Arc_Exceeded : Bool;
-
-            Stat_Unit5_Comms_Fail : Bool;
-            Stat_Unit5_OverCurrent : Bool;
-            Stat_Unit5_OverVoltage : Bool;
-            Stat_Unit5_Fail : Bool;
-            Stat_Unit5_Arc_Exceeded : Bool;
+         Loadlock_Turbo_Pump : STRUCT
+            Stat_Trip : Bool;
+            Stat_Comms_Fail : Bool;
+            Stat_Error : Bool;
+            Stat_Warning : Bool;
          END_STRUCT;
 
-         Magnet_Status : STRUCT
+         Source_Einzel : STRUCT
+            Stat_Comms_Fail : Bool;
+            Stat_OverCurrent : Bool;
+            Stat_OverVoltage : Bool;
+            Stat_Fail : Bool;
+            Stat_Arc_Exceeded : Bool;
+         END_STRUCT;
+
+         Beamline_Einzel : STRUCT
+            Stat_Comms_Fail : Bool;
+            Stat_OverCurrent : Bool;
+            Stat_OverVoltage : Bool;
+            Stat_Fail : Bool;
+            Stat_Arc_Exceeded : Bool;
+         END_STRUCT;
+
+         Beamline_Neutral_Trap_Pos : STRUCT
+            Stat_Comms_Fail : Bool;
+            Stat_OverCurrent : Bool;
+            Stat_OverVoltage : Bool;
+            Stat_Fail : Bool;
+            Stat_Arc_Exceeded : Bool;
+         END_STRUCT;
+
+         Beamline_Neutral_Trap_Neg : STRUCT
+            Stat_Comms_Fail : Bool;
+            Stat_OverCurrent : Bool;
+            Stat_OverVoltage : Bool;
+            Stat_Fail : Bool;
+            Stat_Arc_Exceeded : Bool;
+         END_STRUCT;
+
+         Beamline_Magnet : STRUCT
             Stat_Comms_Fail : Bool;
             Stat_Short_Circuit : Bool;
             Stat_Open_Circuit : Bool;
@@ -237,33 +243,54 @@ NON_RETAIN
             Stat_PSU_OVC : Bool;
          END_STRUCT;
 
-         Gauges_Status : STRUCT
-            Stat_Graphix1_Comms_Fail : Bool;
-            Stat_Graphix2_Comms_Fail : Bool;
-            Stat_VG1_Not_Found : Bool;
-            Stat_VG1_Mismatch : Bool;
-            Stat_VG1_Above_SP : Bool;
-            Stat_VG1_Rapid_Rise : Bool;
-            Stat_VG2_Not_Found : Bool;
-            Stat_VG2_Mismatch : Bool;
-            Stat_VG2_Above_SP : Bool;
-            Stat_VG2_Rapid_Rise : Bool;
-            Stat_VG3_Not_Found : Bool;
-            Stat_VG3_Mismatch : Bool;
-            Stat_VG3_Above_SP : Bool;
-            Stat_VG3_Rapid_Rise : Bool;
-            Stat_VG4_Not_Found : Bool;
-            Stat_VG4_Mismatch : Bool;
-            Stat_VG4_Above_SP : Bool;
-            Stat_VG4_Rapid_Rise : Bool;
-            Stat_VG5_Not_Found : Bool;
-            Stat_VG5_Mismatch : Bool;
-            Stat_VG5_Above_SP : Bool;
-            Stat_VG5_Rapid_Rise : Bool;
-            Stat_VG6_Not_Found : Bool;
-            Stat_VG6_Mismatch : Bool;
-            Stat_VG6_Above_SP : Bool;
-            Stat_VG6_Rapid_Rise : Bool;
+         Facilities_Graphix1 : STRUCT
+            Stat_Comms_Fail : Bool;
+         END_STRUCT;
+
+         Facilities_Graphix2 : STRUCT
+            Stat_Comms_Fail : Bool;
+         END_STRUCT;
+
+         Source_Vacuum_Gauge_1 : STRUCT
+            Stat_Not_Found : Bool;
+            Stat_Mismatch : Bool;
+            Stat_Above_SP : Bool;
+            Stat_Rapid_Rise : Bool;
+         END_STRUCT;
+
+         Beamline_Vacuum_Gauge_2 : STRUCT
+            Stat_Not_Found : Bool;
+            Stat_Mismatch : Bool;
+            Stat_Above_SP : Bool;
+            Stat_Rapid_Rise : Bool;
+         END_STRUCT;
+
+         Beamline_Vacuum_Gauge_3 : STRUCT
+            Stat_Not_Found : Bool;
+            Stat_Mismatch : Bool;
+            Stat_Above_SP : Bool;
+            Stat_Rapid_Rise : Bool;
+         END_STRUCT;
+
+         Endstation_Vacuum_Gauge_4 : STRUCT
+            Stat_Not_Found : Bool;
+            Stat_Mismatch : Bool;
+            Stat_Above_SP : Bool;
+            Stat_Rapid_Rise : Bool;
+         END_STRUCT;
+
+         Loadlock_Vacuum_Gauge_5 : STRUCT
+            Stat_Not_Found : Bool;
+            Stat_Mismatch : Bool;
+            Stat_Above_SP : Bool;
+            Stat_Rapid_Rise : Bool;
+         END_STRUCT;
+
+         Endstation_Vacuum_Gauge_6 : STRUCT
+            Stat_Not_Found : Bool;
+            Stat_Mismatch : Bool;
+            Stat_Above_SP : Bool;
+            Stat_Rapid_Rise : Bool;
          END_STRUCT;
 
       END_STRUCT;
@@ -291,7 +318,6 @@ NON_RETAIN
    END_STRUCT;
 BEGIN
 END_DATA_BLOCK
-
 
 DATA_BLOCK "DB_PC_Retain"
 { S7_Optimized_Access := 'FALSE' }

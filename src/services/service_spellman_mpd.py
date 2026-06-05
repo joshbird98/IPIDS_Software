@@ -17,11 +17,8 @@ if os.name == 'nt':
 
 from src.core.network_map import (
     ZMQ_PORT_SPELLMAN_PUB, ZMQ_PORT_SPELLMAN_CMD, ZMQ_PORT_PLC_PUB,
-    ZMQ_PORT_HEARTBEAT
+    ZMQ_PORT_HEARTBEAT, TOPIC_SPELLMAN_DATA
 )
-
-# Note: Ensure SPELLMAN_WAVESHARES is actually exposed in network_config,
-# or load it directly from network_config.json dynamically below.
 
 # Protocol Constants
 STX = "\x02"
@@ -30,13 +27,13 @@ SOCKET_TIMEOUT = 1.0
 POLL_INTERVAL = 0.1
 MAX_CMD_AGE = 0.5
 
-# MPD Commands
-CMD_REQ_STATUS = "22"
-CMD_REQ_KV = "19"
-CMD_REQ_MA = "20"
-CMD_SET_KV = "10"
-CMD_SET_MA = "11"
-CMD_HV_ENABLE = "99"
+# MPD Commands (per Manual 48113-21 Issue 3, Section 3.2)
+CMD_REQ_STATUS = "SR"
+CMD_REQ_KV = "M0"
+CMD_REQ_MA = "M1"
+CMD_SET_KV = "V1"
+CMD_SET_MA = "I1"
+CMD_HV_ENABLE = "EN"
 
 
 class SpellmanMPDProtocol:
@@ -48,10 +45,13 @@ class SpellmanMPDProtocol:
         self.connected = False
 
     def connect(self):
+        print(f"[MPD_DEBUG][{self.bus_id}] Attempting TCP connection to {self.ip}:{self.port}...")
         if self.sock:
             try:
+                print(f"[MPD_DEBUG][{self.bus_id}] Closing existing stale socket before reconnect.")
                 self.sock.close()
-            except Exception:
+            except Exception as e:
+                print(f"[MPD_DEBUG][{self.bus_id}] Error closing stale socket: {e}")
                 pass
         try:
             self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -59,11 +59,11 @@ class SpellmanMPDProtocol:
             self.sock.settimeout(SOCKET_TIMEOUT)
             self.sock.connect((self.ip, self.port))
             self.connected = True
-            print(f"[MPD Driver] {self.bus_id} Connected to {self.ip}:{self.port}")
+            print(f"[MPD Driver] {self.bus_id} Connected successfully to {self.ip}:{self.port}")
         except Exception as e:
             self.connected = False
             self.sock = None
-            print(f"[MPD Driver] {self.bus_id} Connection failed: {e}")
+            print(f"[MPD Driver] {self.bus_id} Connection failed. Exception type: {type(e).__name__}, Args: {e.args}")
 
     def _calculate_checksum(self, payload: str) -> str:
         ascii_sum = sum(ord(c) for c in payload)
@@ -71,18 +71,26 @@ class SpellmanMPDProtocol:
         csum = csum & 0xFF
         csum = csum & 0x7F
         csum = csum | 0x40
-        return f"{csum:02X}"
+        calc_str = f"{csum:02X}"
+        return calc_str
 
     def _generate_frame(self, address: str, dev_type: str, cmd: str, operator: str = "", data: str = "") -> bytes:
         payload = f"{address}{dev_type}{cmd}{operator}{data}"
         csum = self._calculate_checksum(payload)
-        return f"{STX}{payload}{csum}{LF}".encode('ascii')
+        frame = f"{STX}{payload}{csum}{LF}".encode('ascii')
+        return frame
 
     def transaction(self, address: str, dev_type: str, cmd: str, operator: str = "", data: str = "") -> Optional[str]:
-        if not self.connected: return None
+        if not self.connected:
+            print(f"[MPD_DEBUG][{self.bus_id}] Transaction aborted: Hardware not connected.")
+            return None
+
         try:
+            # Clear stale data from RX buffer
+            stale_cleared = 0
             while select.select([self.sock], [], [], 0.0)[0]:
-                self.sock.recv(1024)
+                dump = self.sock.recv(1024)
+                stale_cleared += len(dump)
 
             frame = self._generate_frame(address, dev_type, cmd, operator, data)
             self.sock.sendall(frame)
@@ -92,17 +100,24 @@ class SpellmanMPDProtocol:
             start_time = time.time()
             while not res.endswith(LF.encode('ascii')):
                 chunk = self.sock.recv(1)
-                if not chunk: break
+                if not chunk:
+                    break
                 res += chunk
-                if time.time() - start_time > SOCKET_TIMEOUT: break
+                if time.time() - start_time > SOCKET_TIMEOUT:
+                    break
 
             res_str = res.decode('ascii')
+
             if res_str.startswith(STX) and res_str.endswith(LF):
-                return res_str[1:-3]
-            return None
+                parsed_data = res_str[1:-3]
+                return parsed_data
+            else:
+                return None
+
         except socket.timeout:
             return None
-        except Exception:
+        except Exception as e:
+            print(f"[MPD_DEBUG][{self.bus_id}] Unexpected transaction exception: {type(e).__name__} -> {e}")
             self.connected = False
             return None
 
@@ -127,34 +142,50 @@ class SpellmanMicroservice:
         self.hb_socket = self.context.socket(zmq.PUB)
         self.hb_socket.connect(ZMQ_PORT_HEARTBEAT)
 
+        self.events = EventHelper("service_spellman_mpd")
+
+        # --- ISA-95 Physical Routing Map ---
+        self.location_routing = {
+            "source_einzel": "ion_beam.source.einzel",
+            "beamline_einzel": "ion_beam.beamline.einzel",
+            "neutral_trap_pos": "ion_beam.beamline.neutral_trap_pos",
+            "neutral_trap_neg": "ion_beam.beamline.neutral_trap_neg"
+        }
+
         self.safety_relay_active = False
         self.config = self._load_config()
         self.net_config = self._load_net_config()
         self.buses: Dict[str, SpellmanMPDProtocol] = {}
 
         self.state: Dict[str, Any] = {"timestamp": 0.0, "system.cycle_time_ms": 0.0}
-
-        # NEW: Cache setpoints to echo back to the GUI
         self.sp_cache: Dict[str, float] = {}
-
         self.last_hb_time = 0.0
-        self.events = EventHelper("service_spellman_mpd")
+
+        # --- Software Arc Detection Memory ---
+        self.dev_settle_timers: Dict[str, float] = {}
+        self.arc_fault_latches: Dict[str, bool] = {}
 
     def _load_config(self) -> dict:
         config_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '../../config/mpd_config.json'))
+        print(f"[SRV_DEBUG] Attempting to load MPD config from: {config_path}")
         try:
             with open(config_path, "r") as f:
-                return json.load(f)
+                data = json.load(f)
+                print(f"[SRV_DEBUG] MPD config loaded successfully. Identified {len(data.get('buses', []))} buses.")
+                return data
         except Exception as e:
             self.events.log_general(f"[Spellman] CRITICAL: Failed to load mpd_config.json: {e}")
+            print(f"[SRV_DEBUG] MPD config load exception: {e}")
             return {"buses": []}
 
     def _load_net_config(self) -> dict:
         config_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '../../config/network_config.json'))
+        print(f"[SRV_DEBUG] Attempting to load Network config from: {config_path}")
         try:
             with open(config_path, "r") as f:
                 return json.load(f)
-        except:
+        except Exception as e:
+            print(f"[SRV_DEBUG] Network config load exception: {e}")
             return {}
 
     def _update_safety_permissives(self):
@@ -164,6 +195,9 @@ class SpellmanMicroservice:
                 payload = orjson.loads(msg)
                 relay_state = payload.get("ion_beam.facilities.safety_relay_active")
                 if relay_state is not None:
+                    if self.safety_relay_active != bool(relay_state):
+                        print(
+                            f"[SRV_DEBUG] Safety Relay state transition: {self.safety_relay_active} -> {bool(relay_state)}")
                     self.safety_relay_active = bool(relay_state)
         except zmq.Again:
             pass
@@ -174,11 +208,13 @@ class SpellmanMicroservice:
         for bus in self.config.get("buses", []):
             bus_id = bus["bus_id"]
             if bus_id not in self.buses:
-                # E.g. "beamline" or "chamber_waveshare" mappings
                 target_net = ws_list.get(bus_id.replace("_waveshare", ""))
                 if target_net:
+                    print(
+                        f"[SRV_DEBUG] Initializing bus '{bus_id}' mapping to IP: {target_net['ip']}:{target_net['port']}")
                     self.buses[bus_id] = SpellmanMPDProtocol(target_net["ip"], target_net["port"], bus_id)
                 else:
+                    print(f"[SRV_DEBUG] WARNING: Bus '{bus_id}' not found in network_config under waveshares.spellman.")
                     continue
 
             if not self.buses[bus_id].connected:
@@ -192,13 +228,40 @@ class SpellmanMicroservice:
                 value = msg.get("value", 0)
                 ts = msg.get("ts", 0.0)
 
-                if time.time() - ts > MAX_CMD_AGE: continue
+                age = time.time() - ts
+                if age > MAX_CMD_AGE:
+                    print(f"[SRV_DEBUG] Rejecting stale command '{tag}' (Age: {age:.3f}s > {MAX_CMD_AGE}s)")
+                    continue
 
-                parts = tag.split('.')
-                if len(parts) < 4 or parts[1] != "spellman": continue
+                # --- GLOBAL FAULT RESET ---
+                if tag == "ion_beam.system.cmd_fault_reset" and bool(value):
+                    print("[SRV_DEBUG] Global Fault Reset received. Clearing MPD hardware and software latches...")
+                    # Clear software arc latches
+                    for key in self.arc_fault_latches.keys():
+                        self.arc_fault_latches[key] = False
 
-                target_dev = parts[2]
-                cmd_type = parts[3]
+                    # Clear hardware faults
+                    for bus in self.config.get("buses", []):
+                        hw = self.buses.get(bus["bus_id"])
+                        if hw and hw.connected:
+                            for dev_info in bus.get("devices", {}).values():
+                                hw.transaction(dev_info["address"], dev_info["dev_type"], "CF", "=", "1")
+                    continue
+
+                # --- Route to specific equipment module ---
+                target_dev = None
+                cmd_type = None
+                prefix = None
+
+                for dev_name, loc_prefix in self.location_routing.items():
+                    if tag.startswith(loc_prefix):
+                        target_dev = dev_name
+                        prefix = loc_prefix
+                        cmd_type = tag.split('.')[-1]
+                        break
+
+                if not target_dev:
+                    continue
 
                 target_bus, dev_info = None, None
                 for bus in self.config.get("buses", []):
@@ -211,65 +274,135 @@ class SpellmanMicroservice:
                     hw = self.buses[target_bus]
                     addr = dev_info["address"]
                     dtype = dev_info["dev_type"]
-                    prefix = f"ion_beam.spellman.{target_dev}"
 
-                    # NEW: Adjusted command routing to match GUI's standard suffixes
                     if cmd_type == "sp_requested_voltage":
-                        if hw.transaction(addr, dtype, CMD_SET_KV, ",", str(value)) is not None:
+                        volts_req = value * 1000.0
+                        formatted_v = f"{volts_req:07.1f}"
+
+                        print(f"[SRV_DEBUG] Translating {value}kV -> {formatted_v}V for {target_dev}")
+                        res = hw.transaction(addr, dtype, CMD_SET_KV, "=", formatted_v)
+
+                        if res and "*" not in res:
                             self.sp_cache[f"{prefix}.sp_actual_voltage"] = float(value)
+                        else:
+                            print(f"[SRV_DEBUG] FAILED to set voltage. Hardware rejected command. Response: {res}")
+
+
                     elif cmd_type == "sp_requested_current":
-                        if hw.transaction(addr, dtype, CMD_SET_MA, ",", str(value)) is not None:
+                        ua_req = value if value > 0.0 else 0.0
+                        formatted_i = f"{ua_req:07.1f}"
+                        print(f"[SRV_DEBUG] Forwarding {value}uA -> {formatted_i}uA for {target_dev}")
+                        res = hw.transaction(addr, dtype, CMD_SET_MA, "=", formatted_i)
+
+                        if res and "*" not in res:
                             self.sp_cache[f"{prefix}.sp_actual_current"] = float(value)
+                        else:
+                            print(
+                                f"[SRV_DEBUG] FAILED to set current limit. Hardware rejected command. Response: {res}")
+
                     elif cmd_type == "cmd_enable":
                         enable_str = "1" if value else "0"
-                        hw.transaction(addr, dtype, CMD_HV_ENABLE, ",", enable_str)
+                        print(f"[SRV_DEBUG] Attempting HV Enable/Disable ({enable_str}) for {target_dev}")
+                        if hw.transaction(addr, dtype, CMD_HV_ENABLE, "=", enable_str) is not None:
+                            if value:
+                                self.dev_settle_timers[target_dev] = time.time()
+                else:
+                    print(f"[SRV_DEBUG] Hardware mapping failed for command targeting '{target_dev}'.")
+
         except zmq.Again:
             pass
 
     def _poll_device(self, bus_id: str, dev_name: str, dev_info: dict):
         addr, dtype = dev_info["address"], dev_info["dev_type"]
-        plc_unit = dev_info.get("plc_unit", 1)
 
         hw = self.buses.get(bus_id)
-        if not hw or not hw.connected: return
+        if not hw or not hw.connected:
+            return
 
-        prefix = f"ion_beam.spellman.{dev_name}"
+        prefix = self.location_routing.get(dev_name, f"ion_beam.source.{dev_name}")
 
+        # 1. Poll live readbacks
         raw_kv = hw.transaction(addr, dtype, CMD_REQ_KV, "?")
         raw_ma = hw.transaction(addr, dtype, CMD_REQ_MA, "?")
         raw_status = hw.transaction(addr, dtype, CMD_REQ_STATUS, "?")
 
+        # 2. Poll hardware-verified setpoints
+        raw_sp_v = hw.transaction(addr, dtype, CMD_SET_KV, "?")
+        raw_sp_i = hw.transaction(addr, dtype, CMD_SET_MA, "?")
+
         comms_fail = raw_kv is None or raw_status is None
-        self.state[f"ion_beam.spellman.status.stat_unit{plc_unit}_comms_fail"] = 1.0 if comms_fail else 0.0
-        if comms_fail: return
+        self.state[f"{prefix}.stat_comms_fail"] = 1.0 if comms_fail else 0.0
+
+        if comms_fail:
+            print(f"[SRV_DEBUG] Polling failed for '{dev_name}'. KV_Response: {raw_kv}, Status_Response: {raw_status}")
+            return
 
         try:
-            # NEW: Adjusted to GUI standards (rb_voltage instead of voltage_rb)
-            if raw_kv: self.state[f"{prefix}.rb_voltage"] = float(raw_kv.split(',')[-1])
-            if raw_ma: self.state[f"{prefix}.rb_current"] = float(raw_ma.split(',')[-1])
+            # Parse live readbacks (M0 / M1)
+            if raw_kv:
+                volts_rb = float(raw_kv.split('=')[-1])
+                self.state[f"{prefix}.rb_voltage"] = volts_rb / 1000.0
+            if raw_ma:
+                ua_rb = float(raw_ma.split('=')[-1])
+                self.state[f"{prefix}.rb_current"] = ua_rb
 
-            # Echo cached setpoints
-            if f"{prefix}.sp_actual_voltage" in self.sp_cache:
+            # Parse Hardware Setpoints (V1 / I1)
+            if raw_sp_v:
+                sp_volts = float(raw_sp_v.split('=')[-1])
+                self.state[f"{prefix}.sp_actual_voltage"] = sp_volts / 1000.0
+            elif f"{prefix}.sp_actual_voltage" in self.sp_cache:
                 self.state[f"{prefix}.sp_actual_voltage"] = self.sp_cache[f"{prefix}.sp_actual_voltage"]
-            if f"{prefix}.sp_actual_current" in self.sp_cache:
+
+            if raw_sp_i:
+                sp_ua = float(raw_sp_i.split('=')[-1])
+                self.state[f"{prefix}.sp_actual_current"] = sp_ua
+            elif f"{prefix}.sp_actual_current" in self.sp_cache:
                 self.state[f"{prefix}.sp_actual_current"] = self.sp_cache[f"{prefix}.sp_actual_current"]
 
-        except ValueError:
-            pass
+        except ValueError as e:
+            print(
+                f"[SRV_DEBUG] Telemetry Float Casting Error for '{dev_name}': {e}. Raw V1: '{raw_sp_v}', Raw I1: '{raw_sp_i}'")
 
         if raw_status:
-            status_parts = raw_status.split(',')
-            if len(status_parts) >= 4:
-                self.state[f"{prefix}.stat_enabled"] = 1.0 if status_parts[0] == "1" else 0.0
-                self.state[f"ion_beam.spellman.status.stat_unit{plc_unit}_overcurrent"] = 1.0 if status_parts[
-                                                                                                     1] == "1" else 0.0
-                self.state[f"ion_beam.spellman.status.stat_unit{plc_unit}_undervoltage"] = 1.0 if status_parts[
-                                                                                                      2] == "1" else 0.0
-                self.state[f"ion_beam.spellman.status.stat_unit{plc_unit}_arc_exceeded"] = 1.0 if status_parts[
-                                                                                                      3] == "1" else 0.0
+            try:
+                status_hex_str = raw_status.split('=')[-1]
+                status_word = int(status_hex_str, 16)
+
+                is_enabled = bool(status_word & 0x01)
+                self.state[f"{prefix}.stat_enabled"] = 1.0 if is_enabled else 0.0
+
+                # Map directly to ISA-95 Equipment flags
+                self.state[f"{prefix}.stat_overvoltage"] = 1.0 if (status_word & 0x04) else 0.0
+                self.state[f"{prefix}.stat_overcurrent"] = 1.0 if (status_word & 0x08) else 0.0
+
+                # Combine Over-temp and Power-rail collapse into generic Hardware Fail
+                self.state[f"{prefix}.stat_fail"] = 1.0 if (status_word & 0x30) else 0.0
+
+                # --- TEMPORARY RAW STATUS DEBUG ---
+                self.state[f"{prefix}.debug_raw_status"] = raw_status
+                self.state[f"{prefix}.debug_general_fault"] = 1.0 if (status_word & 0x02) else 0.0
+                self.state[f"{prefix}.debug_hw_enable"] = 1.0 if (status_word & 0x40) else 0.0
+                self.state[f"{prefix}.debug_sw_enable"] = 1.0 if (status_word & 0x80) else 0.0
+                # ----------------------------------
+
+                # --- AUTONOMOUS SOFTWARE ARC DETECTION ---
+                active_sp_v = self.state.get(f"{prefix}.sp_actual_voltage", 0.0)
+                is_settled = (time.time() - self.dev_settle_timers.get(dev_name, time.time())) > 3.0
+
+                if is_settled and is_enabled and active_sp_v > 0.5:
+                    if volts_rb < (active_sp_v * 0.25) or ua_rb > 500.0:
+                        if not self.arc_fault_latches.get(dev_name, False):
+                            print(
+                                f"[SRV_DEBUG] ⚡ ARC DETECTED on {dev_name}! V_rb: {volts_rb / 1000.0}kV, I_rb: {ua_rb}µA")
+                        self.arc_fault_latches[dev_name] = True
+
+                self.state[f"{prefix}.stat_arc_exceeded"] = 1.0 if self.arc_fault_latches.get(dev_name, False) else 0.0
+
+            except Exception as e:
+                print(f"[SRV_DEBUG] Failed to parse Status Register for '{dev_name}'. Error: {e}. Raw: '{raw_status}'")
 
     def run(self):
-        self.events.log_general("[Spellman Service] Daemon Starting...")
+        self.events.log_general("[Spellman Service] Daemon Starting (ISA-95 Architecture)...")
         next_tick = time.perf_counter() + POLL_INTERVAL
 
         while True:
@@ -284,8 +417,9 @@ class SpellmanMicroservice:
                         self._poll_device(bus["bus_id"], dev_name, dev_info)
                         time.sleep(0.01)
             else:
-                for hw in self.buses.values():
+                for bus_id, hw in self.buses.items():
                     if hw.connected and hw.sock:
+                        print(f"[SRV_DEBUG] Safety Relay OFF. Severing connection to bus '{bus_id}'.")
                         hw.sock.close()
                         hw.connected = False
 
@@ -293,9 +427,9 @@ class SpellmanMicroservice:
             self.state["system.cycle_time_ms"] = (time.perf_counter() - cycle_start) * 1000
 
             try:
-                self.pub_socket.send_multipart([b"SPELLMAN", orjson.dumps(self.state)])
+                self.pub_socket.send_multipart([TOPIC_SPELLMAN_DATA, orjson.dumps(self.state)])
             except Exception as e:
-                pass
+                print(f"[SRV_DEBUG] ZMQ Publish Exception: {e}")
 
             if time.time() - self.last_hb_time >= 0.5:
                 self.hb_socket.send_json({"service": "service_spellman_mpd", "ts": time.time()})

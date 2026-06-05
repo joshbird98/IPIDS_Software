@@ -46,70 +46,76 @@ def get_vacuum_tags(config_dir):
     except FileNotFoundError:
         vacuum_settings = {}
 
-    node_routing = {"10": "source", "20": "beamline"}
+    # Explicitly map the physical (Node, Channel) matrix to the ISA-95 Functional Area
+    mapping = {
+        (10, 1): "ion_beam.source.vacuum_gauge_1",
+        (10, 2): "ion_beam.beamline.vacuum_gauge_2",
+        (10, 3): "ion_beam.beamline.vacuum_gauge_3",
+        (20, 1): "ion_beam.endstation.vacuum_gauge_4",
+        (20, 2): "ion_beam.loadlock.vacuum_gauge_5",
+        (20, 3): "ion_beam.endstation.vacuum_gauge_6"
+    }
 
-    for node in [10, 20]:
-        for ch in [1, 2, 3]:
-            node_str = str(node)
-            ch_str = str(ch)
+    for (node, ch), base_tag in mapping.items():
+        node_str = str(node)
+        ch_str = str(ch)
 
-            geo_location = node_routing.get(node_str, f"controller_{node}")
-            device = f"vacuum_gauge_{ch}"
-            custom_name = f"Node {node} Ch {ch}"
+        # Fallback name if config fails
+        custom_name = f"VG{(node // 10 - 1) * 3 + ch}"
 
-            if node_str in vacuum_settings and "channels" in vacuum_settings[node_str]:
-                ch_data = vacuum_settings[node_str]["channels"].get(ch_str, {})
-                device = ch_data.get("device", device)
-                custom_name = ch_data.get("name", custom_name)
+        if node_str in vacuum_settings and "channels" in vacuum_settings[node_str]:
+            ch_data = vacuum_settings[node_str]["channels"].get(ch_str, {})
+            custom_name = ch_data.get("name", custom_name)
 
-            lower_name = custom_name.lower()
-            if any(k in lower_name for k in ["source", "src"]):
-                geo_location = "source"
-            elif any(k in lower_name for k in ["premag", "bline", "beamline"]):
-                geo_location = "beamline"
-            elif any(k in lower_name for k in ["ends", "endstation"]):
-                geo_location = "endstation"
-            elif any(k in lower_name for k in ["ldlk", "loadlock"]):
-                geo_location = "loadlock"
+        # Consolidated ISA-95 Tag Definitions
+        tags[f"{base_tag}.rb_pressure"] = {
+            "source": "service_vacuum", "hw_node": node, "hw_channel": ch,
+            "datatype": "REAL", "unit": "mB", "default_scale": "log",
+            "multiplier": 1.0, "description": f"{custom_name} Pressure Readback",
+            "default_label": f"{custom_name} Pressure", "short_name": "Pressure"
+        }
+        tags[f"{base_tag}.stat_error_code"] = {
+            "source": "service_vacuum", "hw_node": node, "hw_channel": ch,
+            "datatype": "INT", "unit": "", "default_scale": "linear",
+            "multiplier": 1.0, "description": f"{custom_name} Hardware Status Code",
+            "default_label": f"{custom_name} Status Code", "short_name": "Code"
+        }
+        tags[f"{base_tag}.stat_comms_fail"] = {
+            "source": "service_vacuum", "hw_node": node, "hw_channel": ch,
+            "datatype": "BOOL", "unit": "", "default_scale": "linear",
+            "multiplier": 1.0, "description": f"{custom_name} RS485 Comms Failure",
+            "default_label": f"{custom_name} Comms Fail", "short_name": "Comms"
+        }
 
-            base_tag = f"ion_beam.{geo_location}.{device}"
-
-            tags[f"{base_tag}.pressure"] = {
-                "source": "service_vacuum", "hw_node": node, "hw_channel": ch,
-                "datatype": "REAL", "unit": "mB", "default_scale": "log",
-                "multiplier": 1.0, "description": f"{custom_name} Pressure",
-                "default_label": f"{custom_name} Pressure", "short_name": "Pressure"
-            }
-            tags[f"{base_tag}.status"] = {
-                "source": "service_vacuum", "hw_node": node, "hw_channel": ch,
-                "datatype": "INT", "unit": "", "default_scale": "linear",
-                "multiplier": 1.0, "description": f"{custom_name} Status Code",
-                "default_label": f"{custom_name} Status", "short_name": "Status"
-            }
     return tags
 
 
 def get_turbo_tags():
     tags = {}
+    base_tag = "ion_beam.source.turbo_pump"
+
+    # Fully consolidated ISA-95 mapping with standardized prefixes
     turbo_base = {
-        "ion_beam.source.turbo_pump.speed_hz": {"dt": "INT", "unit": "Hz", "short": "Speed", "desc": "Actual Frequency",
-                                                "label": "Turbo Speed"},
-        "ion_beam.source.turbo_pump.speed_pct": {"dt": "REAL", "unit": "%", "short": "Speed",
-                                                 "desc": "Percent of Max Speed", "label": "Turbo Speed"},
-        "ion_beam.source.turbo_pump.temp_bearing": {"dt": "INT", "unit": "°C", "short": "Bearing Temp",
-                                                    "desc": "Bearing Temperature", "label": "Bearing Temp"},
-        "ion_beam.source.turbo_pump.temp_converter": {"dt": "INT", "unit": "°C", "short": "Converter Temp",
-                                                      "desc": "Converter Temperature", "label": "Converter Temp"},
-        "ion_beam.source.turbo_pump.voltage": {"dt": "INT", "unit": "V", "short": "Voltage", "desc": "Motor Voltage",
-                                               "label": "Turbo Voltage"},
-        "ion_beam.source.turbo_pump.current": {"dt": "REAL", "unit": "A", "short": "Current", "desc": "Motor Current",
-                                               "label": "Turbo Current"},
-        "ion_beam.source.turbo_pump.status_turning": {"dt": "BOOL", "unit": "", "short": "Status Turning",
-                                                      "desc": "Is rotor turning", "label": "Turbo Turning"},
-        "ion_beam.source.turbo_pump.status_ready": {"dt": "BOOL", "unit": "", "short": "Status Ready",
-                                                    "desc": "Normal operation reached", "label": "Turbo Ready"},
-        "ion_beam.source.turbo_pump.status_error": {"dt": "BOOL", "unit": "", "short": "Status Error",
-                                                    "desc": "Active error state", "label": "Turbo Error"}
+        f"{base_tag}.rb_speed_hz": {"dt": "INT", "unit": "Hz", "short": "Speed", "desc": "Actual Frequency",
+                                    "label": "Turbo Speed"},
+        f"{base_tag}.rb_speed_pct": {"dt": "REAL", "unit": "%", "short": "Speed %", "desc": "Percent of Max Speed",
+                                     "label": "Turbo Speed %"},
+        f"{base_tag}.rb_temp_bearing": {"dt": "INT", "unit": "°C", "short": "Brg Temp", "desc": "Bearing Temperature",
+                                        "label": "Bearing Temp"},
+        f"{base_tag}.rb_temp_converter": {"dt": "INT", "unit": "°C", "short": "Conv Temp",
+                                          "desc": "Converter Temperature", "label": "Converter Temp"},
+        f"{base_tag}.rb_voltage": {"dt": "INT", "unit": "V", "short": "Voltage", "desc": "Motor Voltage",
+                                   "label": "Turbo Voltage"},
+        f"{base_tag}.rb_current": {"dt": "REAL", "unit": "A", "short": "Current", "desc": "Motor Current",
+                                   "label": "Turbo Current"},
+        f"{base_tag}.stat_turning": {"dt": "BOOL", "unit": "", "short": "Turning", "desc": "Is rotor turning",
+                                     "label": "Turbo Turning"},
+        f"{base_tag}.stat_ready": {"dt": "BOOL", "unit": "", "short": "Ready", "desc": "Normal operation reached",
+                                   "label": "Turbo Ready"},
+        f"{base_tag}.stat_error": {"dt": "BOOL", "unit": "", "short": "Error", "desc": "Active hardware error state",
+                                   "label": "Turbo Error"},
+        f"{base_tag}.stat_comms_fail": {"dt": "BOOL", "unit": "", "short": "Comms Fail",
+                                        "desc": "Service communications offline", "label": "Turbo Comms Fail"}
     }
 
     for tag_name, info in turbo_base.items():
@@ -120,9 +126,18 @@ def get_turbo_tags():
         }
     return tags
 
+
 def get_spellman_tags(config_dir):
     tags = {}
     config_path = os.path.join(config_dir, "mpd_config.json")
+
+    # ISA-95 Physical Routing Dictionary
+    location_routing = {
+        "source_einzel": "ion_beam.source.einzel",
+        "beamline_einzel": "ion_beam.beamline.einzel",
+        "neutral_trap_pos": "ion_beam.beamline.neutral_trap_pos",
+        "neutral_trap_neg": "ion_beam.beamline.neutral_trap_neg"
+    }
 
     try:
         with open(config_path, "r") as f:
@@ -132,37 +147,122 @@ def get_spellman_tags(config_dir):
 
     for bus in mpd_config.get("buses", []):
         for dev_name, dev_info in bus.get("devices", {}).items():
-            base_tag = f"ion_beam.spellman.{dev_name}"
+            # Apply functional routing, fallback to source if unknown
+            base_tag = location_routing.get(dev_name, f"ion_beam.source.{dev_name}")
+            nice_name = dev_name.replace('_', ' ').title()
 
-            # Readbacks (Telemetry)
-            tags[f"{base_tag}.voltage_rb"] = {
+            tags[f"{base_tag}.rb_voltage"] = {
                 "source": "service_spellman", "datatype": "REAL", "writable": False,
-                "unit": "kV", "description": f"{dev_name} Voltage Readback"
+                "unit": "kV", "default_scale": "linear", "multiplier": 1.0,
+                "description": f"{nice_name} Voltage Readback", "default_label": f"{nice_name} Voltage",
+                "short_name": "Voltage"
             }
-            tags[f"{base_tag}.current_rb"] = {
+            tags[f"{base_tag}.rb_current"] = {
                 "source": "service_spellman", "datatype": "REAL", "writable": False,
-                "unit": "mA", "description": f"{dev_name} Current Readback"
+                "unit": "µA", "default_scale": "linear", "multiplier": 1.0,
+                "description": f"{nice_name} Current Readback", "default_label": f"{nice_name} Current",
+                "short_name": "Current"
             }
             tags[f"{base_tag}.stat_enabled"] = {
                 "source": "service_spellman", "datatype": "BOOL", "writable": False,
-                "unit": "", "description": f"{dev_name} HV Output Status"
+                "unit": "", "default_scale": "linear", "multiplier": 1.0,
+                "description": f"{nice_name} Output Status", "default_label": f"{nice_name} Output Status",
+                "short_name": "Status"
             }
-
-            # Setpoints (Commands sent directly to the ZMQ service)
-            tags[f"{base_tag}.voltage_sp"] = {
-                "source": "service_spellman", "datatype": "REAL", "writable": True,
-                "unit": "kV", "description": f"{dev_name} Voltage Setpoint"
+            tags[f"{base_tag}.sp_actual_voltage"] = {
+                "source": "service_spellman", "datatype": "REAL", "writable": False,
+                "unit": "kV", "default_scale": "linear", "multiplier": 1.0,
+                "description": f"{nice_name} Hardware Voltage Setpoint Cache",
+                "default_label": f"{nice_name} Voltage SP (Act)", "short_name": "V_SP Act"
             }
-            tags[f"{base_tag}.current_sp"] = {
+            tags[f"{base_tag}.sp_actual_current"] = {
+                "source": "service_spellman", "datatype": "REAL", "writable": False,
+                "unit": "µA", "default_scale": "linear", "multiplier": 1.0,
+                "description": f"{nice_name} Hardware Current Setpoint Cache",
+                "default_label": f"{nice_name} Current SP (Act)", "short_name": "I_SP Act"
+            }
+            tags[f"{base_tag}.sp_requested_voltage"] = {
                 "source": "service_spellman", "datatype": "REAL", "writable": True,
-                "unit": "mA", "description": f"{dev_name} Current Setpoint"
+                "unit": "kV", "default_scale": "linear", "multiplier": 1.0,
+                "description": f"{nice_name} Requested Voltage Command", "default_label": f"{nice_name} Voltage Cmd",
+                "short_name": "V_Cmd"
+            }
+            tags[f"{base_tag}.sp_requested_current"] = {
+                "source": "service_spellman", "datatype": "REAL", "writable": True,
+                "unit": "µA", "default_scale": "linear", "multiplier": 1.0,
+                "description": f"{nice_name} Requested Current Command", "default_label": f"{nice_name} Current Cmd",
+                "short_name": "I_Cmd"
             }
             tags[f"{base_tag}.cmd_enable"] = {
                 "source": "service_spellman", "datatype": "BOOL", "writable": True,
-                "unit": "", "description": f"{dev_name} HV Enable Command"
+                "unit": "", "default_scale": "linear", "multiplier": 1.0,
+                "description": f"{nice_name} Enable Command", "default_label": f"{nice_name} Enable Cmd",
+                "short_name": "En_Cmd"
             }
 
     return tags
+
+
+def get_magnet_tags():
+    tags = {}
+    base_tag = "ion_beam.beamline.magnet"
+
+    # Readbacks (Telemetry bypasses PLC, comes direct from Modbus)
+    tags[f"{base_tag}.rb_voltage"] = {
+        "source": "service_magnet", "datatype": "REAL", "writable": False, "unit": "V", "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "Magnet Voltage Readback", "default_label": "Magnet Voltage", "short_name": "Voltage"
+    }
+    tags[f"{base_tag}.rb_current"] = {
+        "source": "service_magnet", "datatype": "REAL", "writable": False, "unit": "A", "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "Magnet Current Readback", "default_label": "Magnet Current", "short_name": "Current"
+    }
+    tags[f"{base_tag}.rb_resistance"] = {
+        "source": "service_magnet", "datatype": "REAL", "writable": False, "unit": "Ω", "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "Magnet Coil Resistance", "default_label": "Magnet Resistance", "short_name": "Resistance"
+    }
+    tags[f"{base_tag}.stat_enabled"] = {
+        "source": "service_magnet", "datatype": "BOOL", "writable": False, "unit": "", "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "Magnet Output Status", "default_label": "Magnet Enabled", "short_name": "Enabled"
+    }
+    tags[f"{base_tag}.stat_degaussing"] = {
+        "source": "service_magnet", "datatype": "BOOL", "writable": False, "unit": "", "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "Magnet Degaussing Active", "default_label": "Degaussing Active", "short_name": "Degaussing"
+    }
+    tags[f"{base_tag}.sp_actual_voltage"] = {
+        "source": "service_magnet", "datatype": "REAL", "writable": False, "unit": "V", "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "Magnet Voltage Setpoint Cache", "default_label": "Magnet Voltage SP (Act)",
+        "short_name": "V_SP Act"
+    }
+    tags[f"{base_tag}.sp_actual_current"] = {
+        "source": "service_magnet", "datatype": "REAL", "writable": False, "unit": "A", "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "Magnet Current Setpoint Cache", "default_label": "Magnet Current SP (Act)",
+        "short_name": "I_SP Act"
+    }
+    tags[f"{base_tag}.sp_requested_current"] = {
+        "source": "service_magnet", "datatype": "REAL", "writable": True, "unit": "A", "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "Magnet Requested Current Command", "default_label": "Magnet Current Cmd", "short_name": "I_Cmd"
+    }
+    tags[f"{base_tag}.cmd_enable"] = {
+        "source": "service_magnet", "datatype": "BOOL", "writable": True, "unit": "", "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "Magnet Enable Command", "default_label": "Magnet Enable Cmd", "short_name": "En_Cmd"
+    }
+    tags[f"{base_tag}.cmd_degauss"] = {
+        "source": "service_magnet", "datatype": "BOOL", "writable": True, "unit": "", "default_scale": "linear",
+        "multiplier": 1.0,
+        "description": "Magnet Degauss Command", "default_label": "Degauss Cmd", "short_name": "Deg_Cmd"
+    }
+
+    return tags
+
 
 # --- SCL Parser specific to Siemens S7 Memory Alignment (Nested STRUCTs) ---
 def get_plc_tags_from_scl(scl_path, db_number=10, machine_root="ion_beam"):
@@ -271,7 +371,9 @@ def get_plc_tags_from_scl(scl_path, db_number=10, machine_root="ion_beam"):
                 elif layer.lower() == "to_pc":
                     writable = False
                 else:
-                    filtered_stack.append(layer.lower().replace('_', '.'))
+                    # STRICT ISA-95 ENFORCEMENT: Replace only the FIRST underscore to split Area and Equipment
+                    # e.g., Source_Vacuum_Gauge_1 -> source.vacuum_gauge_1
+                    filtered_stack.append(layer.lower().replace('_', '.', 1))
 
             subsystem_path = ".".join(filtered_stack)
 
@@ -339,20 +441,26 @@ def build_system_registry():
 
     new_registry = {}
 
+    # Build dynamically generated tags
     vacuum_tags = get_vacuum_tags(config_dir)
     turbo_tags = get_turbo_tags()
     spellman_tags = get_spellman_tags(config_dir)
+    magnet_tags = get_magnet_tags()
 
+    # Build SCL parsed tags
     scl_path = os.path.join(project_root, "plc", "generated", "PLC_PC_Interface.scl")
     plc_tags = get_plc_tags_from_scl(scl_path, db_number=10)
 
+    # Merge sequentially
     new_registry.update(vacuum_tags)
     new_registry.update(turbo_tags)
     new_registry.update(plc_tags)
     new_registry.update(spellman_tags)
+    new_registry.update(magnet_tags)
 
     new_registry = apply_existing_overrides(new_registry, existing_registry)
 
+    # Dump cleanly to JSON
     with open(registry_path, "w") as f:
         sorted_registry = {k: new_registry[k] for k in sorted(new_registry.keys())}
         json.dump(sorted_registry, f, indent=4)

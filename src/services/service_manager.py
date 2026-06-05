@@ -22,7 +22,7 @@ SERVICES_CONFIG = {
                                       "tier": 2, "timeout": 2.0, "boot_grace": 15.0},
     "service_source_turbo": {"script": os.path.join(CURRENT_DIR, "service_source_turbo.py"), "tier": 2, "timeout": 2.0, "boot_grace": 15.0},
     "service_magnet_psu": {"script": os.path.join(CURRENT_DIR, "service_magnet_psu.py"), "tier": 2, "timeout": 2.0, "boot_grace": 15.0},
-    #"service_spellman_mpd": {"script": os.path.join(CURRENT_DIR, "service_spellman_mpd.py"), "tier": 2, "timeout": 2.0, "boot_grace": 15.0},
+    "service_spellman_mpd": {"script": os.path.join(CURRENT_DIR, "service_spellman_mpd.py"), "tier": 2, "timeout": 2.0, "boot_grace": 15.0},
 }
 
 

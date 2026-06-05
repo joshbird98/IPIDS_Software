@@ -10,7 +10,6 @@ from src.core.os_helper import harden_windows_process
 # Force Windows high-resolution timers (1ms precision)
 if os.name == 'nt':
     import ctypes
-
     ctypes.windll.winmm.timeBeginPeriod(1)
 
 # Ensure these match your network_map.py
@@ -23,7 +22,6 @@ from src.core.network_map import (
 PUMP_ADDRESS = 0
 SOCKET_TIMEOUT = 1.0
 POLL_INTERVAL = 0.05  # 50ms loop
-
 MAX_CMD_AGE = 0.5
 
 # Task IDs (AK)
@@ -248,7 +246,6 @@ class TurbovacMicroservice:
             self.events.log_general(f"Connection failed: {e}")
 
     def _verify_safety_strategy(self):
-
         raw_hz, ak_hz, zsw = self._transaction(PNU_ACT_FREQ, 0, control_word=0x0000)
 
         if raw_hz is not None and raw_hz > 0:
@@ -309,7 +306,6 @@ class TurbovacMicroservice:
         try:
             while True:
                 msg = self.sub_socket.recv_json(flags=zmq.NOBLOCK)
-
                 tag = msg.get("tag", "")
                 value = msg.get("value")
                 ts = msg.get("ts", 0.0)
@@ -330,10 +326,11 @@ class TurbovacMicroservice:
             pass
 
     def run(self):
-        self.events.log_general("Starting USS Daemon...")
+        self.events.log_general("Starting USS Daemon (ISA-95 Architecture)...")
 
         current_time_pc = time.perf_counter()
         next_tick = current_time_pc + POLL_INTERVAL
+        base_tag = "ion_beam.source.turbo_pump"
 
         while True:
             cycle_start = time.perf_counter()
@@ -361,21 +358,17 @@ class TurbovacMicroservice:
                 error_active = bool(zsw & (1 << 3))
                 turning = bool(zsw & (1 << 11))
                 warning_active = bool(zsw & (1 << 14))
-
-                self.state["ion_beam.source.turbo_pump.speed_hz"] = float(raw_hz)
-                self.state["ion_beam.source.turbo_pump.status_ready"] = 1.0 if ready else 0.0
-                self.state["ion_beam.source.turbo_pump.status_turning"] = 1.0 if turning else 0.0
-                self.state["ion_beam.source.turbo_pump.status_error"] = 1.0 if error_active else 0.0
-
-                if self._max_hz > 0:
-                    self.state["ion_beam.source.turbo_pump.speed_pct"] = round((raw_hz / self._max_hz) * 100, 1)
-
                 trip_active = error_active and not ready
 
-                # Mapped exactly to PLC payload expectations
-                self.state["ion_beam.pump.status.stat_src_turbo_error"] = 1.0 if error_active else 0.0
-                self.state["ion_beam.pump.status.stat_src_turbo_warning"] = 1.0 if warning_active else 0.0
-                self.state["ion_beam.pump.status.stat_src_turbo_trip"] = 1.0 if trip_active else 0.0
+                self.state[f"{base_tag}.rb_speed_hz"] = float(raw_hz)
+                self.state[f"{base_tag}.stat_ready"] = 1.0 if ready else 0.0
+                self.state[f"{base_tag}.stat_turning"] = 1.0 if turning else 0.0
+                self.state[f"{base_tag}.stat_error"] = 1.0 if error_active else 0.0
+                self.state[f"{base_tag}.stat_warning"] = 1.0 if warning_active else 0.0
+                self.state[f"{base_tag}.stat_trip"] = 1.0 if trip_active else 0.0
+
+                if self._max_hz > 0:
+                    self.state[f"{base_tag}.rb_speed_pct"] = round((raw_hz / self._max_hz) * 100, 1)
 
             elif ak_hz in [7, 8]:
                 self.comms_ok = True
@@ -383,7 +376,7 @@ class TurbovacMicroservice:
                 self.comms_ok = False
 
             comms_fail = not self.connected or not self.comms_ok
-            self.state["ion_beam.pump.status.stat_src_turbo_comms_fail"] = 1.0 if comms_fail else 0.0
+            self.state[f"{base_tag}.stat_comms_fail"] = 1.0 if comms_fail else 0.0
 
             # 2. Process Incoming ZMQ Commands
             self._process_commands()
@@ -394,20 +387,20 @@ class TurbovacMicroservice:
 
             if val is not None and ak_val not in [7, 8]:
                 if task_name == "bearing_temp":
-                    self.state["ion_beam.source.turbo_pump.temp_bearing"] = float(val)
+                    self.state[f"{base_tag}.rb_temp_bearing"] = float(val)
                 elif task_name == "conv_temp":
-                    self.state["ion_beam.source.turbo_pump.temp_converter"] = float(val)
+                    self.state[f"{base_tag}.rb_temp_converter"] = float(val)
                 elif task_name == "volts":
-                    self.state["ion_beam.source.turbo_pump.voltage"] = float(val)
+                    self.state[f"{base_tag}.rb_voltage"] = float(val)
                 elif task_name == "amps":
-                    self.state["ion_beam.source.turbo_pump.current"] = val * 0.1
+                    self.state[f"{base_tag}.rb_current"] = val * 0.1
                 elif task_name == "op_hours":
                     self.state["system.service_hours"] = round(val * 0.01, 2)
                 elif task_name == "warnings":
                     active_warnings = [desc for bit, desc in TURBO_WARNING_DICT.items() if val & (1 << bit)]
                     self._most_recent_warning_desc = ", ".join(active_warnings) if active_warnings else "None"
                 elif task_name == "error":
-                    self.state["ion_beam.source.turbo_pump.error_code"] = float(val)
+                    self.state[f"{base_tag}.stat_error_code"] = float(val)
                     self._most_recent_error_desc = TURBO_ERROR_DICT.get(val, f"Unknown Error ({val})")
 
             self._slow_idx = (self._slow_idx + 1) % len(self.slow_tasks)
@@ -418,8 +411,7 @@ class TurbovacMicroservice:
             self.state["system.cycle_time_ms"] = elapsed * 1000
 
             try:
-                topic = TOPIC_SRC_TURBO_DATA if isinstance(TOPIC_SRC_TURBO_DATA,
-                                                           bytes) else TOPIC_SRC_TURBO_DATA.encode('utf-8')
+                topic = TOPIC_SRC_TURBO_DATA if isinstance(TOPIC_SRC_TURBO_DATA, bytes) else TOPIC_SRC_TURBO_DATA.encode('utf-8')
                 self.pub_socket.send_multipart([topic, orjson.dumps(self.state)])
             except Exception as e:
                 self.events.log_general(f"ZMQ Publish Error: {e}")

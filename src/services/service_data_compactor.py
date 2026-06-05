@@ -25,35 +25,44 @@ class DataCompactor:
         self.hb_socket.connect(ZMQ_PORT_HEARTBEAT)
 
     def compact_all_past_dates(self):
-        # 1. List all chunk files
-        all_chunks = [f for f in os.listdir(DATA_DIR) if f.startswith("chunk_") and f.endswith(".parquet")]
-
-        # 2. Extract unique dates using a Regex (finds YYYYMMDD)
-        # Filename example: chunk_20260518_150811.parquet
-        date_pattern = re.compile(r"chunk_(\d{8})_")
-
-        found_dates = set()
         today_str = datetime.now().strftime("%Y%m%d")
+
+        # 1. Clean up orphaned, corrupted temp files from previous days
+        for f in os.listdir(DATA_DIR):
+            if f.startswith("chunk_") and "_temp.parquet" in f:
+                # If the temp file is NOT from today, it is dead. Delete it.
+                if today_str not in f:
+                    dead_file = os.path.join(DATA_DIR, f)
+                    try:
+                        os.remove(dead_file)
+                        print(f"[Compactor] Deleted orphaned temporary file: {f}")
+                    except OSError:
+                        pass
+
+        # 2. List all valid chunk files (Explicitly excluding any active temp files)
+        all_chunks = [f for f in os.listdir(DATA_DIR)
+                      if f.startswith("chunk_")
+                      and f.endswith(".parquet")
+                      and "_temp" not in f]
+
+        # 3. Extract unique dates using a Regex (finds YYYYMMDD)
+        date_pattern = re.compile(r"chunk_(\d{8})_")
+        found_dates = set()
 
         for f in all_chunks:
             match = date_pattern.search(f)
             if match:
                 date_str = match.group(1)
-                # Only process dates that are NOT today (today is still being written to)
+                # Only process dates that are NOT today
                 if date_str != today_str:
                     found_dates.add(date_str)
 
-        # 3. Iterate and merge
+        # 4. Iterate and merge
         for d_str in sorted(list(found_dates)):
             fragments = [os.path.join(DATA_DIR, f) for f in all_chunks if d_str in f]
             output_file = os.path.join(DAILY_DIR, f"day_{d_str}.parquet")
 
-            # Check if we already have a daily file (maybe a previous partial run)
-            # In this case, we merge the old daily + the new fragments
             try:
-                print(f"[Compactor] Processing {d_str} ({len(fragments)} fragments)...")
-
-                # --- NEW CODE (Diagonal Merge for Schema Evolution) ---
                 print(f"[Compactor] Processing {d_str} ({len(fragments)} fragments)...")
 
                 lfs = [pl.scan_parquet(f) for f in fragments]
@@ -65,9 +74,7 @@ class DataCompactor:
                 # 2. Write the high-resolution raw file
                 daily_df.write_parquet(output_file, compression="zstd", compression_level=10)
 
-                # 3. Generate the UI rollups using the data already sitting in RAM
-                # Note: We pass the base filename "day_YYYYMMDD" so the macro
-                # files get named day_YYYYMMDD_macro_1m.parquet, etc.
+                # 3. Generate the UI rollups
                 self.generate_macro_rollups(daily_df, f"day_{d_str}", DAILY_DIR)
 
                 # 4. Clean up ONLY after successful writes

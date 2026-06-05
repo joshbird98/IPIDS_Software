@@ -1580,10 +1580,10 @@ if __name__ == "__main__":
     # 2. Launch Multiple Thin-Client Windows
     # The windows will automatically fetch their required data the moment they render
     window_1 = DataViewerApp(master_cache, window_title="IPIDS Data Viewer - Window 1")
-    window_2 = DataViewerApp(master_cache, window_title="IPIDS Data Viewer - Window 2")
+    #window_2 = DataViewerApp(master_cache, window_title="IPIDS Data Viewer - Window 2")
 
     window_1.show()
-    window_2.show()
+    #window_2.show()
 
     # 3. Execute Application Loop
     exit_code = app.exec()

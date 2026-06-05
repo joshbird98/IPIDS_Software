@@ -5,6 +5,7 @@ import threading
 import sys
 import csv
 
+# Import your actual network map here.
 from src.core.network_map import ZMQ_PORT_VACUUM_PUB, ZMQ_PORT_PLC_CMD, ZMQ_PORT_PLC_PUB
 
 # --- FAULT BIT MAP ---
@@ -14,18 +15,25 @@ BIT_CESIUM_HEAT_FAIL = 6
 BIT_CESIUM_COOL_FAIL = 7
 
 
-class CesiumFOPDTTester:
+class CesiumTransientTester:
     def __init__(self):
         self.running = True
         self.current_temp = 0.0
         self.fault_word_2 = 0
+
+        # Setup ZMQ Context
         self.ctx = zmq.Context.instance()
+
+        # Command Publisher
         self.cmd_socket = self.ctx.socket(zmq.PUB)
         self.cmd_socket.connect(ZMQ_PORT_PLC_CMD)
+
+        # Telemetry Subscriber
         self.telemetry_socket = self.ctx.socket(zmq.SUB)
         self.telemetry_socket.connect(ZMQ_PORT_PLC_PUB)
         self.telemetry_socket.setsockopt(zmq.SUBSCRIBE, b"")
 
+        # Start background telemetry thread
         self.t_thread = threading.Thread(target=self._telemetry_loop, daemon=True)
         self.t_thread.start()
         time.sleep(1)
@@ -40,8 +48,10 @@ class CesiumFOPDTTester:
                 if self.telemetry_socket.poll(100):
                     topic, payload = self.telemetry_socket.recv_multipart(flags=zmq.NOBLOCK)
                     data = json.loads(payload)
+
                     if "ion_beam.source.cesium.rb_temp" in data:
                         self.current_temp = float(data["ion_beam.source.cesium.rb_temp"])
+
                     if "ion_beam.faults.word_2_source" in data:
                         self.fault_word_2 = int(data["ion_beam.faults.word_2_source"])
             except Exception:
@@ -66,7 +76,8 @@ class CesiumFOPDTTester:
         self.send_command("ion_beam.source.cesium.testing_cmd_force_duty_cycle", False)
         self.running = False
 
-    def run_step_response(self, step_duty=8.0, max_temp=75.0, decay_minutes=20, csv_filename="cesium_fopdt_data.csv"):
+    def run_transient_test(self, pulse_duty=15.0, pulse_duration=60, csv_filename="cesium_transient_data.csv"):
+        # 1. Enforce starting conditions
         if self.current_temp > 30.0:
             print(f"[ERROR] Oven is too hot ({self.current_temp}°C). Must start from < 30.0°C.")
             self.graceful_exit()
@@ -77,42 +88,43 @@ class CesiumFOPDTTester:
                 writer = csv.writer(file)
                 writer.writerow(["Time (s)", "Temperature (C)", "Duty Cycle (%)"])
 
-                print("Starting FOPDT Step Response Profiling...")
+                print("Starting Transient Profiling Sequence...")
+
+                # 2. Assume control and ensure forced cooling is OFF
                 self.send_command("ion_beam.source.cesium.testing_cmd_force_duty_cycle", True)
                 self.send_command("ion_beam.source.cesium.cmd_force_cooling", False)
+
                 start_time = time.time()
 
-                # --- PHASE 1: CONTINUOUS STEP ---
-                print(f"\n>>> APPLYING {step_duty}% CONTINUOUS STEP (Target limit: {max_temp}°C)")
-                self.send_command("ion_beam.source.cesium.testing_cmd_duty_cycle_value", step_duty)
+                # 3. Apply Pulse
+                print(f"\n>>> APPLYING {pulse_duty}% STEP PULSE FOR {pulse_duration} SECONDS")
+                self.send_command("ion_beam.source.cesium.testing_cmd_duty_cycle_value", pulse_duty)
 
-                while self.current_temp < max_temp and (time.time() - start_time) < 2700:  # 45 min timeout
+                while (time.time() - start_time) < pulse_duration:
                     self.check_for_faults()
                     elapsed = time.time() - start_time
-                    writer.writerow([round(elapsed, 2), round(self.current_temp, 2), step_duty])
+                    writer.writerow([round(elapsed, 2), round(self.current_temp, 2), pulse_duty])
 
-                    sys.stdout.write(f"\r[HEATING] T+{elapsed:.0f}s | Temp: {self.current_temp:.2f}°C   ")
+                    sys.stdout.write(f"\r[PULSE] T+{elapsed:.1f}s | Temp: {self.current_temp:.2f}°C   ")
                     sys.stdout.flush()
-                    time.sleep(3.0)
+                    time.sleep(0.5)  # 2Hz sampling for dead-time resolution
 
-                    # --- PHASE 2: NATURAL DECAY ---
-                print(f"\n\n>>> MAXIMUM TEMPERATURE REACHED. APPLYING 0% AND LOGGING DECAY.")
+                # 4. Remove Pulse, monitor natural decay
+                print(f"\n\n>>> PULSE COMPLETE. APPLYING 0% AND MONITORING NATURAL DECAY")
                 self.send_command("ion_beam.source.cesium.testing_cmd_duty_cycle_value", 0.0)
-                decay_start_time = time.time()
-                decay_duration_sec = decay_minutes * 60
 
-                while (time.time() - decay_start_time) < decay_duration_sec:
+                # Wait for peak (thermal lag) and decay back to 30C
+                while self.current_temp >= 30.0 or (time.time() - start_time) < (pulse_duration + 120):
                     self.check_for_faults()
                     elapsed = time.time() - start_time
-                    decay_elapsed = time.time() - decay_start_time
                     writer.writerow([round(elapsed, 2), round(self.current_temp, 2), 0.0])
 
                     sys.stdout.write(
-                        f"\r[DECAY] T+{elapsed:.0f}s (Decay Time: {decay_elapsed:.0f}/{decay_duration_sec}s) | Temp: {self.current_temp:.2f}°C   ")
+                        f"\r[DECAY] T+{elapsed:.1f}s | Temp: {self.current_temp:.2f}°C (Waiting to cross <30.0°C)  ")
                     sys.stdout.flush()
-                    time.sleep(3.0)
+                    time.sleep(1.0)  # 1Hz sampling is sufficient for the long decay tail
 
-            print("\n\n[SUCCESS] FOPDT data logged to:", csv_filename)
+            print("\n\n[SUCCESS] Transient data logged to:", csv_filename)
 
         except KeyboardInterrupt:
             print("\n[ABORT] Sequence interrupted.")
@@ -121,5 +133,6 @@ class CesiumFOPDTTester:
 
 
 if __name__ == "__main__":
-    tester = CesiumFOPDTTester()
-    tester.run_step_response(step_duty=10.0, max_temp=87.0, decay_minutes=60)
+    tester = CesiumTransientTester()
+    # 15% pulse for 60 seconds
+    tester.run_transient_test(pulse_duty=15.0, pulse_duration=60)

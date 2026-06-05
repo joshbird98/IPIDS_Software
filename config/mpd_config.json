@@ -6,32 +6,9 @@
       "devices": {
         "source_einzel": {
           "address": "01",
-          "dev_type": "08",
+          "dev_type": "09",
           "plc_unit": 1,
           "_note": "Spellman 30kV unit"
-        }
-      }
-    },
-    {
-      "bus_id": "beamline_waveshare",
-      "devices": {
-        "beamline_einzel": {
-          "address": "01",
-          "dev_type": "09",
-          "plc_unit": 2,
-          "_note": "Spellman 30kV unit"
-        },
-        "neutral_trap_pos": {
-          "address": "02",
-          "dev_type": "05",
-          "plc_unit": 3,
-          "_note": "Spellman 5kV unit"
-        },
-        "neutral_trap_neg": {
-          "address": "03",
-          "dev_type": "05",
-          "plc_unit": 4,
-          "_note": "Spellman 5kV unit"
         }
       }
     }

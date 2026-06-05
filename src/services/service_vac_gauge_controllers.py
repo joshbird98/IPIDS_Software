@@ -46,11 +46,6 @@ RELAY_PARAMS = {
     6: {"ch": "21", "on": "22", "off": "23", "status": "24"}
 }
 
-VG_MAP = {
-    (10, 1): "VG1", (10, 2): "VG2", (10, 3): "VG3",
-    (20, 1): "VG4", (20, 2): "VG5", (20, 3): "VG6"
-}
-
 
 class VacuumMicroservice:
     def __init__(self):
@@ -87,14 +82,15 @@ class VacuumMicroservice:
             "system.cycle_time_ms": 0.0
         }
 
-        # Initialize all gauge status flags to consistent default states
-        for (node, ch), vg_prefix in VG_MAP.items():
-            self.state[f"ion_beam.gauges.status.stat_{vg_prefix.lower()}_not_found"] = 0.0
-            self.state[f"ion_beam.gauges.status.stat_{vg_prefix.lower()}_mismatch"] = 0.0
-            self.state[f"ion_beam.gauges.status.stat_{vg_prefix.lower()}_rapid_rise"] = 0.0
-            self.state[f"ion_beam.gauges.status.stat_{vg_prefix.lower()}_above_sp"] = 0.0
-            self.state[f"ion_beam.gauges.status.stat_{vg_prefix.lower()}_approaching_sp"] = 0.0
-            self.state[f"ion_beam.gauges.status.stat_{vg_prefix.lower()}_relay_active"] = 0.0
+        # Initialize all gauge status flags to consistent default states in their vertical ISA-95 paths
+        for (node, ch), base_tag in self.tag_map.items():
+            self.state[f"{base_tag}.stat_not_found"] = 0.0
+            self.state[f"{base_tag}.stat_mismatch"] = 0.0
+            self.state[f"{base_tag}.stat_rapid_rise"] = 0.0
+            self.state[f"{base_tag}.stat_above_sp"] = 0.0
+            self.state[f"{base_tag}.stat_approaching_sp"] = 0.0
+            self.state[f"{base_tag}.stat_relay_active"] = 0.0
+            self.state[f"{base_tag}.stat_comms_fail"] = 0.0
 
         # --- Round-Robin Queue ---
         self.slow_tasks = []
@@ -129,15 +125,15 @@ class VacuumMicroservice:
             return {}
 
     def _build_tag_map(self) -> dict:
-        mapping = {}
-        for node_str, node_data in self.config.items():
-            if not node_str.isdigit():
-                continue
-            if "channels" in node_data:
-                for ch_str, ch_data in node_data["channels"].items():
-                    subsystem = ch_data.get("subsystem", "unknown")
-                    device = ch_data.get("device", f"gauge_{ch_str}")
-                    mapping[(int(node_str), int(ch_str))] = f"ion_beam.{subsystem}.{device}"
+        # Explicitly map the physical (Node, Channel) matrix to the ISA-95 Functional Area
+        mapping = {
+            (10, 1): "ion_beam.source.vacuum_gauge_1",
+            (10, 2): "ion_beam.beamline.vacuum_gauge_2",
+            (10, 3): "ion_beam.beamline.vacuum_gauge_3",
+            (20, 1): "ion_beam.endstation.vacuum_gauge_4",
+            (20, 2): "ion_beam.loadlock.vacuum_gauge_5",
+            (20, 3): "ion_beam.endstation.vacuum_gauge_6"
+        }
         return mapping
 
     def _build_relay_configuration_maps(self):
@@ -479,12 +475,16 @@ class VacuumMicroservice:
     def _evaluate_gv_permissive(self):
         is_safe = False
         try:
-            def has_fault(vg):
-                return any(self.state.get(f"ion_beam.gauges.status.stat_{vg}_{f}", 0.0) == 1.0
+            vg1 = self.tag_map.get((10, 1))
+            vg2 = self.tag_map.get((10, 2))
+
+            def has_fault(base_tag):
+                if not base_tag: return True
+                return any(self.state.get(f"{base_tag}.stat_{f}", 0.0) == 1.0
                            for f in ["not_found", "mismatch", "above_sp", "rapid_rise"])
 
-            vg1_has_fault = has_fault("vg1")
-            vg2_has_fault = has_fault("vg2")
+            vg1_has_fault = has_fault(vg1)
+            vg2_has_fault = has_fault(vg2)
             comms_fail = not self.connected
 
             if not comms_fail and not vg1_has_fault and not vg2_has_fault:
@@ -496,7 +496,7 @@ class VacuumMicroservice:
         self.state["ion_beam.vacuum.gv_permissive_ready"] = 1.0 if is_safe else 0.0
 
     def run(self):
-        self.events.log_general("Daemon starting...")
+        self.events.log_general("Daemon starting (ISA-95 Architecture)...")
         global_rise_limit = float(self.config.get("system_interlocks", {}).get("rapid_rise_thresh_mb_s", 5.0e-5))
 
         global POLL_INTERVAL
@@ -520,13 +520,12 @@ class VacuumMicroservice:
             for node in NODE_IDS:
                 for ch in CHANNELS:
                     raw_p = self._read_transaction(node, str(ch), str(PARAM_PRESSURE))
-                    tag_prefix = self.tag_map.get((node, ch))
-                    vg_prefix = VG_MAP.get((node, ch))
+                    base_tag = self.tag_map.get((node, ch))
 
-                    if raw_p is not None and tag_prefix and vg_prefix:
+                    if raw_p is not None and base_tag:
                         try:
                             pressure_val = float(raw_p)
-                            self.state[f"{tag_prefix}.pressure"] = pressure_val
+                            self.state[f"{base_tag}.rb_pressure"] = pressure_val
 
                             # Evaluate dynamic setpoint warning conditions (Approaching Setpoint threshold limit ratio)
                             is_approaching = False
@@ -535,51 +534,51 @@ class VacuumMicroservice:
                                 thresholds = self.relay_thresholds.get((node, r_id))
                                 if thresholds:
                                     on_threshold = thresholds["on_val"]
-                                    # Safe threshold bounds inversion: approach low pressure setpoint from high-pressure atmosphere state
                                     if on_threshold < pressure_val <= (on_threshold / 0.8):
                                         is_approaching = True
                                         break
 
-                            self.state[
-                                f"ion_beam.gauges.status.stat_{vg_prefix.lower()}_approaching_sp"] = 1.0 if is_approaching else 0.0
+                            self.state[f"{base_tag}.stat_approaching_sp"] = 1.0 if is_approaching else 0.0
 
                             current_time = time.time()
                             is_rapid_rise = False
 
-                            if vg_prefix in self.pressure_history:
-                                prev_p = self.pressure_history[vg_prefix]["pressure"]
-                                prev_t = self.pressure_history[vg_prefix]["time"]
+                            if base_tag in self.pressure_history:
+                                prev_p = self.pressure_history[base_tag]["pressure"]
+                                prev_t = self.pressure_history[base_tag]["time"]
                                 dt = current_time - prev_t
 
                                 if dt > 0.5:
                                     dp_dt = (pressure_val - prev_p) / dt
                                     if dp_dt > global_rise_limit and pressure_val > 1.0e-6:
-                                        if "vacuum_gauge_4" not in tag_prefix:
+                                        if "vacuum_gauge_4" not in base_tag:
                                             is_rapid_rise = True
 
-                                    self.pressure_history[vg_prefix] = {"pressure": pressure_val, "time": current_time}
+                                    self.pressure_history[base_tag] = {"pressure": pressure_val, "time": current_time}
                             else:
-                                self.pressure_history[vg_prefix] = {"pressure": pressure_val, "time": current_time}
+                                self.pressure_history[base_tag] = {"pressure": pressure_val, "time": current_time}
 
-                            self.state[
-                                f"ion_beam.gauges.status.stat_{vg_prefix.lower()}_rapid_rise"] = 1.0 if is_rapid_rise else 0.0
+                            self.state[f"{base_tag}.stat_rapid_rise"] = 1.0 if is_rapid_rise else 0.0
+                            self.state[f"{base_tag}.stat_comms_fail"] = 0.0
 
                         except ValueError:
                             pass
+                    elif base_tag:
+                        # If a read fails on a connected network, flag the individual gauge comms offline
+                        self.state[f"{base_tag}.stat_comms_fail"] = 1.0
 
                 val = None
                 if slow_task_name == "gauge_status":
                     val = self._read_transaction(node, str(slow_task_target), str(PARAM_STATUS))
-                    tag_prefix = self.tag_map.get((node, slow_task_target))
-                    vg_prefix = VG_MAP.get((node, slow_task_target))
+                    base_tag = self.tag_map.get((node, slow_task_target))
 
-                    if val and tag_prefix and vg_prefix:
+                    if val and base_tag:
                         try:
                             status_code = int(val)
-                            self.state[f"{tag_prefix}.status"] = float(status_code)
+                            self.state[f"{base_tag}.stat_error_code"] = float(status_code)
 
-                            not_found_key = f"ion_beam.gauges.status.stat_{vg_prefix.lower()}_not_found"
-                            mismatch_key = f"ion_beam.gauges.status.stat_{vg_prefix.lower()}_mismatch"
+                            not_found_key = f"{base_tag}.stat_not_found"
+                            mismatch_key = f"{base_tag}.stat_mismatch"
 
                             if status_code == 5:
                                 self.state[not_found_key], self.state[mismatch_key] = 1.0, 0.0
@@ -604,14 +603,12 @@ class VacuumMicroservice:
                             # Map relay state flags dynamically back to assigned target vacuum gauges based on active configuration data
                             ch_id = self.relay_to_channel_map.get((node, slow_task_target))
                             if ch_id:
-                                vg_prefix = VG_MAP.get((node, ch_id))
-                                if vg_prefix:
+                                base_tag = self.tag_map.get((node, ch_id))
+                                if base_tag:
                                     is_active = 1.0 if status_int == 1 else 0.0
                                     is_above = 1.0 if status_int == 0 else 0.0
-
-                                    self.state[
-                                        f"ion_beam.gauges.status.stat_{vg_prefix.lower()}_relay_active"] = is_active
-                                    self.state[f"ion_beam.gauges.status.stat_{vg_prefix.lower()}_above_sp"] = is_above
+                                    self.state[f"{base_tag}.stat_relay_active"] = is_active
+                                    self.state[f"{base_tag}.stat_above_sp"] = is_above
                         except ValueError:
                             pass
 
@@ -629,8 +626,10 @@ class VacuumMicroservice:
             self._slow_task_idx = (self._slow_task_idx + 1) % len(self.slow_tasks)
 
             comms_fault_active = 1.0 if not self.connected else 0.0
-            self.state["ion_beam.gauges.status.stat_graphix1_comms_fail"] = comms_fault_active
-            self.state["ion_beam.gauges.status.stat_graphix2_comms_fail"] = comms_fault_active
+
+            # Map Master Controller comms faults to their new ISA-95 locations
+            self.state["ion_beam.facilities.graphix1.stat_comms_fail"] = comms_fault_active
+            self.state["ion_beam.facilities.graphix2.stat_comms_fail"] = comms_fault_active
 
             self._evaluate_gv_permissive()
             self.state["timestamp"] = time.time()
