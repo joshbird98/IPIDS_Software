@@ -1,0 +1,27 @@
+{
+  "recipe_name": "Safety Fault & Prompt Test",
+  "version": "1.1",
+  "fault_policy": [
+    {
+      "target": "ion_beam.facilities.safety_relay_active",
+      "condition": "==",
+      "value": 0.0,
+      "action": "ABORT",
+      "message": "Master Safety Relay was lost during recipe!"
+    }
+  ],
+  "steps": [
+    {
+      "step_id": 1,
+      "type": "USER_PROMPT",
+      "prompt_text": "Please verify the cooling water is on, then press the physical START button.",
+      "comment": "Wait for Operator"
+    },
+    {
+      "step_id": 2,
+      "type": "WAIT_TIME",
+      "duration_sec": 5.0,
+      "comment": "Running process for 5s (Simulate tripping relay now!)"
+    }
+  ]
+}

@@ -30,6 +30,9 @@ from src.core.network_map import (
 from src.core.event_helper import EventHelper
 from src.core.os_helper import harden_windows_process
 
+from src.core.recipe_engine import RecipeWorker
+from src.gui.control.recipe_execution_dock import RecipeExecutionWidget
+
 # --- SCADA Standard Colors ---
 COLOR_OK = "background-color: #4CAF50; color: white; font-weight: bold; border-radius: 4px; padding: 4px;"
 COLOR_FAULT = "background-color: #F44336; color: white; font-weight: bold; border-radius: 4px; padding: 4px;"
@@ -2208,6 +2211,11 @@ class ControlMainWindow(QMainWindow):
 
         self.master_telemetry_cache = {}
 
+        self.recipe_worker = RecipeWorker(
+            self.cmd_thread,
+            lambda: self.master_telemetry_cache.copy()
+        )
+
         telemetry_ports = [
             ZMQ_PORT_PLC_PUB, ZMQ_PORT_VACUUM_PUB,
             ZMQ_PORT_SRC_TURBO_PUB, ZMQ_PORT_MANAGER_PUB,
@@ -2231,6 +2239,7 @@ class ControlMainWindow(QMainWindow):
         self.watchdog_timer = QTimer(self)
         self.watchdog_timer.timeout.connect(self._ui_update_loop)
         self.watchdog_timer.start(100)
+
 
     def _show_config_editor(self):
         pwd, ok = QInputDialog.getText(self, "Authentication Required", "Enter Engineering Password:",
@@ -2256,6 +2265,13 @@ class ControlMainWindow(QMainWindow):
         log_dock.setWidget(self.log_widget)
         self.addDockWidget(Qt.DockWidgetArea.LeftDockWidgetArea, log_dock)
         self.subsystems["logging"] = self.log_widget
+
+        recipe_dock = QDockWidget("Recipe Execution", self)
+        recipe_dock.setObjectName("RecipeDock")
+        self.recipe_widget = RecipeExecutionWidget(self.recipe_worker, self.master_telemetry_cache)
+        recipe_dock.setWidget(self.recipe_widget)
+        self.addDockWidget(Qt.DockWidgetArea.LeftDockWidgetArea, recipe_dock)
+        self.subsystems["recipe"] = self.recipe_widget
 
         # Tabify Left Area and bring Vacuum to front
         self.tabifyDockWidget(vac_dock, log_dock)

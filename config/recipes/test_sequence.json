@@ -1,0 +1,14 @@
+{
+  "recipe_name": "Non-Destructive System Dry Run",
+  "version": "1.0",
+  "steps": [
+    { "step_id": 1, "type": "ACTION", "target": "ion_beam.beamline_diagnostics.cmd_insert_fc", "value": true, "comment": "Insert Faraday Cup" },
+    { "step_id": 2, "type": "WAIT_TELEMETRY", "target": "ion_beam.beamline_diagnostics.stat_fc_inserted", "condition": "==", "value": 1.0, "timeout_sec": 10.0, "comment": "Verify Cup is Inserted" },
+    { "step_id": 3, "type": "WAIT_TIME", "duration_sec": 2.5, "comment": "Wait for settling" },
+    { "step_id": 4, "type": "ACTION", "target": "ion_beam.beamline_diagnostics.cmd_insert_fc", "value": false, "comment": "Retract Faraday Cup" },
+    { "step_id": 5, "type": "WAIT_TELEMETRY", "target": "ion_beam.beamline_diagnostics.stat_fc_retracted", "condition": "==", "value": 1.0, "timeout_sec": 10.0, "comment": "Verify Cup is Retracted" },
+    { "step_id": 6, "type": "ACTION", "target": "ion_beam.beamline.magnet.cmd_degauss", "value": true, "comment": "Start Magnet Degauss" },
+    { "step_id": 7, "type": "WAIT_TELEMETRY", "target": "ion_beam.beamline.magnet.stat_degaussing", "condition": "==", "value": 1.0, "timeout_sec": 5.0, "comment": "Wait for Degauss Active" },
+    { "step_id": 8, "type": "WAIT_TELEMETRY", "target": "ion_beam.beamline.magnet.stat_degaussing", "condition": "==", "value": 0.0, "timeout_sec": 60.0, "comment": "Wait for Degauss Complete" }
+  ]
+}
