@@ -757,9 +757,9 @@ class IonSourceWidget(QWidget):
         self.main_layout.addWidget(plot_group)
 
     def _dispatch_spellman_setpoints(self, base_tag: str, voltage: float):
-        """Dispatches voltage and autonomously sets a safe 250uA current limit to unclamp the CC loop."""
+        """Dispatches voltage and autonomously sets a safe 50uA current limit to unclamp the CC loop."""
         self._dispatch_command(f"{base_tag}.sp_requested_voltage", voltage)
-        self._dispatch_command(f"{base_tag}.sp_requested_current", 250.0)
+        self._dispatch_command(f"{base_tag}.sp_requested_current", 50.0)
 
     def _init_psu_ui(self):
         psu_group = QGroupBox("Source Power Supplies")
@@ -1379,9 +1379,9 @@ class BeamlineOpticsWidget(QWidget):
         self.main_layout.addStretch()
 
     def _dispatch_spellman_setpoints(self, base_tag: str, voltage: float):
-        """Dispatches voltage and autonomously sets a safe 250uA current limit to unclamp the CC loop."""
+        """Dispatches voltage and autonomously sets a safe 50uA current limit to unclamp the CC loop."""
         self._dispatch_command(f"{base_tag}.sp_requested_voltage", voltage)
-        self._dispatch_command(f"{base_tag}.sp_requested_current", 250.0)
+        self._dispatch_command(f"{base_tag}.sp_requested_current", 50.0)
 
     def _load_magnet_config(self):
         try:

@@ -41,6 +41,9 @@ class TagSelectorDialog(QDialog):
 
         folder_nodes = {}
         for full_tag, metadata in registry.items():
+            # Hide raw fault words and prohibit automated fault resets
+            if full_tag.startswith("ion_beam.faults.word_") or full_tag == "ion_beam.system.cmd_fault_reset":
+                continue
             parts = full_tag.split('.')
             parent_node = self.tree.invisibleRootItem()
             current_path = ""

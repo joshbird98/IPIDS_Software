@@ -52,6 +52,15 @@ class RecipeExecutionWidget(QWidget):
         self.btn_load.setStyleSheet(COLOR_BUTTON_STANDARD)
         self.btn_load.clicked.connect(self._load_recipe)
 
+        self.btn_edit = QPushButton("✏️ EDIT")
+        self.btn_edit.setToolTip("Open the selected recipe in the Builder for editing.")
+        self.btn_edit.clicked.connect(self._edit_recipe)
+
+        file_layout.addWidget(self.cb_recipes, stretch=1)
+        file_layout.addWidget(self.btn_refresh)
+        file_layout.addWidget(self.btn_load)
+        file_layout.addWidget(self.btn_edit)
+
         file_layout.addWidget(self.cb_recipes, stretch=1)
         file_layout.addWidget(self.btn_refresh)
         file_layout.addWidget(self.btn_load)
@@ -87,19 +96,15 @@ class RecipeExecutionWidget(QWidget):
 
         self._update_button_states("NO_RECIPE")
 
-        dev_layout = QHBoxLayout()
-        self.btn_sim_trip = QPushButton("⚡ DEV: SIMULATE RELAY TRIP")
-        self.btn_sim_trip.setStyleSheet(
-            "background-color: black; color: yellow; font-weight: bold; border-radius: 4px; padding: 6px;")
-        self.btn_sim_trip.setToolTip("Directly injects a fault into the telemetry cache for testing.")
-        self.btn_sim_trip.clicked.connect(self._dev_sim_relay_trip)
-        dev_layout.addWidget(self.btn_sim_trip)
-        layout.addLayout(dev_layout)
+    def _edit_recipe(self):
+        filename = self.cb_recipes.currentText()
+        if not filename: return
+        filepath = os.path.join(self.config_dir, filename)
 
-    def _dev_sim_relay_trip(self):
-        if self.telemetry_cache is not None:
-            self.telemetry_cache["ion_beam.facilities.safety_relay_active"] = 0.0
-            print("[DEV] Injected Safety Relay = 0.0 into master cache!")
+        # Instantiate builder with the filepath
+        builder = RecipeBuilderDialog(self, self.config_dir, load_filepath=filepath)
+        builder.exec()
+        self._populate_recipes()
 
     def _wire_signals(self):
         self.worker.sig_status_update.connect(self._on_status_update)
@@ -147,11 +152,17 @@ class RecipeExecutionWidget(QWidget):
             item.setToolTip(step.get_description())
             item.setData(Qt.ItemDataRole.UserRole, step.step_id)
 
-            # If we popped back up to a parent, previous steps will already be DONE
+            # If it's parallel, add a secondary tooltip showing the plan
+            if step.type == "PARALLEL":
+                sub_info = " | ".join([s.comment for s in step.sub_steps])
+                item.setToolTip(f"Executing in parallel: {sub_info}")
+            else:
+                item.setToolTip(step.get_description())
+
+            item.setData(Qt.ItemDataRole.UserRole, step.step_id)
             if step.state == "DONE":
                 item.setBackground(QColor("#C8E6C9"))
                 item.setText(item.text() + "  ✓")
-
             self.list_steps.addItem(item)
 
         # Update the UI title so the user knows they are deep in a stack

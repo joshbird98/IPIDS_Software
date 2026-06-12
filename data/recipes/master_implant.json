@@ -1,0 +1,9 @@
+{
+  "recipe_name": "Silicon Implantation Run",
+  "version": "1.0",
+  "steps": [
+    { "step_id": 1, "type": "WAIT_TIME", "duration_sec": 1.5, "comment": "Preparing Master Sequence..." },
+    { "step_id": 2, "type": "SUB_RECIPE", "target_file": "sub_startup.json", "comment": "Call Standard Startup" },
+    { "step_id": 3, "type": "WAIT_TIME", "duration_sec": 2.0, "comment": "Proceeding with Implantation..." }
+  ]
+}

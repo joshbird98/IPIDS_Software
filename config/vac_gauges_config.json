@@ -23,7 +23,7 @@
     "relays": {
       "1": {
         "channel": 1,
-        "on_val": 5e-6,
+        "on_val": 5.5e-6,
         "off_val": 8e-6
       },
       "2": {
@@ -38,7 +38,7 @@
       },
       "4": {
         "channel": 1,
-        "on_val": 5e-6,
+        "on_val": 5.5e-6,
         "off_val": 8e-6
       },
       "5": {

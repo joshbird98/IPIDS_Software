@@ -1,0 +1,43 @@
+{
+  "recipe_name": "Generic HV Conditioning",
+  "version": "1.0",
+  "parameters": {
+    "target_psu": "ion_beam.source.extraction",
+    "max_voltage": 20.0,
+    "step_size": 0.5
+  },
+  "fault_policy": {
+    "on_safety_relay_trip": "ABORT",
+    "on_target_psu_arc": "PAUSE_AND_RETRY",
+    "on_vg1_rapid_rise": "HOLD_UNTIL_CLEAR"
+  },
+  "steps": [
+    {
+      "step_id": 1,
+      "type": "ACTION",
+      "target": "{target_psu}.cmd_enable",
+      "value": true
+    },
+    {
+      "step_id": 2,
+      "type": "WAIT_TELEMETRY",
+      "target": "{target_psu}.stat_enabled",
+      "condition": "==",
+      "value": 1.0,
+      "timeout_sec": 5.0,
+      "on_timeout": "ABORT"
+    },
+    {
+      "step_id": 3,
+      "type": "LOOP",
+      "iterator": "current_v",
+      "start": 0.0,
+      "end": "{max_voltage}",
+      "step": "{step_size}",
+      "sub_steps": [
+        { "type": "ACTION", "target": "{target_psu}.sp_requested_voltage", "value": "{current_v}" },
+        { "type": "WAIT_TIME", "duration_sec": 60.0 }
+      ]
+    }
+  ]
+}

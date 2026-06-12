@@ -1,0 +1,8 @@
+{
+  "recipe_name": "Standard Beamline Startup",
+  "version": "1.0",
+  "steps": [
+    { "step_id": 1, "type": "WAIT_TIME", "duration_sec": 2.0, "comment": "Initializing Sub-Systems..." },
+    { "step_id": 2, "type": "ACTION", "target": "ion_beam.beamline_diagnostics.cmd_insert_fc", "value": true, "comment": "Insert Faraday Cup (Sub-Recipe)" }
+  ]
+}

@@ -24,6 +24,20 @@ def evaluate_condition(current_val, condition_str, target_val) -> bool:
         return True
     return False
 
+def create_step(step_data: dict):
+    stype = step_data.get("type")
+    if stype == "ACTION": return ActionStep(step_data)
+    elif stype == "WAIT_TIME": return WaitTimeStep(step_data)
+    elif stype == "WAIT_TELEMETRY": return WaitTelemetryStep(step_data)
+    elif stype == "USER_PROMPT": return UserPromptStep(step_data)
+    elif stype == "SUB_RECIPE": return SubRecipeStep(step_data)
+    elif stype == "ROUTINE_CALL": return RoutineCallStep(step_data)
+    elif stype == "VERIFIED_ACTION": return VerifiedActionStep(step_data)
+    elif stype == "PARALLEL": return ParallelStep(step_data)
+    return RecipeStep(step_data) # Fallback
+
+
+
 class RecipeStep:
     def __init__(self, step_data: dict):
         self.step_id = step_data.get("step_id", 0)
@@ -47,6 +61,10 @@ class RecipeStep:
     def get_description(self) -> str:
         return f"{self.type}: Unknown Target"
 
+    def acknowledge(self, telemetry_cache: dict) -> bool:
+        """Called by the engine when the UI confirms a prompt. Returns True if successful."""
+        return True
+
 class ActionStep(RecipeStep):
     def __init__(self, step_data: dict):
         super().__init__(step_data)
@@ -55,6 +73,13 @@ class ActionStep(RecipeStep):
 
     def execute(self, telemetry_cache: dict, cmd_thread) -> str:
         if self.state == "IDLE":
+            if "cmd_fault_reset" in self.target:
+                print(f"[SECURITY] Step {self.step_id} aborted: Automated fault resets are strictly prohibited.")
+                self.state = "FAILED"
+                return self.state
+
+            self.state = "RUNNING"
+
             if "spellman" in self.target or "einzel" in self.target or "neutral_trap" in self.target:
                 subsystem = "spellman"
             elif "magnet" in self.target:
@@ -173,6 +198,14 @@ class UserPromptStep(RecipeStep):
     def get_description(self) -> str:
         return f"PROMPT: {self.prompt_text}"
 
+    def acknowledge(self, telemetry_cache: dict) -> bool:
+        if self.state == "WAITING_FOR_USER":
+            if self.verify(telemetry_cache):
+                self.state = "DONE"
+                return True
+            return False
+        return True
+
 class SubRecipeStep(RecipeStep):
     def __init__(self, step_data: dict):
         super().__init__(step_data)
@@ -220,6 +253,10 @@ class Recipe:
                 self.steps.append(SubRecipeStep(step_data))
             elif stype == "ROUTINE_CALL":
                 self.steps.append(RoutineCallStep(step_data))
+            elif stype == "PARALLEL":
+                self.steps.append(ParallelStep(step_data))
+            elif stype == "VERIFIED_ACTION":
+                self.steps.append(VerifiedActionStep(step_data))
 
 class RecipeWorker(QThread):
     sig_status_update = pyqtSignal(str)
@@ -248,13 +285,11 @@ class RecipeWorker(QThread):
         """Called by UI. Returns True if successful, False if conditions failed."""
         if self.active_recipe and self.current_step_idx < len(self.active_recipe.steps):
             step = self.active_recipe.steps[self.current_step_idx]
-            if step.type == "USER_PROMPT" and step.state == "WAITING_FOR_USER":
-                # Check hardware conditions
-                if step.verify(self.get_telemetry_cb()):
-                    step.state = "DONE"
-                    return True
-                return False
-        return True  # Default safe return
+
+            # Delegate the logic directly to the step (works for USER_PROMPT, ROUTINE, or PARALLEL!)
+            return step.acknowledge(self.get_telemetry_cb())
+
+        return True
 
     def _get_breadcrumb(self):
         """Builds 'Master Recipe > Sub Recipe' string for the UI"""
@@ -354,18 +389,33 @@ class RecipeWorker(QThread):
 
             fault_triggered = False
             for fault in policies_to_check:
-                target = fault.get("target")
-                val = telemetry.get(target)
 
-                if evaluate_condition(val, fault.get("condition"), fault.get("value")):
-                    if fault.get("action") == "ABORT":
-                        self.running = False
-                        self.call_stack.clear()  # Dump the sub-recipe stack
-                        self._execute_safe_abort()
-                        msg = fault.get("message", "Hardware fault detected!")
-                        self.sig_recipe_finished.emit(False, f"FAULT ABORT: {msg}")
-                        fault_triggered = True
-                        break
+                # Handling our new nicely formatted PLC Bit Faults
+                if fault.get("type") == "BIT_FAULT":
+                    tag = fault.get("registry_tag")
+                    word_val = telemetry.get(tag)
+
+                    if word_val is not None:
+                        try:
+                            word_val = int(word_val)
+                            bit_str = fault.get("bit_str", "0.0")
+                            parts = bit_str.split('.')
+                            x = int(parts[0])
+                            y = int(parts[1])
+
+                            # Your Siemens DWORD endianness math
+                            bit_pos = (3 - x) * 8 + y
+
+                            # If the specific fault bit is HIGH
+                            if bool(word_val & (1 << bit_pos)):
+                                self.running = False
+                                self.call_stack.clear()
+                                self._execute_safe_abort()
+                                self.sig_recipe_finished.emit(False, f"FAULT ABORT: {fault.get('name')} tripped!")
+                                fault_triggered = True
+                                break
+                        except (ValueError, IndexError):
+                            pass
 
             if fault_triggered:
                 return  # Exit the thread completely
@@ -425,6 +475,7 @@ class RoutineCallStep(RecipeStep):
         self.routine_name = step_data.get("routine_name", "")
         self.parameters = step_data.get("parameters", {})
         self.routine_instance = None
+        self.prompt_text = ""
 
     def reset(self):
         super().reset()
@@ -432,19 +483,28 @@ class RoutineCallStep(RecipeStep):
 
     def execute(self, telemetry_cache: dict, cmd_thread) -> str:
         if self.state == "IDLE":
-            if self.routine_name not in ROUTINE_REGISTRY:
-                print(f"[ERROR] Routine '{self.routine_name}' not found in registry.")
+            self.state = "RUNNING"
+            # Late binding of the routine to avoid circular imports
+            from src.core.routines import ROUTINE_REGISTRY
+            routine_class = ROUTINE_REGISTRY.get(self.routine_name)
+            if routine_class:
+                self.routine_instance = routine_class(self.parameters)
+            else:
+                print(f"[ENGINE] Unknown routine: {self.routine_name}")
                 self.state = "FAILED"
                 return self.state
 
-            self.routine_instance = ROUTINE_REGISTRY[self.routine_name](self.parameters)
-            self.state = "RUNNING"
+        if self.routine_instance:
+            res = self.routine_instance.tick(telemetry_cache, cmd_thread)
 
-        if self.state == "RUNNING":
-            # Delegate entirely to the routine's state machine
-            status = self.routine_instance.tick(telemetry_cache, cmd_thread)
-            if status in ["DONE", "FAILED"]:
-                self.state = status
+            # Catch the pause request from the routine!
+            if res == "WAITING_FOR_USER":
+                # Expose the routine's prompt text to the Engine
+                self.prompt_text = getattr(self.routine_instance, "prompt_text", "Action Required")
+                self.state = "WAITING_FOR_USER"
+                return self.state
+
+            self.state = res
 
         return self.state
 
@@ -454,3 +514,147 @@ class RoutineCallStep(RecipeStep):
 
     def get_description(self) -> str:
         return f"ROUTINE: {self.routine_name} {self.parameters}"
+
+    def acknowledge(self, telemetry_cache: dict) -> bool:
+        if self.state == "WAITING_FOR_USER":
+            self.state = "RUNNING"
+            self.has_emitted = False  # Reset emission flag for future prompts
+            # Pass the acknowledgment down to the actual routine!
+            if self.routine_instance and hasattr(self.routine_instance, 'acknowledge'):
+                self.routine_instance.acknowledge()
+        return True
+
+class ParallelStep(RecipeStep):
+    def __init__(self, step_data: dict):
+        super().__init__(step_data)
+        self.sub_steps = [self._instantiate_step(s) for s in step_data.get("steps", [])]
+
+    def _instantiate_step(self, step_data):
+        # Helper to map types to classes
+        mapping = {"ACTION": ActionStep,
+                   "ROUTINE_CALL": RoutineCallStep,
+                   "WAIT_TIME": WaitTimeStep,
+                   "WAIT_TELEMETRY": WaitTelemetryStep,
+                   "USER_PROMPT": UserPromptStep,
+                   "VERIFIED_ACTION": VerifiedActionStep,
+                   "PARALLEL": ParallelStep}
+        return mapping[step_data["type"]](step_data)
+
+    def reset(self):
+        super().reset()
+        for step in self.sub_steps:
+            step.reset()
+
+    def execute(self, telemetry_cache: dict, cmd_thread) -> str:
+        if self.state == "IDLE":
+            self.state = "RUNNING"
+
+        all_done = True
+        any_failed = False
+
+        for step in self.sub_steps:
+            if step.state in ["DONE", "FAILED"]:
+                if step.state == "FAILED": any_failed = True
+                continue
+
+            # Tick every non-finished sub-step
+            res = step.execute(telemetry_cache, cmd_thread)
+
+            if res != "DONE": all_done = False
+            if res == "FAILED": any_failed = True
+
+        if any_failed:
+            self.state = "FAILED"
+            return "FAILED"
+        elif all_done:
+            self.state = "DONE"
+            return "DONE"
+
+        return "RUNNING"
+
+    def add_pause_offset(self, duration: float):
+        for step in self.sub_steps:
+            if hasattr(step, 'add_pause_offset'):
+                step.add_pause_offset(duration)
+
+    def acknowledge(self, telemetry_cache: dict) -> bool:
+        success = True
+        # Pass the click down to any sub-steps that are waiting
+        for step in self.sub_steps:
+            if step.state == "WAITING_FOR_USER":
+                if not step.acknowledge(telemetry_cache):
+                    success = False
+
+        # Un-pause the parallel container if all sub-steps cleared
+        if success and self.state == "WAITING_FOR_USER":
+            self.state = "RUNNING"
+            self.has_emitted = False
+        return success
+
+    def get_display_name(self):
+        return f"🔀 PARALLEL ({len(self.sub_steps)} sub-steps)"
+
+    def get_description(self):
+        return " | ".join([s.comment for s in self.sub_steps])
+
+class VerifiedActionStep(RecipeStep):
+    def __init__(self, step_data: dict):
+        super().__init__(step_data)
+        self.target = step_data.get("target", "")
+        self.value = step_data.get("value", 0.0)
+
+        self.pre_target = step_data.get("pre_target", "")
+        self.pre_condition = step_data.get("pre_condition", "==")
+        self.pre_value = step_data.get("pre_value", 1.0)
+
+        self.verify_target = step_data.get("verify_target", self.target)
+        self.verify_condition = step_data.get("verify_condition", "==")
+        self.verify_value = step_data.get("verify_value", self.value)
+        self.timeout_sec = float(step_data.get("timeout_sec", 5.0))
+
+        self.timer_start = 0.0
+        self.internal_state = "CHECK_PRE"
+
+    def reset(self):
+        super().reset()
+        self.internal_state = "CHECK_PRE"
+
+    def execute(self, telemetry_cache: dict, cmd_thread) -> str:
+        if self.state == "IDLE":
+            if "cmd_fault_reset" in self.target:
+                print(f"[SECURITY] Step {self.step_id} aborted: Automated fault resets are strictly prohibited.")
+                self.state = "FAILED"
+                return self.state
+            self.state = "RUNNING"
+
+        if self.internal_state == "CHECK_PRE":
+            val = telemetry_cache.get(self.pre_target)
+            if evaluate_condition(val, self.pre_condition, self.pre_value):
+                self.internal_state = "FIRE"
+            else:
+                print(f"[VERIFIED_ACTION] Prerequisite failed on {self.pre_target}")
+                self.state = "FAILED"
+                return self.state
+
+        if self.internal_state == "FIRE":
+            # Direct routing logic as defined in earlier base steps
+            subsystem = "plc" if "plc" in self.target else "spellman"  # Adjust routing logic as needed
+            cmd_thread.send_command(subsystem, self.target, self.value)
+            self.timer_start = time.time()
+            self.internal_state = "VERIFY"
+
+        if self.internal_state == "VERIFY":
+            val = telemetry_cache.get(self.verify_target)
+            if evaluate_condition(val, self.verify_condition, self.verify_value):
+                self.state = "DONE"
+                return self.state
+
+            if time.time() - self.timer_start > self.timeout_sec:
+                print(f"[VERIFIED_ACTION] Timeout verifying {self.verify_target}")
+                self.state = "FAILED"
+
+        return self.state
+
+    def add_pause_offset(self, duration: float):
+        if self.internal_state == "VERIFY":
+            self.timer_start += duration
