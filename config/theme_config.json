@@ -1,0 +1,28 @@
+{
+  "theme_mode": "dark",
+  "dark_palette": {
+    "window_bg": "#121212",
+    "panel_bg": "#1E1E1E",
+    "border": "#555555",
+    "text_main": "#E0E0E0",
+    "text_muted": "#888888",
+    "accent": "#2196F3",
+    "input_bg": "#2A2A2A"
+  },
+  "light_palette": {
+    "window_bg": "#F3F3F3",
+    "panel_bg": "#FFFFFF",
+    "border": "#CCCCCC",
+    "text_main": "#111111",
+    "text_muted": "#666666",
+    "accent": "#0078D4",
+    "input_bg": "#FAFAFA"
+  },
+  "scada_styles": {
+    "COLOR_OK": "background-color: #4CAF50; color: white; font-weight: bold; border-radius: 4px; padding: 4px;",
+    "COLOR_FAULT": "background-color: #F44336; color: white; font-weight: bold; border-radius: 4px; padding: 4px;",
+    "COLOR_INACTIVE": "background-color: #555555; color: #E0E0E0; font-weight: bold; border-radius: 4px; padding: 4px;",
+    "COLOR_WARNING": "background-color: #FF9800; color: black; font-weight: bold; border-radius: 4px; padding: 4px;",
+    "COLOR_BUTTON_STANDARD": "background-color: #383838; color: #E0E0E0; font-weight: bold; border-radius: 4px; padding: 6px; border: 1px solid #555;"
+  }
+}

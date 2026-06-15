@@ -7,7 +7,7 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QColor
 
-from src.gui.control.recipe_builder_dialog import RecipeBuilderDialog
+from src.gui.control.dialogs.recipe_builder_dialog import RecipeBuilderDialog
 
 # --- SCADA Standard Colors ---
 COLOR_OK = "background-color: #4CAF50; color: white; font-weight: bold; border-radius: 4px; padding: 6px;"

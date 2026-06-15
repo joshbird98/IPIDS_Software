@@ -4,15 +4,17 @@ from PyQt6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QSplitter,
     QListWidget, QListWidgetItem, QLineEdit, QTextEdit,
     QPushButton, QLabel, QWidget, QFormLayout,
-    QComboBox, QDoubleSpinBox, QMessageBox, QGroupBox,
+    QComboBox, QDoubleSpinBox, QGroupBox,
     QScrollArea
 )
-from PyQt6.QtCore import Qt, pyqtSignal
-from src.gui.control.tag_selector_dialog import TagSelectorDialog
+from PyQt6.QtCore import Qt
+from src.gui.control.dialogs.tag_selector_dialog import TagSelectorDialog
 
 from PyQt6.QtCore import QThread, pyqtSignal
 from src.core.ai_assistant import RecipeAIAssistant
 from PyQt6.QtWidgets import QMessageBox
+
+from src.core.theme import is_dark_mode
 
 # Set it in your PC's environment variables so it isn't hardcoded!
 API_KEY = os.environ.get("GEMINI_API_KEY")
@@ -222,7 +224,8 @@ class RecipeBuilderDialog(QDialog):
         # 1. AI ASSISTANT BLOCK
         ai_group = QGroupBox("✨ AI Recipe Assistant")
         ai_group.setStyleSheet(
-            "QGroupBox { background-color: #f8f9fa; border: 1px solid #ce93d8; border-radius: 6px; margin-top: 10px; font-weight: bold; } QGroupBox::title { subcontrol-origin: margin; left: 10px; padding: 0 3px 0 3px; }")
+            "QGroupBox { border: 1px solid #ce93d8; border-radius: 6px; margin-top: 10px; font-weight: bold; } QGroupBox::title { subcontrol-origin: margin; left: 10px; padding: 0 3px 0 3px; }"
+        )
         ai_group.setMinimumHeight(220)
 
         ai_layout = QVBoxLayout()
@@ -240,15 +243,21 @@ class RecipeBuilderDialog(QDialog):
         self.txt_ai_history = QTextEdit()
         self.txt_ai_history.setReadOnly(True)
         self.txt_ai_history.setStyleSheet(
-            "background-color: white; border: 1px solid #ddd; border-radius: 4px; padding: 5px;")
-        welcome_html = """
-                <table width="100%" border="0" cellspacing="0" cellpadding="0"><tr><td align="left">
-                    <table border="0" cellspacing="0" cellpadding="8" style="background-color: #E5E5EA; color: black;">
-                        <tr><td>Hello! Describe the sequence you want to build.</td></tr>
-                    </table>
-                </td></tr></table><br>
-                """
+            "border: 1px solid #ce93d8; border-radius: 4px; padding: 5px;")
+
+        # Dynamically set the welcome bubble colors
+        bg_col = "#2A2A2A" if is_dark_mode else "#E5E5EA"
+        txt_col = "#E0E0E0" if is_dark_mode else "black"
+
+        welcome_html = f"""
+                        <table width="100%" border="0" cellspacing="0" cellpadding="0"><tr><td align="left">
+                            <table border="0" cellspacing="0" cellpadding="8" style="background-color: {bg_col}; color: {txt_col}; border-radius: 6px;">
+                                <tr><td>Hello! Describe the sequence you want to build.</td></tr>
+                            </table>
+                        </td></tr></table><br>
+                        """
         self.txt_ai_history.setHtml(welcome_html)
+
         ai_layout.addWidget(self.txt_ai_history)
 
         # Input Area
@@ -363,7 +372,7 @@ class RecipeBuilderDialog(QDialog):
 
         user_html = f"""
         <table width="100%" border="0" cellspacing="0" cellpadding="0"><tr><td align="right">
-            <table border="0" cellspacing="0" cellpadding="8" style="background-color: #007AFF; color: white;">
+            <table border="0" cellspacing="0" cellpadding="8" style="background-color: #1976D2; color: #FFFFFF; border-radius: 6px;">
                 <tr><td>{prompt}</td></tr>
             </table>
         </td></tr></table><br>
@@ -389,18 +398,29 @@ class RecipeBuilderDialog(QDialog):
         def make_ai_bubble(text, bg_color, text_color):
             return f"""
             <table width="100%" border="0" cellspacing="0" cellpadding="0"><tr><td align="left">
-                <table border="0" cellspacing="0" cellpadding="8" style="background-color: {bg_color}; color: {text_color};">
+                <table border="0" cellspacing="0" cellpadding="8" style="background-color: {bg_color}; color: {text_color}; border-radius: 6px;">
                     <tr><td>{text}</td></tr>
                 </table>
             </td></tr></table><br>
             """
 
         if status == "error":
-            self.txt_ai_history.append(make_ai_bubble(f"<b>Error:</b> {msg}", "#FFCDD2", "#B71C1C"))
+            # Red error bubble
+            bg = "#4A0000" if is_dark_mode else "#FFCDD2"
+            txt = "#FFB4B4" if is_dark_mode else "#B71C1C"
+            self.txt_ai_history.append(make_ai_bubble(f"<b>Error:</b> {msg}", bg, txt))
+
         elif status == "chat":
-            self.txt_ai_history.append(make_ai_bubble(msg, "#E5E5EA", "black"))
+            # Standard AI reply bubble
+            bg = "#2A2A2A" if is_dark_mode else "#E5E5EA"
+            txt = "#E0E0E0" if is_dark_mode else "black"
+            self.txt_ai_history.append(make_ai_bubble(msg, bg, txt))
+
         elif status == "success":
-            self.txt_ai_history.append(make_ai_bubble("Sequence generated and loaded!", "#C8E6C9", "#1B5E20"))
+            # Green success bubble
+            bg = "#1B5E20" if is_dark_mode else "#C8E6C9"
+            txt = "#A5D6A7" if is_dark_mode else "#1B5E20"
+            self.txt_ai_history.append(make_ai_bubble("Sequence generated and loaded!", bg, txt))
 
             recipe_data = response.get("recipe", {})
             self.le_recipe_name.setText(recipe_data.get("recipe_name", "AI Sequence"))
