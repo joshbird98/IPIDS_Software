@@ -4,25 +4,25 @@ import orjson
 import sys
 
 # Ensure these match your network_map.py exactly
-from src.core.network_map import ZMQ_PORT_VACUUM_PUB, TOPIC_VACUUM_DATA
+from src.core.network_map import ZMQ_PORT_SPELLMAN_PUB, TOPIC_SPELLMAN_DATA
 
 def main():
     context = zmq.Context()
     sub_socket = context.socket(zmq.SUB)
 
-    print(f"Connecting to ZMQ Publisher at {ZMQ_PORT_VACUUM_PUB}...")
+    print(f"Connecting to ZMQ Publisher at {ZMQ_PORT_SPELLMAN_PUB}...")
 
     try:
-        sub_socket.connect(ZMQ_PORT_VACUUM_PUB)
+        sub_socket.connect(ZMQ_PORT_SPELLMAN_PUB)
     except Exception as e:
-        print(f"Connection error to {ZMQ_PORT_VACUUM_PUB}: {e}")
+        print(f"Connection error to {ZMQ_PORT_SPELLMAN_PUB}: {e}")
         sys.exit(1)
 
     # Standardize topic type for setsockopt_string
-    topic_str = TOPIC_VACUUM_DATA.decode('utf-8') if isinstance(TOPIC_VACUUM_DATA, bytes) else TOPIC_VACUUM_DATA
+    topic_str = TOPIC_SPELLMAN_DATA.decode('utf-8') if isinstance(TOPIC_SPELLMAN_DATA, bytes) else TOPIC_SPELLMAN_DATA
     sub_socket.setsockopt_string(zmq.SUBSCRIBE, topic_str)
 
-    print(f"Spying on {ZMQ_PORT_VACUUM_PUB} | Topic: '{topic_str}'")
+    print(f"Spying on {ZMQ_PORT_SPELLMAN_PUB} | Topic: '{topic_str}'")
     print("Waiting for broadcasts (Ctrl+C to exit)...")
 
     tally = 0

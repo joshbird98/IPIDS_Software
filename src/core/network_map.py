@@ -21,6 +21,10 @@ DB_RETAIN_NUM = _cfg["plc"]["db_retain"]
 MAGNET_IP = _cfg["magnet_psu"]["ip"]
 MAGNET_PORT = _cfg["magnet_psu"]["port"]
 
+# --- SMU Comms
+SMU_IP = _cfg["smu"]["ip"]
+SMU_PORT = _cfg["smu"]["port"]
+
 # --- Waveshare Hardware Endpoints ---
 NOISY_RACK_WAVESHARE_IP = _cfg["waveshares"]["noisy_rack"]["ip"]
 NOISY_RACK_WAVESHARE_PORT = _cfg["waveshares"]["noisy_rack"]["port"]
@@ -65,6 +69,9 @@ ZMQ_PORT_EVENTS_PUB = f"{HOST}:{_cfg['zmq_ports']['events_pub']}"
 ZMQ_PORT_MANAGER_PUB = f"{HOST}:{_cfg['zmq_ports']['manager_pub']}"
 ZMQ_PORT_MANAGER_CMD = f"{HOST}:{_cfg['zmq_ports']['manager_cmd']}"
 
+ZMQ_PORT_SMU_PUB =f"{HOST}:{_cfg['zmq_ports']['smu_pub']}"
+ZMQ_PORT_SMU_CMD = f"{HOST}:{_cfg['zmq_ports']['smu_cmd']}"
+
 # --- ZMQ Topics ---
 TOPIC_PLC_DATA = b"PLC_DATA"
 TOPIC_VACUUM_DATA = b"VACUUM_DATA"
@@ -73,3 +80,4 @@ TOPIC_LDLK_TURBO_DATA = b"LDLK_TURBO_DATA"
 TOPIC_SERIAL_DATA = b"SERIAL_DATA"
 TOPIC_SPELLMAN_DATA = b"SPELLMAN_DATA"
 TOPIC_MAGNET_DATA = b"MAGNET_DATA"
+TOPIC_SMU_DATA = b"SMU_DATA"

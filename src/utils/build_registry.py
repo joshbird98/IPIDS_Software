@@ -263,6 +263,41 @@ def get_magnet_tags():
 
     return tags
 
+def get_smu_tags():
+    tags = {}
+    base_tag = "ion_beam.beamline.faraday.smu"
+    source = "service_faraday_smu"
+
+    tags[f"{base_tag}.stat_comms_fail"] = {
+        "source": source, "datatype": "BOOL", "writable": False, "unit": "", "default_scale": "linear",
+        "multiplier": 1.0, "description": "Faraday SMU Comms Failure", "default_label": "SMU Comms Fail", "short_name": "Comms"
+    }
+    tags[f"{base_tag}.rb_voltage"] = {
+        "source": source, "datatype": "REAL", "writable": False, "unit": "V", "default_scale": "linear",
+        "multiplier": 1.0, "description": "Faraday SMU Voltage Readback", "default_label": "Faraday Bias Voltage", "short_name": "Voltage"
+    }
+    tags[f"{base_tag}.rb_current"] = {
+        "source": source, "datatype": "REAL", "writable": False, "unit": "A", "default_scale": "linear",
+        "multiplier": 1.0, "description": "Faraday SMU Beam Current Readback", "default_label": "Faraday Beam Current", "short_name": "Current"
+    }
+    tags[f"{base_tag}.stat_enabled"] = {
+        "source": source, "datatype": "BOOL", "writable": False, "unit": "", "default_scale": "linear",
+        "multiplier": 1.0, "description": "Faraday SMU Output Status", "default_label": "Faraday Bias Enabled", "short_name": "Enabled"
+    }
+    tags[f"{base_tag}.sp_actual_voltage"] = {
+        "source": source, "datatype": "REAL", "writable": False, "unit": "V", "default_scale": "linear",
+        "multiplier": 1.0, "description": "Faraday SMU Voltage Setpoint Cache", "default_label": "Faraday Bias SP (Act)", "short_name": "V_SP Act"
+    }
+    tags[f"{base_tag}.sp_requested_voltage"] = {
+        "source": source, "datatype": "REAL", "writable": True, "unit": "V", "default_scale": "linear",
+        "multiplier": 1.0, "description": "Faraday SMU Requested Voltage Command", "default_label": "Faraday Bias Cmd", "short_name": "V_Cmd"
+    }
+    tags[f"{base_tag}.cmd_enable"] = {
+        "source": source, "datatype": "BOOL", "writable": True, "unit": "", "default_scale": "linear",
+        "multiplier": 1.0, "description": "Faraday SMU Enable Command", "default_label": "Faraday Enable Cmd", "short_name": "En_Cmd"
+    }
+
+    return tags
 
 # --- SCL Parser specific to Siemens S7 Memory Alignment (Nested STRUCTs) ---
 def get_plc_tags_from_scl(scl_path, db_number=10, machine_root="ion_beam"):
@@ -446,6 +481,7 @@ def build_system_registry():
     turbo_tags = get_turbo_tags()
     spellman_tags = get_spellman_tags(config_dir)
     magnet_tags = get_magnet_tags()
+    smu_tags = get_smu_tags()
 
     # Build SCL parsed tags
     scl_path = os.path.join(project_root, "plc", "generated", "PLC_PC_Interface.scl")
@@ -457,6 +493,7 @@ def build_system_registry():
     new_registry.update(plc_tags)
     new_registry.update(spellman_tags)
     new_registry.update(magnet_tags)
+    new_registry.update(smu_tags)
 
     new_registry = apply_existing_overrides(new_registry, existing_registry)
 

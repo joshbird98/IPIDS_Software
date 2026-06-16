@@ -35,7 +35,10 @@
         "ip": "192.168.1.11",
         "port": 502
     },
-
+    "smu": {
+        "ip": "192.168.1.12",
+        "port": 5025
+    },
     "zmq_ports": {
         "plc_pub": 5550,
         "plc_cmd": 5551,
@@ -55,6 +58,8 @@
         "heartbeat_pub": 5566,
         "events_pub": 5567,
         "manager_pub": 5568,
-        "manager_cmd": 5569
+        "manager_cmd": 5569,
+        "smu_pub": 5570,
+        "smu_cmd": 5571
     }
 }
