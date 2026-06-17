@@ -24,7 +24,7 @@ MAX_CMD_AGE = 0.5
 PLC_WATCHDOG_AGE = 1.0
 
 # Set to False to silence standard operational prints
-DEBUG_VERBOSE = True
+DEBUG_VERBOSE = False
 
 
 class SmuScpiProtocol:
@@ -35,6 +35,7 @@ class SmuScpiProtocol:
         self.connected = False
         self.timeout = 0.5
         self.terminator = b'\n'
+        self.output_state = True
 
     def connect(self) -> bool:
         if self.sock:
@@ -50,20 +51,46 @@ class SmuScpiProtocol:
             if DEBUG_VERBOSE: print(f"[SYS] Attempting connection to {self.ip}:{self.port}...")
             self.sock.connect((self.ip, self.port))
             self.connected = True
+            print(f"[SMU Driver] Raw SCPI Socket Connected to {self.ip}:{self.port}")
 
-            # Instrument initialization sequence
+            self.sock.settimeout(5.0)
+
+            # --- 1. Instrument initialization sequence ---
             self.send_cmd("*RST")
-            time.sleep(0.1)
-            self.send_cmd(":SOUR:FUNC:MODE VOLT")
-            self.send_cmd(":SENS:FUNC \"CURR\"")
-            self.send_cmd(":SENS:CURR:RANG:AUTO ON")
-            self.send_cmd(":SENS:CURR:NPLC 1.0")
+            self.send_cmd("*CLS")
+            self.query("*OPC?")
 
-            # [VERIFY REQUIRED] Check B2911A manual for precise :FORM:ELEM syntax
+            # --- 2. Front Panel Configuration ---
+            self.send_cmd(":DISP:ENAB ON")
+            self.send_cmd(":DISP:VIEW SING1")
+            self.send_cmd(":DISP:DIG 6")
+
+            # CHANGED: Turn Zoom OFF to reveal Compliance Limits and Setup Info
+            self.send_cmd(":DISP:ZOOM OFF")
+
+            # --- 3. Source Configuration ---
+            self.send_cmd(":SOUR:VOLT:PROT 200")
+            self.send_cmd(":SOUR:FUNC:MODE VOLT")
+            self.send_cmd(":SOUR:VOLT:RANG:AUTO ON")
+            self.send_cmd(":SOUR:VOLT:MODE AUTO")
+            self.send_cmd(":SENS:CURR:PROT 1e-4")
+
+            # --- 4. Measurement Configuration ---
+            self.send_cmd(":SENS:FUNC:OFF:ALL")
+            self.send_cmd(":SENS:FUNC \"VOLT\",\"CURR\"")
+            self.send_cmd(":SENS:CURR:RANG:AUTO ON")
+            self.send_cmd(":SENS:REM OFF")
+
+            # --- 5. Telemetry Formatting ---
+            # CHANGED: Removed the :SENS node. This strictly formats the global output string.
             self.send_cmd(":FORM:ELEM:SENS VOLT,CURR")
 
-            print(f"[SMU Driver] Raw SCPI Socket Connected to {self.ip}:{self.port}")
+            # --- SYNCHRONIZATION ---
+            self.query("*OPC?")
+
+            self.sock.settimeout(self.timeout)
             return True
+
         except Exception as e:
             if DEBUG_VERBOSE: print(f"[SYS] Connection failed: {e}")
             self.connected = False
@@ -118,34 +145,31 @@ class SmuScpiProtocol:
         self.send_cmd(f":SOUR:VOLT {v_set:.6f}")
 
     def set_output(self, state: bool):
-        val = "ON" if state else "OFF"
-        self.send_cmd(f":OUTP {val}")
+        if not self.connected: return
 
-    def read_telemetry(self, intended_enable: bool) -> Optional[Tuple[float, float, bool]]:
-        """Returns (Voltage, Current, Output_State) using optimized state-aware querying."""
+        if not state:
+            self.send_cmd(":SOUR:VOLT 0.0")
+        self.output_state = state
+
+
+
+    def read_telemetry(self) -> Optional[Tuple[float, float, bool]]:
+        """Returns (Voltage, Current, Output_State)"""
         if not self.connected: return None
 
         try:
-            if not intended_enable:
-                # OPTIMIZATION A: If we want it OFF, skip the measurement.
-                # Just verify the relay state for the safety loop.
-                outp_resp = self.query(":OUTP?")
-                if outp_resp is None: return None
-                outp_state = bool(int(outp_resp.strip()))
-                return 0.0, 0.0, outp_state
+            # Atomic fetch: Ask for everything in one hardware scan
+            # This puts the SMU in 'Fetch' mode and collects all data in one pass
+            resp = self.query(":MEAS:VOLT?;:MEAS:CURR?")
 
-            else:
-                # OPTIMIZATION B: If we want it ON, skip the relay check.
-                # Just take the measurement.
-                meas_resp = self.query(":READ?")
-                if meas_resp is None: return None
+            if resp is None: return None
 
-                parts = meas_resp.split(',')
-                if len(parts) >= 2:
-                    v_rb = float(parts[0])
-                    i_rb = float(parts[1])
-                    return v_rb, i_rb, True
-                return None
+            parts = resp.split(';')
+
+            v_rb = float(parts[0])
+            i_rb = float(parts[1])
+
+            return v_rb, i_rb, self.output_state
 
         except Exception as e:
             if 'DEBUG_VERBOSE' in globals() and DEBUG_VERBOSE:
@@ -187,7 +211,7 @@ class SmuMicroservice:
         self.hb_socket.connect(ZMQ_PORT_HEARTBEAT)
         self.last_hb_time = 0.0
 
-        self.events = EventHelper("service_faraday_smu")
+        self.events = EventHelper("service_smu")
 
     def _load_config(self) -> dict:
         config_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '../../config/smu_config.json'))
@@ -277,22 +301,25 @@ class SmuMicroservice:
                 if DEBUG_VERBOSE: print(f"[ZMQ CMD] Rx: {cmd_type} = {value} (Tag: {tag})")
 
                 if cmd_type == "sp_requested_voltage":
-                    if min_v <= value <= max_v:
-                        self.hw.set_voltage(value)
-                        self.sp_cache["ion_beam.beamline.faraday.smu.sp_actual_voltage"] = value
+                    if self.state["ion_beam.beamline.faraday.smu.stat_enabled"]:
+                        if min_v <= value <= max_v:
+                            self.hw.set_voltage(value)
+                            self.sp_cache["ion_beam.beamline.faraday.smu.sp_actual_voltage"] = value
+                        else:
+                            if DEBUG_VERBOSE: print(f"[ZMQ CMD] Voltage {value} out of bounds [{min_v}, {max_v}]")
                     else:
-                        if DEBUG_VERBOSE: print(f"[ZMQ CMD] Voltage {value} out of bounds [{min_v}, {max_v}]")
+                        self.hw.set_output(False)
+                        if DEBUG_VERBOSE: print(f"[ZMQ CMD] Voltage set ignored, output off.")
 
                 elif cmd_type == "cmd_enable":
-                    self.sp_intended_enable = bool(value)
-                    self.hw.set_output(self.sp_intended_enable)
+                    self.hw.set_output(bool(value))
 
         except zmq.Again:
             pass
 
     def _poll_device(self):
         if not self.hw.connected: return
-        telemetry_data = self.hw.read_telemetry(self.sp_intended_enable)
+        telemetry_data = self.hw.read_telemetry()
         comms_fail = telemetry_data is None
 
         self.state["ion_beam.beamline.faraday.smu.stat_comms_fail"] = 1.0 if comms_fail else 0.0
@@ -315,7 +342,7 @@ class SmuMicroservice:
 
     def run(self):
         self.events.log_general("[SMU Service] Daemon Starting (SCPI/Raw Socket Architecture)...")
-        print("[SYS] Daemon Starting. DEBUG_VERBOSE is active.")
+        print("[SYS] Daemon Starting.")
 
         last_connect_attempt = 0.0
         reconnect_interval = 1.0
@@ -358,7 +385,7 @@ class SmuMicroservice:
                     if DEBUG_VERBOSE: print(f"[SYS ERR] ZMQ Publish failed: {e}")
 
                 if time.time() - self.last_hb_time >= 0.5:
-                    self.hb_socket.send_json({"service": "service_faraday_smu", "ts": time.time()})
+                    self.hb_socket.send_json({"service": "service_smu", "ts": time.time()})
                     self.last_hb_time = time.time()
 
                 sleep_time = next_tick - time.perf_counter()
