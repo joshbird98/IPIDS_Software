@@ -30,7 +30,6 @@ class IonSourceWidget(QWidget):
 
         self._init_alarms_ui()
         self._init_safety_ui()
-        self._init_diagnostics_ui()
         self._init_plot_ui()
         self._init_psu_ui()
 
@@ -103,23 +102,6 @@ class IonSourceWidget(QWidget):
         sl.addWidget(self.btn_cancel_shutdown, 1, 3)
         safety_group.setLayout(sl)
         self.main_layout.addWidget(safety_group)
-
-    def _init_diagnostics_ui(self):
-        diag_group = QGroupBox("Beamline Diagnostics")
-        dl = QHBoxLayout()
-        self.btn_fc = QPushButton("FARADAY CUP")
-        self.btn_fc.setCheckable(True)
-        self.btn_fc.setStyleSheet("""
-            QPushButton { background-color: #E0E0E0; color: black; border-radius: 4px; padding: 6px; }
-            QPushButton:disabled { background-color: #757575; color: #B0B0B0; font-weight: bold; }
-        """)
-        self.btn_fc.clicked.connect(
-            lambda *args, b=self.btn_fc: self._dispatch_command("ion_beam.beamline_diagnostics.cmd_insert_fc",
-                                                                b.isChecked()))
-        dl.addWidget(self.btn_fc)
-        dl.addStretch()
-        diag_group.setLayout(dl)
-        self.main_layout.addWidget(diag_group)
 
     def _init_plot_ui(self):
         plot_group = QGroupBox("Emission Stability")
@@ -299,7 +281,6 @@ class IonSourceWidget(QWidget):
 
             self._update_safety_controls(data, relay_active, active_step, master_comms_lost)
             self._update_shutdown_labels(active_step, auto_sdown, master_comms_lost)
-            self._update_faraday_cup(data, master_comms_lost)
             self._update_plot(data)
             self._update_power_supplies(data, relay_active, remote_lost, auto_sdown, active_step, master_comms_lost,
                                         spellman_comms_lost)
@@ -475,53 +456,6 @@ class IonSourceWidget(QWidget):
         else:
             self.btn_cancel_shutdown.setToolTip(
                 "Disabled: Abort is only permitted during the initial 'Hold Hot' phase.")
-
-    def _update_faraday_cup(self, data: dict, master_comms_lost: bool):
-        fc_inserted = data.get("ion_beam.beamline_diagnostics.stat_fc_inserted")
-        fc_retracted = data.get("ion_beam.beamline_diagnostics.stat_fc_retracted")
-        fc_lockout = bool(data.get("ion_beam.beamline_diagnostics.stat_lockout", False))
-        air_ok = bool(data.get("ion_beam.facilities.stat_air_press_ok", True))
-
-        self.btn_fc.blockSignals(True)
-        fc_state_string = "UNKNOWN"
-
-        if fc_inserted is not None and fc_retracted is not None:
-            fc_in, fc_out = bool(fc_inserted), bool(fc_retracted)
-            if fc_in and not fc_out:
-                fc_state_string = "INSERTED"
-                self.btn_fc.setChecked(True)
-                self.btn_fc.setText("FARADAY CUP: INSERTED")
-                self.btn_fc.setStyleSheet(
-                    """QPushButton { background-color: #FF9800; color: black; font-weight: bold; border-radius: 4px; padding: 6px; } QPushButton:disabled { background-color: #757575; color: #B0B0B0; font-weight: bold; }""")
-            elif not fc_in and fc_out:
-                fc_state_string = "RETRACTED"
-                self.btn_fc.setChecked(False)
-                self.btn_fc.setText("FARADAY CUP: RETRACTED")
-                self.btn_fc.setStyleSheet(
-                    """QPushButton { background-color: #E0E0E0; color: black; border-radius: 4px; padding: 6px; } QPushButton:disabled { background-color: #757575; color: #B0B0B0; font-weight: bold; }""")
-            elif not fc_in and not fc_out:
-                fc_state_string = "UNPOWERED / TRAVELLING"
-                self.btn_fc.setText("FARADAY CUP: NO PNEUMATICS")
-                self.btn_fc.setStyleSheet(COLOR_FAULT)
-            elif fc_in and fc_out:
-                fc_state_string = "SENSOR ERROR"
-                self.btn_fc.setText("FARADAY CUP: SENSOR ERROR")
-                self.btn_fc.setStyleSheet(COLOR_FAULT)
-
-        if master_comms_lost:
-            self.btn_fc.setEnabled(False)
-            self.btn_fc.setToolTip("Disabled: GUI to PLC communications are offline.")
-        elif not air_ok:
-            self.btn_fc.setEnabled(False)
-            self.btn_fc.setToolTip("Disabled: Facility air pressure is lost. Actuator cannot be moved.")
-        elif fc_lockout:
-            self.btn_fc.setEnabled(False)
-            self.btn_fc.setToolTip(f"Disabled: Faraday Cup is locked {fc_state_string} by an active PLC sequence.")
-        else:
-            self.btn_fc.setEnabled(True)
-            self.btn_fc.setToolTip("Click to toggle the Faraday Cup position in the beamline.")
-
-        self.btn_fc.blockSignals(False)
 
     def _update_shutdown_labels(self, active_step: int, auto_sdown: bool, master_comms_lost: bool):
         if master_comms_lost:

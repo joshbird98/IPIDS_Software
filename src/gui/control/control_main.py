@@ -11,7 +11,7 @@ from src.core.theme import is_dark_mode
 from src.core.network_map import (
     ZMQ_PORT_PLC_PUB, ZMQ_PORT_VACUUM_PUB,
     ZMQ_PORT_SRC_TURBO_PUB, ZMQ_PORT_MANAGER_PUB,
-    ZMQ_PORT_SPELLMAN_PUB, ZMQ_PORT_MAGNET_PUB
+    ZMQ_PORT_SPELLMAN_PUB, ZMQ_PORT_MAGNET_PUB, ZMQ_PORT_SMU_PUB
 )
 from src.core.event_helper import EventHelper
 from src.core.recipe_engine import RecipeWorker
@@ -28,6 +28,7 @@ from src.gui.control.widgets.source_widget import IonSourceWidget
 from src.gui.control.widgets.optics_widget import BeamlineOpticsWidget
 from src.gui.control.widgets.diagnostics_widget import DiagnosticsWidget
 from src.gui.control.dialogs.config_editor_dialog import ConfigEditorDialog
+from src.gui.control.widgets.faraday_smu_widget import FaradaySMUWidget
 
 
 class AudioManager:
@@ -88,6 +89,7 @@ class ControlMainWindow(QMainWindow):
             ZMQ_PORT_PLC_PUB, ZMQ_PORT_VACUUM_PUB,
             ZMQ_PORT_SRC_TURBO_PUB, ZMQ_PORT_MANAGER_PUB,
             ZMQ_PORT_SPELLMAN_PUB, ZMQ_PORT_MAGNET_PUB,
+            ZMQ_PORT_SMU_PUB
         ]
         self.telemetry_thread = ZMQTelemetryThread(telemetry_ports)
         self.telemetry_thread.data_received.connect(self._route_telemetry)
@@ -125,6 +127,7 @@ class ControlMainWindow(QMainWindow):
         view_menu.addAction(self.src_dock.toggleViewAction())
         view_menu.addAction(self.optics_dock.toggleViewAction())
         view_menu.addAction(self.diag_dock.toggleViewAction())
+        view_menu.addAction(self.smu_dock.toggleViewAction())
 
         view_menu.addSeparator()
 
@@ -207,6 +210,13 @@ class ControlMainWindow(QMainWindow):
         self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self.optics_dock)
         self.subsystems["optics"] = self.optics_widget
 
+        self.smu_dock = QDockWidget("Faraday Cup && SMU", self)
+        self.smu_dock.setObjectName("FaradaySmuDock")
+        self.smu_widget = FaradaySMUWidget(self.cmd_thread)
+        self.smu_dock.setWidget(self.smu_widget)
+        self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self.smu_dock)
+        self.subsystems["faraday_smu"] = self.smu_widget
+
         self.tabifyDockWidget(self.src_dock, self.optics_dock)
         self.src_dock.raise_()
 
@@ -232,6 +242,9 @@ class ControlMainWindow(QMainWindow):
         if "ion_beam.beamline.magnet.rb_voltage" in fresh_data:
             self.last_seen["magnet"] = now
             fresh_data["magnet.connected"] = True
+        if "ion_beam.beamline.faraday.smu.stat_comms_fail" in fresh_data:
+            self.last_seen["smu"] = time.time()
+            fresh_data["smu.connected"] = True
 
         self.master_telemetry_cache.update(fresh_data)
 
@@ -246,12 +259,15 @@ class ControlMainWindow(QMainWindow):
             self.master_telemetry_cache["vacuum.connected"] = False
         if now - self.last_seen["magnet"] > 2.5 and self.master_telemetry_cache.get("magnet.connected", True):
             self.master_telemetry_cache["magnet.connected"] = False
+        if now - self.last_seen.get("smu", 0) > 2.5 and self.master_telemetry_cache.get("smu.connected", True):
+            self.master_telemetry_cache["smu.connected"] = False
 
         self.vac_widget.update_telemetry(self.master_telemetry_cache)
         self.src_widget.update_telemetry(self.master_telemetry_cache)
         self.optics_widget.update_telemetry(self.master_telemetry_cache)
         self.diag_widget.update_telemetry(self.master_telemetry_cache)
         self.log_widget.update_telemetry(self.master_telemetry_cache)
+        self.smu_widget.update_telemetry(self.master_telemetry_cache)
 
         self._evaluate_audio_triggers()
 

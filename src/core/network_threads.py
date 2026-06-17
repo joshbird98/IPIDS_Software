@@ -8,7 +8,8 @@ from src.core.network_map import (
     ZMQ_PORT_SRC_TURBO_CMD,
     ZMQ_PORT_MANAGER_CMD,
     ZMQ_PORT_SPELLMAN_CMD,
-    ZMQ_PORT_MAGNET_CMD
+    ZMQ_PORT_MAGNET_CMD,
+    ZMQ_PORT_SMU_CMD
 )
 
 # --- Background Network Workers ---
@@ -66,13 +67,15 @@ class ZMQCommandThread(QThread):
             "src_turbo": ctx.socket(zmq.PUB),
             "manager": ctx.socket(zmq.PUB),
             "spellman": ctx.socket(zmq.PUB),
-            "magnet": ctx.socket(zmq.PUB)
+            "magnet": ctx.socket(zmq.PUB),
+            "smu": ctx.socket(zmq.PUB)
         }
         sockets["plc"].connect(ZMQ_PORT_PLC_CMD)
         sockets["src_turbo"].connect(ZMQ_PORT_SRC_TURBO_CMD)
         sockets["manager"].connect(ZMQ_PORT_MANAGER_CMD)
         sockets["spellman"].connect(ZMQ_PORT_SPELLMAN_CMD)
         sockets["magnet"].connect(ZMQ_PORT_MAGNET_CMD)
+        sockets["smu"].connect(ZMQ_PORT_SMU_CMD)
 
         try:
             while self.running:
