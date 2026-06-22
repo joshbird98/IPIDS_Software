@@ -4,7 +4,7 @@ import os
 from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QWidget,
     QVBoxLayout, QHBoxLayout, QGridLayout, QLabel, QPushButton, QFrame,
-    QGroupBox, QDoubleSpinBox, QMessageBox)
+    QGroupBox, QDoubleSpinBox, QMessageBox, QComboBox)
 from PyQt6.QtCore import Qt
 from src.core.theme import (
     COLOR_OK,
@@ -12,6 +12,99 @@ from src.core.theme import (
     COLOR_INACTIVE,
     COLOR_BUTTON_STANDARD
 )
+
+import numpy as np
+from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
+from matplotlib.figure import Figure
+from PyQt6.QtCore import QThread, pyqtSignal
+from PyQt6.QtWidgets import QDockWidget, QFormLayout
+
+
+class MassScanWorker(QThread):
+    data_point = pyqtSignal(float, float)
+    scan_finished = pyqtSignal()
+    status_msg = pyqtSignal(str)
+
+    def __init__(self, cmd_thread, get_telemetry_cb, low: float, high: float, steps: int, dwell: float):
+        super().__init__()
+        self.cmd_thread = cmd_thread
+        self.get_telemetry_cb = get_telemetry_cb
+        self.low = low
+        self.high = high
+        self.steps = steps
+        self.dwell = dwell
+
+        self.is_stopped = False
+        # Direct target for the magnet current
+        self.current_sp_tag = "ion_beam.beamline.magnet.sp_requested_current"
+        self.mag_rb_tag = "ion_beam.beamline.magnet.rb_current"
+        self.beam_rb_tag = "ion_beam.beamline.faraday.smu.rb_current"
+
+    def run(self):
+        self.status_msg.emit("Starting Sweep...")
+        current_points = np.linspace(self.low, self.high, self.steps)
+
+        for amps in current_points:
+            if self.is_stopped: break
+
+            # Send raw Amps command directly to the magnet target
+            self.cmd_thread.send_command("magnet", self.current_sp_tag, amps)
+
+            # Dwell
+            start = time.time()
+            while time.time() - start < self.dwell:
+                if self.is_stopped: return
+                time.sleep(0.05)
+
+            if self.is_stopped: break
+
+            # Measure
+            actual_mag_amps = self.get_telemetry_cb(self.mag_rb_tag)
+            measured_beam_current = self.get_telemetry_cb(self.beam_rb_tag)
+            self.data_point.emit(actual_mag_amps, measured_beam_current)
+
+        if not self.is_stopped:
+            self.status_msg.emit("Scan Complete.")
+
+        self.scan_finished.emit()
+
+    def stop(self):
+        self.is_stopped = True
+
+class MassScanPlotWidget(QWidget):
+    def __init__(self):
+        super().__init__()
+        layout = QVBoxLayout(self)
+        self.figure = Figure()
+        self.canvas = FigureCanvas(self.figure)
+        self.ax = self.figure.add_subplot(111)
+
+        self.ax.set_xlabel("Magnet Current (A)")
+        self.ax.set_ylabel("Beam Current (A)")
+        self.ax.grid(True)
+        self.line, = self.ax.plot([], [], 'b.-')
+        layout.addWidget(self.canvas)
+
+        self.x_data = []
+        self.y_data = []
+
+    def add_point(self, x, y):
+        self.x_data.append(x)
+        self.y_data.append(y)
+        self.line.set_data(self.x_data, self.y_data)
+
+        if self.x_data:
+            self.ax.set_xlim(min(self.x_data) - 1, max(self.x_data) + 1)
+            min_y, max_y = min(self.y_data), max(self.y_data)
+            margin = (max_y - min_y) * 0.1 if max_y != min_y else 1e-9
+            self.ax.set_ylim(min_y - margin, max_y + margin)
+        self.canvas.draw()
+
+    def clear_plot(self):
+        self.x_data.clear()
+        self.y_data.clear()
+        self.line.set_data([], [])
+        self.canvas.draw()
 
 class BeamlineOpticsWidget(QWidget):
     def __init__(self, cmd_thread, event_helper):
@@ -22,6 +115,13 @@ class BeamlineOpticsWidget(QWidget):
         self.config_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../../config"))
         self.magnet_config = self._load_magnet_config()
 
+        # Telemetry Cache
+        self._latest_telemetry = {}
+        self.scan_worker = None
+
+        self.plot_dock = None
+        self.plot_widget = None
+
         self.main_layout = QVBoxLayout(self)
 
         self._init_pre_magnet_ui()
@@ -30,6 +130,21 @@ class BeamlineOpticsWidget(QWidget):
         self._init_downstream_optics_ui()
 
         self.main_layout.addStretch()
+
+    def _init_plot_dock(self):
+        main_win = self.window()
+        if isinstance(main_win, QMainWindow):
+            self.plot_dock = QDockWidget("Mass Scan Live Plot", main_win)
+            self.plot_widget = MassScanPlotWidget()
+            self.plot_dock.setWidget(self.plot_widget)
+
+            self.plot_dock.setFloating(True)
+            main_win.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self.plot_dock)
+            self.plot_dock.resize(600, 400)
+
+            self.plot_dock.hide()
+        else:
+            self.plot_dock = None
 
     def _dispatch_spellman_setpoints(self, base_tag: str, voltage: float):
         """Dispatches voltage and autonomously sets a safe 50uA current limit to unclamp the CC loop."""
@@ -113,12 +228,15 @@ class BeamlineOpticsWidget(QWidget):
         group = QGroupBox("2. Mass Analyzer Magnet")
         layout = QGridLayout()
 
+        # --- Row 0: Cooling Status ---
         self.lbl_mag_cooling = QLabel("COOLING: UNKNOWN")
         self.lbl_mag_cooling.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.lbl_mag_cooling.setStyleSheet(COLOR_INACTIVE)
         layout.addWidget(self.lbl_mag_cooling, 0, 0, 1, 2)
 
+        # --- Row 1: Main Magnet Controls ---
         layout.addWidget(QLabel("<b>Magnet Current:</b>"), 1, 0)
+
         self.lbl_mag_rb = QLabel("RB: --- A | --- V")
         layout.addWidget(self.lbl_mag_rb, 1, 1)
 
@@ -146,28 +264,168 @@ class BeamlineOpticsWidget(QWidget):
             lambda *args: self._dispatch_command("ion_beam.beamline.magnet.cmd_degauss", True))
         layout.addWidget(self.btn_mag_deg, 1, 4)
 
-        calc_frame = QFrame()
-        calc_frame.setStyleSheet("background-color: #E3F2FD; border-radius: 4px; padding: 4px;")
-        calc_layout = QHBoxLayout(calc_frame)
-        calc_layout.setContentsMargins(4, 4, 4, 4)
+        # --- Row 2: Auto-Tune Target ---
+        layout.addWidget(QLabel("<b>Auto-Tune Target:</b>"), 2, 0)
 
-        calc_layout.addWidget(QLabel("<b>Auto-Tune Mass (amu):</b>"))
         self.sp_mass = QDoubleSpinBox()
         self.sp_mass.setRange(1.0, 250.0)
         self.sp_mass.setDecimals(1)
         self.sp_mass.setSingleStep(1.0)
         self.sp_mass.setValue(28.0)
+        self.sp_mass.setSuffix(" amu")
         self.sp_mass.setKeyboardTracking(False)
-        calc_layout.addWidget(self.sp_mass)
+        layout.addWidget(self.sp_mass, 2, 2)
 
         self.btn_calc_mass = QPushButton("CALCULATE && SET AMPS")
         self.btn_calc_mass.setStyleSheet("background-color: #2196F3; color: white; font-weight: bold;")
         self.btn_calc_mass.clicked.connect(self._calculate_mass)
-        calc_layout.addWidget(self.btn_calc_mass)
+        layout.addWidget(self.btn_calc_mass, 2, 3, 1, 2)
 
-        layout.addWidget(calc_frame, 2, 0, 1, 5)
+        # --- Row 3: Sweep Configuration ---
+        layout.addWidget(QLabel("<b>Sweep Config:</b>"), 3, 0)
+
+        self.sp_scan_low = QDoubleSpinBox()
+        self.sp_scan_low.setPrefix("L: ")
+        self.sp_scan_low.setSuffix(" A")
+        self.sp_scan_low.setMaximum(100.0)
+        self.sp_scan_low.setValue(0.0)
+        self.sp_scan_low.setKeyboardTracking(False)
+        layout.addWidget(self.sp_scan_low, 3, 1)
+
+        self.sp_scan_high = QDoubleSpinBox()
+        self.sp_scan_high.setPrefix("H: ")
+        self.sp_scan_high.setSuffix(" A")
+        self.sp_scan_high.setMaximum(100.0)
+        self.sp_scan_high.setValue(5.0)
+        self.sp_scan_high.setKeyboardTracking(False)
+        layout.addWidget(self.sp_scan_high, 3, 2)
+
+        self.sp_scan_steps = QDoubleSpinBox()
+        self.sp_scan_steps.setPrefix("Steps: ")
+        self.sp_scan_steps.setDecimals(0)
+        self.sp_scan_steps.setRange(10, 1000)
+        self.sp_scan_steps.setValue(100)
+        self.sp_scan_steps.setKeyboardTracking(False)
+        layout.addWidget(self.sp_scan_steps, 3, 3)
+
+        self.combo_scan_speed = QComboBox()
+        self.combo_scan_speed.addItems(["Fast (0.5s dwell)", "Slow (2.0s dwell)", "Very Slow (5.0s dwell)"])
+        layout.addWidget(self.combo_scan_speed, 3, 4)
+
+        # --- Row 4: Sweep Controls ---
+        self.btn_start_scan = QPushButton("START SWEEP")
+        self.btn_start_scan.setStyleSheet("background-color: #FF9800; color: white; font-weight: bold;")
+        self.btn_start_scan.clicked.connect(self._start_sweep)
+        self.btn_start_scan.setToolTip("Click to start the automated mass scan sweep")
+        layout.addWidget(self.btn_start_scan, 4, 2)
+
+        self.btn_stop_scan = QPushButton("STOP")
+        self.btn_stop_scan.setStyleSheet("background-color: #F44336; color: white; font-weight: bold;")
+        self.btn_stop_scan.setEnabled(False)
+        self.btn_stop_scan.clicked.connect(self._stop_sweep)
+        self.btn_stop_scan.setToolTip("Disabled: No sweep currently active")
+        layout.addWidget(self.btn_stop_scan, 4, 3)
+
+        self.btn_toggle_plot = QPushButton("SHOW PLOT")
+        self.btn_toggle_plot.clicked.connect(self._toggle_plot)
+        self.btn_toggle_plot.setToolTip("Open or bring the live plot window to the front")
+        layout.addWidget(self.btn_toggle_plot, 4, 4)
+
         group.setLayout(layout)
         self.main_layout.addWidget(group)
+
+    def _get_latest_telemetry(self, tag: str) -> float:
+        return float(self._latest_telemetry.get(tag, 0.0))
+
+    def _start_sweep(self):
+        if not self.btn_mag_en.isChecked():
+            QMessageBox.warning(self, "Hardware Interlock", "Cannot start sweep: Magnet is not enabled.")
+            return
+
+        low = self.sp_scan_low.value()
+        high = self.sp_scan_high.value()
+        steps = int(self.sp_scan_steps.value())
+
+        # Parameter Safety Check
+        if low >= high:
+            QMessageBox.warning(self, "Invalid Sweep Parameters",
+                                "The Low limit must be strictly less than the High limit.")
+            return
+
+        # Lazy-load the dock if it hasn't been created yet
+        if self.plot_dock is None:
+            self._init_plot_dock()
+
+        # Safely open and clear the plot
+        if self.plot_dock is not None and self.plot_widget is not None:
+            self.plot_dock.show()
+            self.plot_widget.clear_plot()
+
+        # Determine dwell time from Combobox
+        speed_idx = self.combo_scan_speed.currentIndex()
+        if speed_idx == 0:
+            dwell = 0.5
+        elif speed_idx == 1:
+            dwell = 2.0
+        else:
+            dwell = 5.0
+
+        self.scan_worker = MassScanWorker(self.cmd_thread, self._get_latest_telemetry, low, high, steps, dwell)
+
+        if self.plot_widget is not None:
+            self.scan_worker.data_point.connect(self.plot_widget.add_point)
+
+        self.scan_worker.scan_finished.connect(self._on_sweep_finished)
+        self.scan_worker.start()
+
+        self._update_sweep_ui_lock(True)
+
+    def _stop_sweep(self):
+        if self.scan_worker and self.scan_worker.isRunning():
+            self.scan_worker.stop()
+            self.scan_worker.wait()
+        self._update_sweep_ui_lock(False)
+
+    def _on_sweep_finished(self):
+        self._update_sweep_ui_lock(False)
+
+    def _toggle_plot(self):
+        # Lazy-load the dock if it hasn't been created yet
+        if self.plot_dock is None:
+            self._init_plot_dock()
+
+        if self.plot_dock is not None:
+            if self.plot_dock.isVisible():
+                self.plot_dock.hide()
+            else:
+                self.plot_dock.show()
+
+    def _update_sweep_ui_lock(self, is_sweeping: bool):
+        # The STOP button is only enabled when sweeping
+        self.btn_stop_scan.setEnabled(is_sweeping)
+        self.btn_stop_scan.setToolTip(
+            "Click to stop the active sweep" if is_sweeping else "Disabled: No sweep currently active"
+        )
+
+        # If we just started a sweep, immediately lock the UI.
+        # (If we just stopped, we let the next 10Hz telemetry tick safely unlock it based on hardware limits)
+        if is_sweeping:
+            sweep_lock_msg = "Disabled: Sweep is currently active"
+
+            self.btn_start_scan.setEnabled(False)
+            self.btn_start_scan.setToolTip(sweep_lock_msg)
+
+            self.sp_mag_current.setEnabled(False)
+            self.sp_mag_current.setToolTip(sweep_lock_msg)
+
+            self.btn_mag_deg.setEnabled(False)
+            self.btn_mag_deg.setToolTip(sweep_lock_msg)
+
+            self.sp_mass.setEnabled(False)
+            self.sp_mass.setToolTip(sweep_lock_msg)
+
+            self.btn_calc_mass.setEnabled(False)
+            self.btn_calc_mass.setToolTip(sweep_lock_msg)
 
     def _calculate_mass(self):
         target_amu = self.sp_mass.value()
@@ -277,6 +535,8 @@ class BeamlineOpticsWidget(QWidget):
                                    "pri_unit": pri_unit, "sec_unit": sec_unit}
 
     def update_telemetry(self, data: dict):
+        self._latest_telemetry = data
+
         master_comms_lost = not bool(data.get("system.connected", False)) or bool(
             data.get("ion_beam.system.pc_plc_comms_lost", False))
         relay_active = bool(data.get("ion_beam.facilities.safety_relay_active", False))
@@ -311,6 +571,11 @@ class BeamlineOpticsWidget(QWidget):
             self.btn_mag_en.setChecked(bool(mag_en))
             self.btn_mag_en.setStyleSheet(COLOR_OK if mag_en else COLOR_BUTTON_STANDARD)
 
+        # ABORT SWEEP IF MAGNET DROPS OR FAULTS
+        is_sweeping = self.scan_worker is not None and self.scan_worker.isRunning()
+        if is_sweeping and not mag_en:
+            self._stop_sweep()
+
         mag_lock_reason = ""
         if mag_state != "ONLINE":
             mag_lock_reason = "Magnet microservice is offline."
@@ -326,14 +591,52 @@ class BeamlineOpticsWidget(QWidget):
 
         self.btn_mag_en.setEnabled(not mag_lockout)
         self.btn_mag_en.setToolTip(mag_tt)
-        self.sp_mag_current.setEnabled(not mag_lockout)
-        self.sp_mag_current.setToolTip(mag_tt)
-        self.btn_mag_deg.setEnabled(not mag_lockout)
-        self.btn_mag_deg.setToolTip(
-            f"Disabled: {mag_lock_reason}" if mag_lockout else "Click to trigger autonomous degaussing sequence")
-        self.btn_calc_mass.setEnabled(not mag_lockout)
-        self.btn_calc_mass.setToolTip(
-            f"Disabled: {mag_lock_reason}" if mag_lockout else "Click to auto-tune magnet current for target mass")
+
+        # --- Dynamic Control Lockouts & Tooltips ---
+        if is_sweeping:
+            # Overwrite all tooltips if a sweep is actively running
+            sweep_lock_msg = "Disabled: Sweep is currently active"
+
+            self.btn_start_scan.setEnabled(False)
+            self.btn_start_scan.setToolTip(sweep_lock_msg)
+
+            # ADDED: Enable Stop button during sweep
+            self.btn_stop_scan.setEnabled(True)
+            self.btn_stop_scan.setToolTip("Click to stop the active sweep")
+
+            self.sp_mag_current.setEnabled(False)
+            self.sp_mag_current.setToolTip(sweep_lock_msg)
+            self.btn_mag_deg.setEnabled(False)
+            self.btn_mag_deg.setToolTip(sweep_lock_msg)
+            self.btn_calc_mass.setEnabled(False)
+            self.btn_calc_mass.setToolTip(sweep_lock_msg)
+            self.sp_mass.setEnabled(False)
+            self.sp_mass.setToolTip(sweep_lock_msg)
+        else:
+            # Revert to hardware-based lockouts and standard tooltips
+            self.btn_start_scan.setEnabled(not mag_lockout)
+            self.btn_start_scan.setToolTip(
+                f"Disabled: {mag_lock_reason}" if mag_lockout else "Click to start the automated mass scan sweep")
+
+            # ADDED: Disable Stop button when NOT sweeping
+            self.btn_stop_scan.setEnabled(False)
+            self.btn_stop_scan.setToolTip("Disabled: No sweep currently active")
+
+            self.sp_mag_current.setEnabled(not mag_lockout)
+            self.sp_mag_current.setToolTip(
+                f"Disabled: {mag_lock_reason}" if mag_lockout else "Set manual magnet current")
+
+            self.btn_mag_deg.setEnabled(not mag_lockout)
+            self.btn_mag_deg.setToolTip(
+                f"Disabled: {mag_lock_reason}" if mag_lockout else "Click to trigger autonomous degaussing sequence")
+
+            self.btn_calc_mass.setEnabled(not mag_lockout)
+            self.btn_calc_mass.setToolTip(
+                f"Disabled: {mag_lock_reason}" if mag_lockout else "Click to auto-tune magnet current for target mass")
+
+            self.sp_mass.setEnabled(not mag_lockout)
+            self.sp_mass.setToolTip(
+                f"Disabled: {mag_lock_reason}" if mag_lockout else "Target mass for auto-tuning")
 
         if mag_deg:
             self.btn_mag_deg.setText("DEGAUSSING...")

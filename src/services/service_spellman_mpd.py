@@ -57,6 +57,7 @@ class SpellmanMPDProtocol:
             self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             self.sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
             self.sock.settimeout(SOCKET_TIMEOUT)
+            self.sock.bind(('192.168.1.100', 0))
             self.sock.connect((self.ip, self.port))
             self.connected = True
             print(f"[MPD Driver] {self.bus_id} Connected successfully to {self.ip}:{self.port}")
