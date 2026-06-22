@@ -10,6 +10,7 @@ from src.core.os_helper import harden_windows_process
 # Force Windows high-resolution timers (1ms precision)
 if os.name == 'nt':
     import ctypes
+
     ctypes.windll.winmm.timeBeginPeriod(1)
 
 # Ensure these match your network_map.py
@@ -128,6 +129,9 @@ class TurbovacMicroservice:
         self.connected = False
         self.comms_ok = False
         self.active_control_word = None
+
+        # Arbitration State
+        self.active_ctrl_mode = 0
 
         # Internal Memory (Not broadcasted directly)
         self._max_hz = 1000
@@ -309,12 +313,27 @@ class TurbovacMicroservice:
                 tag = msg.get("tag", "")
                 value = msg.get("value")
                 ts = msg.get("ts", 0.0)
+                origin = msg.get("origin", "hmi")
 
                 if time.time() - ts > MAX_CMD_AGE:
                     continue
 
+                # --- 1. ARBITRATION: Handle Control Mode Changes ---
+                if tag.endswith(".cmd_ctrl_mode"):
+                    try:
+                        self.active_ctrl_mode = int(value)
+                        self.events.log_general(f"Arbitration: Turbo mode set to {self.active_ctrl_mode}")
+                    except (ValueError, TypeError):
+                        pass
+                    continue
+
+                # --- 2. ARBITRATION: Enforce Lockout ---
+                if self.active_ctrl_mode > 0 and origin != "optimizer":
+                    continue
+
                 if tag.endswith(".cmd_enable"):
                     if value is True:
+                        self._transaction(3, 0, control_word=0x0480)  # Reset to clear any faults
                         self.active_control_word = 0x0401
                     else:
                         self.active_control_word = 0x0400
@@ -378,6 +397,9 @@ class TurbovacMicroservice:
             comms_fail = not self.connected or not self.comms_ok
             self.state[f"{base_tag}.stat_comms_fail"] = 1.0 if comms_fail else 0.0
 
+            # Publish active control mode
+            self.state[f"{base_tag}.rb_ctrl_mode"] = float(self.active_ctrl_mode)
+
             # 2. Process Incoming ZMQ Commands
             self._process_commands()
 
@@ -411,7 +433,8 @@ class TurbovacMicroservice:
             self.state["system.cycle_time_ms"] = elapsed * 1000
 
             try:
-                topic = TOPIC_SRC_TURBO_DATA if isinstance(TOPIC_SRC_TURBO_DATA, bytes) else TOPIC_SRC_TURBO_DATA.encode('utf-8')
+                topic = TOPIC_SRC_TURBO_DATA if isinstance(TOPIC_SRC_TURBO_DATA,
+                                                           bytes) else TOPIC_SRC_TURBO_DATA.encode('utf-8')
                 self.pub_socket.send_multipart([topic, orjson.dumps(self.state)])
             except Exception as e:
                 self.events.log_general(f"ZMQ Publish Error: {e}")

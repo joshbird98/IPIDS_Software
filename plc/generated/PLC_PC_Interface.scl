@@ -18,8 +18,8 @@ NON_RETAIN
             PLC_Cycle_Count : DInt;             // Heartbeat counter for PC to monitor PLC health
             Remote_Shutdown_Step : Int;         // 0=OK, 1=Hold, 2=Cooling, 3=Tripped, 99=Latched
             PC_Shutdown_Step : Int;             // 0=OK, 1=Hold, 2=Cooling, 3=Tripped, 99=Latched
-            Safety_Timer_Elapsed_ms : DInt;     // The elapsed time for the safety relay timer
-            Safety_Timer_Total_ms : DInt;       // The total time the enable safety relay command latches for
+            Safety_Timer_Elapsed_ms : DInt;     // The elapsed time for the safety relay timer | unit=ms
+            Safety_Timer_Total_ms : DInt;       // The total time the enable safety relay command latches for | unit=ms
          END_STRUCT;
 
          Faults : STRUCT
@@ -40,20 +40,20 @@ NON_RETAIN
 
          Source_Extraction : STRUCT
             Stat_Enabled : Bool;          // Hardware state: TRUE = HV Contactor Closed
-            RB_Voltage : Real;            // Physical Readback (ADC) in kV
-            RB_Current : Real;            // Physical Readback (ADC) in mA
-            RB_Power : Real;              // Calculated power, in W
-            SP_Actual_Voltage : Real;     // Active Setpoint currently driving the DAC
+            RB_Voltage : Real;            // Physical Readback (ADC) | unit=kV
+            RB_Current : Real;            // Physical Readback (ADC) | unit=mA
+            RB_Power : Real;              // Calculated power | unit=W
+            SP_Actual_Voltage : Real;     // Active Setpoint currently driving the DAC | unit=kV
             Ctrl_Mode : Int;              // 0=Manual, 1=PLC Auto, 2=Recipe, 4=Arc-Quench
             Stat_Lockout : Bool;          // TRUE if interlock blocks enabling/changing SP
          END_STRUCT;
 
          Source_Target : STRUCT
             Stat_Enabled : Bool;          // Hardware state: TRUE = HV Contactor Closed
-            RB_Voltage : Real;            // Physical Readback (ADC) in kV
-            RB_Current : Real;            // Physical Readback (ADC) in mA
-            RB_Power : Real;              // Calculated power, in W
-            SP_Actual_Voltage : Real;     // Active Setpoint currently driving the DAC
+            RB_Voltage : Real;            // Physical Readback (ADC) | unit=kV
+            RB_Current : Real;            // Physical Readback (ADC) | unit=mA
+            RB_Power : Real;              // Calculated power | unit=W
+            SP_Actual_Voltage : Real;     // Active Setpoint currently driving the DAC | unit=kV
             Ctrl_Mode : Int;              // 0=Manual, 1=PLC Auto, 2=Recipe, 4=Arc-Quench
             Stat_Lockout : Bool;          // TRUE if interlock blocks enabling/changing SP
          END_STRUCT;
@@ -61,37 +61,37 @@ NON_RETAIN
          Source_Filament : STRUCT
             Stat_Enabled : Bool;          // Hardware state: TRUE = Contactor Closed
             Stat_Disarming : Bool;        // Rampdown happening
-            RB_Voltage : Real;            // Physical Readback (ADC) in V
-            RB_Current : Real;            // Physical Readback (ADC) in A
-            RB_Power : Real;              // Calculated power, in W
-            Resistance : Real;            // Calculated resistance of filament, milli-ohms
-            SP_Actual_Current : Real;     // Active Setpoint currently driving the DAC
+            RB_Voltage : Real;            // Physical Readback (ADC) | unit=V
+            RB_Current : Real;            // Physical Readback (ADC) | unit=A
+            RB_Power : Real;              // Calculated power | unit=W
+            Resistance : Real;            // Calculated resistance of filament | unit=mΩ
+            SP_Actual_Current : Real;     // Active Setpoint currently driving the DAC | unit=A
             Ctrl_Mode : Int;              // 0=Manual, 1=PLC Auto, 2=Recipe, 3=Cascaded (PID Slave)
             Stat_Lockout : Bool;          // TRUE if interlock blocks enabling/changing SP
-            Out_CV_Current : Real;        // Raw PID Control Variable output for diagnostics
+            Out_CV_Current : Real;        // Raw PID Control Variable output for diagnostics | unit=%
          END_STRUCT;
 
          Source_Thermionic : STRUCT
             Stat_Enabled : Bool;          // Hardware state: TRUE = Contactor Closed
             Stat_Auto_Emission : Bool;    // TRUE = PID loop is controlling Filament
-            RB_Voltage : Real;            // Physical Readback (ADC) in V
-            RB_Current : Real;            // Physical Readback (ADC) in mA (Emission Current)
-            RB_Power : Real;              // Calculated power, in W
-            SP_Actual_Current : Real;     // Active Setpoint currently driving the DAC
+            RB_Voltage : Real;            // Physical Readback (ADC) | unit=V
+            RB_Current : Real;            // Physical Readback (ADC) | unit=mA
+            RB_Power : Real;              // Calculated power | unit=W
+            SP_Actual_Current : Real;     // Active Setpoint currently driving the DAC | unit=mA
             Ctrl_Mode : Int;              // 0=Manual, 1=PLC Auto, 2=Recipe, 4=Arc-Quench
             Stat_Lockout : Bool;          // TRUE if interlock blocks enabling/changing SP
          END_STRUCT;
 
          Source_Cesium : STRUCT
             Stat_Enabled : Bool;          // Hardware state: TRUE = Heater Contactor Closed
-            RB_Temp : Real;               // Physical Readback (Thermocouple) in °C
-            SP_Actual_Temp : Real;        // Active Setpoint currently driving the PID
+            RB_Temp : Real;               // Physical Readback (Thermocouple) | unit=°C
+            SP_Actual_Temp : Real;        // Active Setpoint currently driving the PID | unit=°C
             Ctrl_Mode : Int;              // 0=Manual, 1=PLC Auto, 2=Recipe
             Stat_Lockout : Bool;          // TRUE if interlock blocks enabling/changing SP
-            Out_CV_Heating : Real;        // PID Heating Duty Cycle (0.0 to 100.0 %)
+            Out_CV_Heating : Real;        // PID Heating Duty Cycle | unit=%
             Stat_Cooling_Active : Bool;   // TRUE if pneumatic cooler valve is energized
             Stat_Cooling_Wait : Bool;     // TRUE if cooling is demanded but air compressor is resting
-            Estimated_Temp : Real;        // Estimated temperature from internal model, used if readback unavailable
+            Estimated_Temp : Real;        // Estimated temperature from internal model | unit=°C
          END_STRUCT;
 
          Source_Chamber : STRUCT
@@ -99,30 +99,31 @@ NON_RETAIN
             Stat_GV_Closed : Bool;              // Limit switch: Gate Valve is fully closed
             Stat_GV_Open_Permissive : Bool;     // TRUE if vacuum differential allows opening
             Stat_GV_Close_Permissive : Bool;    // TRUE if beam is dead and safe to close
-            RB_Body_Temp : Real;                // Physical Readback (Thermocouple) in °C
+            RB_Body_Temp : Real;                // Physical Readback (Thermocouple) | unit=°C
          END_STRUCT;
 
          Beamline_Steering : STRUCT
             Stat_Enabled : Bool;            // True, analog output enabled
-            SP_Actual_X_Volts : Real;       // Active setpoint currently driving the AO
-            SP_Actual_Y_Volts : Real;       // Active setpoint currently driving the AO
+            SP_Actual_X_Volts : Real;       // Active setpoint currently driving the AO | unit=V
+            SP_Actual_Y_Volts : Real;       // Active setpoint currently driving the AO | unit=V
+            Ctrl_Mode : Int;                // 0=Manual, 1=PLC Auto, 2=Recipe
+            Stat_Lockout : Bool;            // True when the PLC forces control
          END_STRUCT;
 
          Beamline_Diagnostics : STRUCT
             Stat_FC_Inserted : Bool;        // Mapped from inferred state model
             Stat_FC_Retracted : Bool;       // Mapped from inferred state model
+            Ctrl_Mode : Int;                // 0=Manual, 1=PLC Auto, 2=Recipe
             Stat_Lockout : Bool;            // True when the PLC forces control
          END_STRUCT;
 
          Endstation : STRUCT
-            RB_Dose_Count : Real;         // Integrated fluence/dose calculation
+            RB_Dose_Count : Real;         // Integrated fluence/dose calculation | unit=µC
          END_STRUCT;
       END_STRUCT;
 
       // =====================================================================
       // FROM PC: WRITE-ONLY FOR PYTHON
-      // Python writes HMI demands and Recipe commands here.
-      // The PLC evaluates these (checking interlocks/modes) before executing.
       // =====================================================================
       From_PC : STRUCT
          System : STRUCT
@@ -135,35 +136,35 @@ NON_RETAIN
 
          Source_Extraction : STRUCT
             Cmd_Enable : Bool;
-            SP_Requested_Voltage : Real;
+            SP_Requested_Voltage : Real;  // Requested Voltage Command | unit=kV
             Cmd_Ctrl_Mode : Int;
          END_STRUCT;
 
          Source_Target : STRUCT
             Cmd_Enable : Bool;
-            SP_Requested_Voltage : Real;
+            SP_Requested_Voltage : Real;  // Requested Voltage Command | unit=kV
             Cmd_Ctrl_Mode : Int;
          END_STRUCT;
 
          Source_Filament : STRUCT
             Cmd_Enable : Bool;
-            SP_Requested_Current : Real;
+            SP_Requested_Current : Real;  // Requested Current Command | unit=A
             Cmd_Ctrl_Mode : Int;
          END_STRUCT;
 
          Source_Thermionic : STRUCT
             Cmd_Enable : Bool;
             Cmd_Auto_Emission : Bool;
-            SP_Requested_Current : Real;
+            SP_Requested_Current : Real;  // Requested Emission Current | unit=mA
             Cmd_Ctrl_Mode : Int;
          END_STRUCT;
 
          Source_Cesium : STRUCT
             Cmd_Force_Cooling : Bool;
-            SP_Requested_Temp : Real;
+            SP_Requested_Temp : Real;     // Requested Temperature Command | unit=°C
             Cmd_Ctrl_Mode : Int;
             Testing_Cmd_Force_Duty_Cycle : Bool;
-            Testing_Cmd_Duty_Cycle_Value : Real;
+            Testing_Cmd_Duty_Cycle_Value : Real; // Forced Manual PID Output | unit=%
          END_STRUCT;
 
          Source_Chamber : STRUCT
@@ -173,12 +174,14 @@ NON_RETAIN
 
          Beamline_Steering : STRUCT
             Cmd_Enable : Bool;
-            SP_Requested_X_Volts : Real;
-            SP_Requested_Y_Volts : Real;
+            SP_Requested_X_Volts : Real;  // Requested X-Deflection | unit=V
+            SP_Requested_Y_Volts : Real;  // Requested Y-Deflection | unit=V
+            Cmd_Ctrl_Mode : Int;
          END_STRUCT;
 
          Beamline_Diagnostics : STRUCT
             Cmd_Insert_FC : Bool;
+            Cmd_Ctrl_Mode : Int;
          END_STRUCT;
 
          // ==================================================================

@@ -151,8 +151,6 @@ class SmuScpiProtocol:
             self.send_cmd(":SOUR:VOLT 0.0")
         self.output_state = state
 
-
-
     def read_telemetry(self) -> Optional[Tuple[float, float, bool]]:
         """Returns (Voltage, Current, Output_State)"""
         if not self.connected: return None
@@ -176,6 +174,7 @@ class SmuScpiProtocol:
                 print(f"[SCPI ERR] Telemetry parse failed: {e}")
             return None
 
+
 class SmuMicroservice:
     def __init__(self):
         self.context = zmq.Context()
@@ -194,6 +193,7 @@ class SmuMicroservice:
         self.plc_socket.setsockopt_string(zmq.SUBSCRIBE, "")
 
         self.limits = self._load_config()
+        self.registry_limits = self._load_registry_limits()
         self.hw = SmuScpiProtocol(SMU_IP, SMU_PORT)
 
         self.stat_safety_relay = False
@@ -201,6 +201,9 @@ class SmuMicroservice:
         self.safety_tripped = True
         self._last_printed_safety_state = True
         self._safety_lockout_active = False
+
+        # Arbitration State
+        self.active_ctrl_mode = 0
 
         self.sp_cache: Dict[str, float] = {}
         self.sp_intended_enable = False
@@ -216,8 +219,6 @@ class SmuMicroservice:
     def _load_config(self) -> dict:
         config_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '../../config/smu_config.json'))
         default_config = {
-            "max_voltage": 200.0,
-            "min_voltage": -200.0,
             "compliance_current": 100e-6  # 100uA
         }
         try:
@@ -226,6 +227,22 @@ class SmuMicroservice:
         except Exception:
             if DEBUG_VERBOSE: print("[SYS] Config file not found, using default hardcoded limits.")
         return default_config
+
+    def _load_registry_limits(self) -> dict:
+        registry_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '../../config/system_tags.json'))
+        limits = {}
+        try:
+            with open(registry_path, "r") as f:
+                registry = json.load(f)
+                for tag, data in registry.items():
+                    if data.get("source") == "service_faraday_smu" and data.get("auto_controllable"):
+                        limits[tag] = {
+                            "min_val": data.get("min_val"),
+                            "max_val": data.get("max_val")
+                        }
+        except Exception as e:
+            if DEBUG_VERBOSE: print(f"[SMU Service] Failed to load registry limits: {e}")
+        return limits
 
     def _update_safety_permissives(self):
         try:
@@ -275,18 +292,29 @@ class SmuMicroservice:
         # Reset the lockout tracker when safety permissives are restored
         self._safety_lockout_active = False
 
-        min_v = self.limits.get("min_voltage", -200.0)
-        max_v = self.limits.get("max_voltage", 200.0)
-
         try:
             while True:
                 msg = self.sub_socket.recv_json(flags=zmq.NOBLOCK)
                 tag = msg.get("tag", "")
                 raw_value = msg.get("value", 0)
                 ts = msg.get("ts", 0.0)
+                origin = msg.get("origin", "hmi")
 
                 if time.time() - ts > MAX_CMD_AGE:
                     if DEBUG_VERBOSE: print(f"[ZMQ CMD] Dropped stale command: {tag}")
+                    continue
+
+                # --- 1. ARBITRATION: Handle Control Mode Changes ---
+                if tag == "ion_beam.beamline.faraday.smu.cmd_ctrl_mode":
+                    try:
+                        self.active_ctrl_mode = int(raw_value)
+                        self.events.log_general(f"Arbitration: SMU mode set to {self.active_ctrl_mode}")
+                    except (ValueError, TypeError):
+                        pass
+                    continue
+
+                # --- 2. ARBITRATION: Enforce Lockout ---
+                if self.active_ctrl_mode > 0 and origin != "optimizer":
                     continue
 
                 parts = tag.split('.')
@@ -301,7 +329,15 @@ class SmuMicroservice:
                 if DEBUG_VERBOSE: print(f"[ZMQ CMD] Rx: {cmd_type} = {value} (Tag: {tag})")
 
                 if cmd_type == "sp_requested_voltage":
-                    if self.state["ion_beam.beamline.faraday.smu.stat_enabled"]:
+                    if self.state.get("ion_beam.beamline.faraday.smu.stat_enabled", 0.0) == 1.0:
+                        tag_limits = self.registry_limits.get(tag, {})
+                        min_v = tag_limits.get("min_val")
+                        max_v = tag_limits.get("max_val")
+
+                        # Fail safe: Do not execute if limits are undefined in the registry
+                        if min_v is None or max_v is None:
+                            continue
+
                         if min_v <= value <= max_v:
                             self.hw.set_voltage(value)
                             self.sp_cache["ion_beam.beamline.faraday.smu.sp_actual_voltage"] = value
@@ -335,6 +371,9 @@ class SmuMicroservice:
         self.state["ion_beam.beamline.faraday.smu.rb_voltage"] = round(v_rb, 4)
         self.state["ion_beam.beamline.faraday.smu.rb_current"] = i_rb
         self.state["ion_beam.beamline.faraday.smu.stat_enabled"] = 1.0 if outp_enabled else 0.0
+
+        # Publish active control mode
+        self.state["ion_beam.beamline.faraday.smu.rb_ctrl_mode"] = float(self.active_ctrl_mode)
 
         if "ion_beam.beamline.faraday.smu.sp_actual_voltage" in self.sp_cache:
             self.state["ion_beam.beamline.faraday.smu.sp_actual_voltage"] = self.sp_cache[

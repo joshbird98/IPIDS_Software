@@ -29,6 +29,7 @@ from src.gui.control.widgets.optics_widget import BeamlineOpticsWidget
 from src.gui.control.widgets.diagnostics_widget import DiagnosticsWidget
 from src.gui.control.dialogs.config_editor_dialog import ConfigEditorDialog
 from src.gui.control.widgets.faraday_smu_widget import FaradaySMUWidget
+from src.gui.control.widgets.optimiser_widget import ParameterOptimizerWidget
 
 
 class AudioManager:
@@ -192,7 +193,16 @@ class ControlMainWindow(QMainWindow):
         self.addDockWidget(Qt.DockWidgetArea.LeftDockWidgetArea, self.recipe_dock)
         self.subsystems["recipe"] = self.recipe_widget
 
+        self.optimiser_dock = QDockWidget("Optimiser", self)
+        self.optimiser_dock.setObjectName("OptimiserDock")
+        self.optimiser_widget = ParameterOptimizerWidget(self.cmd_thread, lambda tag: self.master_telemetry_cache.get(tag, 0.0))
+        self.optimiser_dock.setWidget(self.optimiser_widget)
+        self.addDockWidget(Qt.DockWidgetArea.LeftDockWidgetArea, self.optimiser_dock)
+        self.subsystems["optimiser"] = self.optimiser_widget
+
         self.tabifyDockWidget(self.vac_dock, self.log_dock)
+        self.tabifyDockWidget(self.log_dock, self.recipe_dock)
+        self.tabifyDockWidget(self.recipe_dock, self.optimiser_dock)
         self.vac_dock.raise_()
 
         # 2. Right Area Docks
@@ -268,6 +278,7 @@ class ControlMainWindow(QMainWindow):
         self.diag_widget.update_telemetry(self.master_telemetry_cache)
         self.log_widget.update_telemetry(self.master_telemetry_cache)
         self.smu_widget.update_telemetry(self.master_telemetry_cache)
+        self.optimiser_widget.update_telemetry(self.master_telemetry_cache)
 
         self._evaluate_audio_triggers()
 

@@ -10,6 +10,7 @@ from src.core.os_helper import harden_windows_process
 
 if os.name == 'nt':
     import ctypes
+
     ctypes.windll.winmm.timeBeginPeriod(1)
 
 from pymodbus.client import ModbusTcpClient
@@ -131,6 +132,7 @@ class MagnetMicroservice:
         self.plc_socket.setsockopt_string(zmq.SUBSCRIBE, "")
 
         self.limits = self._load_config()
+        self.registry_limits = self._load_registry_limits()
         self.hw = MagnetModbusProtocol(MAGNET_IP, MAGNET_PORT)
 
         self.stat_safety_relay = False
@@ -138,6 +140,9 @@ class MagnetMicroservice:
         self.safety_tripped = True
         self.last_setpoint_ts = 0.0
         self.sp_cache: Dict[str, float] = {}
+
+        # Arbitration State
+        self.active_ctrl_mode = 0
 
         # Non-Blocking Degauss State Machine
         self.degauss_active = False
@@ -156,7 +161,6 @@ class MagnetMicroservice:
         config_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '../../config/magnet_config.json'))
         default_config = {
             "max_voltage": 10.0,
-            "max_current": 30.0,
             "max_power": 200.0,
             "min_current_for_calc": 2.0,
             "nominal_resistance": 0.16,
@@ -172,6 +176,22 @@ class MagnetMicroservice:
         except Exception:
             pass
         return default_config
+
+    def _load_registry_limits(self) -> dict:
+        registry_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '../../config/system_tags.json'))
+        limits = {}
+        try:
+            with open(registry_path, "r") as f:
+                registry = json.load(f)
+                for tag, data in registry.items():
+                    if data.get("source") == "service_magnet" and data.get("auto_controllable"):
+                        limits[tag] = {
+                            "min_val": data.get("min_val"),
+                            "max_val": data.get("max_val")
+                        }
+        except Exception as e:
+            print(f"[Magnet Service] Failed to load registry limits: {e}")
+        return limits
 
     def _apply_smart_setpoint(self, target_current: float):
         nom_res = self.limits.get("nominal_resistance", 0.16)
@@ -251,16 +271,30 @@ class MagnetMicroservice:
         # Execute automated degauss sequence if active
         self._execute_degauss_cycle()
 
-        max_i = self.limits.get("max_current", 0.0)
-
         try:
             while True:
                 msg = self.sub_socket.recv_json(flags=zmq.NOBLOCK)
                 tag = msg.get("tag", "")
                 raw_value = msg.get("value", 0)
                 ts = msg.get("ts", 0.0)
+                origin = msg.get("origin", "hmi")
 
                 if time.time() - ts > MAX_CMD_AGE: continue
+
+                # --- 1. ARBITRATION: Handle Control Mode Changes ---
+                if tag == "ion_beam.beamline.magnet.cmd_ctrl_mode":
+                    try:
+                        self.active_ctrl_mode = int(raw_value)
+                        self.events.log_general(f"Arbitration: Magnet mode set to {self.active_ctrl_mode}")
+                    except (ValueError, TypeError):
+                        pass
+                    continue
+
+                # --- 2. ARBITRATION: Enforce Lockout ---
+                if self.active_ctrl_mode > 0 and origin != "optimizer":
+                    continue
+
+                # --- 3. Normal Command Processing ---
                 parts = tag.split('.')
                 if len(parts) < 3 or parts[1] != "beamline": continue
                 cmd_type = parts[-1]
@@ -274,7 +308,15 @@ class MagnetMicroservice:
                     pass
 
                 elif cmd_type == "sp_requested_current":
-                    if 0.0 <= value <= max_i:
+                    tag_limits = self.registry_limits.get(tag, {})
+                    min_i = tag_limits.get("min_val")
+                    max_i = tag_limits.get("max_val")
+
+                    # Fail safe: Do not execute if limits are undefined in the registry
+                    if min_i is None or max_i is None:
+                        continue
+
+                    if min_i <= value <= max_i:
                         self.degauss_active = False
                         self._apply_smart_setpoint(value)
                         self.last_setpoint_ts = time.time()
@@ -308,10 +350,15 @@ class MagnetMicroservice:
         self.state["ion_beam.beamline.magnet.stat_enabled"] = 1.0 if outp_enabled else 0.0
         self.state["ion_beam.beamline.magnet.stat_degaussing"] = 1.0 if self.degauss_active else 0.0
 
+        # Publish active control mode
+        self.state["ion_beam.beamline.magnet.rb_ctrl_mode"] = float(self.active_ctrl_mode)
+
         if "ion_beam.beamline.magnet.sp_actual_voltage" in self.sp_cache:
-            self.state["ion_beam.beamline.magnet.sp_actual_voltage"] = self.sp_cache["ion_beam.beamline.magnet.sp_actual_voltage"]
+            self.state["ion_beam.beamline.magnet.sp_actual_voltage"] = self.sp_cache[
+                "ion_beam.beamline.magnet.sp_actual_voltage"]
         if "ion_beam.beamline.magnet.sp_actual_current" in self.sp_cache:
-            self.state["ion_beam.beamline.magnet.sp_actual_current"] = self.sp_cache["ion_beam.beamline.magnet.sp_actual_current"]
+            self.state["ion_beam.beamline.magnet.sp_actual_current"] = self.sp_cache[
+                "ion_beam.beamline.magnet.sp_actual_current"]
 
         # Hardware Alarms - Flattened into Equipment Root
         self.state["ion_beam.beamline.magnet.stat_psu_overtemp"] = 1.0 if internal_alarms["OT"] else 0.0
@@ -371,7 +418,8 @@ class MagnetMicroservice:
                 self.state["system.cycle_time_ms"] = round((time.perf_counter() - cycle_start) * 1000, 2)
 
                 try:
-                    topic = TOPIC_MAGNET_DATA if isinstance(TOPIC_MAGNET_DATA, bytes) else TOPIC_MAGNET_DATA.encode('utf-8')
+                    topic = TOPIC_MAGNET_DATA if isinstance(TOPIC_MAGNET_DATA, bytes) else TOPIC_MAGNET_DATA.encode(
+                        'utf-8')
                     self.pub_socket.send_multipart([topic, orjson.dumps(self.state)])
                 except Exception:
                     pass

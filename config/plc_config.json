@@ -13,5 +13,17 @@
     "max_x": 200.0,
     "min_y": -200.0,
     "max_y": 200.0
+  },
+  "source_filament": {
+    "min_i": 0.0,
+    "max_i": 33.0
+  },
+  "source_thermionic": {
+    "min_i": 0.0,
+    "max_i": 150.0
+  },
+  "source_cesium": {
+    "min_t": 0.0,
+    "max_t": 150.0
   }
 }

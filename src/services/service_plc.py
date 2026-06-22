@@ -12,6 +12,7 @@ from src.core.os_helper import harden_windows_process
 # Force Windows high-resolution timers (1ms precision) for OS sleep accuracy
 if os.name == 'nt':
     import ctypes
+
     ctypes.windll.winmm.timeBeginPeriod(1)
 
 from src.core.network_map import (
@@ -61,8 +62,9 @@ class PlcMicroservice:
         self.plc_cycle_count = 0
         self.heartbeat_count = 0
 
-        # --- Tag Registry ---
+        # --- Tag Registry & Configuration ---
         self.tags = self._load_tag_registry()
+        self.registry_limits = self._load_registry_limits()
         self.db_interface_size = self._calculate_db_size(DB_INTERFACE_NUM)
         self.fault_map = self._load_fault_map()
 
@@ -163,6 +165,24 @@ class PlcMicroservice:
         except FileNotFoundError:
             self.events.log_general(f"WARNING: {registry_path} not found. Operating blind.")
             return {}
+
+    def _load_registry_limits(self) -> dict:
+        current_dir = os.path.dirname(os.path.abspath(__file__))
+        project_root = os.path.dirname(os.path.dirname(current_dir))
+        registry_path = os.path.join(project_root, "config", "system_tags.json")
+        limits = {}
+        try:
+            with open(registry_path, "r") as f:
+                all_tags = json.load(f)
+                for tag, meta in all_tags.items():
+                    if meta.get("source") == "service_plc_snap7" and meta.get("auto_controllable"):
+                        limits[tag] = {
+                            "min_val": meta.get("min_val"),
+                            "max_val": meta.get("max_val")
+                        }
+        except Exception as e:
+            self.events.log_general(f"WARNING: Failed to load registry limits: {e}")
+        return limits
 
     def _calculate_db_size(self, db_num: int) -> int:
         max_byte = 0
@@ -351,7 +371,7 @@ class PlcMicroservice:
             while True:
                 topic, msg = self.telem_socket.recv_multipart(flags=zmq.NOBLOCK)
                 payload = orjson.loads(msg)
-                topic_str = topic.decode('utf-8')
+                topic_str = topic.decode('utf-8').upper()
 
                 for service in self.last_seen.keys():
                     if service in topic_str:
@@ -365,9 +385,12 @@ class PlcMicroservice:
                     pending_updates[f"{base}.stat_trip"] = bool(payload.get(f"{base}.stat_trip", 0.0))
 
                 elif "VACUUM" in topic_str:
-                    pending_updates["ion_beam.facilities.graphix1.stat_comms_fail"] = bool(payload.get("ion_beam.facilities.graphix1.stat_comms_fail", 0.0))
-                    pending_updates["ion_beam.facilities.graphix2.stat_comms_fail"] = bool(payload.get("ion_beam.facilities.graphix2.stat_comms_fail", 0.0))
-                    pending_updates["ion_beam.source.chamber.stat_vac_ok_for_gv"] = bool(payload.get("ion_beam.vacuum.gv_permissive_ready", 0.0))
+                    pending_updates["ion_beam.facilities.graphix1.stat_comms_fail"] = bool(
+                        payload.get("ion_beam.facilities.graphix1.stat_comms_fail", 0.0))
+                    pending_updates["ion_beam.facilities.graphix2.stat_comms_fail"] = bool(
+                        payload.get("ion_beam.facilities.graphix2.stat_comms_fail", 0.0))
+                    pending_updates["ion_beam.source.chamber.stat_vac_ok_for_gv"] = bool(
+                        payload.get("ion_beam.vacuum.gv_permissive_ready", 0.0))
 
                     vg_paths = [
                         "ion_beam.source.vacuum_gauge_1",
@@ -395,14 +418,16 @@ class PlcMicroservice:
                         pending_updates[f"{path}.stat_overcurrent"] = bool(payload.get(f"{path}.stat_overcurrent", 0.0))
                         pending_updates[f"{path}.stat_overvoltage"] = bool(payload.get(f"{path}.stat_overvoltage", 0.0))
                         pending_updates[f"{path}.stat_fail"] = bool(payload.get(f"{path}.stat_fail", 0.0))
-                        pending_updates[f"{path}.stat_arc_exceeded"] = bool(payload.get(f"{path}.stat_arc_exceeded", 0.0))
+                        pending_updates[f"{path}.stat_arc_exceeded"] = bool(
+                            payload.get(f"{path}.stat_arc_exceeded", 0.0))
 
                 elif "MAGNET" in topic_str:
                     base = "ion_beam.beamline.magnet"
                     pending_updates[f"{base}.stat_comms_fail"] = bool(payload.get(f"{base}.stat_comms_fail", 0.0))
                     pending_updates[f"{base}.stat_open_circuit"] = bool(payload.get(f"{base}.stat_open_circuit", 0.0))
                     pending_updates[f"{base}.stat_short_circuit"] = bool(payload.get(f"{base}.stat_short_circuit", 0.0))
-                    pending_updates[f"{base}.stat_unexpected_res"] = bool(payload.get(f"{base}.stat_unexpected_res", 0.0))
+                    pending_updates[f"{base}.stat_unexpected_res"] = bool(
+                        payload.get(f"{base}.stat_unexpected_res", 0.0))
                     pending_updates[f"{base}.stat_psu_overtemp"] = bool(payload.get(f"{base}.stat_psu_overtemp", 0.0))
                     pending_updates[f"{base}.stat_psu_powerfail"] = bool(payload.get(f"{base}.stat_psu_powerfail", 0.0))
                     pending_updates[f"{base}.stat_psu_ovc"] = bool(payload.get(f"{base}.stat_psu_ovc", 0.0))
@@ -447,13 +472,49 @@ class PlcMicroservice:
                 tag = msg.get("tag")
                 value = msg.get("value")
                 timestamp = msg.get("ts", 0.0)
+                origin = msg.get("origin", "hmi")
 
                 if (time.time() - timestamp) > MAX_CMD_AGE:
                     self.events.log_general(f"WARNING: Dropped stale command '{tag}'")
                     continue
 
-                if tag in self.tags and value is not None:
-                    self._write_tag(tag, value)
+                if tag not in self.tags or value is None:
+                    continue
+
+                # --- 1. ARBITRATION: Software Gatekeeper ---
+                # Infer the subsystem. e.g., ion_beam.source.extraction.sp_requested_voltage -> ion_beam.source.extraction
+                parts = tag.split('.')
+                if len(parts) >= 3:
+                    subsystem_base = ".".join(parts[:-1])
+                    rb_mode_tag = f"{subsystem_base}.ctrl_mode"
+
+                    # Check if the subsystem has an active mode, and ensure we aren't trying to change the mode itself
+                    if rb_mode_tag in self.tags and not tag.endswith("cmd_ctrl_mode"):
+                        active_mode = self.state.get(rb_mode_tag, 0.0)
+                        if active_mode > 0 and origin != "optimizer":
+                            continue  # Lockout HMI commands for this specific subsystem
+
+                # --- 2. FAIL-SAFE LIMITS: Software Gatekeeper ---
+                # Check PC-side limits to prevent Snap7 network flooding, even though the PLC hardware provides ultimate protection.
+                meta = self.registry_limits.get(tag)
+                if meta is not None:
+                    min_v = meta["min_val"]
+                    max_v = meta["max_val"]
+
+                    # Drop the command entirely if the bounds have not been configured in the JSON yet
+                    if min_v is None or max_v is None:
+                        continue
+
+                    try:
+                        float_val = float(value)
+                        if not (min_v <= float_val <= max_v):
+                            continue
+                    except (ValueError, TypeError):
+                        continue
+
+                # --- 3. Execute Write ---
+                self._write_tag(tag, value)
+
         except zmq.Again:
             pass
 

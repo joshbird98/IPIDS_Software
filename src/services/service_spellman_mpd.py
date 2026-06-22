@@ -156,11 +156,15 @@ class SpellmanMicroservice:
         self.safety_relay_active = False
         self.config = self._load_config()
         self.net_config = self._load_net_config()
+        self.registry_limits = self._load_registry_limits()
         self.buses: Dict[str, SpellmanMPDProtocol] = {}
 
         self.state: Dict[str, Any] = {"timestamp": 0.0, "system.cycle_time_ms": 0.0}
         self.sp_cache: Dict[str, float] = {}
         self.last_hb_time = 0.0
+
+        # --- Arbitration State per device ---
+        self.active_ctrl_modes: Dict[str, int] = {prefix: 0 for prefix in self.location_routing.values()}
 
         # --- Software Arc Detection Memory ---
         self.dev_settle_timers: Dict[str, float] = {}
@@ -188,6 +192,22 @@ class SpellmanMicroservice:
         except Exception as e:
             print(f"[SRV_DEBUG] Network config load exception: {e}")
             return {}
+
+    def _load_registry_limits(self) -> dict:
+        registry_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '../../config/system_tags.json'))
+        limits = {}
+        try:
+            with open(registry_path, "r") as f:
+                registry = json.load(f)
+                for tag, data in registry.items():
+                    if data.get("source") == "service_spellman" and data.get("auto_controllable"):
+                        limits[tag] = {
+                            "min_val": data.get("min_val"),
+                            "max_val": data.get("max_val")
+                        }
+        except Exception as e:
+            print(f"[SRV_DEBUG] Failed to load registry limits: {e}")
+        return limits
 
     def _update_safety_permissives(self):
         try:
@@ -228,6 +248,7 @@ class SpellmanMicroservice:
                 tag = msg.get("tag", "")
                 value = msg.get("value", 0)
                 ts = msg.get("ts", 0.0)
+                origin = msg.get("origin", "hmi")
 
                 age = time.time() - ts
                 if age > MAX_CMD_AGE:
@@ -237,11 +258,8 @@ class SpellmanMicroservice:
                 # --- GLOBAL FAULT RESET ---
                 if tag == "ion_beam.system.cmd_fault_reset" and bool(value):
                     print("[SRV_DEBUG] Global Fault Reset received. Clearing MPD hardware and software latches...")
-                    # Clear software arc latches
                     for key in self.arc_fault_latches.keys():
                         self.arc_fault_latches[key] = False
-
-                    # Clear hardware faults
                     for bus in self.config.get("buses", []):
                         hw = self.buses.get(bus["bus_id"])
                         if hw and hw.connected:
@@ -264,6 +282,20 @@ class SpellmanMicroservice:
                 if not target_dev:
                     continue
 
+                # --- 1. ARBITRATION: Handle Control Mode Changes ---
+                if cmd_type == "cmd_ctrl_mode":
+                    try:
+                        self.active_ctrl_modes[prefix] = int(value)
+                        self.events.log_general(f"Arbitration: {target_dev} mode set to {int(value)}")
+                    except (ValueError, TypeError):
+                        pass
+                    continue
+
+                # --- 2. ARBITRATION: Enforce Lockout per Device ---
+                active_mode = self.active_ctrl_modes.get(prefix, 0)
+                if active_mode > 0 and origin != "optimizer":
+                    continue
+
                 target_bus, dev_info = None, None
                 for bus in self.config.get("buses", []):
                     if target_dev in bus.get("devices", {}):
@@ -276,27 +308,46 @@ class SpellmanMicroservice:
                     addr = dev_info["address"]
                     dtype = dev_info["dev_type"]
 
+                    try:
+                        value_float = float(value)
+                    except (ValueError, TypeError):
+                        continue
+
                     if cmd_type == "sp_requested_voltage":
-                        volts_req = value * 1000.0
+                        tag_limits = self.registry_limits.get(tag, {})
+                        min_v = tag_limits.get("min_val")
+                        max_v = tag_limits.get("max_val")
+
+                        if min_v is None or max_v is None or not (min_v <= value_float <= max_v):
+                            continue
+
+                        volts_req = value_float * 1000.0
                         formatted_v = f"{volts_req:07.1f}"
 
-                        print(f"[SRV_DEBUG] Translating {value}kV -> {formatted_v}V for {target_dev}")
+                        print(f"[SRV_DEBUG] Translating {value_float}kV -> {formatted_v}V for {target_dev}")
                         res = hw.transaction(addr, dtype, CMD_SET_KV, "=", formatted_v)
 
                         if res and "*" not in res:
-                            self.sp_cache[f"{prefix}.sp_actual_voltage"] = float(value)
+                            self.sp_cache[f"{prefix}.sp_actual_voltage"] = value_float
                         else:
                             print(f"[SRV_DEBUG] FAILED to set voltage. Hardware rejected command. Response: {res}")
 
 
                     elif cmd_type == "sp_requested_current":
-                        ua_req = value if value > 0.0 else 0.0
+                        tag_limits = self.registry_limits.get(tag, {})
+                        min_i = tag_limits.get("min_val")
+                        max_i = tag_limits.get("max_val")
+
+                        if min_i is None or max_i is None or not (min_i <= value_float <= max_i):
+                            continue
+
+                        ua_req = value_float if value_float > 0.0 else 0.0
                         formatted_i = f"{ua_req:07.1f}"
-                        print(f"[SRV_DEBUG] Forwarding {value}uA -> {formatted_i}uA for {target_dev}")
+                        print(f"[SRV_DEBUG] Forwarding {value_float}uA -> {formatted_i}uA for {target_dev}")
                         res = hw.transaction(addr, dtype, CMD_SET_MA, "=", formatted_i)
 
                         if res and "*" not in res:
-                            self.sp_cache[f"{prefix}.sp_actual_current"] = float(value)
+                            self.sp_cache[f"{prefix}.sp_actual_current"] = value_float
                         else:
                             print(
                                 f"[SRV_DEBUG] FAILED to set current limit. Hardware rejected command. Response: {res}")
@@ -321,6 +372,9 @@ class SpellmanMicroservice:
             return
 
         prefix = self.location_routing.get(dev_name, f"ion_beam.source.{dev_name}")
+
+        # Publish active control mode
+        self.state[f"{prefix}.rb_ctrl_mode"] = float(self.active_ctrl_modes.get(prefix, 0))
 
         # 1. Poll live readbacks
         raw_kv = hw.transaction(addr, dtype, CMD_REQ_KV, "?")

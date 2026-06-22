@@ -498,6 +498,16 @@ class IonSourceWidget(QWidget):
             lbl_badge = ctrl["lbl_badge"]
             is_spellman = "einzel" in base_tag
 
+            # --- ARBITRATION FIX: Check both PLC and Python microservice modes ---
+            ctrl_mode = data.get(f"{base_tag}.ctrl_mode")
+            if ctrl_mode is None:
+                ctrl_mode = data.get(f"{base_tag}.rb_ctrl_mode", 0.0)
+            ctrl_mode = int(ctrl_mode)
+
+            is_auto_locked = (ctrl_mode > 0)
+            if name == "Cesium" and ctrl_mode == 1:
+                is_auto_locked = False  # Cesium mode 1 is standard active heating, not a sequencer lock
+
             comp_lock_reason = ""
             if is_spellman and spellman_comms_lost:
                 comp_lock_reason = "Spellman microservice is offline."
@@ -509,6 +519,8 @@ class IonSourceWidget(QWidget):
                 comp_lock_reason = "Remote I/O communications lost."
             elif auto_sdown or active_step > 0:
                 comp_lock_reason = "Automated shutdown sequence in progress."
+            elif is_auto_locked:
+                comp_lock_reason = "Locked by automated sequencer or optimizer."
 
             comp_lockout = bool(comp_lock_reason)
 
@@ -562,7 +574,6 @@ class IonSourceWidget(QWidget):
                 sp_box.blockSignals(False)
 
             # C. Hardware State & Component Logic Sync
-            ctrl_mode = data.get(f"{base_tag}.ctrl_mode", 0)
             hw_lockout = bool(data.get(f"{base_tag}.stat_lockout", 0.0))
 
             if name == "Cesium":
@@ -664,8 +675,8 @@ class IonSourceWidget(QWidget):
                     lbl_badge.show()
                 else:
                     sp_box.setEnabled(False)
-                    sp_box.setToolTip("Disabled: Control yielded to PLC automated sequence.")
-                    lbl_badge.setText("⚙️ PLC AUTO")
+                    sp_box.setToolTip("Disabled: Control yielded to automated sequencer.")
+                    lbl_badge.setText("⚙️ AUTO")
                     lbl_badge.setStyleSheet("background-color: #2196F3; color: white; border-radius: 3px;")
                     lbl_badge.show()
             elif ctrl_mode == 2:

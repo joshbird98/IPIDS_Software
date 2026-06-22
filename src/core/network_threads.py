@@ -57,8 +57,8 @@ class ZMQCommandThread(QThread):
         self.cmd_queue = queue.Queue()
         self.running = True
 
-    def send_command(self, subsystem: str, tag: str, value: any):
-        self.cmd_queue.put((subsystem, tag, value))
+    def send_command(self, subsystem: str, tag: str, value: any, origin: str = "hmi"):
+        self.cmd_queue.put((subsystem, tag, value, origin))
 
     def run(self):
         ctx = zmq.Context.instance()
@@ -80,11 +80,11 @@ class ZMQCommandThread(QThread):
         try:
             while self.running:
                 try:
-                    subsystem, tag, value = self.cmd_queue.get(timeout=0.1)
+                    subsystem, tag, value, origin = self.cmd_queue.get(timeout=0.1)
                     if subsystem == "manager":
                         payload = value
                     else:
-                        payload = {"tag": tag, "value": value, "ts": time.time()}
+                        payload = {"tag": tag, "value": value, "ts": time.time(), "origin": origin}
                     sockets[subsystem].send_json(payload)
                 except queue.Empty:
                     continue

@@ -66,6 +66,10 @@ class VacuumMicroservice:
         self.connected = False
         self.config = self._load_config()
         self.tag_map = self._build_tag_map()
+        self.registry_limits = self._load_registry_limits()
+
+        # Arbitration State
+        self.active_ctrl_mode = 0
 
         self.pressure_history: Dict[str, Dict[str, float]] = {}
 
@@ -123,6 +127,22 @@ class VacuumMicroservice:
         except Exception as e:
             self.events.log_general(f"CRITICAL: Failed to load config: {e}")
             return {}
+
+    def _load_registry_limits(self) -> dict:
+        registry_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '../../config/system_tags.json'))
+        limits = {}
+        try:
+            with open(registry_path, "r") as f:
+                registry = json.load(f)
+                for tag, data in registry.items():
+                    if data.get("source") == "service_vacuum" and data.get("auto_controllable"):
+                        limits[tag] = {
+                            "min_val": data.get("min_val"),
+                            "max_val": data.get("max_val")
+                        }
+        except Exception as e:
+            self.events.log_general(f"Failed to load registry limits: {e}")
+        return limits
 
     def _build_tag_map(self) -> dict:
         # Explicitly map the physical (Node, Channel) matrix to the ISA-95 Functional Area
@@ -320,10 +340,24 @@ class VacuumMicroservice:
                 tag = msg.get("tag", "")
                 value = msg.get("value")
                 ts = msg.get("ts", 0.0)
+                origin = msg.get("origin", "hmi")
 
                 age = time.time() - ts
                 if age > MAX_CMD_AGE:
                     self.events.log_general(f"WARNING: Dropped stale command for '{tag}'")
+                    continue
+
+                # --- 1. ARBITRATION: Handle Control Mode Changes ---
+                if tag.endswith(".cmd_ctrl_mode"):
+                    try:
+                        self.active_ctrl_mode = int(value)
+                        self.events.log_general(f"Arbitration: Vacuum mode set to {self.active_ctrl_mode}")
+                    except (ValueError, TypeError):
+                        pass
+                    continue
+
+                # --- 2. ARBITRATION: Enforce Lockout ---
+                if self.active_ctrl_mode > 0 and origin != "optimizer":
                     continue
 
                 parts = tag.split('.')
@@ -332,6 +366,13 @@ class VacuumMicroservice:
 
                 if "controller_" in parts[2] and "relay_" in parts[3]:
                     try:
+                        # Fail-Safe check using registry limits (if configured in system_tags.json)
+                        if tag in self.registry_limits:
+                            min_val = self.registry_limits[tag]["min_val"]
+                            max_val = self.registry_limits[tag]["max_val"]
+                            if min_val is None or max_val is None or not (min_val <= float(value) <= max_val):
+                                continue
+
                         node_id = int(parts[2].replace("controller_", ""))
                         relay_str_parts = parts[3].split('_')
                         relay_id = int(relay_str_parts[1])
@@ -630,6 +671,9 @@ class VacuumMicroservice:
             # Map Master Controller comms faults to their new ISA-95 locations
             self.state["ion_beam.facilities.graphix1.stat_comms_fail"] = comms_fault_active
             self.state["ion_beam.facilities.graphix2.stat_comms_fail"] = comms_fault_active
+
+            # Broadcast the active control mode
+            self.state["ion_beam.vacuum.rb_ctrl_mode"] = float(self.active_ctrl_mode)
 
             self._evaluate_gv_permissive()
             self.state["timestamp"] = time.time()

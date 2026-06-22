@@ -1,6 +1,6 @@
 {
   "max_voltage": 10.0,
-  "max_current": 30.0,
+  "max_current": 50.0,
   "max_power": 200.0,
   "min_current_for_calc": 2.0,
   "nominal_resistance": 0.16,

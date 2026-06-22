@@ -278,6 +278,13 @@ class FaradaySMUWidget(QWidget):
                 self.btn_fc.setText("FARADAY CUP: LOGIC ERROR")
                 self.btn_fc.setStyleSheet(COLOR_FAULT)
 
+        smu_ctrl_mode = data.get("ion_beam.beamline.faraday.smu.rb_ctrl_mode", 0.0)
+        smu_auto_locked = (smu_ctrl_mode > 0.0)
+
+        # FC lock logic (assuming you add a rb_ctrl_mode to the diagnostics struct in the future)
+        fc_ctrl_mode = data.get("ion_beam.beamline.diagnostics.rb_ctrl_mode", 0.0)
+        fc_auto_locked = (fc_ctrl_mode > 0.0)
+
         if master_comms_lost:
             self.btn_fc.setEnabled(False)
             self.btn_fc.setToolTip("Disabled: PLC telemetry stream is dead.")

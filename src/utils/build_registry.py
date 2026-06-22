@@ -28,8 +28,7 @@ def apply_existing_overrides(new_tags, existing_registry):
     # ADDED: min_val, max_val, and auto_controllable to preserved fields
     preserved_fields = [
         "datatype", "unit", "default_scale", "multiplier",
-        "description", "default_label", "short_name",
-        "min_val", "max_val", "auto_controllable"
+        "description", "default_label", "short_name"
     ]
     for tag_name, tag_data in new_tags.items():
         if tag_name in existing_registry:
@@ -51,6 +50,19 @@ def get_vacuum_tags(config_dir):
     except FileNotFoundError:
         vacuum_settings = {}
 
+    # --- 1. Global Arbitration Tags ---
+    tags["ion_beam.facilities.vacuum.rb_ctrl_mode"] = {
+        "source": "service_vacuum", "datatype": "INT", "writable": False,
+        "unit": "", "default_scale": "linear", "multiplier": 1.0,
+        "description": "Active Control Mode", "default_label": "Ctrl Mode", "short_name": "Mode"
+    }
+    tags["ion_beam.facilities.vacuum.cmd_ctrl_mode"] = {
+        "source": "service_vacuum", "datatype": "INT", "writable": True,
+        "unit": "", "default_scale": "linear", "multiplier": 1.0,
+        "description": "Request Control Mode (0=HMI, 1=Auto)", "default_label": "Cmd Mode", "short_name": "Cmd Mode"
+    }
+
+    # --- 2. Gauge Readbacks ---
     mapping = {
         (10, 1): "ion_beam.source.vacuum_gauge_1",
         (10, 2): "ion_beam.beamline.vacuum_gauge_2",
@@ -88,8 +100,44 @@ def get_vacuum_tags(config_dir):
             "default_label": f"{custom_name} Comms Fail", "short_name": "Comms"
         }
 
-    return tags
+    # --- 3. Relay Setpoints (Auto-Controllable) ---
+    # Transducer physical limits for UI clamping
+    LEYBOLD_MIN_MBAR = 1.0e-10
+    LEYBOLD_MAX_MBAR = 1000.0
 
+    for node_str, node_data in vacuum_settings.items():
+        if not node_str.isdigit():
+            continue
+
+        node_id = int(node_str)
+        if "relays" in node_data:
+            for relay_str, relay_params in node_data["relays"].items():
+                relay_id = int(relay_str)
+                base_relay_tag = None
+                if int(node_id) == 10:
+                    base_relay_tag = f"ion_beam.facilities.graphix1.relay_{relay_id}"
+                elif int(node_id) == 20:
+                    base_relay_tag = f"ion_beam.facilities.graphix2.relay_{relay_id}"
+                else:
+                    continue
+
+                tags[f"{base_relay_tag}_on"] = {
+                    "source": "service_vacuum", "datatype": "REAL", "writable": True,
+                    "auto_controllable": True, "min_val": LEYBOLD_MIN_MBAR, "max_val": LEYBOLD_MAX_MBAR,
+                    "unit": "mB", "default_scale": "log", "multiplier": 1.0,
+                    "description": f"Node {node_id} Relay {relay_id} Turn-On Setpoint",
+                    "default_label": f"Relay {relay_id} ON", "short_name": "ON SP"
+                }
+
+                tags[f"{base_relay_tag}_off"] = {
+                    "source": "service_vacuum", "datatype": "REAL", "writable": True,
+                    "auto_controllable": True, "min_val": LEYBOLD_MIN_MBAR, "max_val": LEYBOLD_MAX_MBAR,
+                    "unit": "mB", "default_scale": "log", "multiplier": 1.0,
+                    "description": f"Node {node_id} Relay {relay_id} Turn-Off Setpoint",
+                    "default_label": f"Relay {relay_id} OFF", "short_name": "OFF SP"
+                }
+
+    return tags
 
 def get_turbo_tags():
     tags = {}
@@ -115,7 +163,11 @@ def get_turbo_tags():
         f"{base_tag}.stat_error": {"dt": "BOOL", "unit": "", "short": "Error", "desc": "Active hardware error state",
                                    "label": "Turbo Error"},
         f"{base_tag}.stat_comms_fail": {"dt": "BOOL", "unit": "", "short": "Comms Fail",
-                                        "desc": "Service communications offline", "label": "Turbo Comms Fail"}
+                                        "desc": "Service communications offline", "label": "Turbo Comms Fail"},
+        f"{base_tag}.cmd_ctrl_mode": {"dt": "INT", "unit": "", "short": "Cmd Ctrl Mode",
+                                        "desc": "Command Control Mode", "label": "Cmd Ctrl Mode"},
+        f"{base_tag}.rb_ctrl_mode": {"dt": "INT", "unit": "", "short": "Rb Ctrl Mode",
+                                        "desc": "Readback Control Mode", "label": "Rb Ctrl Mode"}
     }
 
     for tag_name, info in turbo_base.items():
@@ -497,9 +549,10 @@ def get_plc_tags_from_scl(scl_path, config_dir, db_number=10, machine_root="ion_
             tag_name = tag_name.replace('..', '.')
 
             meta = {}
-            if "=" in comment:
-                pairs = [p.strip() for p in comment.replace(',', '|').split('|')]
-                for p in pairs:
+            if "|" in comment:
+                parts = comment.split('|')
+                meta['desc'] = parts[0].strip()  # The first part is the description
+                for p in parts[1:]:
                     if "=" in p:
                         k, v = p.split('=', 1)
                         meta[k.strip().lower()] = v.strip()

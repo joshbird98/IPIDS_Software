@@ -549,6 +549,10 @@ class BeamlineOpticsWidget(QWidget):
         # --- 1. Update Magnet State ---
         mag_cool = data.get("ion_beam.facilities.stat_mag_coolant_ok")
 
+        # Check if the microservice is under external automated control
+        mag_ctrl_mode = data.get("ion_beam.beamline.magnet.rb_ctrl_mode", 0.0)
+        mag_auto_locked = (mag_ctrl_mode > 0.0)
+
         if master_comms_lost:
             self.lbl_mag_cooling.setText("MAG COOLING: UNKNOWN")
             self.lbl_mag_cooling.setStyleSheet(COLOR_INACTIVE)
@@ -585,6 +589,8 @@ class BeamlineOpticsWidget(QWidget):
             mag_lock_reason = "Safety Relay is De-Energized."
         elif mag_cool is False:
             mag_lock_reason = "Magnet hardware interlock/cooling fault."
+        elif mag_auto_locked:
+            mag_lock_reason = "Locked by automated sequencer."
 
         mag_lockout = bool(mag_lock_reason)
         mag_tt = f"Disabled: {mag_lock_reason}" if mag_lockout else "Click to enable Magnet Output"
@@ -671,12 +677,19 @@ class BeamlineOpticsWidget(QWidget):
             self.sp_x_steer.setValue(float(x_rb))
             self.sp_x_steer.blockSignals(False)
 
+        # Update these specific tag lookups to catch the new PLC-side modes
+        steer_x_ctrl_mode = data.get("ion_beam.beamline.steering.x.rb_ctrl_mode", 0.0)
+        steer_y_ctrl_mode = data.get("ion_beam.beamline.steering.y.rb_ctrl_mode", 0.0)
+        steer_auto_locked = (steer_x_ctrl_mode > 0.0) or (steer_y_ctrl_mode > 0.0)
+
         # Steerer Lockouts
         steer_lock_reason = ""
         if master_comms_lost:
             steer_lock_reason = "PLC communications are offline."
         elif not relay_active:
             steer_lock_reason = "Safety Relay is De-Energized."
+        elif steer_auto_locked:
+            steer_lock_reason = "Locked by automated sequencer."
 
         steer_lockout = bool(steer_lock_reason)
 
@@ -700,6 +713,9 @@ class BeamlineOpticsWidget(QWidget):
             slit_sp.setToolTip(slit_tt)
 
         # --- 4. Update Spellman Downstream Optics ---
+        spellman_ctrl_mode = data.get("ion_beam.source.einzel.rb_ctrl_mode", 0.0) # change this tag when actual tags for these spellmans are added
+        spellman_auto_locked = (spellman_ctrl_mode > 0.0)
+
         spell_lock_reason = ""
         if spellman_state != "ONLINE":
             spell_lock_reason = "Spellman microservice is offline."
@@ -707,6 +723,8 @@ class BeamlineOpticsWidget(QWidget):
             spell_lock_reason = "Safety Relay state is unknown (PLC offline)."
         elif not relay_active:
             spell_lock_reason = "Safety Relay is De-Energized."
+        elif spellman_auto_locked:
+            spell_lock_reason = "Locked by automated sequencer."
 
         spell_lockout = bool(spell_lock_reason)
         spell_tt = f"Disabled: {spell_lock_reason}" if spell_lockout else ""
