@@ -1,0 +1,40 @@
+FEATURES TO ADD
+
+more descriptive legend in viewer_main (RB Current -> Filament RB [mA])
+filament lifetime
+filament thermal model doesn't seem to cool down when in autoemission mode, if PC stops suddenly - goes to Shutdown Seq : Unknown!
+tag to show when cesium heaters are being driven (100ms pulses)
+
+all wires entering the ET200SP should have small ferrite beads on?
+bond the PLC to the quiet bus bar
+
+I had the source running (high voltages and filament hot etc) pressed Source Shutdown and it immediately killed the safety relay etc!! Or the gate valve maybe, either way, it just crashed rather than gracefully ramping down
+and also, when I later turned the safety relay on, it immedaitely went back to 20kV enabled on the extraction!
+And I do not think it is registering faults like normal - the safety relay timeout didn't trigger anything?
+
+new faults
+a HV readback above 0.3kV when that power supply is disabled, for more than 1.5 seconds- should be OverVoltage
+
+warning system for certain faults - approaching 80% for example - OR soft shutdown on certain faults (like cs overtemp) rather than hard shutdown
+
+right-click a HMI value to open a small spark plot window
+
+redo the recipe manager to just be pure python scripts, with a nice library etc
+
+nicer value inputs, try coarse/fine sliders, or click and then scroll etc (as well as typing)
+
+data viewer incorporated into hmi
+
+data viewer memory leak must be fixed
+
+data viewer - if log axis present, shift timespan to account for lost width
+
+cesium oven ramps up output if cooling is on AND if setpoint has been increased
+cesium oven still overshoots like crazy
+cesium oven temperature readback seems to be clipping! maybe remove protection resistors for accessing full range
+
+degauss routine trips magnet faults short circuit and unexpected resistance
+
+initiate shutdown should gently ramp the hot things (filament and ioniser) to reduce thermal shock
+
+add side button to force-cool for next ten minutes etc, or until near room temp?

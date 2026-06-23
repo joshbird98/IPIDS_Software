@@ -132,10 +132,6 @@ class DualPipelineCache(QObject):
         # Store the selected_tags in the request tuple so _dispatch_pending can access it
         self.pending_request = (start_ts, end_ts, self.current_request_id, selected_tags)
 
-        # If the worker is free, dispatch it immediately
-        if not self.is_fetching:
-            self._dispatch_pending()
-
         return self.current_request_id
 
     def _dispatch_pending(self):
@@ -159,9 +155,10 @@ class DualPipelineCache(QObject):
         # This slot guarantees the thread is fully dead and safe to restart
         self.is_fetching = False
 
-        # If the user scrolled while we were busy, immediately fetch the new bounds
+        # If the user scrolled while we were busy, safely fetch the new bounds
         if getattr(self, 'pending_request', None) is not None:
-            self._dispatch_pending()
+            # FIX: Defer execution to allow the QThread to complete its teardown
+            QTimer.singleShot(0, self._dispatch_pending)
 
     def _on_live_data(self, flat_data: dict):
         t0 = time.perf_counter()

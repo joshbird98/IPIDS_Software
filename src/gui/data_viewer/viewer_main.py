@@ -194,8 +194,10 @@ class DataViewerApp(QMainWindow):
         self.curves = {}  # For Live Data
         self.hist_curves = {}  # For Stateless Historical Data
 
-        # Connect the two pipelines
-        self.cache.live_updated.connect(self._refresh_plot_live)
+        self.render_timer = QTimer()
+        self.render_timer.timeout.connect(self._refresh_plot_live)
+        self.render_timer.start(200)
+
         self.cache.historical_updated.connect(self._refresh_plot_historical)
 
         self.historical_x = np.array([])
@@ -208,14 +210,6 @@ class DataViewerApp(QMainWindow):
         self.live_span = 300
 
         self._init_ui()
-
-        # 4. Connect Signals
-        self.cache.live_updated.connect(self._refresh_plot_live)
-        self.cache.historical_updated.connect(self._refresh_plot_historical)
-
-        self.historical_x = np.array([])
-        self.historical_y = {}
-        self.is_historical_mode = False
 
         # Use the new register method so we don't wipe out other windows
         self.cache.register_client_tags(self.client_id, list(self.plot_config.keys()))
@@ -389,7 +383,7 @@ class DataViewerApp(QMainWindow):
         sidebar_layout.addStretch()
         layout.addWidget(sidebar)
 
-        pg.setConfigOptions(antialias=True, useOpenGL=True)
+        pg.setConfigOptions(antialias=True)
 
         # Core container replaces the single PlotWidget
         self.layout_widget = pg.GraphicsLayoutWidget()
@@ -580,11 +574,9 @@ class DataViewerApp(QMainWindow):
         pass
 
     def _refresh_plot_live(self):
-        now = time.perf_counter()
-        if now - self.last_ui_update < self.ui_lockout: return
-        self.last_ui_update = now
 
         if not self.cache.tags or not getattr(self, 'lanes', None): return
+        self._check_and_fetch_history()
         for ta in getattr(self, 'time_axes', []): ta.set_offset(self.t0)
 
         # Grab the raw reference without allocating any new memory
@@ -688,6 +680,7 @@ class DataViewerApp(QMainWindow):
             if tag not in target_dict:
                 color = self._get_distinct_color(idx)
                 pen = pg.mkPen(color=color, width=1.0)
+
                 c = pg.PlotDataItem(pen=pen, autoDownsample=True, clipToView=True, connect='finite')
 
                 if cfg.get('scale') == 'log': self.lane_axes[lane].addItem(c)
@@ -709,9 +702,14 @@ class DataViewerApp(QMainWindow):
 
             min_len = min(len(x_array), len(y))
             x_plot = x_array[-min_len:]
+
             try:
+                # Use a view where possible instead of a forced copy
                 y_raw = np.asarray(y[-min_len:], dtype=np.float64)
-                y_plot = y_raw * cfg.get('multiplier', 1.0)
+
+                # Only allocate a new array in RAM if math is actually required
+                mult = cfg.get('multiplier', 1.0)
+                y_plot = y_raw if mult == 1.0 else y_raw * mult
             except: continue
 
             if cfg.get('scale') == 'log':
@@ -738,24 +736,15 @@ class DataViewerApp(QMainWindow):
         if getattr(self, '_auto_panning', False) or not self.lanes:
             return
 
-        # 1. HARDWARE CHECK: Is the user actually holding a mouse button?
-        # Wheel zooming happens with NoButton.
-        # Dragging/Panning happens with Left or Middle button pressed.
         is_panning = QApplication.mouseButtons() != Qt.MouseButton.NoButton
 
         if self.auto_scroll and is_panning:
-            # User is physically dragging the graph away from 'Now'
             self._toggle_scroll_lock(manual_break=True)
 
-        # 2. If we are still in Auto-Scroll (meaning they just used the Scroll Wheel),
-        # we update the width so the live edge doesn't "snap" back to 5 minutes.
         if self.auto_scroll:
             base_plot = list(self.lanes.values())[0]
             vr = base_plot.viewRange()[0]
             self.live_span = vr[1] - vr[0]
-
-        self._check_and_fetch_history()
-        self._refresh_plot_live()
 
     def request_ui_refresh(self):
         """
