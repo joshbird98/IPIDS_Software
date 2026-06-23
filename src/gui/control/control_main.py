@@ -1,4 +1,5 @@
 import os
+import sys
 import time
 from PyQt6.QtWidgets import QMainWindow, QDockWidget, QMessageBox, QInputDialog, QLineEdit
 from PyQt6.QtCore import Qt, QTimer, QUrl, QSettings
@@ -129,6 +130,7 @@ class ControlMainWindow(QMainWindow):
         view_menu.addAction(self.optics_dock.toggleViewAction())
         view_menu.addAction(self.diag_dock.toggleViewAction())
         view_menu.addAction(self.smu_dock.toggleViewAction())
+        view_menu.addAction(self.optimiser_dock.toggleViewAction())
 
         view_menu.addSeparator()
 

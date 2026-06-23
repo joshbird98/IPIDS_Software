@@ -2,7 +2,7 @@
   "_comment": "These limits strictly mirror the hardcoded LIMIT blocks in the PLC to inform the PC UI.",
   "source_extraction": {
     "min_v": 0.0,
-    "max_v": 30.0
+    "max_v": 20.0
   },
   "source_target": {
     "min_v": 0.0,

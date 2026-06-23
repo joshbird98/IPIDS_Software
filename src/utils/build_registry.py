@@ -25,7 +25,6 @@ def clean_node_name(node_str):
 
 
 def apply_existing_overrides(new_tags, existing_registry):
-    # ADDED: min_val, max_val, and auto_controllable to preserved fields
     preserved_fields = [
         "datatype", "unit", "default_scale", "multiplier",
         "description", "default_label", "short_name"

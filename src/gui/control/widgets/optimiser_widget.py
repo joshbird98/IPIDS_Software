@@ -2,63 +2,91 @@ import time
 import json
 import os
 import numpy as np
+import pyqtgraph as pg
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QGridLayout, QLabel, QPushButton,
     QGroupBox, QDoubleSpinBox, QMessageBox, QDialog, QTreeWidget,
-    QTreeWidgetItem, QDialogButtonBox
+    QTreeWidgetItem, QDialogButtonBox, QHBoxLayout
 )
-from PyQt6.QtCore import Qt, QThread, pyqtSignal
+from PyQt6.QtCore import Qt, QThread, pyqtSignal, QRectF
 
 
-class OptimizerWorker(QThread):
-    data_point = pyqtSignal(float, float)
+class Optimizer2DWorker(QThread):
+    # Emits (x_idx, y_idx, measurement_value)
+    data_point = pyqtSignal(int, int, float)
     scan_finished = pyqtSignal()
     status_msg = pyqtSignal(str)
 
-    def __init__(self, cmd_thread, get_telemetry_cb, target_service: str,
-                 target_tag: str, mode_tag: str, rb_tag: str,
-                 start_val: float, stop_val: float, steps: int, dwell: float):
+    def __init__(self, cmd_thread, get_telemetry_cb,
+                 x_service, x_tag, x_mode_tag, x_start, x_stop, x_steps,
+                 y_service, y_tag, y_mode_tag, y_start, y_stop, y_steps,
+                 rb_tag, dwell):
         super().__init__()
         self.cmd_thread = cmd_thread
         self.get_telemetry_cb = get_telemetry_cb
-        self.target_service = target_service
-        self.target_tag = target_tag
-        self.mode_tag = mode_tag
+
+        self.x_service = x_service
+        self.x_tag = x_tag
+        self.x_mode_tag = x_mode_tag
+        self.x_start = x_start
+        self.x_stop = x_stop
+        self.x_steps = x_steps
+
+        self.y_service = y_service
+        self.y_tag = y_tag
+        self.y_mode_tag = y_mode_tag
+        self.y_start = y_start
+        self.y_stop = y_stop
+        self.y_steps = y_steps
+
         self.rb_tag = rb_tag
-        self.start_val = start_val
-        self.stop_val = stop_val
-        self.steps = steps
         self.dwell = dwell
+
         self.is_stopped = False
 
     def run(self):
         self.status_msg.emit("Seizing Control (Mode=1)...")
-        self.cmd_thread.send_command(self.target_service, self.mode_tag, 1, origin="optimizer")
+        # 1. Handshake: Seize Control for BOTH axes
+        self.cmd_thread.send_command(self.x_service, self.x_mode_tag, 1, origin="optimizer")
+        if self.x_mode_tag != self.y_mode_tag:
+            self.cmd_thread.send_command(self.y_service, self.y_mode_tag, 1, origin="optimizer")
         time.sleep(0.5)
 
-        self.status_msg.emit("Executing Sweep...")
-        scan_points = np.linspace(self.start_val, self.stop_val, self.steps)
+        self.status_msg.emit("Executing 2D Raster Sweep...")
+        x_points = np.linspace(self.x_start, self.x_stop, self.x_steps)
+        y_points = np.linspace(self.y_start, self.y_stop, self.y_steps)
 
-        for val in scan_points:
-            if self.is_stopped:
-                break
+        for i, val_x in enumerate(x_points):
+            if self.is_stopped: break
 
-            self.cmd_thread.send_command(self.target_service, self.target_tag, float(val), origin="optimizer")
+            # Set X Axis
+            self.cmd_thread.send_command(self.x_service, self.x_tag, float(val_x), origin="optimizer")
+            # Give X a tiny extra moment to settle if it's a large physical jump (like a magnet)
+            time.sleep(0.2)
 
-            start_t = time.time()
-            while time.time() - start_t < self.dwell:
-                if self.is_stopped:
-                    break
-                time.sleep(0.05)
+            for j, val_y in enumerate(y_points):
+                if self.is_stopped: break
 
-            if self.is_stopped:
-                break
+                # Set Y Axis
+                self.cmd_thread.send_command(self.y_service, self.y_tag, float(val_y), origin="optimizer")
 
-            rb_val = self.get_telemetry_cb(self.rb_tag)
-            self.data_point.emit(float(val), float(rb_val))
+                # Dwell
+                start_t = time.time()
+                while time.time() - start_t < self.dwell:
+                    if self.is_stopped: break
+                    time.sleep(0.05)
 
+                if self.is_stopped: break
+
+                # Measure
+                rb_val = self.get_telemetry_cb(self.rb_tag)
+                self.data_point.emit(i, j, float(rb_val))
+
+        # 5. Handshake: Release Control
         self.status_msg.emit("Releasing Control (Mode=0)...")
-        self.cmd_thread.send_command(self.target_service, self.mode_tag, 0, origin="optimizer")
+        self.cmd_thread.send_command(self.x_service, self.x_mode_tag, 0, origin="optimizer")
+        if self.x_mode_tag != self.y_mode_tag:
+            self.cmd_thread.send_command(self.y_service, self.y_mode_tag, 0, origin="optimizer")
 
         if not self.is_stopped:
             self.status_msg.emit("Optimization Complete.")
@@ -70,9 +98,9 @@ class OptimizerWorker(QThread):
 
 
 class OptimizerTagSelectorDialog(QDialog):
-    def __init__(self, registry: dict, parent=None):
+    def __init__(self, registry: dict, axis_label: str, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("Select Sweep Parameter")
+        self.setWindowTitle(f"Select {axis_label}-Axis Sweep Parameter")
         self.resize(500, 500)
         self.registry = registry
 
@@ -120,7 +148,10 @@ class OptimizerTagSelectorDialog(QDialog):
             item.setText(1, meta.get("unit", ""))
             item.setData(0, Qt.ItemDataRole.UserRole, {"tag": full_tag, "meta": meta})
 
+        # Collapse everything, then selectively expand only the root branches
         self.tree.collapseAll()
+        for i in range(self.tree.topLevelItemCount()):
+            self.tree.topLevelItem(i).setExpanded(True)
 
     def _on_double_click(self, item, column):
         self.accept_selection()
@@ -149,17 +180,16 @@ class ParameterOptimizerWidget(QWidget):
         # Hardcoded Objective Metric
         self.rb_metric_tag = "ion_beam.beamline.faraday.smu.rb_current"
 
-        self.selected_target_tag = None
-        self.selected_target_meta = None
+        self.x_tag = None
+        self.x_meta = None
+        self.y_tag = None
+        self.y_meta = None
 
         self.scan_worker = None
+        self.heatmap_data = None
+
         self.main_layout = QVBoxLayout(self)
         self._init_ui()
-
-    def _derive_enable_tag(self, target_tag: str) -> str:
-        parts = target_tag.split('.')
-        base = ".".join(parts[:-1])
-        return f"{base}.stat_enabled"
 
     def _load_registry(self) -> dict:
         try:
@@ -170,106 +200,148 @@ class ParameterOptimizerWidget(QWidget):
             print(f"[Optimizer] Failed to load registry: {e}")
             return {}
 
-    def _init_ui(self):
-        group = QGroupBox("1D Parameter Optimizer")
+    def _create_axis_config_ui(self, axis_label: str):
+        """Helper to create identical UI blocks for X and Y axes."""
+        group = QGroupBox(f"{axis_label}-Axis Configuration")
         layout = QGridLayout()
 
-        # --- Row 0: Target Parameter Selection ---
-        self.btn_select_param = QPushButton("Select Sweep Parameter...")
-        self.btn_select_param.clicked.connect(self._open_selector_dialog)
-        layout.addWidget(self.btn_select_param, 0, 0, 1, 2)
+        btn_select = QPushButton(f"Select {axis_label}-Axis Parameter...")
+        btn_select.setStyleSheet("text-align: center; font-style: italic; padding: 6px;")
+        layout.addWidget(btn_select, 0, 0, 1, 4)
 
-        self.lbl_selected_param = QLabel("<i>None Selected</i>")
-        layout.addWidget(self.lbl_selected_param, 0, 2, 1, 2)
+        sp_start = QDoubleSpinBox()
+        sp_start.setPrefix("Start: ")
+        sp_start.setDecimals(3)
+        sp_start.setKeyboardTracking(False)
+        layout.addWidget(sp_start, 1, 0, 1, 2)
 
-        # --- Row 1: Objective Metric ---
-        layout.addWidget(QLabel("<b>Objective Metric:</b>"), 1, 0)
-        lbl_metric = QLabel("Faraday Beam Current (SMU)")
-        layout.addWidget(lbl_metric, 1, 1, 1, 3)
+        sp_stop = QDoubleSpinBox()
+        sp_stop.setPrefix("Stop: ")
+        sp_stop.setDecimals(3)
+        sp_stop.setKeyboardTracking(False)
+        layout.addWidget(sp_stop, 1, 2, 1, 2)
 
-        # --- Row 2: Sweep Bounds ---
-        layout.addWidget(QLabel("<b>Sweep Range:</b>"), 2, 0)
+        sp_steps = QDoubleSpinBox()
+        sp_steps.setPrefix("Steps: ")
+        sp_steps.setDecimals(0)
+        sp_steps.setRange(2, 500)
+        sp_steps.setValue(20)  # 20x20 = 400 points default
+        layout.addWidget(sp_steps, 2, 0, 1, 4)
 
-        self.sp_start = QDoubleSpinBox()
-        self.sp_start.setPrefix("Start: ")
-        self.sp_start.setDecimals(3)
-        self.sp_start.setKeyboardTracking(False)
-        layout.addWidget(self.sp_start, 2, 1)
+        group.setLayout(layout)
+        return group, btn_select, sp_start, sp_stop, sp_steps
 
-        self.sp_stop = QDoubleSpinBox()
-        self.sp_stop.setPrefix("Stop: ")
-        self.sp_stop.setDecimals(3)
-        self.sp_stop.setKeyboardTracking(False)
-        layout.addWidget(self.sp_stop, 2, 2)
+    def _init_ui(self):
+        # 1. Top Controls (X, Y, Dwell, Buttons)
+        ctrl_layout = QVBoxLayout()
 
-        # --- Row 3: Resolution & Timing ---
-        layout.addWidget(QLabel("<b>Resolution:</b>"), 3, 0)
+        # Axes
+        x_group, self.btn_x, self.sp_x_start, self.sp_x_stop, self.sp_x_steps = self._create_axis_config_ui("X")
+        y_group, self.btn_y, self.sp_y_start, self.sp_y_stop, self.sp_y_steps = self._create_axis_config_ui("Y")
 
-        self.sp_steps = QDoubleSpinBox()
-        self.sp_steps.setPrefix("Steps: ")
-        self.sp_steps.setDecimals(0)
-        self.sp_steps.setRange(2, 1000)
-        self.sp_steps.setValue(50)
-        layout.addWidget(self.sp_steps, 3, 1)
+        self.btn_x.clicked.connect(lambda: self._open_selector("X"))
+        self.btn_y.clicked.connect(lambda: self._open_selector("Y"))
+
+        axes_layout = QHBoxLayout()
+        axes_layout.addWidget(x_group)
+        axes_layout.addWidget(y_group)
+        ctrl_layout.addLayout(axes_layout)
+
+        # Global Dwell & Start/Stop
+        exec_group = QGroupBox("Execution")
+        exec_layout = QHBoxLayout()
 
         self.sp_dwell = QDoubleSpinBox()
-        self.sp_dwell.setPrefix("Dwell: ")
+        self.sp_dwell.setPrefix("Dwell Time: ")
         self.sp_dwell.setSuffix(" s")
         self.sp_dwell.setDecimals(2)
-        self.sp_dwell.setRange(0.1, 60.0)
-        self.sp_dwell.setValue(1.0)
-        layout.addWidget(self.sp_dwell, 3, 2)
+        self.sp_dwell.setRange(0.05, 60.0)
+        self.sp_dwell.setValue(0.5)
+        exec_layout.addWidget(self.sp_dwell)
 
-        # --- Row 4: Controls ---
-        self.btn_start = QPushButton("START OPTIMIZATION")
+        self.btn_start = QPushButton("START 2D RASTER SWEEP")
         self.btn_start.setStyleSheet("""
-                    QPushButton { background-color: #FF9800; color: white; font-weight: bold; }
-                    QPushButton:disabled { background-color: #555555; color: #888888; }
-                """)
+            QPushButton { background-color: #FF9800; color: white; font-weight: bold; }
+            QPushButton:disabled { background-color: #555555; color: #888888; }
+        """)
         self.btn_start.setEnabled(False)
         self.btn_start.clicked.connect(self._start_optimization)
-        layout.addWidget(self.btn_start, 4, 1)
+        exec_layout.addWidget(self.btn_start)
 
         self.btn_stop = QPushButton("ABORT")
         self.btn_stop.setStyleSheet("""
-                    QPushButton { background-color: #F44336; color: white; font-weight: bold; }
-                    QPushButton:disabled { background-color: #555555; color: #888888; }
-                """)
+            QPushButton { background-color: #F44336; color: white; font-weight: bold; }
+            QPushButton:disabled { background-color: #555555; color: #888888; }
+        """)
         self.btn_stop.setEnabled(False)
         self.btn_stop.clicked.connect(self._stop_optimization)
-        layout.addWidget(self.btn_stop, 4, 2)
+        exec_layout.addWidget(self.btn_stop)
+
+        exec_group.setLayout(exec_layout)
+        ctrl_layout.addWidget(exec_group)
 
         self.lbl_status = QLabel("Status: Idle")
-        layout.addWidget(self.lbl_status, 5, 0, 1, 4)
+        ctrl_layout.addWidget(self.lbl_status)
+        self.main_layout.addLayout(ctrl_layout)
 
-        group.setLayout(layout)
-        self.main_layout.addWidget(group)
-        self.main_layout.addStretch()
+        # 2. Bottom Plotting Area (PyQtGraph ImageItem)
+        pg.setConfigOption('background', '#1E1E1E')
+        pg.setConfigOption('foreground', 'w')
+        self.plot_widget = pg.PlotWidget(title="Beam Current Heat Map (A)")
+        self.plot_widget.setLabel('bottom', "X-Axis Parameter")
+        self.plot_widget.setLabel('left', "Y-Axis Parameter")
 
-    def _open_selector_dialog(self):
-        dialog = OptimizerTagSelectorDialog(self.registry, self)
+        self.image_item = pg.ImageItem()
+        # Use a high-contrast colormap for beam diagnostics
+        colormap = pg.colormap.get('plasma')
+        self.image_item.setColorMap(colormap)
+
+        self.plot_widget.addItem(self.image_item)
+        self.main_layout.addWidget(self.plot_widget)
+
+    def _open_selector(self, axis: str):
+        dialog = OptimizerTagSelectorDialog(self.registry, axis, self)
         if dialog.exec():
-            self.selected_target_tag = dialog.selected_tag
-            self.selected_target_meta = dialog.selected_meta
-            self._apply_target_constraints()
+            if axis == "X":
+                self.x_tag = dialog.selected_tag
+                self.x_meta = dialog.selected_meta
+                self._apply_target_constraints(self.x_meta, self.btn_x, self.sp_x_start, self.sp_x_stop, "X")
+                self.plot_widget.setLabel('bottom', self.x_meta.get("default_label", "X-Axis"),
+                                          units=self.x_meta.get("unit", ""))
+            else:
+                self.y_tag = dialog.selected_tag
+                self.y_meta = dialog.selected_meta
+                self._apply_target_constraints(self.y_meta, self.btn_y, self.sp_y_start, self.sp_y_stop, "Y")
+                self.plot_widget.setLabel('left', self.y_meta.get("default_label", "Y-Axis"),
+                                          units=self.y_meta.get("unit", ""))
 
-    def _apply_target_constraints(self):
-        meta = self.selected_target_meta
-        tag_name = meta.get("default_label", self.selected_target_tag.split('.')[-1])
+            self._evaluate_start_ready()
+
+    def _apply_target_constraints(self, meta: dict, btn: QPushButton, sp_start: QDoubleSpinBox, sp_stop: QDoubleSpinBox,
+                                  axis_label: str):
+        tag_name = meta.get("default_label", "Unknown")
         unit = meta.get("unit", "")
 
-        self.lbl_selected_param.setText(f"<b>{tag_name}</b> [{unit}]")
+        # Consolidate the tag display directly into the button
+        btn.setText(f"{axis_label}: {tag_name} [{unit}]")
+        btn.setStyleSheet("text-align: center; font-weight: bold; padding: 6px;")
 
         min_v = float(meta["min_val"])
         max_v = float(meta["max_val"])
 
-        self.sp_start.setRange(min_v, max_v)
-        self.sp_start.setValue(min_v)
-        self.sp_start.setSuffix(f" {unit}")
+        sp_start.setRange(min_v, max_v)
+        sp_start.setValue(min_v)
+        sp_start.setSuffix(f" {unit}")
 
-        self.sp_stop.setRange(min_v, max_v)
-        self.sp_stop.setValue(max_v)
-        self.sp_stop.setSuffix(f" {unit}")
+        sp_stop.setRange(min_v, max_v)
+        sp_stop.setValue(max_v)
+        sp_stop.setSuffix(f" {unit}")
+
+    def _evaluate_start_ready(self):
+        # We can only start if both axes are populated
+        if self.x_tag and self.y_tag:
+            self.btn_start.setEnabled(True)
+            self.btn_start.setToolTip("Click to begin 2D Raster Sweep")
 
     def _derive_mode_tag(self, target_tag: str) -> str:
         parts = target_tag.split('.')
@@ -277,26 +349,40 @@ class ParameterOptimizerWidget(QWidget):
         return f"{base}.cmd_ctrl_mode"
 
     def _start_optimization(self):
-        if not self.selected_target_tag:
+        if not self.x_tag or not self.y_tag:
             return
 
-        target_service = self.selected_target_meta["source"]
-        mode_tag = self._derive_mode_tag(self.selected_target_tag)
+        x_start = self.sp_x_start.value()
+        x_stop = self.sp_x_stop.value()
+        x_steps = int(self.sp_x_steps.value())
 
-        start_val = self.sp_start.value()
-        stop_val = self.sp_stop.value()
+        y_start = self.sp_y_start.value()
+        y_stop = self.sp_y_stop.value()
+        y_steps = int(self.sp_y_steps.value())
 
-        if start_val == stop_val:
+        if x_start == x_stop or y_start == y_stop:
             QMessageBox.warning(self, "Invalid Parameters", "Start and Stop values cannot be identical.")
             return
 
-        if mode_tag not in self.registry:
-            QMessageBox.critical(self, "Architecture Error", f"Cannot find arbitration tag: {mode_tag}")
+        x_mode_tag = self._derive_mode_tag(self.x_tag)
+        y_mode_tag = self._derive_mode_tag(self.y_tag)
+
+        if x_mode_tag not in self.registry or y_mode_tag not in self.registry:
+            QMessageBox.critical(self, "Architecture Error", "Cannot find arbitration tags for selected hardware.")
             return
+
+        # Initialize the empty heat map matrix
+        self.heatmap_data = np.zeros((x_steps, y_steps))
+        self.image_item.setImage(self.heatmap_data, autoLevels=False)
+
+        # Map the pixels of the image to the actual physical unit bounds
+        # Note: PyQtGraph QRectF takes (x, y, width, height)
+        x_width = x_stop - x_start
+        y_height = y_stop - y_start
+        self.image_item.setRect(QRectF(x_start, y_start, x_width, y_height))
 
         self._lock_ui(True)
 
-        # Map the registry source to the HMI Command Thread target port
         route_map = {
             "service_plc_snap7": "plc",
             "service_magnet": "magnet",
@@ -305,24 +391,31 @@ class ParameterOptimizerWidget(QWidget):
             "service_source_turbo": "source_turbo",
             "service_faraday_smu": "smu"
         }
-        routing_target = route_map.get(target_service, "plc")
 
-        self.scan_worker = OptimizerWorker(
+        x_target_service = route_map.get(self.x_meta["source"], "plc")
+        y_target_service = route_map.get(self.y_meta["source"], "plc")
+
+        self.scan_worker = Optimizer2DWorker(
             cmd_thread=self.cmd_thread,
             get_telemetry_cb=self.get_telemetry_cb,
-            target_service=routing_target,
-            target_tag=self.selected_target_tag,
-            mode_tag=mode_tag,
+            x_service=x_target_service, x_tag=self.x_tag, x_mode_tag=x_mode_tag,
+            x_start=x_start, x_stop=x_stop, x_steps=x_steps,
+            y_service=y_target_service, y_tag=self.y_tag, y_mode_tag=y_mode_tag,
+            y_start=y_start, y_stop=y_stop, y_steps=y_steps,
             rb_tag=self.rb_metric_tag,
-            start_val=start_val,
-            stop_val=stop_val,
-            steps=int(self.sp_steps.value()),
             dwell=self.sp_dwell.value()
         )
 
+        self.scan_worker.data_point.connect(self._on_data_point)
         self.scan_worker.status_msg.connect(self.lbl_status.setText)
         self.scan_worker.scan_finished.connect(self._on_scan_finished)
         self.scan_worker.start()
+
+    def _on_data_point(self, x_idx: int, y_idx: int, val: float):
+        # Insert the live telemetry value into the numpy matrix
+        self.heatmap_data[x_idx, y_idx] = val
+        # Setting autoLevels=True forces the color scale to adapt to the min/max of the beam current live
+        self.image_item.setImage(self.heatmap_data, autoLevels=True)
 
     def _stop_optimization(self):
         if self.scan_worker and self.scan_worker.isRunning():
@@ -335,28 +428,39 @@ class ParameterOptimizerWidget(QWidget):
         self._lock_ui(False)
 
     def _lock_ui(self, is_running: bool):
-        self.btn_select_param.setEnabled(not is_running)
-        self.sp_start.setEnabled(not is_running)
-        self.sp_stop.setEnabled(not is_running)
-        self.sp_steps.setEnabled(not is_running)
+        self.btn_x.setEnabled(not is_running)
+        self.btn_y.setEnabled(not is_running)
+        self.sp_x_start.setEnabled(not is_running)
+        self.sp_x_stop.setEnabled(not is_running)
+        self.sp_x_steps.setEnabled(not is_running)
+        self.sp_y_start.setEnabled(not is_running)
+        self.sp_y_stop.setEnabled(not is_running)
+        self.sp_y_steps.setEnabled(not is_running)
         self.sp_dwell.setEnabled(not is_running)
         self.btn_stop.setEnabled(is_running)
 
-        # Only re-enable Start if a valid parameter is currently loaded
-        self.btn_start.setEnabled((not is_running) and (self.selected_target_tag is not None))
+        self.btn_start.setEnabled((not is_running) and (self.x_tag is not None) and (self.y_tag is not None))
+
+    def _derive_enable_tag(self, target_tag: str) -> str:
+        parts = target_tag.split('.')
+        base = ".".join(parts[:-1])
+        return f"{base}.stat_enabled"
 
     def update_telemetry(self, data: dict):
         master_comms_lost = not bool(data.get("system.connected", False)) or bool(
             data.get("ion_beam.system.pc_plc_comms_lost", False))
         relay_active = bool(data.get("ion_beam.facilities.safety_relay_active", False))
 
-        target_service = self.selected_target_meta["source"] if self.selected_target_meta else None
+        is_sweeping = self.scan_worker is not None and self.scan_worker.isRunning()
 
-        service_online = True
-        heartbeat_name = None
-
-        if target_service:
-            # Map registry 'source' keys to the actual Service Manager heartbeat names
+        # Check safety and comms for BOTH selected services
+        lock_reason = ""
+        if master_comms_lost:
+            lock_reason = "PLC communications offline."
+        elif not relay_active:
+            lock_reason = "Safety Relay is De-Energized."
+        else:
+            services_status = data.get("manager.services", {})
             service_translation = {
                 "service_magnet": "service_magnet_psu",
                 "service_plc_snap7": "service_plc",
@@ -365,44 +469,35 @@ class ParameterOptimizerWidget(QWidget):
                 "service_vacuum": "service_vac_gauge_controllers",
                 "service_source_turbo": "service_source_turbo"
             }
-            heartbeat_name = service_translation.get(target_service, target_service)
 
-            services_status = data.get("manager.services", {})
-            service_online = services_status.get(heartbeat_name, "OFFLINE") == "ONLINE"
+            for meta in [self.x_meta, self.y_meta]:
+                if meta:
+                    target_service = meta["source"]
+                    heartbeat_name = service_translation.get(target_service, target_service)
+                    if services_status.get(heartbeat_name, "OFFLINE") != "ONLINE":
+                        lock_reason = f"Target service ({heartbeat_name}) is offline."
+                        break
 
-        is_sweeping = self.scan_worker is not None and self.scan_worker.isRunning()
+            if not lock_reason:
+                for tag in [self.x_tag, self.y_tag]:
+                    if tag:
+                        enable_tag = self._derive_enable_tag(tag)
+                        if enable_tag in self.registry and not bool(data.get(enable_tag, 0.0)):
+                            lock_reason = "Hardware output for selected target is disabled."
+                            break
 
-        # Check if the specific physical hardware is enabled
-        hw_enabled = True
-        if self.selected_target_tag:
-            enable_tag = self._derive_enable_tag(self.selected_target_tag)
-            # If the device has an enable tag in the registry, check it. Otherwise assume True.
-            if enable_tag in self.registry:
-                hw_enabled = bool(data.get(enable_tag, 0.0))
-
-        if is_sweeping and (master_comms_lost or not relay_active or not service_online or not hw_enabled):
+        if is_sweeping and lock_reason:
             self._stop_optimization()
-
-        lock_reason = ""
-        if master_comms_lost:
-            lock_reason = "PLC communications offline."
-        elif not relay_active:
-            lock_reason = "Safety Relay is De-Energized."
-        elif target_service and not service_online:
-            lock_reason = f"Target service ({target_service}) is offline."
-        elif not hw_enabled:
-            lock_reason = f"Hardware is not enabled."
 
         if not is_sweeping:
             lockout = bool(lock_reason)
-            can_start = (not lockout) and (self.selected_target_tag is not None)
+            can_start = (not lockout) and (self.x_tag is not None) and (self.y_tag is not None)
 
             self.btn_start.setEnabled(can_start)
 
-            # Dynamic Tooltips
-            if self.selected_target_tag is None:
-                self.btn_start.setToolTip("Disabled: Select a parameter to sweep first.")
+            if self.x_tag is None or self.y_tag is None:
+                self.btn_start.setToolTip("Disabled: Select both X and Y parameters to sweep.")
             elif lockout:
                 self.btn_start.setToolTip(f"Disabled: {lock_reason}")
             else:
-                self.btn_start.setToolTip("Click to start optimization sweep.")
+                self.btn_start.setToolTip("Click to begin 2D Raster Sweep")

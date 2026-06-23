@@ -248,6 +248,13 @@ class FaradaySMUWidget(QWidget):
             data.get("ion_beam.system.pc_plc_comms_lost", False))
         relay_active = bool(data.get("ion_beam.facilities.safety_relay_active", False))
 
+        # --- Arbitration Flags ---
+        smu_ctrl_mode = float(data.get("ion_beam.beamline.faraday.smu.rb_ctrl_mode", 0.0))
+        smu_auto_locked = (smu_ctrl_mode > 0.0)
+
+        fc_ctrl_mode = float(data.get("ion_beam.beamline.diagnostics.rb_ctrl_mode", 0.0))
+        fc_auto_locked = (fc_ctrl_mode > 0.0)
+
         # --- 1. Actuator Update ---
         fc_in = data.get("ion_beam.beamline.diagnostics.stat_fc_inserted")
         fc_out = data.get("ion_beam.beamline.diagnostics.stat_fc_retracted")
@@ -278,13 +285,6 @@ class FaradaySMUWidget(QWidget):
                 self.btn_fc.setText("FARADAY CUP: LOGIC ERROR")
                 self.btn_fc.setStyleSheet(COLOR_FAULT)
 
-        smu_ctrl_mode = data.get("ion_beam.beamline.faraday.smu.rb_ctrl_mode", 0.0)
-        smu_auto_locked = (smu_ctrl_mode > 0.0)
-
-        # FC lock logic (assuming you add a rb_ctrl_mode to the diagnostics struct in the future)
-        fc_ctrl_mode = data.get("ion_beam.beamline.diagnostics.rb_ctrl_mode", 0.0)
-        fc_auto_locked = (fc_ctrl_mode > 0.0)
-
         if master_comms_lost:
             self.btn_fc.setEnabled(False)
             self.btn_fc.setToolTip("Disabled: PLC telemetry stream is dead.")
@@ -294,6 +294,9 @@ class FaradaySMUWidget(QWidget):
         elif fc_lock:
             self.btn_fc.setEnabled(False)
             self.btn_fc.setToolTip(f"Disabled: Faraday Cup is locked {fc_state_string} by an active PLC sequence.")
+        elif fc_auto_locked:
+            self.btn_fc.setEnabled(False)
+            self.btn_fc.setToolTip(f"Disabled: Locked by automated sequencer.")
         else:
             self.btn_fc.setEnabled(True)
             self.btn_fc.setToolTip("Click to physically insert or retract the Faraday Cup into the beam path.")
@@ -309,7 +312,6 @@ class FaradaySMUWidget(QWidget):
             self.lbl_bias_status.setStyleSheet(COLOR_FAULT)
             self.lbl_bias_rb.setText("RB: --- V")
 
-            # Shrink font to 18pt so "NO MEASUREMENT" fits
             self.lbl_digital_current.setText("NO MEASUREMENT")
             self.lbl_digital_current.setStyleSheet(
                 "QLabel { font-family: monospace; font-size: 18pt; font-weight: bold; color: #F44336; }")
@@ -327,13 +329,12 @@ class FaradaySMUWidget(QWidget):
             self.sp_bias.setToolTip(offline_msg)
             return
 
-        # SCENARIO B: Online, but Safety Relay is De-energized
+        # SCENARIO B: Safety Relay is De-energized
         if not relay_active:
             self.lbl_bias_status.setText("STATUS: SAFETY LOCK")
             self.lbl_bias_status.setStyleSheet(COLOR_INACTIVE)
             self.lbl_bias_rb.setText("RB: 0.0 V")
 
-            # Shrink font to 18pt so "NO MEASUREMENT" fits
             self.lbl_digital_current.setText("NO MEASUREMENT")
             self.lbl_digital_current.setStyleSheet(
                 "QLabel { font-family: monospace; font-size: 18pt; font-weight: bold; color: #FF9800; }")
@@ -354,18 +355,23 @@ class FaradaySMUWidget(QWidget):
             self.sp_bias.setToolTip("Disabled: Bias requires Safety Relay to be closed.")
             return
 
-        # SCENARIO C: Fully Online and Safe
-        self.btn_enable_bias.setEnabled(True)
-        self.btn_enable_bias.setToolTip("Click to enable or disable the SMU bias voltage output.")
-        self.sp_bias.setEnabled(True)
-        self.sp_bias.setToolTip("Enter the target bias voltage (-200V to +200V).")
+        # SCENARIO C: Online and Safe (Evaluate Arbitration Lockout)
+        if smu_auto_locked:
+            self.btn_enable_bias.setEnabled(False)
+            self.btn_enable_bias.setToolTip("Disabled: Locked by automated sequencer.")
+            self.sp_bias.setEnabled(False)
+            self.sp_bias.setToolTip("Disabled: Locked by automated sequencer.")
+        else:
+            self.btn_enable_bias.setEnabled(True)
+            self.btn_enable_bias.setToolTip("Click to enable or disable the SMU bias voltage output.")
+            self.sp_bias.setEnabled(True)
+            self.sp_bias.setToolTip("Enter the target bias voltage (-200V to +200V).")
 
         live_msg = "Live beam current measured by the Source-Measure Unit."
         self.lbl_digital_current.setToolTip(live_msg)
         self.lbl_speedo_text.setToolTip(live_msg)
         self.speedo.setToolTip(live_msg)
 
-        # Restore large 32pt font for active numerical readouts
         self.lbl_digital_current.setStyleSheet(
             "QLabel { font-family: monospace; font-size: 32pt; font-weight: bold; color: #4CAF50; }")
 
@@ -373,13 +379,19 @@ class FaradaySMUWidget(QWidget):
         if smu_en:
             self.lbl_bias_status.setText("STATUS: BIAS LIVE")
             self.lbl_bias_status.setStyleSheet(COLOR_WARNING)
+
+            self.btn_enable_bias.blockSignals(True)
             self.btn_enable_bias.setChecked(True)
             self.btn_enable_bias.setStyleSheet(COLOR_OK)
+            self.btn_enable_bias.blockSignals(False)
         else:
             self.lbl_bias_status.setText("STATUS: BIAS DISABLED")
             self.lbl_bias_status.setStyleSheet(COLOR_OK)
+
+            self.btn_enable_bias.blockSignals(True)
             self.btn_enable_bias.setChecked(False)
             self.btn_enable_bias.setStyleSheet(COLOR_BUTTON_STANDARD)
+            self.btn_enable_bias.blockSignals(False)
 
         v_rb = data.get("ion_beam.beamline.faraday.smu.rb_voltage")
         i_rb = data.get("ion_beam.beamline.faraday.smu.rb_current")
