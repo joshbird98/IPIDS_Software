@@ -1,5 +1,5 @@
 {
-  "min_v": 0,
+  "min_v": -200,
   "max_v": 200,
   "compliance_current": 100e-6
 }

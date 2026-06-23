@@ -558,6 +558,20 @@ def get_plc_tags_from_scl(scl_path, config_dir, db_number=10, machine_root="ion_
             else:
                 meta['desc'] = comment if comment else name.replace('_', ' ')
 
+            # --- SMART DEFAULT LABEL GENERATOR ---
+            if "label" not in meta:
+                # Extract the parent struct for context (e.g., 'extraction' -> 'Extraction')
+                parent_struct = filtered_stack[-1].replace('_', ' ').title() if filtered_stack else ""
+                var_clean = name.replace('_', ' ').title()
+
+                # Fix capitalization for common process acronyms
+                acronyms = {"Sp ": "SP ", "Rb ": "RB ", "Cv ": "CV ", "Fc ": "FC ", "Gv ": "GV ", "Psu ": "PSU "}
+                for old, new in acronyms.items():
+                    var_clean = var_clean.replace(old, new)
+
+                meta["label"] = f"{parent_struct} {var_clean}".strip()
+            # -------------------------------------
+
             # --- ADDED: Auto-tag auto_controllable and default limits ---
             is_auto_controllable = name.lower().startswith("sp_requested_")
             default_min = None

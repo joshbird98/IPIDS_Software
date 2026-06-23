@@ -27,7 +27,8 @@ from src.gui.control.widgets.vacuum_widget import VacuumControlWidget
 from src.gui.control.widgets.logger_widget import ExperimentLoggerWidget
 from src.gui.control.widgets.source_widget import IonSourceWidget
 from src.gui.control.widgets.optics_widget import BeamlineOpticsWidget
-from src.gui.control.widgets.diagnostics_widget import DiagnosticsWidget
+from src.gui.control.widgets.system_health_widget import SystemHealthWidget
+from src.gui.control.widgets.services_widget import ServicesWidget
 from src.gui.control.dialogs.config_editor_dialog import ConfigEditorDialog
 from src.gui.control.widgets.faraday_smu_widget import FaradaySMUWidget
 from src.gui.control.widgets.optimiser_widget import ParameterOptimizerWidget
@@ -124,13 +125,14 @@ class ControlMainWindow(QMainWindow):
         view_menu.setIcon(FIF.LAYOUT.icon(icon_theme))
 
         view_menu.addAction(self.vac_dock.toggleViewAction())
-        view_menu.addAction(self.log_dock.toggleViewAction())
-        view_menu.addAction(self.recipe_dock.toggleViewAction())
         view_menu.addAction(self.src_dock.toggleViewAction())
         view_menu.addAction(self.optics_dock.toggleViewAction())
-        view_menu.addAction(self.diag_dock.toggleViewAction())
         view_menu.addAction(self.smu_dock.toggleViewAction())
         view_menu.addAction(self.optimiser_dock.toggleViewAction())
+        view_menu.addAction(self.log_dock.toggleViewAction())
+        view_menu.addAction(self.recipe_dock.toggleViewAction())
+        view_menu.addAction(self.health_dock.toggleViewAction())
+        view_menu.addAction(self.service_dock.toggleViewAction())
 
         view_menu.addSeparator()
 
@@ -233,12 +235,20 @@ class ControlMainWindow(QMainWindow):
         self.src_dock.raise_()
 
         # 3. Bottom Area Dock
-        self.diag_dock = QDockWidget("System Diagnostics", self)
-        self.diag_dock.setObjectName("DiagDock")
-        self.diag_widget = DiagnosticsWidget(self.cmd_thread, self.fault_engine)
-        self.diag_dock.setWidget(self.diag_widget)
-        self.addDockWidget(Qt.DockWidgetArea.BottomDockWidgetArea, self.diag_dock)
-        self.subsystems["diagnostics"] = self.diag_widget
+        self.health_dock = QDockWidget("System Health", self)
+        self.health_dock.setObjectName("HealthDock")
+        self.health_widget = SystemHealthWidget(self.cmd_thread, self.fault_engine)
+        self.health_dock.setWidget(self.health_widget)
+        self.addDockWidget(Qt.DockWidgetArea.BottomDockWidgetArea, self.health_dock)
+        self.subsystems["health"] = self.health_widget
+
+
+        self.service_dock = QDockWidget("Service Manager", self)
+        self.service_dock.setObjectName("ServicesDock")
+        self.service_widget = ServicesWidget(self.cmd_thread)
+        self.service_dock.setWidget(self.service_widget)
+        self.addDockWidget(Qt.DockWidgetArea.BottomDockWidgetArea, self.service_dock)
+        self.subsystems["services"] = self.service_widget
 
     def _route_telemetry(self, fresh_data: dict):
         now = time.time()
@@ -277,7 +287,8 @@ class ControlMainWindow(QMainWindow):
         self.vac_widget.update_telemetry(self.master_telemetry_cache)
         self.src_widget.update_telemetry(self.master_telemetry_cache)
         self.optics_widget.update_telemetry(self.master_telemetry_cache)
-        self.diag_widget.update_telemetry(self.master_telemetry_cache)
+        self.health_widget.update_telemetry(self.master_telemetry_cache)
+        self.service_widget.update_telemetry(self.master_telemetry_cache)
         self.log_widget.update_telemetry(self.master_telemetry_cache)
         self.smu_widget.update_telemetry(self.master_telemetry_cache)
         self.optimiser_widget.update_telemetry(self.master_telemetry_cache)
