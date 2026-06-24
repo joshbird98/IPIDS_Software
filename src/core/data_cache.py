@@ -69,7 +69,7 @@ class DualPipelineCache(QObject):
         )
         self.zmq_listener.data_ready.connect(self._on_live_data)
 
-        self.live_capacity = 5000000
+        self.live_capacity = 100000
         self._x_live = np.zeros(self.live_capacity, dtype=np.float64)
         self._y_live = {key: np.zeros(self.live_capacity, dtype=np.float64) for key in self.engine.channel_keys}
 
@@ -95,6 +95,36 @@ class DualPipelineCache(QObject):
         perf = PerfTracker.get_stats()
         print(
             f"[UI] Time {time.time()} | CPU: {self.process.cpu_percent():>4.1f}% | RAM: {mem_mb:>6.1f} MB | {perf} | Buffer Pointer: {self.live_ptr}")
+        self._debug_memory_footprint()
+
+    def _debug_memory_footprint(self):
+        """Calculates the strict physical byte size of loaded data structures."""
+        # 1. Measure the Live Circular Buffers (NumPy)
+        x_mb = self._x_live.nbytes / (1024 * 1024)
+        y_mb = sum(arr.nbytes for arr in self._y_live.values()) / (1024 * 1024)
+        live_total_mb = x_mb + y_mb
+
+        # 2. Measure the Preloaded Historical Data (Polars)
+        # Note: If self.engine.chunk_mart uses a different naming convention, adjust accordingly.
+        try:
+            chunk_mart_mb = sum(df.estimated_size("mb") for df in self.engine.chunk_mart.values())
+        except AttributeError:
+            chunk_mart_mb = 0.0
+
+        try:
+            mart_1m_mb = self.engine.mart_1m.estimated_size("mb") if self.engine.mart_1m is not None else 0.0
+            mart_20m_mb = self.engine.mart_20m.estimated_size("mb") if self.engine.mart_20m is not None else 0.0
+        except AttributeError:
+            mart_1m_mb = 0.0
+            mart_20m_mb = 0.0
+
+        print(f"\n[MEM DEBUG] --- RAW DATA FOOTPRINT ---")
+        print(f"[MEM DEBUG] Live Ring Buffer : {live_total_mb:.1f} MB")
+        print(f"[MEM DEBUG] Active Chunks RAM: {chunk_mart_mb:.1f} MB")
+        print(f"[MEM DEBUG] 1m Macro Mart RAM: {mart_1m_mb:.1f} MB")
+        print(f"[MEM DEBUG] 20m Macro Mart RAM: {mart_20m_mb:.1f} MB")
+        print(f"[MEM DEBUG] Total Raw Data   : {live_total_mb + chunk_mart_mb + mart_1m_mb + mart_20m_mb:.1f} MB")
+        print(f"[MEM DEBUG] --------------------------\n")
 
     def register_client_tags(self, client_id: int, tags: list):
         self.client_tags[client_id] = set(tags)
@@ -160,6 +190,7 @@ class DualPipelineCache(QObject):
         self.live_ptr += 1
         if self.live_ptr >= self.live_capacity:
             self.buffer_wrapped = True
+            self.live_ptr = self.live_ptr % self.live_capacity
 
         # REMOVED the expensive np.concatenate logic entirely!
         PerfTracker.log("ingest", t0)

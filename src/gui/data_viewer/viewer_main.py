@@ -186,6 +186,18 @@ class DataViewerApp(QMainWindow):
         self.events = EventHelper("viewer_main")
         # Launch background mart sync
         self._setup_midnight_refresh()
+        # The Active Chunk Pre-loader
+        self.chunk_sync_timer = QTimer()
+        self.chunk_sync_timer.timeout.connect(self._trigger_chunk_sync)
+        self.chunk_sync_timer.start(60000)  # Run every 60 seconds
+
+        # Trigger it immediately on startup
+        self._trigger_chunk_sync()
+
+        # The Debouncer: Prevents the UI from freezing while dragging the graph
+        self.history_debounce_timer = QTimer()
+        self.history_debounce_timer.setSingleShot(True)
+        self.history_debounce_timer.timeout.connect(self._execute_history_fetch)
 
         # 2. Profiles & Config
         current_direc = os.path.dirname(os.path.abspath(__file__))
@@ -199,7 +211,7 @@ class DataViewerApp(QMainWindow):
 
         self.render_timer = QTimer()
         self.render_timer.timeout.connect(self._refresh_plot_live)
-        self.render_timer.start(33)
+        self.render_timer.start(100)
 
         self.cache.historical_updated.connect(self._refresh_plot_historical)
 
@@ -238,7 +250,7 @@ class DataViewerApp(QMainWindow):
 
         # --- Sidebar (Now Scrollable) ---
         self.sidebar_scroll = QScrollArea()
-        self.sidebar_scroll.setFixedWidth(310)  # Slightly wider to fit the scrollbar safely
+        self.sidebar_scroll.setFixedWidth(350)  # Slightly wider to fit the scrollbar safely
         self.sidebar_scroll.setWidgetResizable(True)
         self.sidebar_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.sidebar_scroll.setStyleSheet("QScrollArea { border: none; }")
@@ -424,6 +436,10 @@ class DataViewerApp(QMainWindow):
 
         # Build the initial grid
         QTimer.singleShot(200, self.request_ui_refresh)
+
+    def _trigger_chunk_sync(self):
+        """Silently updates the RAM buffer with any newly generated 15-minute logs."""
+        threading.Thread(target=self.cache.engine.sync_active_chunks, daemon=True).start()
 
     def _setup_midnight_refresh(self):
         """Schedules the Data Mart to reload into RAM at exactly 02:30 AM daily."""
@@ -765,6 +781,72 @@ class DataViewerApp(QMainWindow):
         sorted_tags = sorted(self.cache.tags)
         active_axes = {lane: {'linear': False, 'log': False} for lane in self.lanes}
 
+        # =========================================================
+        # --- 1. GLOBAL X-AXIS EXTRACTION (Run ONCE per frame) ---
+        # =========================================================
+        RENDER_LIMIT = 10000
+        needs_downsample = False
+        master_slice_start = 0
+        master_slice_end = 0
+        use_concat = False
+        start_idx = 0
+        end_idx = 0
+
+        if not is_historical and self.cache.live_ptr > 0:
+            ptr = self.cache.live_ptr
+            cap = self.cache.live_capacity
+
+            N_total = min(ptr, cap)
+            start_idx = (ptr - N_total) % cap
+            end_idx = ptr % cap
+
+            # Reconstruct chronological X array
+            if start_idx < end_idx:
+                x_chron = x_array[start_idx:end_idx]
+            else:
+                x_chron = np.concatenate((x_array[start_idx:], x_array[:end_idx]))
+                use_concat = True
+
+            # Viewport filtering (Binary Search)
+            try:
+                view_range = list(self.lanes.values())[0].viewRange()[0]
+                span = view_range[1] - view_range[0]
+
+                # Add heavy padding (25%) so auto-scrolling new data NEVER clips
+                v_min = view_range[0] - (span * 0.25)
+                v_max = view_range[1] + (span * 0.25)
+
+                master_slice_start = np.searchsorted(x_chron, v_min, side='left')
+                master_slice_end = np.searchsorted(x_chron, v_max, side='right')
+
+                # Failsafe: If the slice is empty, abort the filter and show all live data
+                if master_slice_start >= master_slice_end:
+                    master_slice_start, master_slice_end = 0, len(x_chron)
+
+                x_raw_master = x_chron[master_slice_start:master_slice_end]
+
+            except Exception:
+                x_raw_master = x_chron
+                master_slice_start = 0
+                master_slice_end = len(x_chron)
+
+        else:
+            x_raw_master = x_array
+            master_slice_start = 0
+            master_slice_end = len(x_array)
+
+        # Decide if we need to downsample this frame
+        if len(x_raw_master) > RENDER_LIMIT:
+            needs_downsample = True
+            # Downsample X once, globally!
+            x_plot_master, _ = self.cache.engine.downsample_minmax(x_raw_master, x_raw_master,
+                                                                   target_points=RENDER_LIMIT)
+        else:
+            x_plot_master = x_raw_master
+
+        # =========================================================
+        # --- 2. CHANNEL LOOP (Now ultra-lightweight) ---
+        # =========================================================
         for idx, tag in enumerate(sorted_tags):
             cfg = self.plot_config.get(tag, {})
             lane = cfg.get('lane', 'Lane 1')
@@ -777,12 +859,13 @@ class DataViewerApp(QMainWindow):
             if tag not in target_dict:
                 color = self._get_distinct_color(idx)
                 pen = pg.mkPen(color=color, width=1.0)
-
                 c = pg.PlotDataItem(pen=pen, autoDownsample=True, clipToView=True, connect='finite',
-                    downsampleMethod='peak')
+                                    downsampleMethod='peak')
 
-                if cfg.get('scale') == 'log': self.lane_axes[lane].addItem(c)
-                else: self.lanes[lane].addItem(c)
+                if cfg.get('scale') == 'log':
+                    self.lane_axes[lane].addItem(c)
+                else:
+                    self.lanes[lane].addItem(c)
 
                 if not is_historical:
                     label_text = cfg.get('label', tag)
@@ -798,17 +881,34 @@ class DataViewerApp(QMainWindow):
                 target_dict[tag].setData([], [])
                 continue
 
-            min_len = min(len(x_array), len(y))
-            x_plot = x_array[-min_len:]
+            # Extract Y using the globally calculated indices
+            if not is_historical and self.cache.live_ptr > 0:
+                if not use_concat:
+                    y_chron = y[start_idx:end_idx]
+                else:
+                    y_chron = np.concatenate((y[start_idx:], y[:end_idx]))
 
+                y_raw = y_chron[master_slice_start:master_slice_end]
+            else:
+                y_raw = y
+
+            # Run min/max downsample ONLY if the view is zoomed out
+            if needs_downsample:
+                try:
+                    _, y_plot_pre = self.cache.engine.downsample_minmax(x_raw_master, y_raw, target_points=RENDER_LIMIT)
+                except Exception:
+                    # Catch NaN array crashes
+                    y_plot_pre = y_raw
+            else:
+                y_plot_pre = y_raw
+
+            # Apply multipliers and log scaling
             try:
-                # Use a view where possible instead of a forced copy
-                y_raw = np.asarray(y[-min_len:], dtype=np.float64)
-
-                # Only allocate a new array in RAM if math is actually required
+                y_plot_pre = np.asarray(y_plot_pre, dtype=np.float64)
                 mult = cfg.get('multiplier', 1.0)
-                y_plot = y_raw if mult == 1.0 else y_raw * mult
-            except: continue
+                y_plot = y_plot_pre if mult == 1.0 else y_plot_pre * mult
+            except Exception:
+                continue
 
             if cfg.get('scale') == 'log':
                 active_axes[lane]['log'] = True
@@ -817,8 +917,9 @@ class DataViewerApp(QMainWindow):
             else:
                 active_axes[lane]['linear'] = True
 
-            target_dict[tag].setData(x_plot, y_plot)
+            target_dict[tag].setData(x_plot_master, y_plot)
 
+        # UI Cleanup
         for lane, states in active_axes.items():
             left_axis = self.lanes[lane].getAxis('left')
             left_axis.show()
@@ -843,6 +944,21 @@ class DataViewerApp(QMainWindow):
             base_plot = list(self.lanes.values())[0]
             vr = base_plot.viewRange()[0]
             self.live_span = vr[1] - vr[0]
+
+        # ADD THIS: Reset the 150ms countdown every time the view shifts
+        self._trigger_history_debounce()
+
+    def _trigger_history_debounce(self):
+        """Starts a 150ms countdown. If triggered again, the countdown resets."""
+        self.history_debounce_timer.start(150)
+
+    def _execute_history_fetch(self):
+        """This only fires when the user STOPS dragging the mouse."""
+        # Replace this with the actual method you use to load historical data.
+        # e.g., self._check_and_fetch_history() or self._refresh_plot_history()
+
+        if hasattr(self, '_check_and_fetch_history'):
+            self._check_and_fetch_history()
 
     def request_ui_refresh(self):
         """
@@ -1385,6 +1501,8 @@ class DataViewerApp(QMainWindow):
 
         try:
             with sqlite3.connect(db_path) as conn:
+                conn.execute("PRAGMA journal_mode=WAL;")
+                conn.execute("PRAGMA synchronous=NORMAL;")
                 cursor = conn.cursor()
                 cursor.execute(query, db_query_types)
 
