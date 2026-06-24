@@ -71,15 +71,23 @@ class DataCompactor:
                 # 1. Collect into RAM ONCE
                 daily_df = df.collect()
 
-                # 2. Write the high-resolution raw file
-                daily_df.write_parquet(output_file, compression="zstd", compression_level=10)
+                # 2. ATOMIC WRITE: Write to a temporary file first
+                temp_output = output_file + ".tmp"
+                daily_df.write_parquet(temp_output, compression="zstd", compression_level=10)
+
+                # If the script crashes during the write above, output_file is untouched.
+                # os.replace is an atomic filesystem operation. It swaps the files instantly.
+                os.replace(temp_output, output_file)
 
                 # 3. Generate the UI rollups
                 self.generate_macro_rollups(daily_df, f"day_{d_str}", DAILY_DIR)
 
-                # 4. Clean up ONLY after successful writes
+                # 4. Clean up ONLY after the atomic swap is complete
                 for f in fragments:
-                    os.remove(f)
+                    try:
+                        os.remove(f)
+                    except OSError:
+                        pass
                 print(f"[Compactor] Finished {d_str}.")
 
             except Exception as e:
@@ -120,9 +128,13 @@ class DataCompactor:
             # Execute aggregation and drop the temporary 'bin' column
             macro_df = lf.group_by("bin").agg(agg_exprs).sort("bin").drop("bin").collect()
 
-            # Save to disk
+            # Save to disk using Atomic Write
             out_path = os.path.join(output_dir, f"{base_filename}_{suffix}.parquet")
-            macro_df.write_parquet(out_path)
+            temp_path = out_path + ".tmp"
+
+            macro_df.write_parquet(temp_path)
+            os.replace(temp_path, out_path)
+
             print(f"Saved {out_path} ({len(macro_df)} rows)")
 
     def run(self):

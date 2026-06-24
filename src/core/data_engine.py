@@ -11,6 +11,8 @@ class TimeSeriesEngine:
         self.log_dir = log_dir
         self.channel_keys = self._load_master_schema()
         self._schema_cache = {}
+        self.mart_1m = None
+        self.mart_20m = None
 
     def _load_master_schema(self) -> list:
         registry_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '../../config/system_tags.json'))
@@ -51,116 +53,100 @@ class TimeSeriesEngine:
         # Use 'columns=' keyword argument instead of 'include_columns'
         return pl.scan_parquet(filepath).select(valid_cols)
 
-    def query_stateless(self, start_ts: float, end_ts: float, selected_tags: list):
-        """Pure stateless router with schema caching and projection pushdown."""
-        import time
-        #t_start = time.perf_counter()
-        span = end_ts - start_ts
-        print(f"\n[Engine] Query Started! Request Span: {start_ts:.1f} to {end_ts:.1f}")
+    def populate_macro_marts(self):
+        """Silently loads macro rollups into RAM for instantaneous slicing."""
+        print("[Engine] Hoisting In-Memory Data Marts...")
+        files_1m = glob.glob(os.path.join(self.log_dir, "**/*macro_1m.parquet"), recursive=True)
+        files_20m = glob.glob(os.path.join(self.log_dir, "**/*macro_20m.parquet"), recursive=True)
 
-        # 1. Determine configuration based on zoom span
-        import datetime
-        today_midnight = datetime.datetime.now().replace(hour=0, minute=0, second=0, microsecond=0).timestamp()
-
-        # Determine if we need Macro files or Raw files
-        # We only use macros if the ENTIRE window is in the past (before today)
-        is_macro = (span > 14400) and (end_ts < today_midnight)
-
-        if is_macro:
-            # Use 20m for very long spans, 1m for shorter historical spans
-            file_suffixes = ["*_macro_20m.parquet"] if span > 86400 * 10 else ["*_macro_1m.parquet"]
-            gap_threshold = 1200.0 * 2.0 if span > 86400 * 10 else 60.0 * 2.0
-        else:
-            # If we are touching "Today", we MUST use raw data
-            file_suffixes = ["*_raw.parquet", "day_*.parquet", "chunk_*.parquet"]
-            gap_threshold = 15.0
-
-        # 2. Determine Required Columns (Projection Pushdown)
-        if is_macro:
-            required_cols = ["timestamp_min", "timestamp_max"]
-            for t in selected_tags:
-                required_cols.extend([f"{t}_min", f"{t}_max"])
-        else:
-            required_cols = ["timestamp"] + selected_tags
-
-        # 3. File Discovery
-        available_files = []
-        for suf in file_suffixes:
-            available_files.extend(glob.glob(os.path.join(self.log_dir, "parquet_logs", suf)))
-            available_files.extend(glob.glob(os.path.join(self.log_dir, "daily_logs", suf)))
-        available_files = list(set(available_files))
-        if not is_macro:
-            available_files = [f for f in available_files if "_macro" not in os.path.basename(f)]
-
-        print(f"[Engine] Found {len(available_files)} files using suffixes {file_suffixes}")
-        if available_files:
-            print(f"[Engine] Sample file path: {available_files[0]}")
-
-        if not available_files:
-            print("[Engine] EXIT: No files found! Check log_dir and suffixes.")
-            return np.array([]), {}
-
-        # 5. Execute Query
         try:
-            if is_macro:
-                lfs = []
-                for f in available_files:
-                    # Add a safe scan for each file
-                    lf = self.get_safe_scan(f, required_cols).filter(
-                        (pl.col("timestamp_max") >= start_ts) & (pl.col("timestamp_min") <= end_ts)
-                    )
-                    lfs.append(lf)
+            # 1. Load entire history of 20m summaries
+            if files_20m:
+                self.mart_20m = pl.scan_parquet(files_20m).collect()
+                print(f"[Engine] 20m Mart online. Rows: {self.mart_20m.height}")
 
-                # Concat all found macro files
-                df = pl.concat(lfs, how="diagonal").collect().sort("timestamp_min")
+            # 2. Load rolling 30-day window of 1m summaries
+            if files_1m:
+                cutoff_ts = time.time() - (30 * 86400)
+                self.mart_1m = pl.scan_parquet(files_1m) \
+                    .filter(pl.col("timestamp_min") >= cutoff_ts) \
+                    .collect()
+                print(f"[Engine] 1m Mart online (30-day window). Rows: {self.mart_1m.height}")
+        except Exception as e:
+            print(f"[Engine] Data Mart population failed: {e}")
+            # Request for manual check: If this fails, double-check that the compactor
+            # is correctly writing the files to the directories matched by the glob patterns.
 
-                if df.is_empty(): return np.array([]), {}
+    def query_stateless(self, start_ts: float, end_ts: float, selected_tags: list):
+        if not selected_tags: return np.array([]), {}
 
-                n_bins = len(df)
-                ts_array = np.empty(n_bins * 2, dtype=np.float64)
-                ts_array[0::2] = df["timestamp_min"].to_numpy()
-                ts_array[1::2] = df["timestamp_max"].to_numpy()
+        span = end_ts - start_ts
+        target_df = None
+        is_macro = False
 
-                vals_dict = {}
-                for col in selected_tags:
-                    min_c, max_c = f"{col}_min", f"{col}_max"
-                    if min_c in df.columns and max_c in df.columns:
-                        arr = np.empty(n_bins * 2, dtype=np.float64)
-                        arr[0::2] = df[min_c].cast(pl.Float64, strict=False).to_numpy()
-                        arr[1::2] = df[max_c].cast(pl.Float64, strict=False).to_numpy()
-                        vals_dict[col] = arr
+        # --- 1. RESOLUTION ROUTING ---
+        if span > (30 * 86400) and self.mart_20m is not None:
+            # > 30 Days: Route to 20m RAM Mart
+            is_macro = True
+            target_df = self.mart_20m.filter(
+                (pl.col("timestamp_min") >= start_ts) & (pl.col("timestamp_min") <= end_ts))
 
-                return self._inject_nan_gaps(ts_array, vals_dict, gap_threshold)
+        elif span > 7200 and self.mart_1m is not None:
+            # 2 Hours to 30 Days: Route to 1m RAM Mart
+            is_macro = True
+            target_df = self.mart_1m.filter((pl.col("timestamp_min") >= start_ts) & (pl.col("timestamp_min") <= end_ts))
 
-            else:
-                lfs = [
-                    self.get_safe_scan(f, required_cols).filter(
-                        (pl.col("timestamp") >= start_ts) & (pl.col("timestamp") <= end_ts)
-                    ) for f in available_files
-                ]
-                print(f"[Engine] Executing Polars concat & scan on {len(lfs)} files...")
-                df = pl.concat(lfs, how="diagonal").collect().sort("timestamp")
-                print(f"[Engine] Scan Complete. Rows returned: {len(df)}")
+        # --- 2. MACRO EXTRACTION (RAM) ---
+        if is_macro and target_df is not None:
+            if target_df.height == 0: return np.array([]), {}
 
-                if df.is_empty():# --- CRITICAL DEBUG INJECT ---
-                    sample_df = pl.read_parquet(available_files[0]).head(1)
-                    if "timestamp" in sample_df.columns:
-                        disk_val = sample_df["timestamp"][0]
-                        print(f"[Engine] ERROR: df is empty after filter! ")
-                        print(f"[Engine] -> Disk 'timestamp' sample: {disk_val} (Type: {type(disk_val)})")
-                        print(f"[Engine] -> UI request bounds: {start_ts} to {end_ts} (Type: {type(start_ts)})")
-                    else:
-                        print(f"[Engine] ERROR: 'timestamp' column not found in Parquet! Columns are: {sample_df.columns}")
-                    return np.array([]), {}
+            # Interleave Min/Max for the Y-Axis Envelope
+            ts_min = target_df["timestamp_min"].to_numpy()
+            ts_max = target_df["timestamp_max"].to_numpy()
+            ts_arr = np.empty((ts_min.size + ts_max.size,), dtype=np.float64)
+            ts_arr[0::2] = ts_min
+            ts_arr[1::2] = ts_max
 
-                ts_array = df["timestamp"].cast(pl.Float64, strict=False).to_numpy()
-                vals_dict = {col: df[col].cast(pl.Float64, strict=False).to_numpy()
-                             for col in selected_tags if col in df.columns}
+            vals_dict = {}
+            for tag in selected_tags:
+                min_col, max_col = f"{tag}_min", f"{tag}_max"
+                if min_col in target_df.columns and max_col in target_df.columns:
+                    y_min = target_df[min_col].to_numpy()
+                    y_max = target_df[max_col].to_numpy()
+                    y_arr = np.empty((y_min.size + y_max.size,), dtype=np.float64)
+                    y_arr[0::2] = y_min
+                    y_arr[1::2] = y_max
+                    vals_dict[tag] = y_arr
+            return ts_arr, vals_dict
 
-                return self._inject_nan_gaps(ts_array, vals_dict, gap_threshold)
+        # --- 3. RAW EXTRACTION (Disk) ---
+        # < 2 Hours: Route to raw Parquet files on SSD
+        chunks = glob.glob(os.path.join(self.log_dir, "**/chunk_*.parquet"), recursive=True)
+        days = glob.glob(os.path.join(self.log_dir, "**/day_*.parquet"), recursive=True)
+        raws = glob.glob(os.path.join(self.log_dir, "**/*_raw.parquet"), recursive=True)
+
+        target_files = chunks + raws + [f for f in days if "macro" not in f]
+        if not target_files: return np.array([]), {}
+
+        fetch_cols = ["timestamp"] + selected_tags
+
+        try:
+            df = pl.scan_parquet(target_files) \
+                .filter((pl.col("timestamp") >= start_ts) & (pl.col("timestamp") <= end_ts))
+
+            available_cols = df.collect_schema().names()
+            valid_cols = [c for c in fetch_cols if c in available_cols]
+
+            df_collected = df.select(valid_cols).sort("timestamp").collect()
+
+            if df_collected.height == 0: return np.array([]), {}
+
+            ts_arr = df_collected["timestamp"].to_numpy()
+            vals_dict = {tag: df_collected[tag].to_numpy() for tag in selected_tags if tag in df_collected.columns}
+            return ts_arr, vals_dict
 
         except Exception as e:
-            print(f"[Engine] Stateless Query Exception: {e}")
+            print(f"[Engine] Raw Disk Query Error: {e}")
             return np.array([]), {}
 
     @staticmethod

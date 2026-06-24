@@ -4,12 +4,13 @@ import csv
 import time
 import numpy as np
 import copy
-from datetime import datetime
+from datetime import datetime, timedelta
 import textwrap
 import sqlite3
 import json
 import zmq
 import orjson
+import threading
 
 from src.core.event_helper import EventHelper
 from src.core.os_helper import harden_windows_process
@@ -17,7 +18,7 @@ from src.core.os_helper import harden_windows_process
 from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QVBoxLayout, QHBoxLayout,
     QWidget, QPushButton, QLabel, QDateTimeEdit,
-    QFileDialog, QCheckBox
+    QFileDialog, QCheckBox, QScrollArea
 )
 from PyQt6.QtCore import Qt, QDateTime, QTimer, QThread, pyqtSignal
 import pyqtgraph as pg
@@ -27,7 +28,7 @@ from src.gui.data_viewer.config_manager import load_registry
 from src.gui.data_viewer.channel_selector import ChannelSelectorDialog
 from src.core.data_cache import DualPipelineCache
 
-from PyQt6.QtWidgets import QDialog, QFormLayout, QLineEdit, QComboBox, QDialogButtonBox
+from PyQt6.QtWidgets import QDialog, QFormLayout, QLineEdit, QComboBox, QDialogButtonBox, QSizePolicy
 from PyQt6.QtGui import QIcon, QPixmap, QColor
 from PyQt6.QtCore import QSize
 
@@ -183,6 +184,8 @@ class DataViewerApp(QMainWindow):
         self.cache = shared_cache
         self.system_registry = load_registry()
         self.events = EventHelper("viewer_main")
+        # Launch background mart sync
+        self._setup_midnight_refresh()
 
         # 2. Profiles & Config
         current_direc = os.path.dirname(os.path.abspath(__file__))
@@ -196,7 +199,7 @@ class DataViewerApp(QMainWindow):
 
         self.render_timer = QTimer()
         self.render_timer.timeout.connect(self._refresh_plot_live)
-        self.render_timer.start(200)
+        self.render_timer.start(33)
 
         self.cache.historical_updated.connect(self._refresh_plot_historical)
 
@@ -233,10 +236,16 @@ class DataViewerApp(QMainWindow):
         self.setCentralWidget(main_widget)
         layout = QHBoxLayout(main_widget)
 
-        # --- Sidebar ---
+        # --- Sidebar (Now Scrollable) ---
+        self.sidebar_scroll = QScrollArea()
+        self.sidebar_scroll.setFixedWidth(310)  # Slightly wider to fit the scrollbar safely
+        self.sidebar_scroll.setWidgetResizable(True)
+        self.sidebar_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.sidebar_scroll.setStyleSheet("QScrollArea { border: none; }")
+
         sidebar = QWidget()
-        sidebar.setFixedWidth(280)
         sidebar_layout = QVBoxLayout(sidebar)
+        self.sidebar_scroll.setWidget(sidebar)
 
         self.btn_scroll_lock = QPushButton("🟢 Scroll: LOCKED")
         self.btn_scroll_lock.setStyleSheet("background-color: #4CAF50; color: white; font-weight: bold; padding: 10px;")
@@ -314,6 +323,12 @@ class DataViewerApp(QMainWindow):
         sidebar_layout.addWidget(self.btn_inspector)
 
         sidebar_layout.addSpacing(20)
+        sidebar_layout.addWidget(QLabel("<b>Live Channel Values:</b>"))
+        self.value_display_layout = QFormLayout()
+        self.sidebar_value_labels = {}
+        sidebar_layout.addLayout(self.value_display_layout)
+
+        sidebar_layout.addSpacing(20)
         sidebar_layout.addWidget(QLabel("<b>Export Settings:</b>"))
 
         # Path selection layout
@@ -381,7 +396,7 @@ class DataViewerApp(QMainWindow):
         # ----------------------------------
 
         sidebar_layout.addStretch()
-        layout.addWidget(sidebar)
+        layout.addWidget(self.sidebar_scroll)
 
         pg.setConfigOptions(antialias=True)
 
@@ -409,6 +424,40 @@ class DataViewerApp(QMainWindow):
 
         # Build the initial grid
         QTimer.singleShot(200, self.request_ui_refresh)
+
+    def _setup_midnight_refresh(self):
+        """Schedules the Data Mart to reload into RAM at exactly 02:30 AM daily."""
+
+        # 1. Trigger the immediate startup load
+        threading.Thread(target=self.cache.engine.populate_macro_marts, daemon=True).start()
+
+        # 2. Calculate milliseconds until the next 02:30 AM
+        now = datetime.now()
+        target = now.replace(hour=2, minute=30, second=0, microsecond=0)
+
+        if now >= target:
+            # If it is already past 2:30 AM today, schedule for tomorrow
+            target += timedelta(days=1)
+
+        ms_until_target = int((target - now).total_seconds() * 1000)
+
+        # 3. Set a single-shot timer to bridge the gap to 02:30 AM
+        self.initial_sync_timer = QTimer()
+        self.initial_sync_timer.setSingleShot(True)
+        self.initial_sync_timer.timeout.connect(self._trigger_daily_sync)
+        self.initial_sync_timer.start(ms_until_target)
+
+    def _trigger_daily_sync(self):
+        """Fires at 02:30 AM, triggers the load, and establishes the 24h rolling timer."""
+        print("[UI] Executing 02:30 AM Data Mart Refresh...")
+        threading.Thread(target=self.cache.engine.populate_macro_marts, daemon=True).start()
+
+        # 4. Now that we are aligned to 2:30 AM, start a standard 24-hour repeating loop
+        self.daily_sync_timer = QTimer()
+        self.daily_sync_timer.timeout.connect(
+            lambda: threading.Thread(target=self.cache.engine.populate_macro_marts, daemon=True).start()
+        )
+        self.daily_sync_timer.start(86400000)  # 24 hours in milliseconds
 
     def _toggle_y_lock(self):
         self.y_auto_scale = not self.y_auto_scale
@@ -505,12 +554,14 @@ class DataViewerApp(QMainWindow):
             p.scene().addItem(right_vb)
 
             # D. Configure ViewBox Auto-Scaling (Y-Axis only)
-            # We disable X-AutoRange because our own Scroll Lock/Timespan logic handles X
             for vb in [p.vb, right_vb]:
                 vb.setMouseEnabled(x=True, y=False)
-                vb.setAutoVisible(y=True)  # Focus Y-scale only on visible data points
+                vb.setAutoVisible(y=True)
                 vb.enableAutoRange(axis=pg.ViewBox.YAxis, enable=True)
                 vb.disableAutoRange(axis=pg.ViewBox.XAxis)
+
+                # ADD THIS: The SCADA Deadzone trick. 15% padding prevents micro-twitching.
+                vb.setDefaultPadding(0.15)
 
             # E. Setup Log Axis (Right side)
             log_axis = LogAxisItem(orientation='right')
@@ -562,6 +613,34 @@ class DataViewerApp(QMainWindow):
             self.lanes[lane_name] = p
             self.lane_axes[lane_name] = right_vb
 
+        # Clear existing sidebar labels
+        while self.value_display_layout.count():
+            item = self.value_display_layout.takeAt(0)
+            if item.widget(): item.widget().deleteLater()
+        self.sidebar_value_labels.clear()
+
+        # Generate new static labels
+        for tag in sorted_lanes:  # Or iterate over your selected active tags
+            for t, cfg in self.plot_config.items():
+                if cfg.get('selected') and cfg.get('lane') == tag:
+                    # 1. Right Column: Force a fixed width for the readout
+                    val_lbl = QLabel("---")
+                    val_lbl.setStyleSheet("font-family: monospace; font-size: 14px; color: #2196F3; font-weight: bold;")
+                    val_lbl.setFixedWidth(80)  # Locked width, no wrapping/clipping
+                    val_lbl.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+
+                    # 2. Left Column: Allow to expand to fit the name
+                    label_text = str(cfg.get('label', t))
+                    unit = getattr(self, 'system_registry', {}).get(t, {}).get("unit", "")
+
+                    name_lbl = QLabel(f"{label_text} [{unit}]:")
+                    name_lbl.setStyleSheet("font-size: 11px; color: #555;")
+                    # Allow name_lbl to shrink, but it will not wrap unless strictly necessary
+                    name_lbl.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+
+                    self.value_display_layout.addRow(name_lbl, val_lbl)
+                    self.sidebar_value_labels[t] = val_lbl
+
     def _sync_specific_viewbox(self, main_plot, right_viewbox):
         """Forces geometry alignment between a specific lane and its log axis."""
         right_viewbox.setGeometry(main_plot.vb.sceneBoundingRect())
@@ -579,63 +658,60 @@ class DataViewerApp(QMainWindow):
         self._check_and_fetch_history()
         for ta in getattr(self, 'time_axes', []): ta.set_offset(self.t0)
 
-        # Grab the raw reference without allocating any new memory
-        x_raw = self.cache.x_live_view
-        if len(x_raw) == 0: return
-
+        # --- THE VIRTUAL WINDOW SLICER ---
+        if self.cache.live_ptr == 0: return
         t_slice = time.perf_counter()
 
-        # 1. DYNAMIC VIEWPORT SLICING (No Array Math Yet!)
+        x_raw = self.cache._x_live
+        cap = self.cache.live_capacity
+        ptr = self.cache.live_ptr % cap
+        wrapped = getattr(self.cache, 'buffer_wrapped', False)
+
         base_plot = list(self.lanes.values())[0]
         view_start, view_end = base_plot.viewRange()[0]
         span = view_end - view_start
 
-        # Convert UI view bounds into absolute time to match the raw backend array
         abs_slice_start = (view_start - span) + self.t0
         abs_slice_end = (view_end + span) + self.t0
 
-        # Search the raw O(1) view directly
-        start_idx = np.searchsorted(x_raw, abs_slice_start)
-        end_idx = np.searchsorted(x_raw, abs_slice_end, side='right')
+        if not wrapped:
+            # Simple slice if we haven't hit the 5-million point wrap yet
+            x_valid = x_raw[:ptr]
+            start_idx = np.searchsorted(x_valid, abs_slice_start)
+            end_idx = np.searchsorted(x_valid, abs_slice_end, side='right')
 
-        x_slice = x_raw[start_idx:end_idx] - self.t0
+            x_slice = x_valid[start_idx:end_idx] - self.t0
+            y_slice_dict = {tag: self.cache._y_live[tag][start_idx:end_idx] for tag in self.cache.tags}
+        else:
+            # Dual-Slice: Grab views of the Old Segment and New Segment independently
+            x_old = x_raw[ptr:]
+            x_new = x_raw[:ptr]
 
-        y_slice_dict = {}
-        for tag in self.cache.tags:
-            y_arr = self.cache.y_live_view.get(tag)
-            if y_arr is not None:
-                # Slice Y-data using the same indices
-                y_slice_dict[tag] = y_arr[start_idx:end_idx]
+            s_idx_old = np.searchsorted(x_old, abs_slice_start)
+            e_idx_old = np.searchsorted(x_old, abs_slice_end, side='right')
 
-        MAX_LIVE_RENDER_POINTS = 10000
-        if len(x_slice) > MAX_LIVE_RENDER_POINTS and len(y_slice_dict) > 0:
-            from src.core.data_engine import TimeSeriesEngine  # Import your engine
+            s_idx_new = np.searchsorted(x_new, abs_slice_start)
+            e_idx_new = np.searchsorted(x_new, abs_slice_end, side='right')
 
-            # Use the first tag to align the decimated time axis
-            first_tag = list(y_slice_dict.keys())[0]
-            x_decimated, _ = TimeSeriesEngine.downsample_minmax(
-                x_slice, y_slice_dict[first_tag], target_points=MAX_LIVE_RENDER_POINTS
-            )
+            # Concat ONLY the tiny visible slices (< 0.1ms execution time)
+            x_slice = np.concatenate((x_old[s_idx_old:e_idx_old], x_new[s_idx_new:e_idx_new])) - self.t0
 
-            new_y_dict = {}
-            for tag, y_arr in y_slice_dict.items():
-                _, y_decimated = TimeSeriesEngine.downsample_minmax(
-                    x_slice, y_arr, target_points=MAX_LIVE_RENDER_POINTS
-                )
-                new_y_dict[tag] = y_decimated
+            y_slice_dict = {}
+            for tag in self.cache.tags:
+                y_raw = self.cache._y_live[tag]
+                y_slice_old = y_raw[ptr:][s_idx_old:e_idx_old]
+                y_slice_new = y_raw[:ptr][s_idx_new:e_idx_new]
+                y_slice_dict[tag] = np.concatenate((y_slice_old, y_slice_new))
 
-            # Replace the massive raw arrays with the protected decimated arrays
-            x_slice = x_decimated
-            y_slice_dict = new_y_dict
+        # Cache the current render payload for the Mouse Inspector to use
+        self.current_x_slice = x_slice
+        self.current_y_dict = y_slice_dict
 
         PerfTracker.slice_size = len(x_slice)
         PerfTracker.log("slice", t_slice)
 
-        # --- START TRACKING RENDER TIME ---
         t_render = time.perf_counter()
-
         self._render_curves(self.curves, x_slice, y_slice_dict, is_historical=False)
-
         PerfTracker.log("render", t_render)
 
         if self.is_historical_mode and len(self.historical_x) > 0:
@@ -646,12 +722,33 @@ class DataViewerApp(QMainWindow):
             current_width = view_end - view_start
             self.live_span = current_width
 
-            # Use raw absolute time to find the newest edge
-            latest_x_relative = x_raw[-1] - self.t0
+            # Extract the newest relative timestamp efficiently
+            latest_idx = (ptr - 1) % cap if self.cache.live_ptr > 0 else 0
+            latest_x_relative = self.cache._x_live[latest_idx] - self.t0
+
             base_plot.setXRange(latest_x_relative - current_width, latest_x_relative, padding=0)
             self._auto_panning = False
 
+        # --- UPDATE LIVE SIDEBAR READOUT ---
+        if not self.btn_inspector.isChecked():
+            if self.cache.live_ptr > 0:
+                latest_idx = (self.cache.live_ptr - 1) % self.cache.live_capacity
+
+                for tag in self.cache.tags:
+                    # Use .get() to avoid KeyErrors if the tag isn't in the sidebar dictionary yet
+                    val_lbl = getattr(self, 'sidebar_value_labels', {}).get(tag)
+
+                    if val_lbl is not None:
+                        cfg = self.plot_config.get(tag, {})
+                        val = self.cache._y_live[tag][latest_idx]
+                        mult = cfg.get('multiplier', 1.0)
+                        val = val * mult if mult != 1.0 else val
+
+                        # Use a standard format string
+                        val_lbl.setText(f"{val:.2f}")
+
     def _refresh_plot_historical(self, ts_array, vals_dict, req_id=None):
+        #print(f"[DEBUG-UI] Received history for ID {req_id}. Expected ID: {self.pending_hist_id}. Points: {len(ts_array)}") # ADD THIS
         if req_id is not None and req_id != self.pending_hist_id:
             return
         # if not self.is_historical_mode: return  ### not used right now?
@@ -681,7 +778,8 @@ class DataViewerApp(QMainWindow):
                 color = self._get_distinct_color(idx)
                 pen = pg.mkPen(color=color, width=1.0)
 
-                c = pg.PlotDataItem(pen=pen, autoDownsample=True, clipToView=True, connect='finite')
+                c = pg.PlotDataItem(pen=pen, autoDownsample=True, clipToView=True, connect='finite',
+                    downsampleMethod='peak')
 
                 if cfg.get('scale') == 'log': self.lane_axes[lane].addItem(c)
                 else: self.lanes[lane].addItem(c)
@@ -756,7 +854,6 @@ class DataViewerApp(QMainWindow):
 
         # 2. Reset inspector and legends
         self._ensure_inspector_items()
-        self._reset_legend_text()
         self._refresh_event_markers()
 
         # 3. Delay the fetch by 200ms to allow the layout to stabilize
@@ -888,9 +985,10 @@ class DataViewerApp(QMainWindow):
         view_range = base_plot.viewRange()[0]
         right_edge = view_range[1]
 
-        # If we are live, snap to the very end of the cache
-        if self.auto_scroll and len(self.cache.x_live_view) > 0:
-            right_edge = self.cache.x_live_view[-1] - self.t0
+        # If we are live, snap to the very end of the cache using the ring buffer pointer
+        if self.auto_scroll and self.cache.live_ptr > 0:
+            latest_idx = (self.cache.live_ptr - 1) % self.cache.live_capacity
+            right_edge = self.cache._x_live[latest_idx] - self.t0
 
         base_plot.setXRange(right_edge - span_seconds, right_edge, padding=0)
         self._check_and_fetch_history()  # History load happens under shield
@@ -903,19 +1001,35 @@ class DataViewerApp(QMainWindow):
         view_start, view_end = base_plot.viewRange()[0]
         start_ts = self.t0 + view_start
         end_ts = self.t0 + view_end
+        span = end_ts - start_ts
 
-        oldest_live_ts = self.cache.x_live_view[0] if len(self.cache.x_live_view) > 0 else time.time() - (3600 * 12)
-        # DEBUG: See what the UI is asking for
-        print(f"[UI State] View Span: {start_ts:.1f} to {end_ts:.1f} (Duration: {(end_ts - start_ts) / 3600:.2f} hrs | Oldest Live: {oldest_live_ts:.1f}")
-
-        # Are we looking at data older than the 1-hour live tail?
-        oldest_live_ts = self.cache.x_live_view[0] if len(self.cache.x_live_view) > 0 else time.time() - (3600 * 12)
+        if self.cache.live_ptr == 0:
+            oldest_live_ts = time.time()
+        elif getattr(self.cache, 'buffer_wrapped', False):
+            ptr = self.cache.live_ptr % self.cache.live_capacity
+            oldest_live_ts = self.cache._x_live[ptr]
+        else:
+            oldest_live_ts = self.cache._x_live[0]
 
         if start_ts < oldest_live_ts:
-            #print(f"[UI State] Historical Mode Triggered. Oldest Live: {oldest_live_ts:.1f}")
             self.is_historical_mode = True
-            currently_selected = [tag for tag in self.cache.tags if self.plot_config.get(tag, {}).get('selected')]
-            self.pending_hist_id = self.cache.request_historical_window(start_ts, end_ts, selected_tags=currently_selected)
+
+            # --- HYSTERESIS THRESHOLD ---
+            # Prevent Polars death-loop by requiring a minimum view shift
+            if not hasattr(self, 'last_hist_start'):
+                self.last_hist_start = 0.0
+                self.last_hist_end = 0.0
+
+            # Require a 2% shift in the view window before querying disk again
+            shift_threshold = span * 0.02
+
+            if abs(start_ts - self.last_hist_start) > shift_threshold or abs(
+                    end_ts - self.last_hist_end) > shift_threshold:
+                self.last_hist_start = start_ts
+                self.last_hist_end = end_ts
+                currently_selected = [tag for tag in self.cache.tags if self.plot_config.get(tag, {}).get('selected')]
+                self.pending_hist_id = self.cache.request_historical_window(start_ts, end_ts,
+                                                                            selected_tags=currently_selected)
         else:
             self.is_historical_mode = False
             self._clear_historical_curves()
@@ -949,19 +1063,24 @@ class DataViewerApp(QMainWindow):
         mouse_x = mouse_point.x()
 
         # 2. DYNAMIC PIPELINE ROUTER
-        # Determine the physical X-coordinate where Live Data begins
-        live_start_x = (self.cache.x_live_view[0] - self.t0) if len(self.cache.x_live_view) > 0 else float('inf')
+        if self.cache.live_ptr == 0: return
 
-        # If history is loaded AND mouse is to the left of the live boundary, read from Polars
+        cap = self.cache.live_capacity
+        ptr = self.cache.live_ptr % cap
+        wrapped = getattr(self.cache, 'buffer_wrapped', False)
+
+        live_start_abs = self.cache._x_live[ptr] if wrapped else self.cache._x_live[0]
+        live_start_x = live_start_abs - self.t0
+
         if self.is_historical_mode and mouse_x < live_start_x and len(self.historical_x) > 0:
             x_source = self.historical_x
             y_source = self.historical_y
             ts_source = self.historical_x + self.t0
         else:
-            if len(self.cache.x_live_view) == 0: return
-            x_source = self.cache.x_live_view - self.t0
-            y_source = self.cache.y_live_view
-            ts_source = self.cache.x_live_view
+            if getattr(self, 'current_x_slice', None) is None or len(self.current_x_slice) == 0: return
+            x_source = self.current_x_slice
+            y_source = self.current_y_dict
+            ts_source = self.current_x_slice + self.t0
 
         # 3. SNAP TO CLOSEST DATA POINT
         idx = np.searchsorted(x_source, mouse_x, side='right') - 1
@@ -998,39 +1117,30 @@ class DataViewerApp(QMainWindow):
             else:
                 label.hide()
 
-            # --- LEGEND UPDATES ---
-            for tag, curve in self.curves.items():  # We update the base live curves legends
+            # --- SIDEBAR UPDATES ---
+            for tag, curve in self.curves.items():
                 cfg = self.plot_config.get(tag, {})
-                lane = cfg.get('lane', 'Lane 1')
-
-                # Pull data from the dynamically selected source
                 y_data = y_source.get(tag, np.array([]))
 
-                if len(y_data) <= idx or lane not in self.lane_legends:
+                if len(y_data) <= idx:
                     continue
 
                 val = y_data[idx]
-                label_text = cfg.get('label', tag)
                 fmt = ".2e" if cfg.get('scale') == 'log' else ".2f"
 
-                unit = getattr(self, 'system_registry', {}).get(tag, {}).get("unit", "")
-                unit_bracket = f" [{unit}]" if unit else ""
-                display_name = f"{label_text}{unit_bracket}"
+                display_text = f"{val:{fmt}}"
 
-                legend_text = f"{display_name}: {val:{fmt}}"
-
-                # 4. CROSS-DOMAIN DELTA MATH
+                # CROSS-DOMAIN DELTA MATH
                 if active_pin is not None:
-                    # Look up the exact value we cached when the pin was dropped
                     pin_val = getattr(self, 'pinned_values', {}).get(tag)
                     if pin_val is not None:
                         dy = val - pin_val
+                        unit = getattr(self, 'system_registry', {}).get(tag, {}).get("unit", "")
                         unit_suffix = f" {unit}" if unit else ""
-                        legend_text += f" (Δ: {dy:{fmt}}{unit_suffix})"
+                        display_text += f" (Δ: {dy:{fmt}}{unit_suffix})"
 
-                lbl_item = self.lane_legends[lane].getLabel(curve)
-                if lbl_item:
-                    lbl_item.setText(legend_text)
+                if tag in getattr(self, 'sidebar_value_labels', {}):
+                    self.sidebar_value_labels[tag].setText(display_text)
 
     def _on_graph_clicked(self, event):
         if not self.lanes: return
@@ -1051,18 +1161,25 @@ class DataViewerApp(QMainWindow):
 
             mouse_x = mouse_point.x()
 
-            # DYNAMIC PIPELINE ROUTER
-            live_start_x = (self.cache.x_live_view[0] - self.t0) if len(self.cache.x_live_view) > 0 else float('inf')
+            # --- VIRTUAL PIPELINE ROUTER ---
+            if self.cache.live_ptr == 0: return
+
+            cap = self.cache.live_capacity
+            ptr = self.cache.live_ptr % cap
+            wrapped = getattr(self.cache, 'buffer_wrapped', False)
+
+            live_start_abs = self.cache._x_live[ptr] if wrapped else self.cache._x_live[0]
+            live_start_x = live_start_abs - self.t0
 
             if self.is_historical_mode and mouse_x < live_start_x and len(self.historical_x) > 0:
                 x_source = self.historical_x
                 y_source = self.historical_y
                 ts_source = self.historical_x + self.t0
             else:
-                if len(self.cache.x_live_view) == 0: return
-                x_source = self.cache.x_live_view - self.t0
-                y_source = self.cache.y_live_view
-                ts_source = self.cache.x_live_view
+                if getattr(self, 'current_x_slice', None) is None or len(self.current_x_slice) == 0: return
+                x_source = self.current_x_slice
+                y_source = self.current_y_dict
+                ts_source = self.current_x_slice + self.t0
 
             idx = np.searchsorted(x_source, mouse_x, side='right') - 1
             idx = np.clip(idx, 0, len(x_source) - 1)
@@ -1071,7 +1188,6 @@ class DataViewerApp(QMainWindow):
             self.pin_timestamp = ts_source[idx]
 
             # CACHE THE EXACT Y-VALUES AT THE PIN LOCATION
-            # This allows flawless delta math even if the mouse crosses into a different pipeline
             self.pinned_values = {}
             for tag in self.cache.tags:
                 y_data = y_source.get(tag, np.array([]))
@@ -1088,8 +1204,6 @@ class DataViewerApp(QMainWindow):
             self.pinned_values = {}
             for pin_line in self.pin_lines: pin_line.hide()
             for label in self.delta_labels: label.hide()
-
-        self._reset_legend_text()
 
     def _handle_click_events(self, event):
         """Double click for markers. Only triggers if clicking the background."""
@@ -1136,31 +1250,7 @@ class DataViewerApp(QMainWindow):
         else:
             self.btn_inspector.setText("🔍 Enable Inspector")
             self.btn_inspector.setStyleSheet("")
-            self._reset_legend_text()
             self.layout_widget.setCursor(Qt.CursorShape.ArrowCursor)
-
-    def _reset_legend_text(self):
-        """Restores legends to 'Label [Unit]' format when inspector is off."""
-        for tag, curve in self.curves.items():
-            cfg = self.plot_config.get(tag, {})
-            lane = cfg.get('lane', 'Lane 1')
-
-            if lane in self.lane_legends:
-                lbl_item = self.lane_legends[lane].getLabel(curve)
-                if lbl_item:
-                    label_text = cfg.get('label', tag)
-                    # Fetch unit from registry
-                    unit = getattr(self, 'system_registry', {}).get(tag, {}).get("unit", "")
-                    unit_str = f" [{unit}]" if unit else ""
-
-                    lbl_item.setText(f"{label_text}{unit_str}")
-
-        # Force layout update to prevent text clipping
-        for legend in self.lane_legends.values():
-            legend.layout.invalidate()
-            legend.resize(0, 0)
-            legend.updateSize()
-            #legend.layout.activate()
 
     def _format_delta_time(self, seconds):
         """Converts seconds into a human-readable string (e.g., 2h 46m 40s)."""
@@ -1213,12 +1303,13 @@ class DataViewerApp(QMainWindow):
         # Get range from top lane
         base_plot = list(self.lanes.values())[0]
         view_start, view_end = base_plot.viewRange()[0]
-        norm_x = self.cache.x_live_view - self.t0
-        indices = np.where((norm_x >= view_start) & (norm_x <= view_end))[0]
-        if len(indices) == 0: return
 
-        x_slice = self.cache.x_live_view[indices]
-        y_slices = {tag: self.cache.y_live_view[tag][indices] for tag in selected_tags}
+        # Retrieve the exact data currently rendered on the screen
+        if getattr(self, 'current_x_slice', None) is None or len(self.current_x_slice) == 0: return
+
+        # Restore absolute UNIX timestamp for the CSV
+        x_slice = self.current_x_slice + self.t0
+        y_slices = {tag: self.current_y_dict[tag] for tag in selected_tags}
 
         from PyQt6 import QtSvg
         from PyQt6.QtCore import QBuffer, QIODevice, QRectF
