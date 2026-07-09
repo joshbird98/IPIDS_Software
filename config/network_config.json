@@ -39,6 +39,10 @@
         "ip": "192.168.1.12",
         "port": 5025
     },
+    "adam": {
+        "ip": "192.168.1.13",
+        "port": 502
+    },
     "zmq_ports": {
         "plc_pub": 5550,
         "plc_cmd": 5551,
@@ -60,6 +64,8 @@
         "manager_pub": 5568,
         "manager_cmd": 5569,
         "smu_pub": 5570,
-        "smu_cmd": 5571
+        "smu_cmd": 5571,
+        "adam_pub": 5572,
+        "adam_cmd": 5573
     }
 }
