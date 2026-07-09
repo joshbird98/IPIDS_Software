@@ -38,3 +38,5 @@ degauss routine trips magnet faults short circuit and unexpected resistance
 initiate shutdown should gently ramp the hot things (filament and ioniser) to reduce thermal shock
 
 add side button to force-cool for next ten minutes etc, or until near room temp?
+
+why did the forced air cooling not come off when the PC watchdog crashed? Maybe because cesium temp readback is wrong atm

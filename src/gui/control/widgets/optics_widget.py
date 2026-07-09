@@ -303,7 +303,7 @@ class BeamlineOpticsWidget(QWidget):
         self.sp_scan_steps = QDoubleSpinBox()
         self.sp_scan_steps.setPrefix("Steps: ")
         self.sp_scan_steps.setDecimals(0)
-        self.sp_scan_steps.setRange(10, 1000)
+        self.sp_scan_steps.setRange(10, 10000)
         self.sp_scan_steps.setValue(100)
         self.sp_scan_steps.setKeyboardTracking(False)
         layout.addWidget(self.sp_scan_steps, 3, 3)

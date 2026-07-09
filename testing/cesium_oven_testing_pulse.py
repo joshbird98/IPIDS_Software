@@ -40,6 +40,7 @@ class CesiumTransientTester:
 
     def send_command(self, tag: str, value):
         payload = {"tag": tag, "value": value, "ts": time.time()}
+        print(payload)
         self.cmd_socket.send_json(payload)
 
     def _telemetry_loop(self):

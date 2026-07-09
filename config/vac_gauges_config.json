@@ -1,6 +1,6 @@
 {
   "system_interlocks": {
-    "rapid_rise_thresh_mb_s": 0.0005
+    "rapid_rise_thresh_mb_s": 0.005
   },
   "10": {
     "channels": {
@@ -74,8 +74,8 @@
     "relays": {
       "1": {
         "channel": 1,
-        "on_val": 0.0002,
-        "off_val": 0.0005
+        "on_val": 0.5,
+        "off_val": 0.6
       },
       "2": {
         "channel": 2,
@@ -84,13 +84,13 @@
       },
       "3": {
         "channel": 3,
-        "on_val": 1e-6,
-        "off_val": 5e-6
+        "on_val": 0.5,
+        "off_val": 0.6
       },
       "4": {
         "channel": 1,
-        "on_val": 0.0002,
-        "off_val": 0.0005
+        "on_val": 0.5,
+        "off_val": 0.6
       },
       "5": {
         "channel": 2,
@@ -99,8 +99,8 @@
       },
       "6": {
         "channel": 3,
-        "on_val": 1e-6,
-        "off_val": 5e-6
+        "on_val": 0.5,
+        "off_val": 0.6
       }
     }
   }

@@ -625,6 +625,66 @@ def get_plc_tags_from_scl(scl_path, config_dir, db_number=10, machine_root="ion_
 
     return tags
 
+def get_adam_monitor_tags():
+    tags = {}
+    source = "service_adam_monitor"
+
+    base_paths = {
+        "ion_beam.beamline.object_slits.left": "Object Slits Left",
+        "ion_beam.beamline.object_slits.right": "Object Slits Right",
+        "ion_beam.beamline.straight_through": "Straight Through",
+        "ion_beam.beamline.image_slits.left": "Image Slits Left",
+        "ion_beam.beamline.image_slits.right": "Image Slits Right",
+        "ion_beam.beamline.faraday.front_aperture": "Faraday Front Aperture",
+        "ion_beam.system.facilities.adam.ch6": "ADAM Aux Ch 6",
+        "ion_beam.system.facilities.adam.ch7": "ADAM Aux Ch 7"
+    }
+
+    # Global Service Status
+    tags["ion_beam.system.facilities.adam.stat_comms_fail"] = {
+        "source": source, "datatype": "BOOL", "writable": False, "unit": "", "default_scale": "linear",
+        "multiplier": 1.0, "description": "ADAM Modbus Comms Failure", "default_label": "ADAM Comms Fail",
+        "short_name": "Comms Fail"
+    }
+
+    for base, nice_name in base_paths.items():
+        # Readbacks
+        tags[f"{base}.rb_current"] = {
+            "source": source, "datatype": "REAL", "writable": False, "unit": "A", "default_scale": "linear",
+            "multiplier": 1.0, "description": f"{nice_name} Live Current", "default_label": f"{nice_name} Current",
+            "short_name": "Current"
+        }
+        tags[f"{base}.rb_range_idx"] = {
+            "source": source, "datatype": "INT", "writable": False, "unit": "", "default_scale": "linear",
+            "multiplier": 1.0,
+            "description": f"{nice_name} Active Hardware Range (0=150mV, 1=500mV, 2=1V, 3=5V, 4=10V)",
+            "default_label": f"{nice_name} Range Idx",
+            "short_name": "Range Idx"
+        }
+        tags[f"{base}.rb_op_mode"] = {
+            "source": source, "datatype": "INT", "writable": False, "unit": "", "default_scale": "linear",
+            "multiplier": 1.0, "description": f"{nice_name} Active Operating Mode (0=Auto)", "default_label": f"{nice_name} Op Mode",
+            "short_name": "Op Mode"
+        }
+        tags[f"{base}.stat_overrange"] = {
+            "source": source, "datatype": "BOOL", "writable": False, "unit": "", "default_scale": "linear",
+            "multiplier": 1.0, "description": f"{nice_name} ADC Saturation Status", "default_label": f"{nice_name} Overrange",
+            "short_name": "Clip"
+        }
+        tags[f"{base}.stat_ranging"] = {
+            "source": source, "datatype": "BOOL", "writable": False, "unit": "", "default_scale": "linear",
+            "multiplier": 1.0, "description": f"{nice_name} Hardware Ranging Cooldown", "default_label": f"{nice_name} Ranging",
+            "short_name": "Ranging"
+        }
+
+        # Commands
+        tags[f"{base}.cmd_range"] = {
+            "source": source, "datatype": "INT", "writable": True, "unit": "", "default_scale": "linear",
+            "multiplier": 1.0, "description": f"{nice_name} Set Range (0=Auto, 1=150mV, 2=500mV, 3=1V, 4=5V, 5=10V)",
+            "default_label": f"{nice_name} Cmd Range", "short_name": "Cmd Range"
+        }
+
+    return tags
 
 # --- Main Execution ---
 def build_system_registry():
@@ -653,6 +713,7 @@ def build_system_registry():
     spellman_tags = get_spellman_tags(config_dir)
     magnet_tags = get_magnet_tags(config_dir)
     smu_tags = get_smu_tags(config_dir)
+    adam_tags = get_adam_monitor_tags()
 
     scl_path = os.path.join(project_root, "plc", "generated", "PLC_PC_Interface.scl")
     plc_tags = get_plc_tags_from_scl(scl_path, config_dir, db_number=10)
@@ -663,6 +724,7 @@ def build_system_registry():
     new_registry.update(spellman_tags)
     new_registry.update(magnet_tags)
     new_registry.update(smu_tags)
+    new_registry.update(adam_tags)
 
     new_registry = apply_existing_overrides(new_registry, existing_registry)
 

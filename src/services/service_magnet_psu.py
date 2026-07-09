@@ -311,6 +311,7 @@ class MagnetMicroservice:
                     tag_limits = self.registry_limits.get(tag, {})
                     min_i = tag_limits.get("min_val")
                     max_i = tag_limits.get("max_val")
+                    print(max_i)
 
                     # Fail safe: Do not execute if limits are undefined in the registry
                     if min_i is None or max_i is None:

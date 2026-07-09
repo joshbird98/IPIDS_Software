@@ -215,10 +215,9 @@ class AdamMicroservice:
                     is_overrange = raw_val <= 0 or raw_val >= 65535
                     self.state[f"{base_tag}.stat_overrange"] = 1.0 if is_overrange else 0.0
 
-                    current_uA = (voltage / RESISTOR_OHMS) * 1e6
-
-                    self.state[f"{base_tag}.rb_current"] = round(current_uA, 3)
-                    self.state[f"{base_tag}.range"] = active_range
+                    current_amps = voltage / RESISTOR_OHMS
+                    self.state[f"{base_tag}.rb_current"] = round(current_amps, 10)
+                    self.state[f"{base_tag}.rb_range_idx"] = RANGE_ORDER.index(active_range)
                     self.state[f"{base_tag}.rb_op_mode"] = self.op_modes[bnc_idx]
 
         except Exception:

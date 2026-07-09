@@ -24,6 +24,7 @@ SERVICES_CONFIG = {
     "service_magnet_psu": {"script": os.path.join(CURRENT_DIR, "service_magnet_psu.py"), "tier": 2, "timeout": 2.0, "boot_grace": 15.0},
     "service_spellman_mpd": {"script": os.path.join(CURRENT_DIR, "service_spellman_mpd.py"), "tier": 2, "timeout": 2.5, "boot_grace": 15.0},
     "service_smu": {"script": os.path.join(CURRENT_DIR, "service_smu.py"), "tier": 2, "timeout": 2.5, "boot_grace": 15.0},
+    "service_current_mon": {"script": os.path.join(CURRENT_DIR, "service_current_monitor.py"), "tier": 2, "timeout": 2.5, "boot_grace": 15.0},
 }
 
 

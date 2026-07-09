@@ -17,6 +17,8 @@ class AdamMonitorWidget(QWidget):
         self.cmd_thread = cmd_thread
         self.main_layout = QVBoxLayout(self)
 
+        self.range_map = ["+/- 150 mV", "+/- 500 mV", "+/- 1 V", "+/- 5 V", "+/- 10 V"]
+
         self.channels = [
             {"name": "Object Slits (Left)", "tag": "ion_beam.beamline.object_slits.left"},
             {"name": "Object Slits (Right)", "tag": "ion_beam.beamline.object_slits.right"},
@@ -74,6 +76,18 @@ class AdamMonitorWidget(QWidget):
         self.main_layout.addWidget(group)
         self.main_layout.addStretch()
 
+    def _format_current(self, amps: float) -> str:
+        """Dynamically scales base Amps to a readable SI prefix string."""
+        abs_amps = abs(amps)
+        if abs_amps >= 1e-3:
+            return f"{amps * 1e3:+.2f} mA"
+        elif abs_amps >= 1e-6:
+            return f"{amps * 1e6:+.2f} \u03BCA"
+        elif abs_amps >= 1e-9:
+            return f"{amps * 1e9:+.2f} nA"
+        else:
+            return f"{amps * 1e12:+.2f} pA"
+
     def update_telemetry(self, data: dict):
         sys_connected = bool(data.get("system.connected", False))
         svc_connected = bool(data.get("current_mon.connected", False))
@@ -93,9 +107,16 @@ class AdamMonitorWidget(QWidget):
 
             rb_current = data.get(f"{tag}.rb_current")
             rb_mode = data.get(f"{tag}.rb_op_mode")
-            act_range = data.get(f"{tag}.range", "UNKNOWN")
             overrange = bool(data.get(f"{tag}.stat_overrange", False))
             ranging = bool(data.get(f"{tag}.stat_ranging", False))
+
+            # --- MODIFIED SECTION ---
+            rb_range_idx = data.get(f"{tag}.rb_range_idx")
+            if isinstance(rb_range_idx, int) and 0 <= rb_range_idx < len(self.range_map):
+                act_range = self.range_map[rb_range_idx]
+            else:
+                act_range = "UNKNOWN"
+            # ------------------------
 
             ui["range"].setEnabled(True)
 
@@ -115,6 +136,6 @@ class AdamMonitorWidget(QWidget):
                 ui["status"].setStyleSheet(COLOR_FAULT)
             else:
                 if rb_current is not None:
-                    ui["val"].setText(f"{float(rb_current):+.3f} \u03BCA")
+                    ui["val"].setText(self._format_current(float(rb_current)))
                 ui["status"].setText(f"OK [{act_range}]")
                 ui["status"].setStyleSheet(COLOR_OK)

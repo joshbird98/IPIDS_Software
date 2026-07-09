@@ -297,9 +297,19 @@ class ParameterOptimizerWidget(QWidget):
         self.plot_widget.setLabel('bottom', "X-Axis Parameter")
         self.plot_widget.setLabel('left', "Y-Axis Parameter")
 
-        self.plot_widget.setMouseEnabled(x=False, y=False)
+        # Enable mouse interactions
+        self.plot_widget.setMouseEnabled(x=True, y=True)
         self.plot_widget.setMenuEnabled(False)
         self.plot_widget.hideButtons()
+
+        # Configure left-click to drag a bounding box (rubber band zoom)
+        self.plot_widget.getViewBox().setMouseMode(pg.ViewBox.RectMode)
+
+        # Disable scroll wheel zooming to prevent accidental rapid-fire sweeps
+        self.plot_widget.getViewBox().wheelEvent = lambda event: None
+
+        # Hook into the manual range change (fired when the user finishes dragging the box)
+        self.plot_widget.getViewBox().sigRangeChangedManually.connect(self._on_hone_in_dragged)
 
         self.image_item = pg.ImageItem()
         colormap = pg.colormap.get('plasma')
@@ -446,6 +456,8 @@ class ParameterOptimizerWidget(QWidget):
         if not evt.double() or self.heatmap_data is None:
             return
 
+        evt.accept()  # <--- ADD THIS LINE HERE
+
         pos = evt.scenePos()
         if self.plot_widget.vb.sceneBoundingRect().contains(pos):
             mouse_point = self.plot_widget.vb.mapSceneToView(pos)
@@ -464,6 +476,30 @@ class ParameterOptimizerWidget(QWidget):
                 self.cmd_thread.send_command(x_target, self.x_tag, float(x_val), origin="hmi")
                 self.cmd_thread.send_command(y_target, self.y_tag, float(y_val), origin="hmi")
                 self.lbl_status.setText(f"Manual Jump to X={x_val:.2f}, Y={y_val:.2f}")
+
+    def _on_hone_in_dragged(self, *args):
+        # Prevent triggering if a scan is already running, or if there's no baseline data yet
+        if (self.scan_worker and self.scan_worker.isRunning()) or self.heatmap_data is None:
+            return
+
+        # Grab the newly zoomed-in bounds from the ViewBox
+        view_rect = self.plot_widget.viewRange()
+        new_x_start, new_x_stop = view_rect[0]
+        new_y_start, new_y_stop = view_rect[1]
+
+        # Prevent triggering on tiny/zero-width accidental clicks
+        if abs(new_x_stop - new_x_start) < 1e-6 or abs(new_y_stop - new_y_start) < 1e-6:
+            return
+
+        # Update the UI spinboxes to match this new box
+        self.sp_x_start.setValue(new_x_start)
+        self.sp_x_stop.setValue(new_x_stop)
+        self.sp_y_start.setValue(new_y_start)
+        self.sp_y_stop.setValue(new_y_stop)
+
+        # Kick off the new sweep automatically
+        self.lbl_status.setText("Honing in on selected region...")
+        self._start_optimization()
 
     def _start_optimization(self):
         if not self.x_tag or not self.y_tag:
@@ -498,10 +534,16 @@ class ParameterOptimizerWidget(QWidget):
         y_height = y_stop - y_start
         self.image_item.setRect(QRectF(x_start, y_start, x_width, y_height))
 
-        self.plot_widget.setXRange(x_start, x_stop, padding=0)
-        self.plot_widget.setYRange(y_start, y_stop, padding=0)
+        # Clear existing limits to prevent clamping conflicts during transition
+        self.plot_widget.setLimits(xMin=None, xMax=None, yMin=None, yMax=None)
+
+        # Apply the new bounding limits first
         self.plot_widget.setLimits(xMin=min(x_start, x_stop), xMax=max(x_start, x_stop),
                                    yMin=min(y_start, y_stop), yMax=max(y_start, y_stop))
+
+        # Set the viewable ranges
+        self.plot_widget.setXRange(x_start, x_stop, padding=0)
+        self.plot_widget.setYRange(y_start, y_stop, padding=0)
 
         self._lock_ui(True)
         self.live_crosshair.hide()

@@ -11,6 +11,7 @@ import json
 import zmq
 import orjson
 import threading
+import zlib
 
 from src.core.event_helper import EventHelper
 from src.core.os_helper import harden_windows_process
@@ -204,6 +205,10 @@ class DataViewerApp(QMainWindow):
         self.profiles_file = os.path.join(os.path.dirname(current_direc), "config", "workspace_profiles.json")
         self.profiles = self._load_all_profiles()
         self.plot_config = copy.deepcopy(self.profiles.get("Default", {}))
+
+        # Add these to track color assignments
+        self._assigned_colors = {}  # Maps {tag: hex_color}
+        self._used_colors = set()  # Tracks which hex_colors are currently in use
 
         # 3. State
         self.curves = {}  # For Live Data
@@ -523,6 +528,10 @@ class DataViewerApp(QMainWindow):
         self.marker_items.clear()
         self.time_axes = []
 
+        # Attempt to free up colours for next set of channels?
+        self._assigned_colors = {}
+        self._used_colors = set()
+
         # Identify which lanes actually have selected tags
         active_lanes = set()
         for tag, cfg in self.plot_config.items():
@@ -647,15 +656,36 @@ class DataViewerApp(QMainWindow):
 
                     # 2. Left Column: Allow to expand to fit the name
                     label_text = str(cfg.get('label', t))
-                    unit = getattr(self, 'system_registry', {}).get(t, {}).get("unit", "")
 
-                    name_lbl = QLabel(f"{label_text} [{unit}]:")
+                    # Removed static unit injection here
+                    name_lbl = QLabel(f"{label_text}:")
                     name_lbl.setStyleSheet("font-size: 11px; color: #555;")
-                    # Allow name_lbl to shrink, but it will not wrap unless strictly necessary
                     name_lbl.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
 
                     self.value_display_layout.addRow(name_lbl, val_lbl)
                     self.sidebar_value_labels[t] = val_lbl
+
+    def _format_with_si_prefix(self, value: float, base_unit: str, is_delta: bool = False) -> str:
+        """Dynamically scales base units to a readable SI prefix string."""
+        if value is None:
+            return "---"
+
+        # Determine the format string based on whether we need a forced +/- sign
+        fmt = "+.2f" if is_delta else ".2f"
+
+        if base_unit == "A":
+            abs_val = abs(value)
+            if abs_val >= 1e-3:
+                return f"{value * 1e3:{fmt}} mA"
+            elif abs_val >= 1e-6:
+                return f"{value * 1e6:{fmt}} \u03BCA"
+            elif abs_val >= 1e-9:
+                return f"{value * 1e9:{fmt}} nA"
+            else:
+                return f"{value * 1e12:{fmt}} pA"
+
+        # Fallback for standard non-scaled units (V, Hz, mB, etc.)
+        return f"{value:{fmt}} {base_unit}"
 
     def _sync_specific_viewbox(self, main_plot, right_viewbox):
         """Forces geometry alignment between a specific lane and its log axis."""
@@ -697,7 +727,9 @@ class DataViewerApp(QMainWindow):
             end_idx = np.searchsorted(x_valid, abs_slice_end, side='right')
 
             x_slice = x_valid[start_idx:end_idx] - self.t0
-            y_slice_dict = {tag: self.cache._y_live[tag][start_idx:end_idx] for tag in self.cache.tags}
+            y_slice_dict = {tag: self.cache._y_live[tag][start_idx:end_idx]
+                            for tag in self.cache.tags
+                            if tag in self.cache._y_live}
         else:
             # Dual-Slice: Grab views of the Old Segment and New Segment independently
             x_old = x_raw[ptr:]
@@ -760,8 +792,11 @@ class DataViewerApp(QMainWindow):
                         mult = cfg.get('multiplier', 1.0)
                         val = val * mult if mult != 1.0 else val
 
-                        # Use a standard format string
-                        val_lbl.setText(f"{val:.2f}")
+                        # --- Fetch unit and apply dynamic formatting ---
+                        base_unit = getattr(self, 'system_registry', {}).get(tag, {}).get("unit", "")
+                        formatted_str = self._format_with_si_prefix(val, base_unit)
+
+                        val_lbl.setText(formatted_str)
 
     def _refresh_plot_historical(self, ts_array, vals_dict, req_id=None):
         #print(f"[DEBUG-UI] Received history for ID {req_id}. Expected ID: {self.pending_hist_id}. Points: {len(ts_array)}") # ADD THIS
@@ -857,7 +892,7 @@ class DataViewerApp(QMainWindow):
                 continue
 
             if tag not in target_dict:
-                color = self._get_distinct_color(idx)
+                color = self._get_distinct_color(tag)
                 pen = pg.mkPen(color=color, width=1.0)
                 c = pg.PlotDataItem(pen=pen, autoDownsample=True, clipToView=True, connect='finite',
                                     downsampleMethod='peak')
@@ -1072,11 +1107,57 @@ class DataViewerApp(QMainWindow):
 
         self.request_ui_refresh()
 
-    def _get_distinct_color(self, index):
-        """Returns a high-contrast color based on the golden ratio."""
-        hue = (index * 0.618033988749895) % 1.0
-        color = pg.hsvColor(hue, 0.8, 1.0)
-        return color
+    import zlib
+    import pyqtgraph as pg
+
+    def _get_distinct_color(self, tag: str):
+        """Returns a unique, high-visibility color, resolving hash collisions via linear probing."""
+
+        # 1. Return immediately if this tag already has a permanent color assigned
+        if tag in self._assigned_colors:
+            return pg.mkColor(self._assigned_colors[tag])
+
+        # High-Vibrancy "Neon" Palette (No pastels, maximum saturation)
+        palette = [
+            "#FF1493",  # Deep Pink
+            "#00FFFF",  # Cyan / Aqua
+            "#39FF14",  # Neon Green
+            "#FF4500",  # Orange Red
+            "#9400D3",  # Neon Violet
+            "#FFD700",  # Golden Yellow
+            "#00BFFF",  # Deep Sky Blue
+            "#FF00FF",  # Magenta
+            "#7FFF00",  # Chartreuse
+            "#FF3131",  # Neon Red
+            "#1E90FF",  # Dodger Blue
+            "#FF8C00",  # Dark Orange
+            "#00FA9A",  # Medium Spring Green
+            "#8A2BE2",  # Blue Violet
+            "#F0E68C",  # Khaki (Bright)
+            "#00FF7F"   # Spring Green
+        ]
+
+        # 2. Hash the tag to find a preferred starting index
+        hash_val = zlib.crc32(tag.encode('utf-8'))
+        start_idx = hash_val % len(palette)
+
+        # 3. Collision Resolution (Linear Probing)
+        # Scan the palette starting from our hash index to find an empty slot
+        for offset in range(len(palette)):
+            idx = (start_idx + offset) % len(palette)
+            candidate_color = palette[idx]
+
+            if candidate_color not in self._used_colors:
+                self._assigned_colors[tag] = candidate_color
+                self._used_colors.add(candidate_color)
+                return pg.mkColor(candidate_color)
+
+        # 4. Palette Exhaustion Fallback
+        # If you plot more than 20 lines simultaneously, all colors are taken.
+        # Fallback to the raw hash index and accept the visual collision.
+        fallback_color = palette[start_idx]
+        self._assigned_colors[tag] = fallback_color
+        return pg.mkColor(fallback_color)
 
     def _jump_to_date(self):
         if not self.lanes: return
@@ -1242,18 +1323,24 @@ class DataViewerApp(QMainWindow):
                     continue
 
                 val = y_data[idx]
-                fmt = ".2e" if cfg.get('scale') == 'log' else ".2f"
 
-                display_text = f"{val:{fmt}}"
+                # 1. Extract the unit early
+                base_unit = getattr(self, 'system_registry', {}).get(tag, {}).get("unit", "")
+
+                # 2. Format the main absolute value
+                display_text = self._format_with_si_prefix(val, base_unit)
 
                 # CROSS-DOMAIN DELTA MATH
                 if active_pin is not None:
                     pin_val = getattr(self, 'pinned_values', {}).get(tag)
                     if pin_val is not None:
                         dy = val - pin_val
-                        unit = getattr(self, 'system_registry', {}).get(tag, {}).get("unit", "")
-                        unit_suffix = f" {unit}" if unit else ""
-                        display_text += f" (Δ: {dy:{fmt}}{unit_suffix})"
+
+                        # 3. Format the delta difference
+                        formatted_dy = self._format_with_si_prefix(dy, base_unit , is_delta=True)
+
+                        # Append the scaled and formatted delta to the main display text
+                        display_text += f" (\u0394: {formatted_dy})"
 
                 if tag in getattr(self, 'sidebar_value_labels', {}):
                     self.sidebar_value_labels[tag].setText(display_text)
