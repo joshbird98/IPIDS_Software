@@ -291,7 +291,7 @@ class MagnetMicroservice:
                     continue
 
                 # --- 2. ARBITRATION: Enforce Lockout ---
-                if self.active_ctrl_mode > 0 and origin != "optimizer":
+                if self.active_ctrl_mode > 0 and (origin not in ["optimizer", "mass_scan"]):
                     continue
 
                 # --- 3. Normal Command Processing ---

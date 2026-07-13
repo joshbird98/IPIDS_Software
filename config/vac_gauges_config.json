@@ -1,6 +1,6 @@
 {
   "system_interlocks": {
-    "rapid_rise_thresh_mb_s": 0.005
+    "rapid_rise_thresh_mb_s": 0.5
   },
   "10": {
     "channels": {

@@ -645,36 +645,46 @@ class DataViewerApp(QMainWindow):
         self.sidebar_value_labels.clear()
 
         # Generate new static labels
-        for tag in sorted_lanes:  # Or iterate over your selected active tags
+        for tag in sorted_lanes:
             for t, cfg in self.plot_config.items():
                 if cfg.get('selected') and cfg.get('lane') == tag:
-                    # 1. Right Column: Force a fixed width for the readout
+                    # 1. Right Column (Value): Swap to MinimumExpanding so it doesn't clip
                     val_lbl = QLabel("---")
                     val_lbl.setStyleSheet("font-family: monospace; font-size: 14px; color: #2196F3; font-weight: bold;")
-                    val_lbl.setFixedWidth(80)  # Locked width, no wrapping/clipping
+                    val_lbl.setMinimumWidth(130)  # Safe width for scientific notation & deltas
                     val_lbl.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+                    val_lbl.setSizePolicy(QSizePolicy.Policy.MinimumExpanding, QSizePolicy.Policy.Preferred)
 
-                    # 2. Left Column: Allow to expand to fit the name
+                    # 2. Left Column (Name): Swap to Minimum so it only takes up necessary space
                     label_text = str(cfg.get('label', t))
 
-                    # Removed static unit injection here
+                    # Note: The static [{unit}] was removed here because we moved the unit to the right side!
                     name_lbl = QLabel(f"{label_text}:")
                     name_lbl.setStyleSheet("font-size: 11px; color: #555;")
-                    name_lbl.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+                    name_lbl.setSizePolicy(QSizePolicy.Policy.Minimum, QSizePolicy.Policy.Preferred)
 
                     self.value_display_layout.addRow(name_lbl, val_lbl)
                     self.sidebar_value_labels[t] = val_lbl
 
     def _format_with_si_prefix(self, value: float, base_unit: str, is_delta: bool = False) -> str:
-        """Dynamically scales base units to a readable SI prefix string."""
+        """Dynamically scales base units to a readable SI prefix string or scientific notation."""
         if value is None:
             return "---"
 
-        # Determine the format string based on whether we need a forced +/- sign
+        # 1. Specific Override for Vacuum Pressure (Scientific Notation)
+        if base_unit == "mB":
+            # Use 'e' for scientific notation (e.g., 5.30e-07)
+            sci_fmt = "+.2e" if is_delta else ".2e"
+            return f"{value:{sci_fmt}} {base_unit}"
+
+        # 2. General Float Format for everything else
         fmt = "+.2f" if is_delta else ".2f"
 
+        # 3. Dynamic SI Prefixing for Amperes
         if base_unit == "A":
             abs_val = abs(value)
+            if abs_val >= 1:
+                return f"{value * 1:{fmt}} A"
             if abs_val >= 1e-3:
                 return f"{value * 1e3:{fmt}} mA"
             elif abs_val >= 1e-6:
@@ -684,7 +694,7 @@ class DataViewerApp(QMainWindow):
             else:
                 return f"{value * 1e12:{fmt}} pA"
 
-        # Fallback for standard non-scaled units (V, Hz, mB, etc.)
+        # 4. Fallback for standard non-scaled units (V, Hz, %, etc.)
         return f"{value:{fmt}} {base_unit}"
 
     def _sync_specific_viewbox(self, main_plot, right_viewbox):
@@ -1340,7 +1350,7 @@ class DataViewerApp(QMainWindow):
                         formatted_dy = self._format_with_si_prefix(dy, base_unit , is_delta=True)
 
                         # Append the scaled and formatted delta to the main display text
-                        display_text += f" (\u0394: {formatted_dy})"
+                        display_text = f" (\u0394: {formatted_dy})"
 
                 if tag in getattr(self, 'sidebar_value_labels', {}):
                     self.sidebar_value_labels[tag].setText(display_text)

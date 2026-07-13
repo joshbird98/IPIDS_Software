@@ -34,6 +34,7 @@ from src.gui.control.dialogs.config_editor_dialog import ConfigEditorDialog
 from src.gui.control.widgets.faraday_smu_widget import FaradaySMUWidget
 from src.gui.control.widgets.optimiser_widget import ParameterOptimizerWidget
 from src.gui.control.widgets.current_monitor_widget import AdamMonitorWidget
+from src.gui.control.widgets.mass_scan_widget import PrecisionMassScannerWidget
 
 
 class AudioManager:
@@ -136,6 +137,7 @@ class ControlMainWindow(QMainWindow):
         view_menu.addAction(self.health_dock.toggleViewAction())
         view_menu.addAction(self.service_dock.toggleViewAction())
         view_menu.addAction(self.current_mon_dock.toggleViewAction())
+        view_menu.addAction(self.mass_scan_dock.toggleViewAction())
 
         view_menu.addSeparator()
 
@@ -175,7 +177,7 @@ class ControlMainWindow(QMainWindow):
 
     def _open_help_docs(self):
         QMessageBox.information(self, "Documentation",
-                                "IPIDS Documentation Library coming soon...\n\nFuture implementation will include navigation links and offline markdown viewing.")
+                                "IPIDS Documentation Library coming soon...\n\nOr more likely 10 years time.")
 
     def _init_docks(self):
         # 1. Left Area Docks
@@ -240,6 +242,13 @@ class ControlMainWindow(QMainWindow):
         self.current_mon_dock.setWidget(self.current_mon_widget)
         self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self.current_mon_dock)
         self.subsystems["current_mon"] = self.current_mon_widget
+
+        self.mass_scan_dock = QDockWidget("Mass Scan", self)
+        self.mass_scan_dock.setObjectName("MassScanDock")
+        self.mass_scan_widget = PrecisionMassScannerWidget(self.cmd_thread, lambda tag: self.master_telemetry_cache.get(tag, 0.0), self.event_helper)
+        self.mass_scan_dock.setWidget(self.mass_scan_widget)
+        self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self.mass_scan_dock)
+        self.subsystems["mass_scan"] = self.mass_scan_widget
 
         self.tabifyDockWidget(self.src_dock, self.optics_dock)
         self.src_dock.raise_()
@@ -308,6 +317,7 @@ class ControlMainWindow(QMainWindow):
         self.smu_widget.update_telemetry(self.master_telemetry_cache)
         self.current_mon_widget.update_telemetry(self.master_telemetry_cache)
         self.optimiser_widget.update_telemetry(self.master_telemetry_cache)
+        self.mass_scan_widget.update_telemetry(self.master_telemetry_cache)
 
         self._evaluate_audio_triggers()
 
