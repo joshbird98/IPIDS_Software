@@ -148,10 +148,10 @@ class VacuumControlWidget(QWidget):
 
                 if pressure is not None:
                     self.gauges[i]["val"].setText(f"{pressure:.2e} mbar")
-                    if status is None: status = 1
+                    if status is None: status = 0
 
                 if status is not None:
-                    if not_found or status == 0:
+                    if not_found or status == 5:
                         self.gauges[i]["status"].setText("NOT FOUND")
                         self.gauges[i]["status"].setStyleSheet(COLOR_FAULT)
                     elif rapid_rise:
@@ -160,11 +160,11 @@ class VacuumControlWidget(QWidget):
                     elif status == 3:
                         self.gauges[i]["status"].setText("SENSOR OFF")
                         self.gauges[i]["status"].setStyleSheet(COLOR_INACTIVE)
-                    elif status != 1:
+                    elif status != 0:
                         self.gauges[i]["status"].setText(f"FAULT ({int(status)})")
                         self.gauges[i]["status"].setStyleSheet(COLOR_FAULT)
                     else:
-                        # Status is 1 (Online) - Evaluate dynamic fail-safe relay states
+                        # Status is 0 (Online/OK) - Evaluate dynamic fail-safe relay states
                         has_relay = bool(relay_active or above_sp)
 
                         if has_relay:

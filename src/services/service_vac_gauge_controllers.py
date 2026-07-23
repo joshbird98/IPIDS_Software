@@ -227,6 +227,7 @@ class VacuumMicroservice:
                 self.sock.settimeout(SOCKET_TIMEOUT)
 
     def _read_transaction(self, node_id: int, param_group: str, param_no: str) -> Optional[str]:
+
         stat_key = f"Node{node_id}_Grp{param_group}"
         if stat_key not in self.stats_detailed:
             self.stats_detailed[stat_key] = {"attempts": 0, "timeouts": 0, "garbage": 0}
@@ -291,6 +292,7 @@ class VacuumMicroservice:
         return None
 
     def _write_transaction(self, node_id: int, param_group: str, param_no: str, value: str) -> str:
+
         if not self.connected: return "ERROR"
         self._clear_stale_buffer()
         address = f"{node_id:02X}".encode('ascii')
@@ -581,6 +583,8 @@ class VacuumMicroservice:
 
                             self.state[f"{base_tag}.stat_approaching_sp"] = 1.0 if is_approaching else 0.0
 
+
+
                             current_time = time.time()
                             is_rapid_rise = False
 
@@ -602,6 +606,7 @@ class VacuumMicroservice:
                             self.state[f"{base_tag}.stat_rapid_rise"] = 1.0 if is_rapid_rise else 0.0
                             self.state[f"{base_tag}.stat_comms_fail"] = 0.0
 
+
                         except ValueError:
                             pass
                     elif base_tag:
@@ -615,7 +620,12 @@ class VacuumMicroservice:
 
                     if val and base_tag:
                         try:
-                            status_code = int(val)
+                            # Handle string literals returned by the hardware
+                            if val.strip().upper() == "OK":
+                                status_code = 0
+                            else:
+                                status_code = int(val)
+
                             self.state[f"{base_tag}.stat_error_code"] = float(status_code)
 
                             not_found_key = f"{base_tag}.stat_not_found"
@@ -629,6 +639,8 @@ class VacuumMicroservice:
                                 self.state[not_found_key], self.state[mismatch_key] = 0.0, 1.0
                             else:
                                 self.state[not_found_key], self.state[mismatch_key] = 0.0, 0.0
+
+
                         except ValueError:
                             pass
 
@@ -650,6 +662,8 @@ class VacuumMicroservice:
                                     is_above = 1.0 if status_int == 0 else 0.0
                                     self.state[f"{base_tag}.stat_relay_active"] = is_active
                                     self.state[f"{base_tag}.stat_above_sp"] = is_above
+
+
                         except ValueError:
                             pass
 

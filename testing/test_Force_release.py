@@ -2,7 +2,6 @@ import sys
 import zmq
 import json
 
-# TODO: Verify this port against your src.core.network_map
 # Replace with the actual port your Command Thread sends data to (e.g., ZMQ_PORT_MANAGER_CMD)
 MANAGER_CMD_PORT = "tcp://127.0.0.1:5555"
 

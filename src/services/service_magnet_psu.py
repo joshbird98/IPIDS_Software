@@ -167,7 +167,7 @@ class MagnetMicroservice:
             "resistance_tolerance": 0.05,
             "short_circuit_threshold": 0.05,
             "open_circuit_threshold": 5.0,
-            "degauss_steps_amps": [30.0, 0.0, 20.0, 0.0, 10.0, 0.0, 5.0, 0.0],
+            "degauss_steps_amps": [50.0, 0.0, 40.0, 0.0, 30.0, 0.0, 20.0, 0.0, 10.0, 0.0, 5.0, 0.0],
             "degauss_step_time_sec": 1.5
         }
         try:
@@ -238,10 +238,11 @@ class MagnetMicroservice:
         if not self.degauss_active: return
 
         now = time.time()
-        step_delay = self.limits.get("degauss_step_time_sec", 1.5)
+        step_delay = self.limits.get("degauss_step_time_sec", 10)
         steps = self.limits.get("degauss_steps_amps", [])
 
         if now - self.degauss_last_step_ts > step_delay:
+            print("Next Degauss Step")
             if self.degauss_step_idx < len(steps):
                 target_amps = steps[self.degauss_step_idx]
 

@@ -6,7 +6,7 @@ import pyqtgraph as pg
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QGridLayout, QLabel, QPushButton,
     QGroupBox, QDoubleSpinBox, QMessageBox, QDialog, QTreeWidget,
-    QTreeWidgetItem, QDialogButtonBox, QHBoxLayout
+    QTreeWidgetItem, QDialogButtonBox, QHBoxLayout, QCheckBox
 )
 from PyQt6.QtCore import Qt, QThread, pyqtSignal, QRectF, QEvent
 
@@ -263,6 +263,11 @@ class ParameterOptimizerWidget(QWidget):
         self.sp_dwell.setRange(0.10, 60.0)
         self.sp_dwell.setValue(0.25)
         exec_layout.addWidget(self.sp_dwell)
+
+        # NEW: Log Scale Toggle
+        self.cb_log_z = QCheckBox("Log Scale (Z)")
+        self.cb_log_z.toggled.connect(self._update_image_render)
+        exec_layout.addWidget(self.cb_log_z)
 
         self.btn_start = QPushButton("START 2D RASTER SWEEP")
         self.btn_start.setStyleSheet("""
@@ -566,8 +571,39 @@ class ParameterOptimizerWidget(QWidget):
         self.scan_worker.scan_finished.connect(self._on_scan_finished)
         self.scan_worker.start()
 
+    def _update_image_render(self):
+        if self.heatmap_data is None:
+            return
+
+        display_data = np.copy(self.heatmap_data)
+
+        if self.cb_log_z.isChecked():
+            # Mask values <= 0 to avoid RuntimeWarnings and invalid calculations
+            with np.errstate(divide='ignore', invalid='ignore'):
+                valid_mask = display_data > 0
+                if not np.any(valid_mask):
+                    return  # No positive data to render yet
+
+                log_data = np.full_like(display_data, np.nan)
+                log_data[valid_mask] = np.log10(display_data[valid_mask])
+                display_data = log_data
+
+        # Abort if all values are NaN
+        if np.all(np.isnan(display_data)):
+            return
+
+        z_min = float(np.nanmin(display_data))
+        z_max = float(np.nanmax(display_data))
+
+        if z_min == z_max:
+            z_max = z_min + 1e-12
+
+        self.image_item.setImage(display_data, autoLevels=False, levels=(z_min, z_max))
+        self.color_bar.setLevels((z_min, z_max))
+
     def _on_data_point(self, x_idx: int, y_idx: int, val: float):
         self.heatmap_data[x_idx, y_idx] = val
+        self._update_image_render()
 
         z_min = float(np.nanmin(self.heatmap_data))
         z_max = float(np.nanmax(self.heatmap_data))
