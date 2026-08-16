@@ -43,6 +43,10 @@
         "ip": "192.168.1.13",
         "port": 502
     },
+    "steerer_magnet_psu": {
+        "ip": "192.168.1.14",
+        "port": 5025
+    },
     "zmq_ports": {
         "plc_pub": 5550,
         "plc_cmd": 5551,
@@ -66,6 +70,8 @@
         "smu_pub": 5570,
         "smu_cmd": 5571,
         "adam_pub": 5572,
-        "adam_cmd": 5573
+        "adam_cmd": 5573,
+        "steerer_magnet_pub": 5574,
+        "steerer_magnet_cmd": 5575
     }
 }

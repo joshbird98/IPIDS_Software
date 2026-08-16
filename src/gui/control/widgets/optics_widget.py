@@ -162,11 +162,18 @@ class BeamlineOpticsWidget(QWidget):
     def _dispatch_command(self, tag: str, value):
         if "einzel" in tag or "neutral_trap" in tag:
             target = "spellman"
+        elif "steerer_magnet" in tag:
+            target = "steerer_magnet"
         elif "magnet" in tag:
             target = "magnet"
         else:
             target = "plc"
         self.cmd_thread.send_command(target, tag, value)
+
+    def _toggle_master_steering(self):
+        state = self.btn_steer_en.isChecked()
+        self._dispatch_command("ion_beam.beamline.steering.cmd_enable", state)
+        self._dispatch_command("ion_beam.beamline.steerer_magnet.cmd_enable", state)
 
     def _log_manual_slit(self, position_name: str, spinbox: QDoubleSpinBox):
         val = spinbox.value()
@@ -178,7 +185,7 @@ class BeamlineOpticsWidget(QWidget):
         group = QGroupBox("1. Pre-Magnet Tuning")
         layout = QGridLayout()
 
-        # Y-Steerer
+        # Y-Steerer (Electrostatic)
         layout.addWidget(QLabel("<b>Y-Steerer Voltage:</b>"), 0, 0)
 
         self.lbl_y_rb = QLabel("RB: --- V")
@@ -198,13 +205,29 @@ class BeamlineOpticsWidget(QWidget):
         self.btn_steer_en = QPushButton("ENABLE STEERING")
         self.btn_steer_en.setCheckable(True)
         self.btn_steer_en.setStyleSheet(COLOR_BUTTON_STANDARD)
-        self.btn_steer_en.clicked.connect(
-            lambda *args: self._dispatch_command("ion_beam.beamline.steering.cmd_enable",
-                                                 self.btn_steer_en.isChecked()))
-        layout.addWidget(self.btn_steer_en, 0, 3)
+        self.btn_steer_en.clicked.connect(self._toggle_master_steering)
+        # Span the button across rows 0 and 1
+        layout.addWidget(self.btn_steer_en, 0, 3, 2, 1)
+
+        # X-Steerer (Magnetic)
+        layout.addWidget(QLabel("<b>X-Steerer Current:</b>"), 1, 0)
+
+        self.lbl_x_rb = QLabel("RB: --- A | --- V")
+        self.lbl_x_rb.setMinimumWidth(120)
+        layout.addWidget(self.lbl_x_rb, 1, 1)
+
+        self.sp_x_steer = QDoubleSpinBox()
+        self.sp_x_steer.setRange(0.0, 80.0)
+        self.sp_x_steer.setSuffix(" A")
+        self.sp_x_steer.setDecimals(2)
+        self.sp_x_steer.setSingleStep(0.1)
+        self.sp_x_steer.setKeyboardTracking(False)
+        self.sp_x_steer.editingFinished.connect(
+            lambda: self._dispatch_command("ion_beam.beamline.steerer_magnet.sp_requested_current", self.sp_x_steer.value()))
+        layout.addWidget(self.sp_x_steer, 1, 2)
 
         # Object Slits
-        layout.addWidget(QLabel("<b>Object Slits (L / R):</b>"), 1, 0)
+        layout.addWidget(QLabel("<b>Object Slits (L / R):</b>"), 2, 0)
         slit_layout = QHBoxLayout()
 
         self.sp_obj_l = QDoubleSpinBox()
@@ -219,7 +242,7 @@ class BeamlineOpticsWidget(QWidget):
 
         slit_layout.addWidget(self.sp_obj_l)
         slit_layout.addWidget(self.sp_obj_r)
-        layout.addLayout(slit_layout, 1, 1, 1, 2)
+        layout.addLayout(slit_layout, 2, 1, 1, 3)
 
         group.setLayout(layout)
         self.main_layout.addWidget(group)
@@ -457,24 +480,8 @@ class BeamlineOpticsWidget(QWidget):
         group = QGroupBox("3. Post-Magnet Tuning")
         layout = QGridLayout()
 
-        # X-Steerer
-        layout.addWidget(QLabel("<b>X-Steerer Voltage:</b>"), 0, 0)
-
-        self.lbl_x_rb = QLabel("RB: --- V")
-        self.lbl_x_rb.setMinimumWidth(80)
-        layout.addWidget(self.lbl_x_rb, 0, 1)
-
-        self.sp_x_steer = QDoubleSpinBox()
-        self.sp_x_steer.setRange(-200.0, 200.0)
-        self.sp_x_steer.setSuffix(" V")
-        self.sp_x_steer.setDecimals(1)
-        self.sp_x_steer.setKeyboardTracking(False)
-        self.sp_x_steer.editingFinished.connect(
-            lambda: self._dispatch_command("ion_beam.beamline.steering.sp_requested_x_volts", self.sp_x_steer.value()))
-        layout.addWidget(self.sp_x_steer, 0, 2)
-
         # Image Slits
-        layout.addWidget(QLabel("<b>Image Slits (L / R):</b>"), 1, 0)
+        layout.addWidget(QLabel("<b>Image Slits (L / R):</b>"), 0, 0)
         slit_layout = QHBoxLayout()
 
         self.sp_img_l = QDoubleSpinBox()
@@ -489,7 +496,7 @@ class BeamlineOpticsWidget(QWidget):
 
         slit_layout.addWidget(self.sp_img_l)
         slit_layout.addWidget(self.sp_img_r)
-        layout.addLayout(slit_layout, 1, 1, 1, 2)
+        layout.addLayout(slit_layout, 0, 1, 1, 2)
 
         group.setLayout(layout)
         self.main_layout.addWidget(group)
@@ -651,57 +658,67 @@ class BeamlineOpticsWidget(QWidget):
             self.btn_mag_deg.setText("DEGAUSS ROUTINE")
             self.btn_mag_deg.setStyleSheet("background-color: #9C27B0; color: white; font-weight: bold;")
 
-        # --- 2. Update Steerers ---
-        # PLC Telemetry handling
-        steer_en = bool(data.get("ion_beam.beamline.steering.stat_enabled", False))
-        self.btn_steer_en.setChecked(steer_en)
-        self.btn_steer_en.setStyleSheet(COLOR_OK if steer_en else COLOR_BUTTON_STANDARD)
+            # --- 2. Update Steerers ---
+            # PLC Telemetry handling (Y-Axis)
+            y_steer_en = bool(data.get("ion_beam.beamline.steering.stat_enabled", False))
+            y_rb = data.get("ion_beam.beamline.steering.sp_actual_y_volts")
 
-        # Read the Actual Setpoints active in the PLC
-        y_rb = data.get("ion_beam.beamline.steering.sp_actual_y_volts")
-        x_rb = data.get("ion_beam.beamline.steering.sp_actual_x_volts")
+            self.lbl_y_rb.setText(f"RB: {y_rb:.1f} V" if y_rb is not None else "RB: --- V")
+            if y_rb is not None and y_steer_en and not self.sp_y_steer.hasFocus():
+                self.sp_y_steer.blockSignals(True)
+                self.sp_y_steer.setValue(float(y_rb))
+                self.sp_y_steer.blockSignals(False)
 
-        # The text label ALWAYS tracks the true PLC output
-        self.lbl_y_rb.setText(f"RB: {y_rb:.1f} V" if y_rb is not None else "RB: --- V")
-        self.lbl_x_rb.setText(f"RB: {x_rb:.1f} V" if x_rb is not None else "RB: --- V")
+            # Microservice Telemetry handling (X-Axis Magnet)
+            x_steer_en = bool(data.get("ion_beam.beamline.steerer_magnet.stat_enabled", False))
+            x_v_rb = data.get("ion_beam.beamline.steerer_magnet.rb_voltage")
+            x_i_rb = data.get("ion_beam.beamline.steerer_magnet.rb_current")
+            x_i_sp = data.get("ion_beam.beamline.steerer_magnet.sp_actual_current")
 
-        # The Spinbox ONLY syncs to the PLC if the steerer is enabled.
-        # This prevents your typed setpoint from zeroing out when the output drops.
-        if y_rb is not None and steer_en and not self.sp_y_steer.hasFocus():
-            self.sp_y_steer.blockSignals(True)
-            self.sp_y_steer.setValue(float(y_rb))
-            self.sp_y_steer.blockSignals(False)
+            if x_i_rb is not None and x_v_rb is not None:
+                self.lbl_x_rb.setText(f"RB: {x_i_rb:.2f} A | {x_v_rb:.1f} V")
+            else:
+                self.lbl_x_rb.setText("RB: --- A | --- V")
 
-        if x_rb is not None and steer_en and not self.sp_x_steer.hasFocus():
-            self.sp_x_steer.blockSignals(True)
-            self.sp_x_steer.setValue(float(x_rb))
-            self.sp_x_steer.blockSignals(False)
+            if x_i_sp is not None and x_steer_en and not self.sp_x_steer.hasFocus():
+                self.sp_x_steer.blockSignals(True)
+                self.sp_x_steer.setValue(float(x_i_sp))
+                self.sp_x_steer.blockSignals(False)
 
-        # Update these specific tag lookups to catch the new PLC-side modes
-        steer_x_ctrl_mode = data.get("ion_beam.beamline.steering.x.rb_ctrl_mode", 0.0)
-        steer_y_ctrl_mode = data.get("ion_beam.beamline.steering.y.rb_ctrl_mode", 0.0)
-        steer_auto_locked = (steer_x_ctrl_mode > 0.0) or (steer_y_ctrl_mode > 0.0)
+            # Master enable button shows OK only if BOTH steerers are verified active
+            both_steerers_en = y_steer_en and x_steer_en
+            self.btn_steer_en.setChecked(both_steerers_en)
+            self.btn_steer_en.setStyleSheet(COLOR_OK if both_steerers_en else COLOR_BUTTON_STANDARD)
 
-        # Steerer Lockouts
-        steer_lock_reason = ""
-        if master_comms_lost:
-            steer_lock_reason = "PLC communications are offline."
-        elif not relay_active:
-            steer_lock_reason = "Safety Relay is De-Energized."
-        elif steer_auto_locked:
-            steer_lock_reason = "Locked by automated sequencer."
+            steer_y_ctrl_mode = data.get("ion_beam.beamline.steering.y.rb_ctrl_mode", 0.0)
+            x_steer_ctrl_mode = data.get("ion_beam.beamline.steerer_magnet.rb_ctrl_mode", 0.0)
+            steer_auto_locked = (steer_y_ctrl_mode > 0.0) or (x_steer_ctrl_mode > 0.0)
 
-        steer_lockout = bool(steer_lock_reason)
+            # Heartbeat ID extracted from provided microservice code
+            steer_magnet_state = services.get("service_steerer_magnet_psu", "OFFLINE")
 
-        self.btn_steer_en.setEnabled(not steer_lockout)
-        self.btn_steer_en.setToolTip(
-            f"Disabled: {steer_lock_reason}" if steer_lockout else "Enable Beam Steerer Outputs")
-        self.sp_y_steer.setEnabled(not steer_lockout)
-        self.sp_y_steer.setToolTip(
-            f"Disabled: {steer_lock_reason}" if steer_lockout else "Adjust Y-Axis Beam Deflection")
-        self.sp_x_steer.setEnabled(not steer_lockout)
-        self.sp_x_steer.setToolTip(
-            f"Disabled: {steer_lock_reason}" if steer_lockout else "Adjust X-Axis Beam Deflection")
+            # Steerer Lockouts
+            steer_lock_reason = ""
+            if steer_magnet_state != "ONLINE":
+                steer_lock_reason = "Steerer magnet microservice is offline."
+            elif master_comms_lost:
+                steer_lock_reason = "PLC communications are offline."
+            elif not relay_active:
+                steer_lock_reason = "Safety Relay is De-Energized."
+            elif steer_auto_locked:
+                steer_lock_reason = "Locked by automated sequencer."
+
+            steer_lockout = bool(steer_lock_reason)
+
+            self.btn_steer_en.setEnabled(not steer_lockout)
+            self.btn_steer_en.setToolTip(
+                f"Disabled: {steer_lock_reason}" if steer_lockout else "Enable Beam Steerer Outputs")
+            self.sp_y_steer.setEnabled(not steer_lockout)
+            self.sp_y_steer.setToolTip(
+                f"Disabled: {steer_lock_reason}" if steer_lockout else "Adjust Y-Axis Beam Deflection")
+            self.sp_x_steer.setEnabled(not steer_lockout)
+            self.sp_x_steer.setToolTip(
+                f"Disabled: {steer_lock_reason}" if steer_lockout else "Adjust X-Axis Magnet Current")
 
         # --- 3. Update Manual Slit Inputs ---
         slit_lock_reason = "Events microservice is offline (Cannot log manual adjustments)."

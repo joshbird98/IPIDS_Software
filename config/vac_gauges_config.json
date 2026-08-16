@@ -28,8 +28,8 @@
       },
       "2": {
         "channel": 2,
-        "on_val": 1e-6,
-        "off_val": 5e-6
+        "on_val": 5e-6,
+        "off_val": 6e-6
       },
       "3": {
         "channel": 3,
@@ -43,8 +43,8 @@
       },
       "5": {
         "channel": 2,
-        "on_val": 1e-6,
-        "off_val": 5e-6
+        "on_val": 5e-6,
+        "off_val": 6e-6
       },
       "6": {
         "channel": 3,
@@ -74,33 +74,33 @@
     "relays": {
       "1": {
         "channel": 1,
-        "on_val": 7.0e-1,
-        "off_val": 8.0e-1
+        "on_val": 0.7,
+        "off_val": 0.8
       },
       "2": {
         "channel": 2,
-        "on_val": 7.0e-1,
-        "off_val": 8.0e-1
+        "on_val": 0.7,
+        "off_val": 0.8
       },
       "3": {
         "channel": 3,
-        "on_val": 7.0e-1,
-        "off_val": 8.0e-1
+        "on_val": 0.7,
+        "off_val": 0.8
       },
       "4": {
         "channel": 1,
-        "on_val": 7.0e-1,
-        "off_val": 8.0e-1
+        "on_val": 0.7,
+        "off_val": 0.8
       },
       "5": {
         "channel": 2,
-        "on_val": 7.0e-1,
-        "off_val": 8.0e-1
+        "on_val": 0.7,
+        "off_val": 0.8
       },
       "6": {
         "channel": 3,
-        "on_val": 7.0e-1,
-        "off_val": 8.0e-1
+        "on_val": 0.7,
+        "off_val": 0.8
       }
     }
   }

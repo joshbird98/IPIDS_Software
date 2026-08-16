@@ -29,6 +29,10 @@ SMU_PORT = _cfg["smu"]["port"]
 ADAM_IP = _cfg["adam"]["ip"]
 ADAM_PORT = _cfg["adam"]["port"]
 
+# --- ADAM Comms
+STEERER_MAGNET_IP = _cfg["steerer_magnet_psu"]["ip"]
+STEERER_MAGNET_PORT = _cfg["steerer_magnet_psu"]["port"]
+
 # --- Waveshare Hardware Endpoints ---
 NOISY_RACK_WAVESHARE_IP = _cfg["waveshares"]["noisy_rack"]["ip"]
 NOISY_RACK_WAVESHARE_PORT = _cfg["waveshares"]["noisy_rack"]["port"]
@@ -79,6 +83,8 @@ ZMQ_PORT_SMU_CMD = f"{HOST}:{_cfg['zmq_ports']['smu_cmd']}"
 ZMQ_PORT_ADAM_PUB = f"{HOST}:{_cfg['zmq_ports']['adam_pub']}"
 ZMQ_PORT_ADAM_CMD = f"{HOST}:{_cfg['zmq_ports']['adam_cmd']}"
 
+ZMQ_PORT_STEERER_MAGNET_PUB = f"{HOST}:{_cfg['zmq_ports']['steerer_magnet_pub']}"
+ZMQ_PORT_STEERER_MAGNET_CMD = f"{HOST}:{_cfg['zmq_ports']['steerer_magnet_cmd']}"
 
 # --- ZMQ Topics ---
 TOPIC_PLC_DATA = b"PLC_DATA"
@@ -90,3 +96,4 @@ TOPIC_SPELLMAN_DATA = b"SPELLMAN_DATA"
 TOPIC_MAGNET_DATA = b"MAGNET_DATA"
 TOPIC_SMU_DATA = b"SMU_DATA"
 TOPIC_ADAM_DATA = b"ADAM_DATA"
+TOPIC_STEERER_MAGNET_DATA = b"STEEER_MAGNET_DATA"

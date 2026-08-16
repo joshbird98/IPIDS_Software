@@ -96,7 +96,15 @@
         "0.4": {"name": "Magnet_PSU_Overtemp", "severity": 1, "description": "Magnet PSU Internal Overtemperature."},
         "0.5": {"name": "Magnet_PSU_PowerFail", "severity": 1, "description": "Magnet PSU AC Mains Power Fail."},
         "0.6": {"name": "Magnet_PSU_OVP", "severity": 1, "description": "Magnet PSU Hardware Overvoltage Trip."},
-        "0.7": {"name": "Magnet_PSU_OCP", "severity": 1, "description": "Magnet PSU Hardware Overcurrent Trip."}
+        "0.7": {"name": "Magnet_PSU_OCP", "severity": 1, "description": "Magnet PSU Hardware Overcurrent Trip."},
+        "1.0": {"name": "Str_Magnet_Comms_Fail", "severity": 1, "description": "Steerer Magnet PSU communication failure."},
+        "1.1": {"name": "Str_Magnet_Short_Circuit", "severity": 1, "description": "Steerer Magnet PSU appears short-circuited."},
+        "1.2": {"name": "Str_Magnet_Open_Circuit", "severity": 1, "description": "Steerer Magnet PSU appears open-circuited."},
+        "1.3": {"name": "Str_Magnet_Unexpected_Res", "severity": 1, "description": "Steerer Magnet has unexpected resistance value."},
+        "1.4": {"name": "Str_Magnet_PSU_Overtemp", "severity": 1, "description": "Steerer Magnet PSU Internal Overtemperature."},
+        "1.5": {"name": "Str_Magnet_PSU_PowerFail", "severity": 1, "description": "Steerer Magnet PSU AC Mains Power Fail."},
+        "1.6": {"name": "Str_Magnet_PSU_OVP", "severity": 1, "description": "Steerer Magnet PSU Hardware Overvoltage Trip."},
+        "1.7": {"name": "Str_Magnet_PSU_OCP", "severity": 1, "description": "Steerer Magnet PSU Hardware Overcurrent Trip."}
       }
     },
     "UDT_Fault_Word_5_Gauges": {

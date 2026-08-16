@@ -13,7 +13,7 @@ from src.core.network_map import (
     ZMQ_PORT_PLC_PUB, ZMQ_PORT_VACUUM_PUB,
     ZMQ_PORT_SRC_TURBO_PUB, ZMQ_PORT_MANAGER_PUB,
     ZMQ_PORT_SPELLMAN_PUB, ZMQ_PORT_MAGNET_PUB, ZMQ_PORT_SMU_PUB,
-    ZMQ_PORT_ADAM_PUB
+    ZMQ_PORT_ADAM_PUB, ZMQ_PORT_STEERER_MAGNET_PUB
 )
 from src.core.event_helper import EventHelper
 from src.core.recipe_engine import RecipeWorker
@@ -95,7 +95,7 @@ class ControlMainWindow(QMainWindow):
             ZMQ_PORT_PLC_PUB, ZMQ_PORT_VACUUM_PUB,
             ZMQ_PORT_SRC_TURBO_PUB, ZMQ_PORT_MANAGER_PUB,
             ZMQ_PORT_SPELLMAN_PUB, ZMQ_PORT_MAGNET_PUB,
-            ZMQ_PORT_SMU_PUB, ZMQ_PORT_ADAM_PUB
+            ZMQ_PORT_SMU_PUB, ZMQ_PORT_ADAM_PUB, ZMQ_PORT_STEERER_MAGNET_PUB
         ]
         self.telemetry_thread = ZMQTelemetryThread(telemetry_ports)
         self.telemetry_thread.data_received.connect(self._route_telemetry)

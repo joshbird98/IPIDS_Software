@@ -8,7 +8,8 @@ from src.core.data_engine import TimeSeriesEngine
 from src.core.zmq_listener import ZMQLiveEngine
 from src.core.network_map import (
     ZMQ_PORT_PLC_PUB, ZMQ_PORT_VACUUM_PUB, ZMQ_PORT_SRC_TURBO_PUB,
-    ZMQ_PORT_SPELLMAN_PUB, ZMQ_PORT_MAGNET_PUB, ZMQ_PORT_SMU_PUB, ZMQ_PORT_ADAM_PUB
+    ZMQ_PORT_SPELLMAN_PUB, ZMQ_PORT_MAGNET_PUB, ZMQ_PORT_SMU_PUB, ZMQ_PORT_ADAM_PUB,
+    ZMQ_PORT_STEERER_MAGNET_PUB
 )
 from src.core.perf_utils import PerfTracker
 
@@ -65,7 +66,7 @@ class DualPipelineCache(QObject):
 
         self.zmq_listener = ZMQLiveEngine(
             ZMQ_PORT_PLC_PUB, ZMQ_PORT_VACUUM_PUB, ZMQ_PORT_SRC_TURBO_PUB,
-            ZMQ_PORT_SPELLMAN_PUB, ZMQ_PORT_MAGNET_PUB, ZMQ_PORT_SMU_PUB, ZMQ_PORT_ADAM_PUB
+            ZMQ_PORT_SPELLMAN_PUB, ZMQ_PORT_MAGNET_PUB, ZMQ_PORT_SMU_PUB, ZMQ_PORT_ADAM_PUB, ZMQ_PORT_STEERER_MAGNET_PUB
         )
         self.zmq_listener.data_ready.connect(self._on_live_data)
 

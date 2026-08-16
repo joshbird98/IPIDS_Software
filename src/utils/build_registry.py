@@ -360,6 +360,89 @@ def get_magnet_tags(config_dir):
 
     return tags
 
+def get_steerer_magnet_tags(config_dir):
+    tags = {}
+    base_tag = "ion_beam.beamline.steerer_magnet"
+    source = "service_steerer_magnet"
+
+    config_path = os.path.join(config_dir, "steerer_magnet_config.json")
+    try:
+        with open(config_path, "r") as f:
+            mag_config = json.load(f)
+    except FileNotFoundError:
+        mag_config = {}
+
+    max_i = mag_config.get("max_current")
+    min_i = 0.0 if max_i is not None else None
+
+    # Readbacks
+    tags[f"{base_tag}.rb_voltage"] = {
+        "source": source, "datatype": "REAL", "writable": False, "unit": "V", "default_scale": "linear",
+        "multiplier": 1.0, "description": "Steerer Magnet Voltage Readback", "default_label": "Steerer Magnet Voltage",
+        "short_name": "Voltage"
+    }
+    tags[f"{base_tag}.rb_current"] = {
+        "source": source, "datatype": "REAL", "writable": False, "unit": "A", "default_scale": "linear",
+        "multiplier": 1.0, "description": "Steerer Magnet Current Readback", "default_label": "Steerer Magnet Current",
+        "short_name": "Current"
+    }
+    tags[f"{base_tag}.rb_resistance"] = {
+        "source": source, "datatype": "REAL", "writable": False, "unit": "Ω", "default_scale": "linear",
+        "multiplier": 1.0, "description": "Steerer Magnet Coil Resistance", "default_label": "Steerer Magnet Resistance",
+        "short_name": "Resistance"
+    }
+    tags[f"{base_tag}.stat_enabled"] = {
+        "source": source, "datatype": "BOOL", "writable": False, "unit": "", "default_scale": "linear",
+        "multiplier": 1.0, "description": "Steerer Magnet Output Status", "default_label": "Steerer Magnet Enabled",
+        "short_name": "Enabled"
+    }
+    tags[f"{base_tag}.stat_degaussing"] = {
+        "source": source, "datatype": "BOOL", "writable": False, "unit": "", "default_scale": "linear",
+        "multiplier": 1.0, "description": "Steerer Magnet Degaussing Active", "default_label": "Steerer Degaussing Active",
+        "short_name": "Degaussing"
+    }
+    tags[f"{base_tag}.sp_actual_voltage"] = {
+        "source": source, "datatype": "REAL", "writable": False, "unit": "V", "default_scale": "linear",
+        "multiplier": 1.0, "description": "Steerer Magnet Voltage Setpoint Cache", "default_label": "Steerer Magnet Voltage SP (Act)",
+        "short_name": "V_SP Act"
+    }
+    tags[f"{base_tag}.sp_actual_current"] = {
+        "source": source, "datatype": "REAL", "writable": False, "unit": "A", "default_scale": "linear",
+        "multiplier": 1.0, "description": "Steerer Magnet Current Setpoint Cache", "default_label": "Steerer Magnet Current SP (Act)",
+        "short_name": "I_SP Act"
+    }
+
+    # Control Mode Arbitration
+    tags[f"{base_tag}.rb_ctrl_mode"] = {
+        "source": source, "datatype": "INT", "writable": False, "unit": "", "default_scale": "linear",
+        "multiplier": 1.0, "description": "Active Control Mode", "default_label": "Ctrl Mode", "short_name": "Mode"
+    }
+    tags[f"{base_tag}.cmd_ctrl_mode"] = {
+        "source": source, "datatype": "INT", "writable": True, "unit": "", "default_scale": "linear",
+        "multiplier": 1.0, "description": "Request Control Mode (0=HMI, 1=Auto)", "default_label": "Cmd Mode",
+        "short_name": "Cmd Mode"
+    }
+
+    # Setpoints (auto_controllable)
+    tags[f"{base_tag}.sp_requested_current"] = {
+        "source": source, "datatype": "REAL", "writable": True,
+        "auto_controllable": True, "min_val": min_i, "max_val": max_i,
+        "unit": "A", "default_scale": "linear", "multiplier": 1.0,
+        "description": "Steerer Magnet Requested Current Command", "default_label": "Steerer Magnet Current Cmd", "short_name": "I_Cmd"
+    }
+    tags[f"{base_tag}.cmd_enable"] = {
+        "source": source, "datatype": "BOOL", "writable": True, "unit": "", "default_scale": "linear",
+        "multiplier": 1.0, "description": "Steerer Magnet Enable Command", "default_label": "Steerer Magnet Enable Cmd",
+        "short_name": "En_Cmd"
+    }
+    tags[f"{base_tag}.cmd_degauss"] = {
+        "source": source, "datatype": "BOOL", "writable": True, "unit": "", "default_scale": "linear",
+        "multiplier": 1.0, "description": "Steerer Magnet Degauss Command", "default_label": "Steerer Degauss Cmd",
+        "short_name": "Deg_Cmd"
+    }
+
+    return tags
+
 def get_smu_tags(config_dir):
     tags = {}
     base_tag = "ion_beam.beamline.faraday.smu"
@@ -714,6 +797,7 @@ def build_system_registry():
     magnet_tags = get_magnet_tags(config_dir)
     smu_tags = get_smu_tags(config_dir)
     adam_tags = get_adam_monitor_tags()
+    steerer_magnet_tags = get_steerer_magnet_tags(config_dir)
 
     scl_path = os.path.join(project_root, "plc", "generated", "PLC_PC_Interface.scl")
     plc_tags = get_plc_tags_from_scl(scl_path, config_dir, db_number=10)
@@ -725,6 +809,7 @@ def build_system_registry():
     new_registry.update(magnet_tags)
     new_registry.update(smu_tags)
     new_registry.update(adam_tags)
+    new_registry.update(steerer_magnet_tags)
 
     new_registry = apply_existing_overrides(new_registry, existing_registry)
 

@@ -246,6 +246,17 @@ NON_RETAIN
             Stat_PSU_OVC : Bool;
          END_STRUCT;
 
+         Beamline_Steerer_Magnet : STRUCT
+            Stat_Comms_Fail : Bool;
+            Stat_Short_Circuit : Bool;
+            Stat_Open_Circuit : Bool;
+            Stat_Unexpected_Res : Bool;
+            Stat_PSU_Overtemp : Bool;
+            Stat_PSU_PowerFail : Bool;
+            Stat_PSU_OVP : Bool;
+            Stat_PSU_OVC : Bool;
+         END_STRUCT;
+
          Facilities_Graphix1 : STRUCT
             Stat_Comms_Fail : Bool;
          END_STRUCT;
