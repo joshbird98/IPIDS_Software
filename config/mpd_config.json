@@ -9,7 +9,7 @@
           "dev_type": "09",
           "plc_unit": 1,
           "min_value": 0,
-          "max_value": 18000.0,
+          "max_value": 22000.0,
           "_note": "Spellman 30kV unit"
         }
       }

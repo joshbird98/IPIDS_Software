@@ -160,7 +160,7 @@ class MagnetMicroservice:
     def _load_config(self) -> dict:
         config_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '../../config/magnet_config.json'))
         default_config = {
-            "max_voltage": 10.0,
+            "max_voltage": 20.0,
             "max_power": 200.0,
             "min_current_for_calc": 2.0,
             "nominal_resistance": 0.16,
@@ -199,8 +199,9 @@ class MagnetMicroservice:
 
         # Calculate required voltage (Current * Resistance * 1.20 for 20% overhead)
         # Enforce an absolute minimum of 1.0V and cap at hardware maximum
-        target_voltage = max(1.0, target_current * nom_res * 1.20)
+        target_voltage = max(1.0, target_current * nom_res * 1.50)
         target_voltage = min(target_voltage, max_v)
+        print(f"Target Voltage: {target_voltage}")
 
         # Get the currently requested current to determine the direction of travel
         current_sp_i = self.sp_cache.get("ion_beam.beamline.magnet.sp_actual_current", 0.0)

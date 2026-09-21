@@ -1,12 +1,12 @@
 {
-  "max_voltage": 20.0,
+  "max_voltage": 40.0,
   "max_current": 80.0,
   "max_power": 200.0,
   "min_current_for_calc": 2.0,
-  "nominal_resistance": 1.6,
+  "nominal_resistance": 0.3,
   "resistance_tolerance": 0.2,
   "short_circuit_threshold": 0.05,
-  "open_circuit_threshold": 5.0,
+  "open_circuit_threshold": 2.0,
   "mass_calibration_poly": [
     0.0,
     1.25,

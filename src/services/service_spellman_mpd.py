@@ -247,6 +247,8 @@ class SpellmanMicroservice:
                 msg = self.sub_socket.recv_json(flags=zmq.NOBLOCK)
                 tag = msg.get("tag", "")
                 value = msg.get("value", 0)
+                print(tag)
+                print(value)
                 ts = msg.get("ts", 0.0)
                 origin = msg.get("origin", "hmi")
 
@@ -317,6 +319,8 @@ class SpellmanMicroservice:
                         tag_limits = self.registry_limits.get(tag, {})
                         min_v = tag_limits.get("min_val")
                         max_v = tag_limits.get("max_val")
+                        print(min_v)
+                        print(max_v)
 
                         if min_v is None or max_v is None or not (min_v <= value_float <= max_v):
                             continue

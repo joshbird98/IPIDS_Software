@@ -191,6 +191,7 @@ class ParameterOptimizerWidget(QWidget):
         self.route_map = {
             "service_plc_snap7": "plc",
             "service_magnet": "magnet",
+            "service_steerer_magnet": "steerer_magnet",
             "service_spellman": "spellman",
             "service_vacuum": "vacuum",
             "service_source_turbo": "source_turbo",
@@ -669,6 +670,7 @@ class ParameterOptimizerWidget(QWidget):
             services_status = data.get("manager.services", {})
             service_translation = {
                 "service_magnet": "service_magnet_psu",
+                "service_steerer_magnet": "service_steerer_magnet_psu",
                 "service_plc_snap7": "service_plc",
                 "service_faraday_smu": "service_smu",
                 "service_spellman": "service_spellman_mpd",

@@ -15,6 +15,7 @@ from src.core.os_helper import harden_windows_process
 DATA_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), '../../data/parquet_logs'))
 DAILY_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), '../../data/daily_logs'))
 DB_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), '../../data/events.db'))
+EXPORTS_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), '../../data/exports'))
 
 COMPACTION_TIME = "02:00"  # 24-hour format
 
@@ -31,10 +32,11 @@ class OneDriveArchiver:
         self.onedrive_dir.mkdir(parents=True, exist_ok=True)
         self.archive_dir.mkdir(parents=True, exist_ok=True)
 
-    def sync_daily_files(self) -> bool:
+    def sync_files(self, file_pattern: str = "*.parquet", recursive: bool = False) -> bool:
         """
-        Executes a one-way incremental sync for Parquet files.
+        Executes a one-way incremental sync for files matching the pattern.
         Local deletions are ignored. Overwrites are archived.
+        Preserves relative directory structure if recursive is True.
         """
         if not self.local_dir.exists():
             print(f"[Archiver] Error: Local directory not found: {self.local_dir}")
@@ -44,19 +46,29 @@ class OneDriveArchiver:
         success = True
         sync_count = 0
 
-        for local_file in self.local_dir.glob("*.parquet"):
-            cloud_file = self.onedrive_dir / local_file.name
+        file_iterator = self.local_dir.rglob(file_pattern) if recursive else self.local_dir.glob(file_pattern)
+
+        for local_file in file_iterator:
+            if not local_file.is_file():
+                continue
+
+            # Calculate relative path to maintain folder structure in cloud
+            relative_path = local_file.relative_to(self.local_dir)
+            cloud_file = self.onedrive_dir / relative_path
+
+            # Ensure the specific target subdirectory exists
+            cloud_file.parent.mkdir(parents=True, exist_ok=True)
 
             try:
                 # Condition A: File does not exist in OneDrive -> Copy
                 if not cloud_file.exists():
-                    print(f"[Archiver] Backing up new file: {local_file.name}")
+                    print(f"[Archiver] Backing up new file: {relative_path}")
                     shutil.copy2(local_file, cloud_file)
                     sync_count += 1
 
                 # Condition C: File exists, but local is newer -> Archive & Replace
                 elif local_file.stat().st_mtime > cloud_file.stat().st_mtime:
-                    print(f"[Archiver] Modification detected for {local_file.name}. Archiving old version.")
+                    print(f"[Archiver] Modification detected for {relative_path}. Archiving old version.")
 
                     timestamp = time.strftime("%Y%m%d_%H%M%S")
                     archive_name = f"{cloud_file.stem}_{timestamp}{cloud_file.suffix}"
@@ -67,10 +79,10 @@ class OneDriveArchiver:
                     sync_count += 1
 
             except Exception as e:
-                print(f"[Archiver] Failed to sync {local_file.name}: {e}")
+                print(f"[Archiver] Failed to sync {relative_path}: {e}")
                 success = False
 
-        print(f"[Archiver] Parquet backup scan complete. Synced {sync_count} files.")
+        print(f"[Archiver] Backup scan complete. Synced {sync_count} files.")
         return success
 
     def sync_database(self, local_db_path: str) -> bool:
@@ -117,9 +129,11 @@ class OneDriveArchiver:
             print(f"[Archiver] Failed to sync database {db_file.name}: {e}")
             return False
 
+
 class DataCompactor:
     def __init__(self):
         os.makedirs(DAILY_DIR, exist_ok=True)
+        os.makedirs(EXPORTS_DIR, exist_ok=True)
 
         # ZMQ Heartbeat setup
         self.context = zmq.Context()
@@ -249,9 +263,17 @@ class DataCompactor:
                 # --- Backup Sequence ---
                 try:
                     print("[Compactor] Initiating OneDrive Backup Sequence...")
+
+                    # 1. Daily Logs & DB
                     archiver = OneDriveArchiver(local_dir=DAILY_DIR, onedrive_dir=ONEDRIVE_PATH)
-                    archiver.sync_daily_files()
-                    archiver.sync_database(DB_PATH)  # Snapshot the event log
+                    archiver.sync_files(file_pattern="*.parquet", recursive=False)
+                    archiver.sync_database(DB_PATH)
+
+                    # 2. Exports Directory (Recursive Sync)
+                    exports_onedrive_path = os.path.join(ONEDRIVE_PATH, "exports")
+                    exports_archiver = OneDriveArchiver(local_dir=EXPORTS_DIR, onedrive_dir=exports_onedrive_path)
+                    exports_archiver.sync_files(file_pattern="*", recursive=True)
+
                 except Exception as e:
                     print(f"[Compactor] FATAL ERROR during backup sequence: {e}")
 
@@ -260,34 +282,8 @@ class DataCompactor:
 
             time.sleep(10)
 
-    def test_run(self):
-        """Executes a single, immediate pass of the compaction and backup sequence for debugging."""
-        print("[Test Mode] Forcing compaction and backup sequence NOW...")
-
-        # 1. Run Compaction (Will safely ignore today's data)
-        self.compact_all_past_dates()
-
-        # 2. Run Backup
-        try:
-            print("[Test Mode] Initiating OneDrive Backup Sequence...")
-            archiver = OneDriveArchiver(local_dir=DAILY_DIR, onedrive_dir=ONEDRIVE_PATH)
-            archiver.sync_daily_files()
-            archiver.sync_database(DB_PATH)
-        except Exception as e:
-            print(f"[Test Mode] FATAL ERROR during backup sequence: {e}")
-
-        print("[Test Mode] Sequence Complete. Exiting.")
-
 
 if __name__ == "__main__":
-    import sys
-
     harden_windows_process()
-
     compactor = DataCompactor()
-
-    # If launched with a test flag, run once and exit. Otherwise, run forever.
-    if "--test" in sys.argv:
-        compactor.test_run()
-    else:
-        compactor.run()
+    compactor.run()

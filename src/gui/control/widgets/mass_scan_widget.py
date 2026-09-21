@@ -12,7 +12,8 @@ from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, QLabel,
     QPushButton, QGroupBox, QDoubleSpinBox, QSpinBox, QCheckBox,
     QMessageBox, QSplitter, QTableWidget, QTableWidgetItem, QHeaderView,
-    QLineEdit, QFileDialog, QDialog, QDialogButtonBox
+    QLineEdit, QFileDialog, QDialog, QDialogButtonBox,
+    QApplication, QInputDialog  # <-- Added
 )
 from PyQt6.QtCore import Qt, QThread, pyqtSignal, QMutex, QMutexLocker, QTimer
 
@@ -736,6 +737,51 @@ class PrecisionMassScannerWidget(QWidget):
         grp_calib.setLayout(calib_layout)
         analysis_layout.addWidget(grp_calib)
 
+        # ==========================================
+        # START OF STEP 2 INSERTION
+        # ==========================================
+
+        # --- State Variables for Calibration ---
+        self.calib_points = []
+        self.calib_scatter = self.plot_widget.plot(pen=None, symbol='star', symbolSize=15, symbolBrush='#00FF00',
+                                                   symbolPen='k')
+
+        # --- Multi-Point Auto Calibration UI ---
+        grp_auto_fit = QGroupBox("Multi-Point Auto Fit")
+        auto_fit_layout = QVBoxLayout()
+
+        self.table_calib = QTableWidget(0, 2)
+        self.table_calib.setHorizontalHeaderLabels(["Magnet (A)", "True AMU"])
+        self.table_calib.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        self.table_calib.verticalHeader().setVisible(False)
+        self.table_calib.setMaximumHeight(120)
+
+        btn_layout = QHBoxLayout()
+        self.btn_clear_calib = QPushButton("Clear")
+        self.btn_clear_calib.clicked.connect(self._clear_calib_points)
+        self.btn_fit_calib = QPushButton("Calculate Fit")
+        self.btn_fit_calib.clicked.connect(self._calculate_fit)
+        self.btn_fit_calib.setStyleSheet("background-color: #9C27B0; color: white; font-weight: bold;")
+
+        btn_layout.addWidget(self.btn_clear_calib)
+        btn_layout.addWidget(self.btn_fit_calib)
+
+        # Add this new label
+        self.lbl_fit_stats = QLabel("")
+        self.lbl_fit_stats.setStyleSheet("color: #00E5FF; font-weight: bold; font-size: 11px;")
+        self.lbl_fit_stats.setAlignment(Qt.AlignmentFlag.AlignCenter)
+
+        lbl_instruct = QLabel("<i>Ctrl + Left Click on plot peaks to assign True AMU.</i>")
+        lbl_instruct.setTextFormat(Qt.TextFormat.RichText)
+
+        auto_fit_layout.addWidget(lbl_instruct)
+        auto_fit_layout.addWidget(self.table_calib)
+        auto_fit_layout.addLayout(btn_layout)
+        auto_fit_layout.addWidget(self.lbl_fit_stats)
+        grp_auto_fit.setLayout(auto_fit_layout)
+
+        analysis_layout.addWidget(grp_auto_fit)
+
         grp_peaks = QGroupBox("Peak Detection")
         peaks_layout = QVBoxLayout()
 
@@ -863,6 +909,14 @@ class PrecisionMassScannerWidget(QWidget):
 
         self._conditional_peak_update()
         self._update_plot_limits()
+
+        # Add this at the very end of the method:
+        if hasattr(self, 'calib_points'):
+            for pt in self.calib_points:
+                k = self.sp_k_factor.value()
+                i_off = self.sp_i_offset.value()
+                pt['amu_plot_x'] = k * ((pt['amps'] + i_off) ** 2) / pt['energy_ev']
+            self._update_calib_table()
 
     def _conditional_peak_update(self):
         if self.btn_detect.isChecked():
@@ -1089,16 +1143,25 @@ class PrecisionMassScannerWidget(QWidget):
         filepath, _ = QFileDialog.getOpenFileName(self, "Load Mass Scan CSV", current_dir, "CSV Files (*.csv)")
 
         if not filepath: return
+        self.current_csv_path = filepath
 
         try:
             x_vals, y_vals, energy_vals = [], [], []
             has_energy_data = False
+            calib_k = None
+            calib_i_off = None
 
             with open(filepath, 'r') as f:
                 reader = csv.DictReader(f)
                 for i, row in enumerate(reader):
                     if i == 0:
                         has_energy_data = ('Target_kV' in row and 'Extraction_kV' in row)
+                        if 'Calib_k' in row and 'Calib_I_off' in row:
+                            try:
+                                calib_k = float(row['Calib_k'])
+                                calib_i_off = float(row['Calib_I_off'])
+                            except ValueError:
+                                pass
 
                     mag = float(row.get('Measured_Magnet_A', 0))
                     beam = float(row.get('Measured_Beam_A', 0))
@@ -1118,14 +1181,21 @@ class PrecisionMassScannerWidget(QWidget):
             self.last_scan_data = list(zip(x_vals, x_vals, y_vals, energy_vals, [0.0] * len(energy_vals)))
             self.btn_save_csv.setEnabled(True)
 
+            if calib_k is not None and calib_i_off is not None:
+                self.sp_k_factor.blockSignals(True)
+                self.sp_i_offset.blockSignals(True)
+                self.sp_k_factor.setValue(calib_k)
+                self.sp_i_offset.setValue(calib_i_off)
+                self.sp_k_factor.blockSignals(False)
+                self.sp_i_offset.blockSignals(False)
+
             self._recalculate_mass_axis()
             self._update_energy_display()
             self._conditional_peak_update()
             self._update_plot_limits()
 
             if not has_energy_data:
-                QMessageBox.warning(self, "Missing Data",
-                                    "CSV missing voltage columns; peak mass analysis may use defaults.")
+                QMessageBox.warning(self, "Missing Data", "CSV missing voltage columns; peak mass analysis may use defaults.")
 
             self.lbl_data_source.setText(f"<b>Data Source:</b> Loaded {os.path.basename(filepath)}")
 
@@ -1154,11 +1224,26 @@ class PrecisionMassScannerWidget(QWidget):
         self.lbl_rem_time.setText(f"Remaining: {m:02d}:{s:02d}")
 
     def _on_mouse_clicked(self, evt):
+        modifiers = QApplication.keyboardModifiers()
+
+        # Safely retrieve the ViewBox instance
+        view_box = self.plot_widget.getViewBox()
+
+        # Intercept Ctrl+Click for calibration selection
+        if modifiers == Qt.KeyboardModifier.ControlModifier and evt.button() == Qt.MouseButton.LeftButton:
+            evt.accept()
+            pos = evt.scenePos()
+            if view_box.sceneBoundingRect().contains(pos):
+                mouse_point = view_box.mapSceneToView(pos)
+                self._add_calibration_point(mouse_point.x())
+            return
+
+        # Existing manual jump code (double-click)
         if evt.double() and not (self.worker and self.worker.isRunning()):
             evt.accept()
             pos = evt.scenePos()
-            if self.plot_widget.vb.sceneBoundingRect().contains(pos):
-                mouse_point = self.plot_widget.vb.mapSceneToView(pos)
+            if view_box.sceneBoundingRect().contains(pos):
+                mouse_point = view_box.mapSceneToView(pos)
                 target_amu = mouse_point.x()
 
                 k = self.sp_k_factor.value()
@@ -1335,6 +1420,14 @@ class PrecisionMassScannerWidget(QWidget):
         self._update_plot_limits()
         self._conditional_peak_update()
 
+        # Add this at the very end of the method:
+        if hasattr(self, 'calib_points'):
+            for pt in self.calib_points:
+                k = self.sp_k_factor.value()
+                i_off = self.sp_i_offset.value()
+                pt['amu_plot_x'] = k * ((pt['amps'] + i_off) ** 2) / pt['energy_ev']
+            self._update_calib_table()
+
     def _update_plot_limits(self):
         is_log = self.chk_log_y.isChecked()
 
@@ -1434,3 +1527,151 @@ class PrecisionMassScannerWidget(QWidget):
             self.lbl_data_source.setText(f"<b>Data Source:</b> Saved as {filename}")
         except Exception as e:
             print(f"[Mass Scan] Export Failed: {e}")
+
+    def _add_calibration_point(self, click_amu):
+        if not self.amu_data:
+            return
+
+        # Snap to closest data index
+        x_arr = np.array(self.amu_data)
+        closest_idx = (np.abs(x_arr - click_amu)).argmin()
+
+        # Search local window (±5 points) to snap exactly to the local maximum
+        window = 5
+        start_idx = max(0, closest_idx - window)
+        end_idx = min(len(self.y_data), closest_idx + window + 1)
+        local_peak_idx = start_idx + np.argmax(self.y_data[start_idx:end_idx])
+
+        amps = self.amps_data[local_peak_idx]
+        energy_kev = self.energy_data[local_peak_idx] if self.energy_data else 30.0
+        energy_ev = (energy_kev * 1000.0) if energy_kev > 0 else 30000.0
+        peak_current = self.y_data[local_peak_idx]
+        current_amu = self.amu_data[local_peak_idx]
+
+        true_amu, ok = QInputDialog.getDouble(
+            self, "Add Calibration Peak",
+            f"Peak detected at {amps:.3f} A ({current_amu:.1f} AMU).\nEnter known True AMU:",
+            value=round(current_amu), min=1.0, max=300.0, decimals=2
+        )
+
+        if ok:
+            self.calib_points.append({
+                'amps': amps,
+                'energy_ev': energy_ev,
+                'true_amu': true_amu,
+                'amu_plot_x': current_amu,
+                'peak_y': peak_current
+            })
+            self._update_calib_table()
+
+    def _update_calib_table(self):
+        self.table_calib.setRowCount(len(self.calib_points))
+        x_pts, y_pts = [], []
+        is_log = self.chk_log_y.isChecked()
+
+        for i, pt in enumerate(self.calib_points):
+            self.table_calib.setItem(i, 0, QTableWidgetItem(f"{pt['amps']:.3f}"))
+            self.table_calib.setItem(i, 1, QTableWidgetItem(f"{pt['true_amu']:.2f}"))
+
+            x_pts.append(pt['amu_plot_x'])
+            y_pts.append(math.log10(max(1e-15, pt['peak_y'])) if is_log else pt['peak_y'])
+
+        if x_pts:
+            self.calib_scatter.setData(x=np.array(x_pts, dtype=float), y=np.array(y_pts, dtype=float))
+            self.calib_scatter.setVisible(True)
+        else:
+            # Provide dummy data to bypass PyQtGraph bound-calculation bug on empty sets
+            self.calib_scatter.setData(x=np.array([0.0]), y=np.array([0.0]))
+            self.calib_scatter.setVisible(False)
+
+    def _clear_calib_points(self):
+        self.calib_points.clear()
+        self.lbl_fit_stats.setText("")
+        self._update_calib_table()
+
+    def _calculate_fit(self):
+        n = len(self.calib_points)
+        if n == 0:
+            return
+
+        if n == 1:
+            pt = self.calib_points[0]
+            m = pt['true_amu']
+            I = pt['amps']
+            E = pt['energy_ev']
+            i_off = self.sp_i_offset.value()
+
+            if (I + i_off) != 0:
+                k_new = (m * E) / ((I + i_off) ** 2)
+                self.sp_k_factor.setValue(k_new)
+                self.lbl_fit_stats.setText("Fit: 1 point (I_off fixed)")
+                self._save_calib_to_csv(k_new, i_off)
+        else:
+            x_vals = np.array([pt['amps'] for pt in self.calib_points])
+            y_vals = np.array([math.sqrt(pt['true_amu'] * pt['energy_ev']) for pt in self.calib_points])
+
+            A, B = np.polyfit(x_vals, y_vals, 1)
+
+            if A > 0:
+                y_pred = A * x_vals + B
+                ss_res = np.sum((y_vals - y_pred) ** 2)
+                ss_tot = np.sum((y_vals - np.mean(y_vals)) ** 2)
+                r_squared = 1.0 - (ss_res / ss_tot) if ss_tot > 0 else 1.0
+
+                k_new = A ** 2
+                i_off_new = B / A
+
+                self.sp_k_factor.blockSignals(True)
+                self.sp_i_offset.blockSignals(True)
+
+                self.sp_k_factor.setValue(k_new)
+                self.sp_i_offset.setValue(i_off_new)
+
+                self.sp_k_factor.blockSignals(False)
+                self.sp_i_offset.blockSignals(False)
+                self._recalculate_mass_axis()
+
+                self.lbl_fit_stats.setText(f"Fit R² = {r_squared:.5f} (n={n})")
+                self._save_calib_to_csv(k_new, i_off_new)
+            else:
+                QMessageBox.warning(self, "Fit Error", "Negative slope derived. Check input values.")
+                self.lbl_fit_stats.setText("Fit Error")
+
+    def _save_calib_to_csv(self, k, i_off):
+        if not hasattr(self, 'current_csv_path') or not self.current_csv_path:
+            return
+        if not os.path.exists(self.current_csv_path):
+            return
+
+        try:
+            with open(self.current_csv_path, 'r') as f:
+                reader = csv.reader(f)
+                rows = list(reader)
+
+            if not rows:
+                return
+
+            header = rows[0]
+
+            # Find or append columns safely
+            if "Calib_k" not in header:
+                k_idx = len(header)
+                i_off_idx = k_idx + 1
+                header.extend(["Calib_k", "Calib_I_off"])
+            else:
+                k_idx = header.index("Calib_k")
+                i_off_idx = header.index("Calib_I_off")
+
+            # Iterate through data rows to write the values
+            for row in rows[1:]:
+                while len(row) <= max(k_idx, i_off_idx):
+                    row.append("")
+                row[k_idx] = f"{k:.4f}"
+                row[i_off_idx] = f"{i_off:.4f}"
+
+            with open(self.current_csv_path, 'w', newline='') as f:
+                writer = csv.writer(f)
+                writer.writerows(rows)
+            print(f"[Mass Scan] Updated CSV with new calibration: k={k:.2f}, I_off={i_off:.3f}")
+        except Exception as e:
+            print(f"[Mass Scan] Failed to update CSV calibration: {e}")

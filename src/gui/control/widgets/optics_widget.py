@@ -264,7 +264,7 @@ class BeamlineOpticsWidget(QWidget):
         layout.addWidget(self.lbl_mag_rb, 1, 1)
 
         self.sp_mag_current = QDoubleSpinBox()
-        self.sp_mag_current.setRange(0.0, 50.0)
+        self.sp_mag_current.setRange(0.0, 80.0)
         self.sp_mag_current.setSuffix(" A")
         self.sp_mag_current.setDecimals(2)
         self.sp_mag_current.setSingleStep(0.01)
