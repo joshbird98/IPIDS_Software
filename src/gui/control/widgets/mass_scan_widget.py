@@ -787,12 +787,12 @@ class PrecisionMassScannerWidget(QWidget):
 
         param_layout = QGridLayout()
         self.sp_max_peaks = QSpinBox()
-        self.sp_max_peaks.setRange(1, 50)
+        self.sp_max_peaks.setRange(1, 100)
         self.sp_max_peaks.setValue(15)
         self.sp_max_peaks.valueChanged.connect(self._conditional_peak_update)
 
         self.sp_sensitivity = QDoubleSpinBox()
-        self.sp_sensitivity.setRange(0.001, 100.0)
+        self.sp_sensitivity.setRange(0.0001, 100.0)
         self.sp_sensitivity.setDecimals(3)
         self.sp_sensitivity.setSuffix(" %")
         self.sp_sensitivity.setValue(0.05)
