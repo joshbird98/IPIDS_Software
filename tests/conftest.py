@@ -48,6 +48,22 @@ def endpoint():
     return free_tcp_endpoint()
 
 
+def _gh_escape(text: str, prop: bool = False) -> str:
+    text = text.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
+    return text.replace(":", "%3A").replace(",", "%2C") if prop else text
+
+
+def pytest_runtest_logreport(report):
+    """On GitHub Actions, also report each failure as an annotation, so it shows on the
+    run's summary page (and through the API) without opening the full log."""
+    if os.environ.get("GITHUB_ACTIONS") != "true" or not report.failed:
+        return
+    lines = [line for line in str(report.longrepr).splitlines() if line.strip()]
+    title = f"{report.nodeid} ({report.when})"
+    sys.__stdout__.write(f"\n::error title={_gh_escape(title, prop=True)}::{_gh_escape(chr(10).join(lines[-20:]))}\n")
+    sys.__stdout__.flush()
+
+
 class FakeEvents:
     """Stands in for EventHelper: records what would have gone to events.db."""
 
