@@ -107,8 +107,9 @@ class FaultPolicyDialog(QDialog):
         """Parses fault_config.json into a flat list for the dropdown."""
         faults = []
         try:
-            # Adjust path as necessary
-            config_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '../../../config/fault_config.json'))
+            # (was ../../../config from this folder = src/config: the fault list was always empty)
+            from src.core.paths import config_path as _config_path
+            config_path = _config_path("fault_config.json")
             with open(config_path, 'r') as f:
                 data = json.load(f)
                 for udt_name, udt_data in data.items():

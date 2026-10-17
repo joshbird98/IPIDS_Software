@@ -23,7 +23,7 @@ from src.core.commands import CommandServer
 from src.core.event_helper import EventHelper
 from src.core.log_setup import setup_logging
 from src.core.network_map import (ZMQ_PORT_HEARTBEAT, ZMQ_PORT_MANAGER_PUB, ZMQ_PORT_MANAGER_CMD,
-                                  MANAGER_LOCK_PORT, TOPIC_MANAGER)
+                                  MANAGER_LOCK_PORT, PORT_OFFSET, TOPIC_MANAGER)
 from src.core.os_helper import harden_windows_process
 
 CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -96,6 +96,49 @@ class RestartPolicy:
         self.online_since = None
 
 
+def instance_key(env) -> tuple:
+    """Which IPIDS installation a process belongs to: (port offset, simulated?).
+    Services inherit the manager's environment, so they carry the same key."""
+    try:
+        offset = int(env.get("IPIDS_PORT_OFFSET", "0") or 0)
+    except ValueError:
+        offset = None
+    return offset, env.get("IPIDS_SIMULATE", "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+MY_INSTANCE = (PORT_OFFSET, paths.simulation_enabled())
+REAL_SYSTEM = (0, False)
+
+
+def find_orphans(script_names, me=None, my_instance=MY_INSTANCE):
+    """Service processes left behind by an earlier manager of THIS instance.
+
+    Before, every python process running a service script was killed - so starting the
+    simulator or the end-to-end tests on the lab PC would have killed the live system's
+    services. Now a process only counts when its environment says it is the same
+    instance (same port offset, same simulated/real mode). A process whose environment
+    can't be read is only treated as ours by the real system's manager (as before)."""
+    me = os.getpid() if me is None else me
+    found = []
+    for proc in psutil.process_iter(['pid', 'name', 'cmdline']):
+        try:
+            cmdline = proc.info.get('cmdline')
+            if proc.info['pid'] == me or not cmdline or 'python' not in (proc.info['name'] or '').lower():
+                continue
+            script = next((s for s in script_names if any(arg.endswith(s) for arg in cmdline)), None)
+            if script is None:
+                continue
+            try:
+                theirs = instance_key(proc.environ())
+            except (psutil.AccessDenied, psutil.ZombieProcess, OSError):
+                theirs = REAL_SYSTEM if my_instance == REAL_SYSTEM else None
+            if theirs == my_instance:
+                found.append((proc, script))
+        except (psutil.NoSuchProcess, psutil.AccessDenied):
+            pass
+    return found
+
+
 class IpidsServiceManager:
     def __init__(self, services=None):
         self.services = services or SERVICES_CONFIG
@@ -141,17 +184,11 @@ class IpidsServiceManager:
     def _purge_zombies(self):
         script_names = [os.path.basename(cfg["script"]) for cfg in self.services.values()]
         killed_count = 0
-        me = os.getpid()
-        for proc in psutil.process_iter(['pid', 'name', 'cmdline']):
+        for proc, script in find_orphans(script_names):
             try:
-                cmdline = proc.info.get('cmdline')
-                if proc.info['pid'] != me and cmdline and 'python' in (proc.info['name'] or '').lower():
-                    for script in script_names:
-                        if any(arg.endswith(script) for arg in cmdline):
-                            self.events.log_general(f"Killing orphaned '{script}' (PID {proc.info['pid']})")
-                            proc.kill()
-                            killed_count += 1
-                            break
+                self.events.log_general(f"Killing orphaned '{script}' (PID {proc.pid})")
+                proc.kill()
+                killed_count += 1
             except (psutil.NoSuchProcess, psutil.AccessDenied):
                 pass
         if killed_count == 0:

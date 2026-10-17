@@ -36,6 +36,7 @@ from PyQt6.QtWidgets import QApplication
 from PyQt6.QtCore import QTimer
 
 from src.core.data_cache import DualPipelineCache
+from src.core.paths import REGISTRY_PATH
 from src.gui.data_viewer.viewer_main import DataViewerApp
 
 
@@ -127,7 +128,7 @@ def main():
     # tags by 'source' and use each service's POLL_INTERVAL.
     import json as _json
     from collections import defaultdict as _dd
-    with open(os.path.join(ROOT, "config", "system_tags.json")) as _f:
+    with open(REGISTRY_PATH) as _f:
         _reg = _json.load(_f)
     by_source = _dd(list)
     for _t, _info in _reg.items():

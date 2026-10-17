@@ -12,7 +12,7 @@ from src.core.commands import CommandServer
 from src.core.event_helper import EventHelper
 from src.core.log_setup import Throttle, setup_logging
 from src.core.os_helper import harden_windows_process
-from src.core.paths import simulation_enabled
+from src.core.paths import REGISTRY_PATH, simulation_enabled
 
 if os.name == 'nt':
     import ctypes
@@ -24,10 +24,12 @@ from pymodbus.framer import FramerType
 
 from src.core.network_map import (
     STEERER_MAGNET_IP, STEERER_MAGNET_PORT, ZMQ_PORT_STEERER_MAGNET_PUB, ZMQ_PORT_STEERER_MAGNET_CMD,
-    TOPIC_STEERER_MAGNET_DATA, ZMQ_PORT_HEARTBEAT)
+    TOPIC_STEERER_MAGNET_DATA, ZMQ_PORT_HEARTBEAT, ZMQ_PORT_PLC_PUB)
 
 POLL_INTERVAL = 0.05
 MAX_CMD_AGE = 0.5
+PLC_WATCHDOG_AGE = 1.0      # relay state counts as unknown (= off) if the PLC goes quiet this long
+FORCE_SAFE_REPEAT_S = 1.0   # while interlocked, re-send 'output off' this often
 RECONNECT_DELAYS = (0.5, 1.0, 2.0, 5.0)
 BASE = "ion_beam.beamline.steerer_magnet"
 
@@ -156,6 +158,16 @@ class SteererMagnetMicroservice:
         self.commands = CommandServer(ZMQ_PORT_STEERER_MAGNET_CMD, "service_steerer_magnet_psu",
                                       context=self.context, events=self.events, max_age=MAX_CMD_AGE)
 
+        # Software safety interlock: the steerer PSU is not on the safety relay circuit, so the
+        # service holds its output off whenever the PLC reports the relay de-energised (or is silent)
+        self.plc_socket = self.context.socket(zmq.SUB)
+        self.plc_socket.connect(ZMQ_PORT_PLC_PUB)
+        self.plc_socket.setsockopt_string(zmq.SUBSCRIBE, "")
+        self.stat_safety_relay = False
+        self.last_plc_ts = 0.0
+        self.safety_tripped = True
+        self._last_force_safe = 0.0
+
         self.limits = self._load_config()
         self.registry_limits = self._load_registry_limits()
         self.hw = _make_driver()
@@ -207,7 +219,7 @@ class SteererMagnetMicroservice:
         return default_config
 
     def _load_registry_limits(self) -> dict:
-        registry_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '../../config/system_tags.json'))
+        registry_path = REGISTRY_PATH
         limits = {}
         try:
             with open(registry_path, "r") as f:
@@ -247,6 +259,54 @@ class SteererMagnetMicroservice:
         # Update cache to reflect the new hardware state
         self.sp_cache["ion_beam.beamline.steerer_magnet.sp_actual_voltage"] = target_voltage
         self.sp_cache["ion_beam.beamline.steerer_magnet.sp_actual_current"] = target_current
+
+    def _update_safety_permissives(self):
+        try:
+            while True:
+                topic, msg = self.plc_socket.recv_multipart(flags=zmq.NOBLOCK)
+                try:
+                    payload = orjson.loads(msg)
+                except ValueError:
+                    continue
+                self.last_plc_ts = time.time()
+                # null = PLC disconnected = relay state unknown -> treat as off
+                self.stat_safety_relay = bool(payload.get("ion_beam.facilities.safety_relay_active"))
+        except zmq.Again:
+            pass
+
+        comms_alive = (time.time() - self.last_plc_ts) < PLC_WATCHDOG_AGE
+        was_tripped = self.safety_tripped
+        self.safety_tripped = not (self.stat_safety_relay and comms_alive)
+        if self.safety_tripped != was_tripped:
+            if self.safety_tripped:
+                why = "safety relay de-energised" if comms_alive else "no PLC telemetry"
+                self.events.log_general(f"Steerer output forced off: {why}", severity="WARNING")
+                self._last_force_safe = 0.0   # act now, not on the next repeat
+            else:
+                self.events.log_general("Steerer safety permissive restored (output stays off until enabled)")
+        self.state["system.safe_to_run"] = 0.0 if self.safety_tripped else 1.0
+
+    def _force_safe_outputs(self):
+        """Interlocked: hold the PSU at 0 A, 0 V, output off. Sent when the interlock trips, then
+        every FORCE_SAFE_REPEAT_S, and at once if the PSU reports its output on anyway."""
+        self.degauss_active = False
+        if not self.hw.connected:
+            return
+        output_on = self.state.get(f"{BASE}.stat_enabled") == 1.0
+        if not output_on and time.time() - self._last_force_safe < FORCE_SAFE_REPEAT_S:
+            return
+        try:
+            self.hw.set_current(0.0)
+            self.hw.set_voltage(0.0)
+            self.hw.set_output(False)
+            self.sp_cache[f"{BASE}.sp_actual_voltage"] = 0.0
+            self.sp_cache[f"{BASE}.sp_actual_current"] = 0.0
+            self._last_force_safe = time.time()
+        except Exception as e:
+            if (n := self._throttle.ready("force-safe")) is not None:
+                self.events.log_general(f"Could not force steerer outputs off: {e}{Throttle.suffix(n)}",
+                                        severity="ERROR")
+            self.hw.connected = False
 
     def _execute_degauss_cycle(self):
         if not self.degauss_active: return
@@ -309,6 +369,12 @@ class SteererMagnetMicroservice:
 
             if not self.hw.connected:
                 cmd.reject("steerer PSU not connected")
+                continue
+            if self.safety_tripped:
+                if cmd_type == "cmd_enable" and not value:
+                    cmd.ok("already off: safety interlock holds the output off")
+                else:
+                    cmd.reject("safety relay de-energised (or no PLC telemetry) - output held off")
                 continue
 
             try:
@@ -456,10 +522,14 @@ class SteererMagnetMicroservice:
 
                 if not self.hw.connected:
                     self._try_connect()
-                if self.hw.connected:
+
+                self._update_safety_permissives()
+                if self.safety_tripped:
+                    self._force_safe_outputs()
+                elif self.hw.connected:
                     self._execute_degauss_cycle()
 
-                self._process_commands()
+                self._process_commands()   # always answered, with a reason when refused
                 self._poll_device()
 
                 self.state["timestamp"] = time.time()
@@ -488,6 +558,7 @@ class SteererMagnetMicroservice:
             self.hw.disconnect()
             self.commands.close()
             self.pub_socket.close(0)
+            self.plc_socket.close(0)
             self.hb_socket.close(0)
 
 

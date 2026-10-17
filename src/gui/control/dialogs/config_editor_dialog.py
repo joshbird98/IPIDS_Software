@@ -24,6 +24,9 @@ class ConfigEditorDialog(QDialog):
             "network_config.json": "ALL SERVICES",
             "logger_config.json": "service_logger",
             "magnet_config.json": "service_magnet_psu",
+            "steerer_magnet_config.json": "service_steerer_magnet_psu",
+            "smu_config.json": "service_smu",
+            "readback_tolerance.json": "service_monitor",
             "mpd_config.json": "service_spellman_mpd",
             "vac_gauges_config.json": "service_vac_gauge_controllers",
             "theme_config.json": "HMI_GUI",
@@ -44,7 +47,8 @@ class ConfigEditorDialog(QDialog):
         self.cb_service.addItems([
             "ALL SERVICES", "service_plc", "service_magnet_psu",
             "service_source_turbo", "service_spellman_mpd",
-            "service_logger", "service_vac_gauge_controllers"
+            "service_logger", "service_vac_gauge_controllers",
+            "service_steerer_magnet_psu", "service_smu", "service_monitor"
         ])
         self.cb_service.currentTextChanged.connect(self._update_button_text)
         top_layout.addWidget(self.cb_service)
@@ -196,16 +200,23 @@ class ConfigEditorDialog(QDialog):
             with open(path, 'wb') as f:
                 f.write(orjson.dumps(new_data, option=orjson.OPT_INDENT_2))
 
-            registry_triggers = ["fault_config.json", "mpd_config.json", "vac_gauges_config.json"]
+            # Config files that build_registry.py reads (limits end up in system_tags.json)
+            registry_triggers = ["fault_config.json", "mpd_config.json", "vac_gauges_config.json",
+                                 "magnet_config.json", "steerer_magnet_config.json", "smu_config.json",
+                                 "plc_config.json"]
             if filename in registry_triggers:
+                import subprocess
+                # (this pointed at src/core/build_registry.py, which doesn't exist, and the
+                # missing file was skipped silently - so the registry was never rebuilt)
+                build_script = os.path.abspath(os.path.join(self.config_dir, "../src/utils/build_registry.py"))
                 try:
-                    import subprocess
-                    build_script = os.path.abspath(os.path.join(self.config_dir, "../src/core/build_registry.py"))
-                    if os.path.exists(build_script):
-                        subprocess.run([sys.executable, build_script], check=True)
-                        print("[GUI Output] Successfully rebuilt system_tags.json")
-                except Exception as e:
-                    QMessageBox.warning(self, "Build Error", f"Config saved, but build_registry.py failed:\n{e}")
+                    subprocess.run([sys.executable, build_script], check=True, capture_output=True, text=True,
+                                   timeout=60)
+                    print("[GUI Output] Successfully rebuilt system_tags.json")
+                except (OSError, subprocess.SubprocessError) as e:
+                    detail = getattr(e, "stderr", "") or ""
+                    QMessageBox.warning(self, "Build Error",
+                                        f"Config saved, but rebuilding system_tags.json failed:\n{e}\n{detail[-800:]}")
                     return
 
             target_svc = self.cb_service.currentText()
@@ -220,7 +231,8 @@ class ConfigEditorDialog(QDialog):
                 master_list = [
                     "service_events", "service_logger", "service_data_compactor",
                     "service_plc", "service_vac_gauge_controllers",
-                    "service_source_turbo", "service_magnet_psu", "service_spellman_mpd"
+                    "service_source_turbo", "service_magnet_psu", "service_spellman_mpd",
+                    "service_steerer_magnet_psu", "service_smu", "service_monitor"
                 ]
                 for svc in master_list:
                     self.cmd_thread.send_command("manager", "manager_cmd", {"command": "restart", "service": svc})

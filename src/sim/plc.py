@@ -8,7 +8,9 @@ Modelled behaviour
   * safety relay follows cmd_enable_safety (0.5 s "panel start" delay)
   * extraction / target / filament / thermionic supplies, steering, cesium
     oven, gate valve (only opens with the vacuum permissive), Faraday cup
-  * comms-fail flags written by the PC are mirrored into the fault words
+  * comms-fail flags and the source einzel's status/arc flags written by the PC are
+    mirrored into the fault words (the real PLC program's reaction to a fault - e.g.
+    dropping the relay - is not modelled)
 """
 import json
 import threading
@@ -222,6 +224,10 @@ class SimulatedPLC:
             "Graphix_1_Comms_Fail": bool(self.get("ion_beam.facilities.graphix1.stat_comms_fail")),
             "Graphix_2_Comms_Fail": bool(self.get("ion_beam.facilities.graphix2.stat_comms_fail")),
             "Unit1_Comms_Fail": bool(self.get("ion_beam.source.einzel.stat_comms_fail")),
+            "Unit1_OverCurrent": bool(self.get("ion_beam.source.einzel.stat_overcurrent")),
+            "Unit1_OverVoltage": bool(self.get("ion_beam.source.einzel.stat_overvoltage")),
+            "Unit1_Fail": bool(self.get("ion_beam.source.einzel.stat_fail")),
+            "Unit1_Arc_Exceeded": bool(self.get("ion_beam.source.einzel.stat_arc_exceeded")),
             "Magnet_Comms_Fail": bool(self.get("ion_beam.beamline.magnet.stat_comms_fail")),
             "Str_Magnet_Comms_Fail": bool(self.get("ion_beam.beamline.steerer_magnet.stat_comms_fail")),
         }

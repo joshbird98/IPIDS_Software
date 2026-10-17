@@ -13,7 +13,7 @@ from src.core.commands import CommandServer
 from src.core.event_helper import EventHelper
 from src.core.log_setup import Throttle, setup_logging
 from src.core.os_helper import harden_windows_process
-from src.core.paths import simulation_enabled
+from src.core.paths import REGISTRY_PATH, simulation_enabled
 
 # Force Windows high-resolution timers (1ms precision)
 if os.name == 'nt':
@@ -44,6 +44,85 @@ CMD_SET_MA = "I1"
 CMD_HV_ENABLE = "EN"
 
 log = logging.getLogger("service_spellman_mpd")
+
+# Software arc detection; override in config/mpd_config.json under "arc_detection"
+# (top level for every supply, or inside a device entry for that supply only).
+ARC_DEFAULTS = {
+    "collapse_fraction": 0.10,  # output below this fraction of the setpoint = collapsed = arc
+    "min_setpoint_kv": 0.5,     # not judged below this setpoint (a low reading is normal there)
+    "settle_s": 3.0,            # longest wait for the output to come up after an enable / setpoint change
+    "overcurrent_ua": 500.0,    # a current above this counts as an arc too
+}
+
+
+class ArcDetector:
+    """Software arc detection for one supply.
+
+    During an arc the supply runs into its current limit and the output voltage
+    collapses to a small fraction of the setpoint; that collapse is what is detected
+    (readback below collapse_fraction x setpoint, or current above overcurrent_ua).
+    The result latches stat_arc_exceeded, which the PLC service turns into a PLC fault.
+
+    Not judged:
+      - below min_setpoint_kv: at a setpoint of a few volts a near-zero reading is normal;
+      - while the output is still coming up after an enable or a setpoint change. Watching
+        starts once the output has reached half the setpoint, or settle_s after the change,
+        whichever comes first - so small steps (the optimiser) never blind it, a large step
+        up can't trip it while the output ramps, and a supply that never comes up at all
+        (a short at switch-on) is still caught after settle_s.
+    """
+
+    def __init__(self, settings: Optional[dict] = None):
+        self.s = {**ARC_DEFAULTS, **(settings or {})}
+        self._sp = None       # setpoint being watched (kV)
+        self._since = 0.0     # when that setpoint / the enable was first seen
+        self._armed = False
+
+    def restart(self):
+        """The output was switched on or off: wait for it to come up again before judging."""
+        self._sp = None
+
+    def update(self, enabled: bool, sp_kv: Optional[float], rb_kv: Optional[float],
+               rb_ua: Optional[float], now: float) -> Optional[str]:
+        """Feed one poll of the supply; returns why it looks like an arc, else None."""
+        if not enabled:
+            self._sp = None
+            return None
+        if sp_kv is None or rb_kv is None:
+            return None
+        sp, rb = abs(sp_kv), abs(rb_kv)
+        if self._sp is None or abs(sp - self._sp) > 1e-6:
+            self._sp, self._since, self._armed = sp, now, False
+        if not self._armed:
+            if rb >= 0.5 * sp or now - self._since >= self.s["settle_s"]:
+                self._armed = True
+            else:
+                return None
+        if sp < self.s["min_setpoint_kv"]:
+            return None
+        if rb < self.s["collapse_fraction"] * sp:
+            return (f"output collapsed to {rb:.3f} kV, below {self.s['collapse_fraction']:.0%} "
+                    f"of the {sp:.3f} kV setpoint")
+        if rb_ua is not None and rb_ua > self.s["overcurrent_ua"]:
+            return f"output current {rb_ua:.1f} uA above {self.s['overcurrent_ua']:g} uA"
+        return None
+
+
+def arc_settings(config: dict, dev_info: dict) -> dict:
+    """ARC_DEFAULTS <- mpd_config 'arc_detection' <- the device's own 'arc_detection'."""
+    merged = dict(ARC_DEFAULTS)
+    for source in (config.get("arc_detection") or {}, dev_info.get("arc_detection") or {}):
+        for key, value in source.items():
+            if key.startswith("_"):
+                continue
+            if key not in ARC_DEFAULTS:
+                log.warning("Unknown arc_detection setting %r in mpd_config.json (ignored)", key)
+            elif isinstance(value, bool) or not isinstance(value, (int, float)):
+                log.warning("arc_detection %s=%r in mpd_config.json is not a number (using %g)",
+                            key, value, merged[key])
+            else:
+                merged[key] = float(value)
+    return merged
 
 
 class SpellmanMPDProtocol:
@@ -182,8 +261,10 @@ class SpellmanMicroservice:
         # --- Arbitration State per device ---
         self.active_ctrl_modes: Dict[str, int] = {prefix: 0 for prefix in self.location_routing.values()}
 
-        # --- Software Arc Detection Memory ---
-        self.dev_settle_timers: Dict[str, float] = {}
+        # --- Software Arc Detection ---
+        self.arc_detectors: Dict[str, ArcDetector] = {
+            dev_name: ArcDetector(arc_settings(self.config, dev_info))
+            for _, dev_name, dev_info in self._configured_devices()}
         self.arc_fault_latches: Dict[str, bool] = {}
 
     def stop(self):
@@ -215,7 +296,7 @@ class SpellmanMicroservice:
             return {}
 
     def _load_registry_limits(self) -> dict:
-        registry_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '../../config/system_tags.json'))
+        registry_path = REGISTRY_PATH
         limits = {}
         try:
             with open(registry_path, "r") as f:
@@ -430,8 +511,7 @@ class SpellmanMicroservice:
             elif cmd_type == "cmd_enable":
                 enable_str = "1" if value_float else "0"
                 if hw.transaction(addr, dtype, CMD_HV_ENABLE, "=", enable_str) is not None:
-                    if value_float:
-                        self.dev_settle_timers[target_dev] = time.time()
+                    self._arc_detector(target_dev).restart()
                     cmd.ok("output enabled" if value_float else "output disabled")
                 else:
                     cmd.fail("no reply from supply")
@@ -458,7 +538,12 @@ class SpellmanMicroservice:
             self.state[f"{prefix}.rb_ctrl_mode"] = float(self.active_ctrl_modes.get(prefix, 0))
             self.state[f"{prefix}.stat_comms_fail"] = 0.0   # expected silence, not a comms fault
             self._set_unknown(prefix, 0.0)
-            self.dev_settle_timers.pop(dev_name, None)
+            self._arc_detector(dev_name).restart()
+
+    def _arc_detector(self, dev_name: str) -> ArcDetector:
+        if dev_name not in self.arc_detectors:
+            self.arc_detectors[dev_name] = ArcDetector(arc_settings(self.config, self._locate(dev_name)[1] or {}))
+        return self.arc_detectors[dev_name]
 
     def _poll_device(self, bus_id: str, dev_name: str, dev_info: dict):
         addr, dtype = dev_info["address"], dev_info["dev_type"]
@@ -550,19 +635,15 @@ class SpellmanMicroservice:
         # ----------------------------------
 
         # --- AUTONOMOUS SOFTWARE ARC DETECTION ---
-        active_sp_v = self.state.get(f"{prefix}.sp_actual_voltage") or 0.0
-        is_settled = (time.time() - self.dev_settle_timers.get(dev_name, time.time())) > 3.0
-
-        if is_settled and is_enabled and active_sp_v > 0.5 and volts_rb is not None:
-            # NOTE: volts_rb is in volts but active_sp_v is in kV, so this only fires when the
-            # output has collapsed to a few volts. Kept exactly as it was (it feeds a PLC fault);
-            # see the review notes before changing it to a true 25 %-of-setpoint test.
-            if volts_rb < (active_sp_v * 0.25) or (ua_rb is not None and ua_rb > 500.0):
-                if not self.arc_fault_latches.get(dev_name, False):
-                    self.events.log_general(
-                        f"ARC DETECTED on {dev_name}: V_rb {volts_rb / 1000.0:.3f} kV, I_rb {ua_rb} uA "
-                        f"(setpoint {active_sp_v:.3f} kV) - latched until fault reset", severity="WARNING")
-                self.arc_fault_latches[dev_name] = True
+        # (Before: volts were compared with kV x 0.25, so it only fired on a total collapse.)
+        why = self._arc_detector(dev_name).update(
+            is_enabled, self.state.get(f"{prefix}.sp_actual_voltage"),
+            volts_rb / 1000.0 if volts_rb is not None else None, ua_rb, time.time())
+        if why:
+            if not self.arc_fault_latches.get(dev_name, False):
+                self.events.log_general(f"ARC DETECTED on {dev_name}: {why} - latched until fault reset",
+                                        severity="WARNING", metadata={"device": dev_name, "reason": why})
+            self.arc_fault_latches[dev_name] = True
 
         self.state[f"{prefix}.stat_arc_exceeded"] = 1.0 if self.arc_fault_latches.get(dev_name, False) else 0.0
 

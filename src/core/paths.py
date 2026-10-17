@@ -1,12 +1,14 @@
 """Single place that decides where data, logs and config live.
 
 Normally everything is under the project folder (data/, SystemLogs/, config/),
-exactly as before. Two environment variables change that, mainly so the
+exactly as before. A few environment variables change that, mainly so the
 simulator and the automated tests never touch real machine data:
 
     IPIDS_SIMULATE=1     fake-device mode: data goes to data_sim/ instead of data/
     IPIDS_DATA_DIR=...   explicit data folder (overrides both of the above)
     IPIDS_LOG_DIR=...    explicit folder for the per-process log files
+    IPIDS_REGISTRY=...   tag registry to use instead of config/system_tags.json
+                         (the tests build a fresh one from the config files)
 
 The values are read once at import, so set the variables before starting a
 process (the service manager passes its own environment to every service).
@@ -43,5 +45,13 @@ else:
     LOG_DIR = os.path.join(PROJECT_ROOT, "SystemLogs")
 
 
+_registry_override = os.environ.get("IPIDS_REGISTRY", "").strip()
+# The tag registry built by src/utils/build_registry.py from the config files
+REGISTRY_PATH = os.path.abspath(_registry_override) if _registry_override else os.path.join(CONFIG_DIR,
+                                                                                             "system_tags.json")
+
+
 def config_path(name: str) -> str:
+    if name == "system_tags.json":
+        return REGISTRY_PATH
     return os.path.join(CONFIG_DIR, name)

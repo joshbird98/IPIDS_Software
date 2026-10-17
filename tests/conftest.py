@@ -18,6 +18,18 @@ ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 
+# A tag registry built fresh from the config files in this checkout (not whatever
+# config/system_tags.json happens to be on this machine), so limits match the config.
+if not os.environ.get("IPIDS_REGISTRY", "").strip():
+    import contextlib  # noqa: E402
+    import io  # noqa: E402
+
+    os.environ["IPIDS_REGISTRY"] = os.path.join(_TMP, "system_tags.json")
+    from src.utils.build_registry import build_system_registry  # noqa: E402
+
+    with contextlib.redirect_stdout(io.StringIO()):
+        build_system_registry(os.environ["IPIDS_REGISTRY"])
+
 import socket  # noqa: E402
 
 import pytest  # noqa: E402

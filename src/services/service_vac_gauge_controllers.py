@@ -13,7 +13,7 @@ from src.core.commands import CommandServer
 from src.core.event_helper import EventHelper
 from src.core.log_setup import Throttle, setup_logging
 from src.core.os_helper import harden_windows_process
-from src.core.paths import simulation_enabled
+from src.core.paths import REGISTRY_PATH, simulation_enabled
 
 # Force Windows high-resolution timers (1ms precision)
 if os.name == 'nt':
@@ -154,7 +154,7 @@ class VacuumMicroservice:
             return {}
 
     def _load_registry_limits(self) -> dict:
-        registry_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '../../config/system_tags.json'))
+        registry_path = REGISTRY_PATH
         limits = {}
         try:
             with open(registry_path, "r") as f:

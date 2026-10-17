@@ -1,47 +1,67 @@
 # Control hardening - status and to-do
 
-Branch `claude/control-hardening` (from `claude/viewer-stability`). Paused at the usage limit.
+Branch `claude/control-hardening` (from `claude/viewer-stability`). Everything here runs against the
+simulator; none of it has been tried on the real hardware yet (see "Lab PC validation").
 
-## Done (code + tests written; `pytest -m "not slow"` passes, the sim-stack end-to-end test passed)
-- Acknowledged commands (ROUTER/DEALER) for every service and the manager: ok / accepted / rejected+reason / failed,
-  plus timeout / unreachable on the client side. Stale-command rejection kept (0.5 s; SMU scales with NPLC).
-  `src/core/commands.py`; HMI `ZMQCommandThread.send_command()` keeps its signature and returns a ticket.
-- HMI: Command Log dock + pop-ups for refused/failed commands; stale telemetry hidden (`---`) via
-  `src/core/telemetry_cache.py`; arm-then-confirm on HV/source/magnet/steering enables and degauss
-  (`src/gui/control/arming.py`); amber readback when out of tolerance; services panel shows BACKOFF/STOPPED with Stop/Start.
-- Recipe: Abort renamed Stop (just stops stepping, nothing reverted). Steps wait for the service's ack and fail with its
-  reason; waits only accept live values; routing by registry (fixes VERIFIED_ACTION going to Spellman).
-- Spellman enable-latch bug fixed (relay off -> disabled; supply silent -> unknown; no 5 s blocking polls).
-- Services keep heartbeating while their device is unreachable (stops the restart loops); manager restart back-off
-  (2 s ... 5 min, reset after 2 min stable), honours boot_grace, stops children on SIGTERM.
-- Logger crash journal (<= 5 s loss instead of 15 min), compactor merges late fragments instead of overwriting a day.
-- Readback tolerance monitor `service_monitor.py` + `config/readback_tolerance.json` (TOLERANCE events, not faults).
-- Audit trail: every command outcome in events.db as event type COMMAND (viewer overlay checkbox, off by default).
-- PLC: batched writes honour `writable`; commands may only write cmd_/sp_requested_ tags (status/permissive tags refused).
-- Logging: rotating per-process logs in SystemLogs/, swallowed errors now logged.
-- Simulation mode (IPIDS_SIMULATE=1 / `--sim`): fake PLC, Spellman, magnets, turbo, SMU (with a mass spectrum),
-  gauges; data in data_sim/; runtime fault injection via data_sim/sim_faults.txt.
+## After pulling this branch on the lab PC
+1. `python src/utils/build_registry.py` - rebuilds config/system_tags.json (picks up the new Spellman
+   current limits). Without it nothing breaks, the HMI just keeps not sending the 50 uA current limit.
+2. Restart the services and the HMI.
 
-## To do next
-1. Run and fix `tests/test_hmi_sim.py` (HMI offscreen against the sim stack; currently skipped - never run).
-2. Re-run `testing/viewer_smoke_test.py` (viewer now uses src/core/paths.py and has two new overlay checkboxes).
-3. `run_simulation.py` at the project root: start manager --sim + HMI (+ viewer), refuse if a real manager is running,
-   simple fault-injection menu.
-4. Repo hygiene: requirements.txt is a UTF-16 full `pip freeze` -> runtime `requirements.txt` + `requirements-dev.txt`
-   (pytest, pytest-timeout); untrack the ~600 MB parquet data (`git rm --cached`, .gitignore, safe-checkout notes);
-   delete stale `src/gui/data_viewer/temp.py`.
-5. GitHub Actions CI: `pytest -m "not slow"` on push (+ slow suite optionally).
-6. Remaining broad/bare excepts: `src/gui/data_viewer/config_manager.py`, `data_engine.sync_active_chunks`.
-7. Short README section: running the simulator, the tests, where logs/audit live.
-8. Lab PC validation (real hardware): every service connects and acks; Spellman relay trip shows DISABLED;
-   unplugged device -> service stays ONLINE with comms-fail (no restart loop); turbo start/stop; SMU connect timeout;
-   logger journal file appears in data/parquet_logs; tolerance rules sensible for the real supplies.
+## Done
+- Acknowledged commands (ROUTER/DEALER) for every service and the manager: ok / accepted / rejected+reason /
+  failed, plus timeout / unreachable on the client side; stale commands still rejected (0.5 s; SMU scales with NPLC).
+- HMI: Command Log dock + pop-ups for refused/failed commands; stale telemetry hidden (`---`); arm-then-confirm on
+  HV/source/magnet/steering enables and degauss; amber readback when out of tolerance; services panel shows
+  BACKOFF/STOPPED with Stop/Start.
+- Recipe: Abort renamed Stop (just stops stepping). Steps wait for the service's answer and fail with its reason;
+  waits only accept live values; routing by registry.
+- Spellman enable-latch bug fixed; services keep heartbeating while their device is unreachable; manager restart
+  back-off (2 s ... 5 min); logger crash journal (<= 5 s loss); compactor merges late fragments.
+- Readback tolerance monitor (`config/readback_tolerance.json`, TOLERANCE events, not faults); command audit trail
+  (event type COMMAND); PLC batched writes honour `writable`; rotating per-process logs.
+- Simulator (`run_simulation.py`, fault menu) and tests (`tests/`, CI in `.github/workflows/tests.yml`).
+- Josh's decisions (Oct 2026):
+  - Spellman arc = output below 10 % of setpoint, not judged below 0.5 kV, nor while the output is still coming
+    up after an enable/setpoint change (until it reaches half the setpoint, max 3 s). Settings in
+    `mpd_config.json` -> `arc_detection`. Latches until fault reset (also checked end-to-end into the PLC fault word).
+  - Spellman current limits in `mpd_config.json` (0-330 uA, the MPD30's rating) - the HMI's automatic 50 uA limit
+    is now actually sent and accepted.
+  - X-steerer: software safety-relay interlock (output forced off and held off while the relay is off or the PLC
+    is silent; stays off when the relay comes back).
+  - SMU: after a reconnect the previous bias is re-applied only if fresh PLC data confirms the relay is on;
+    otherwise 0 V / bias off and the setpoint is forgotten (also if the relay tripped while it was disconnected,
+    or the operator had switched the bias off).
+- Found on the way and fixed: the manager's start-up purge killed every IPIDS service process on the PC (so a
+  simulator or test run would have killed the live system's services) - now only its own; the HMI config editor
+  never rebuilt the registry (wrong script path); the recipe builder's tag picker and fault list looked in
+  src/config/ (never found); the viewer saved plot settings to src/config/ (now config/, old file still read);
+  HMI no longer fails to start without google-genai; Faraday panel no longer keeps showing the last reading.
+
+## To do
+1. Lab PC validation (real hardware):
+   - every service connects and answers commands; Command Log shows OK / reasons;
+   - relay trip: Spellman shows DISABLED, steerer output goes off and stays off, SMU bias to 0 V;
+   - einzel: voltage + 50 uA limit accepted, output comes up, **no false arc trips** during normal use (ramps,
+     optimiser, enable/disable) - this is the main thing to watch with the new 10 % arc test;
+   - unplug a device: service stays ONLINE with comms-fail (no restart loop); SMU reconnect behaviour as above;
+   - turbo start/stop; logger journal file appears in data/parquet_logs; tolerance rules sensible.
+2. Take the example parquet data out of git - on the lab PC (the files stay on disk; back up data/ first anyway):
+   ```
+   git rm -r --cached data/daily_logs data/parquet_logs
+   git commit -m "Stop tracking machine data (files stay on disk)"
+   ```
+   (.gitignore now lists them, so they won't be re-added.) Other clones that pull that commit lose their copies;
+   the history keeps ~500 MB unless it is rewritten (git filter-repo + force push - only if wanted). Optional:
+   point `IPIDS_DATA_DIR` at a folder outside the repo so git can never touch live data.
+3. Check the first GitHub Actions run (Linux) - the Qt libraries step may need adjusting.
 
 ## Decisions needed from Josh
-- Spellman arc detection compares volts with kV (`volts_rb < sp_kV * 0.25`), so it only fires on total collapse.
-  Kept as-is; make it a real 25 %-of-setpoint test? (It feeds a PLC fault, so needs care on hardware.)
-- Spellman current limit: the HMI's automatic 50 uA write was always silently refused (no limits in the registry).
-  Add `"min_current_ua"`/`"max_current_ua"` to config/mpd_config.json and rebuild system_tags.json if you want it.
-- Steerer magnet service has no safety-relay interlock (main magnet and SMU do) - intended?
-- SMU re-applies its last bias automatically after a reconnect - intended?
+- Is the source einzel supply an MPD30 (30 kV, 0.33 mA)? max_current_ua = 330 assumes so.
+- "Calculate & set amps" (Beamline Optics) has always used amps = amu: the widget looks for magnet_config.json
+  in src/config/, which doesn't exist. Fixing the path would switch it to `mass_calibration_poly` in
+  config/magnet_config.json ([0, 1.25, -0.005, 0] - looks like a placeholder; the mass scan uses k = 1391.9,
+  I_off = 0.223 instead). Which calibration should it use? Not changed yet.
+- Recipes saved from the HMI go to src/config/recipes/ (created automatically, not in git), while the recipes in
+  git are in config/recipes/. Move the HMI to config/recipes/ (and copy yours over)? Not changed yet.
 - If the ADAM module is repaired: its manager key must be `service_adam_monitor` (matches its heartbeat name).

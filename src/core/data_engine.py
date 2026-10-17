@@ -1,5 +1,6 @@
 import os
 import glob
+import logging
 import numpy as np
 import polars as pl
 import json
@@ -7,6 +8,8 @@ import warnings
 import time
 import re
 from datetime import datetime
+
+log = logging.getLogger("data_engine")
 
 class TimeSeriesEngine:
     def __init__(self, data_root_dir):
@@ -22,6 +25,7 @@ class TimeSeriesEngine:
 
         # NEW: The Active Chunk Mart
         self.chunk_mart = {}
+        self._unreadable_chunks = set()
 
     RAW_MAX_SPAN = 86400            # <= this: raw rows
     MACRO_1M_MAX_SPAN = 20 * 86400  # <= this: 1-minute rollups from disk
@@ -53,8 +57,13 @@ class TimeSeriesEngine:
             if f not in self.chunk_mart:
                 try:
                     self.chunk_mart[f] = pl.read_parquet(f)
-                except Exception as e:
-                    pass  # File might be locked by the OS briefly, we will catch it next loop
+                    self._unreadable_chunks.discard(f)
+                except (OSError, pl.exceptions.PolarsError) as e:
+                    # Usually locked by the OS for a moment (retried next loop); say so once per file
+                    # so a corrupt chunk doesn't go unnoticed
+                    if f not in self._unreadable_chunks:
+                        self._unreadable_chunks.add(f)
+                        log.warning("Chunk %s not readable (will keep retrying): %s", f, e)
 
         # 3. Garbage Collection: Free RAM if the 2:00 AM Compactor deleted the file from disk
         stale_keys = [k for k in self.chunk_mart.keys() if k not in valid_chunks]
@@ -91,7 +100,7 @@ class TimeSeriesEngine:
         return self.cached_files
 
     def _load_master_schema(self) -> list:
-        registry_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '../../config/system_tags.json'))
+        from src.core.paths import REGISTRY_PATH as registry_path
         try:
             with open(registry_path, "r") as f:
                 return sorted(list(json.load(f).keys()))

@@ -1,11 +1,22 @@
 import os
 import json
-from google import genai
-from google.genai import types
-from dotenv import load_dotenv
+import logging
 import time
 import inspect
-load_dotenv()
+
+# Optional: without these packages the recipe builder still works, the assistant just shows offline
+# (before, a missing package stopped the whole HMI from starting).
+try:
+    from google import genai
+    from google.genai import types
+except ImportError as _e:
+    genai = types = None
+    logging.getLogger("hmi.ai_assistant").info("google-genai not installed - AI assistant unavailable (%s)", _e)
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    pass
 
 from src.core import routines
 
@@ -13,14 +24,14 @@ from src.core import routines
 class RecipeAIAssistant:
     def __init__(self, config_dir: str):
         self.api_key = os.getenv("GEMINI_API_KEY")
-        self.available = bool(self.api_key)
+        self.available = bool(self.api_key) and genai is not None
         self.config_dir = config_dir
 
         if self.available:
             self.client = genai.Client(api_key=self.api_key)
 
         # 1. Load Machine Tags
-        tags_path = os.path.abspath(os.path.join(config_dir, '../system_tags.json'))
+        from src.core.paths import REGISTRY_PATH as tags_path
         try:
             with open(tags_path, 'r', encoding='utf-8') as f:
                 self.machine_tags = f.read()
@@ -28,7 +39,8 @@ class RecipeAIAssistant:
             self.machine_tags = "{}"
 
         # 2. Load Fault Config
-        faults_path = os.path.abspath(os.path.join(config_dir, '../fault_config.json'))
+        from src.core.paths import config_path as _config_path
+        faults_path = _config_path("fault_config.json")   # (was <recipes folder>/../fault_config.json)
         try:
             with open(faults_path, 'r', encoding='utf-8') as f:
                 self.fault_tags = f.read()

@@ -1,0 +1,10 @@
+# Development: everything in requirements.txt plus the test tools.
+#   pip install -r requirements-dev.txt
+#   python -m pytest -m "not slow"      quick tests (about a minute)
+#   python -m pytest                    everything, including the simulated full stack and HMI
+-r requirements.txt
+pytest==9.1.1
+pytest-timeout==2.4.0
+
+# Some one-off scripts also need: opencv-python (testing/stills_from_videos.py), pyarrow
+# (testing/log_reader.py), mendeleev (src/utils/build_element_database.py)

@@ -11,6 +11,8 @@ from PyQt6.QtWidgets import (
 )
 from PyQt6.QtCore import Qt, QThread, pyqtSignal, QRectF, QEvent
 
+from src.core import paths
+
 log = logging.getLogger("hmi.optimiser")
 
 
@@ -232,7 +234,7 @@ class ParameterOptimizerWidget(QWidget):
 
     def _load_registry(self) -> dict:
         try:
-            path = os.path.join(self.config_dir, "system_tags.json")
+            path = paths.REGISTRY_PATH
             with open(path, "r") as f:
                 return json.load(f)
         except Exception as e:

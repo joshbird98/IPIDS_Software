@@ -16,6 +16,7 @@ process through the environment variable IPIDS_SIM_FAULTS. Known faults:
 
     plc_disconnect      PLC unreachable            plc_relay_trip      safety relay drops
     spellman_no_reply   supply silent (timeouts)   spellman_refuse     supply rejects settings
+    spellman_arc        einzel output collapses into its current limit (arc)
     magnet_disconnect   magnet PSU unreachable     magnet_sag          magnet delivers 10 % low
     steerer_disconnect  steerer PSU unreachable    smu_disconnect      SMU unreachable
     turbo_disconnect    turbo bridge unreachable   turbo_error         turbo run-up error
@@ -30,9 +31,22 @@ from src.core import paths
 from src.core.paths import simulation_enabled  # noqa: F401  (re-exported for the services)
 
 FAULTS_FILE = os.path.join(paths.DATA_DIR, "sim_faults.txt")
-KNOWN_FAULTS = ("plc_disconnect", "plc_relay_trip", "spellman_no_reply", "spellman_refuse", "magnet_disconnect",
-                "magnet_sag", "steerer_disconnect", "smu_disconnect", "turbo_disconnect", "turbo_error",
-                "vacuum_disconnect", "vacuum_vent_source")
+FAULT_DESCRIPTIONS = {
+    "plc_disconnect": "PLC unreachable",
+    "plc_relay_trip": "safety relay drops",
+    "spellman_no_reply": "Spellman supply silent (timeouts)",
+    "spellman_refuse": "Spellman supply rejects settings",
+    "spellman_arc": "einzel output collapses into its current limit (arc)",
+    "magnet_disconnect": "analyser magnet PSU unreachable",
+    "magnet_sag": "analyser magnet delivers 10 % low",
+    "steerer_disconnect": "X-steerer PSU unreachable",
+    "smu_disconnect": "SMU unreachable",
+    "turbo_disconnect": "turbo pump bridge unreachable",
+    "turbo_error": "turbo pump run-up error",
+    "vacuum_disconnect": "gauge controller bridge unreachable",
+    "vacuum_vent_source": "source vacuum (VG1) rises to atmosphere",
+}
+KNOWN_FAULTS = tuple(FAULT_DESCRIPTIONS)
 _file_cache = {"checked": 0.0, "mtime": None, "faults": frozenset()}
 
 

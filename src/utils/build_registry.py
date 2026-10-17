@@ -773,15 +773,21 @@ def get_adam_monitor_tags():
     return tags
 
 # --- Main Execution ---
-def build_system_registry():
+def build_system_registry(registry_path=None):
+    """Build the tag registry from the config files (and the PLC interface SCL).
+
+    Written to `registry_path`, else $IPIDS_REGISTRY, else config/system_tags.json.
+    Hand-edited display fields of an existing registry at that path are kept.
+    """
     current_dir = os.path.dirname(os.path.abspath(__file__))
     src_dir = os.path.dirname(current_dir)
     project_root = os.path.dirname(src_dir)
 
     config_dir = os.path.join(project_root, "config")
-    registry_path = os.path.join(config_dir, "system_tags.json")
+    registry_path = (registry_path or os.environ.get("IPIDS_REGISTRY", "").strip()
+                     or os.path.join(config_dir, "system_tags.json"))
 
-    os.makedirs(config_dir, exist_ok=True)
+    os.makedirs(os.path.dirname(os.path.abspath(registry_path)), exist_ok=True)
 
     existing_registry = {}
     if os.path.exists(registry_path):
@@ -824,4 +830,8 @@ def build_system_registry():
 
 
 if __name__ == "__main__":
-    build_system_registry()
+    import argparse
+
+    ap = argparse.ArgumentParser(description="Build config/system_tags.json from the config files.")
+    ap.add_argument("--out", help="write the registry here instead (default: config/system_tags.json)")
+    build_system_registry(ap.parse_args().out)

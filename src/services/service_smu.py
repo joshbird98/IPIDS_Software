@@ -12,7 +12,7 @@ from src.core.commands import CommandServer
 from src.core.event_helper import EventHelper
 from src.core.log_setup import Throttle, setup_logging
 from src.core.os_helper import harden_windows_process
-from src.core.paths import simulation_enabled
+from src.core.paths import REGISTRY_PATH, simulation_enabled
 
 if os.name == 'nt':
     import ctypes
@@ -31,6 +31,7 @@ DEBUG_VERBOSE = False
 CONNECT_TIMEOUT = 2.0
 RECONNECT_DELAYS = (1.0, 2.0, 5.0, 10.0)
 BASE = "ion_beam.beamline.faraday.smu"
+SP_BIAS = f"{BASE}.sp_actual_voltage"
 
 log = logging.getLogger("service_smu")
 
@@ -233,7 +234,8 @@ class SmuMicroservice:
         self.hw = _make_driver()
 
         self.stat_safety_relay = False
-        self.last_plc_ts = 0.0
+        self.last_plc_ts = 0.0       # when the last PLC message was received
+        self.last_plc_msg_ts = 0.0   # when the PLC service published it (its own timestamp)
         self.safety_tripped = True
         self._last_printed_safety_state = True
         self._safety_lockout_active = False
@@ -274,7 +276,7 @@ class SmuMicroservice:
         return default_config
 
     def _load_registry_limits(self) -> dict:
-        registry_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '../../config/system_tags.json'))
+        registry_path = REGISTRY_PATH
         limits = {}
         try:
             with open(registry_path, "r") as f:
@@ -296,6 +298,8 @@ class SmuMicroservice:
                 except ValueError:
                     continue
                 self.last_plc_ts = time.time()
+                ts = payload.get("timestamp")
+                self.last_plc_msg_ts = ts if isinstance(ts, (int, float)) and ts > 0 else self.last_plc_ts
                 stat_safety_relay = payload.get("ion_beam.facilities.safety_relay_active")
                 # null = PLC disconnected = relay state unknown -> treat as off
                 self.stat_safety_relay = bool(stat_safety_relay)
@@ -305,12 +309,43 @@ class SmuMicroservice:
         comms_alive = (time.time() - self.last_plc_ts) < PLC_WATCHDOG_AGE
         self.safety_tripped = not (self.stat_safety_relay and comms_alive)
         self.state["system.safe_to_run"] = 0.0 if self.safety_tripped else 1.0
+        if self.safety_tripped:
+            # A trip resets the bias - also when the SMU is disconnected at the time, so a
+            # later reconnect can't bring back a bias from before the trip.
+            self.sp_cache[SP_BIAS] = 0.0
 
         if self.safety_tripped != self._last_printed_safety_state:
             self.events.log_general(
                 "SMU bias forced to 0 V: safety relay off or no PLC telemetry" if self.safety_tripped
                 else "SMU safety permissive restored", severity="WARNING" if self.safety_tripped else "INFO")
             self._last_printed_safety_state = self.safety_tripped
+
+    def _relay_confirmed_on(self) -> bool:
+        """Fresh PLC data says the safety relay is energised. Drains the PLC queue first and goes
+        by the PLC's own timestamp, so a reconnect that took a few seconds doesn't act on what
+        the relay was doing before it started."""
+        self._update_safety_permissives()
+        return not self.safety_tripped and time.time() - self.last_plc_msg_ts < PLC_WATCHDOG_AGE
+
+    def _after_connect(self, bias_was_on: bool):
+        """*RST on connect leaves the source at 0 V. Put back the bias that was live when the
+        link dropped only if the safety relay is confirmed on; otherwise start from reset
+        (0 V, bias off) and forget the old setpoint, so the operator re-applies it."""
+        last_v = self.sp_cache.get(SP_BIAS) or 0.0
+        if bias_was_on and last_v != 0.0:
+            if self._relay_confirmed_on():
+                self.events.log_general(f"SMU reconnected - safety relay confirmed on, restoring the previous "
+                                        f"bias of {last_v:g} V")
+                self.hw.set_voltage(last_v)
+                self.hw.set_output(True)
+                return
+            self.events.log_general(f"SMU reconnected - previous bias of {last_v:g} V NOT restored (safety relay "
+                                    f"not confirmed on); bias reset to 0 V, output off", severity="WARNING")
+        else:
+            self.events.log_general(f"Connected to SMU at {SMU_IP}:{SMU_PORT} (bias off, 0 V)")
+        self.hw.set_voltage(0.0)
+        self.hw.set_output(False)
+        self.sp_cache[SP_BIAS] = 0.0
 
     def _process_commands(self):
         if self.safety_tripped and self.hw.connected:
@@ -321,6 +356,7 @@ class SmuMicroservice:
                 log.warning("Safety interlock: forcing SMU output off and 0 V.")
                 self.hw.set_voltage(0.0)
                 self.hw.set_output(False)
+                self.sp_cache[SP_BIAS] = 0.0
                 self._safety_lockout_active = True
         elif not self.safety_tripped:
             self._safety_lockout_active = False
@@ -382,6 +418,8 @@ class SmuMicroservice:
 
             elif cmd_type == "cmd_enable":
                 self.hw.set_output(bool(value))
+                if not value:
+                    self.sp_cache[SP_BIAS] = 0.0   # disabling sends 0 V
                 cmd.ok("bias enabled" if value else "bias disabled (0 V)")
 
             elif cmd_type == "cmd_nplc":
@@ -407,7 +445,7 @@ class SmuMicroservice:
 
     def _publish_unknown(self):
         self.state[f"{BASE}.stat_comms_fail"] = 1.0
-        for key in ("rb_voltage", "rb_current", "stat_enabled", "stat_range_settled"):
+        for key in ("rb_voltage", "rb_current", "stat_enabled", "stat_range_settled", "sp_actual_voltage"):
             self.state[f"{BASE}.{key}"] = None
         self.state[f"{BASE}.rb_ctrl_mode"] = float(self.active_ctrl_mode)
 
@@ -460,18 +498,12 @@ class SmuMicroservice:
                 "ion_beam.beamline.faraday.smu.sp_actual_voltage"]
 
     def _try_connect(self):
+        bias_was_on = self.hw.output_state
         if self.hw.connect():
             comp_i = self.limits.get("compliance_current", 100e-6)
             self.hw.send_cmd(f":SENS:CURR:PROT {comp_i:.6e}")
             self._update_command_age_limit()
-
-            last_v = self.sp_cache.get(f"{BASE}.sp_actual_voltage")
-            if last_v is not None and not self.safety_tripped:
-                self.events.log_general(f"SMU (re)connected - restoring previous bias of {last_v:g} V")
-                self.hw.set_voltage(last_v)
-                self.hw.set_output(True)
-            else:
-                self.events.log_general(f"Connected to SMU at {SMU_IP}:{SMU_PORT}")
+            self._after_connect(bias_was_on)
             self._connect_failures = 0
             self._throttle.reset("connect")
             return 0.0

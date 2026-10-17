@@ -15,7 +15,7 @@ import psutil
 import pytest
 
 from src.core import commands as C
-from tests.sim_stack import Stack, start_stack, stop_stack
+from tests.sim_stack import start_stack, stop_stack
 
 pytestmark = pytest.mark.slow
 
@@ -37,9 +37,38 @@ def test_relay_then_spellman_einzel(stack):
     # Spellman only accepts commands once it has seen the relay energised
     stack.wait(lambda l: l["SPELLMAN_DATA"]["ion_beam.source.einzel.rb_voltage"] is not None, 10, "einzel powered")
     assert stack.cmd("spellman", "ion_beam.source.einzel.sp_requested_voltage", 6.0)["status"] == C.OK
+    # current limit from mpd_config.json; with it at 0 the (simulated) supply can't raise its voltage
+    assert stack.cmd("spellman", "ion_beam.source.einzel.sp_requested_current", 50.0)["status"] == C.OK
     assert stack.cmd("spellman", "ion_beam.source.einzel.cmd_enable", True)["status"] == C.OK
     stack.wait(lambda l: abs(l["SPELLMAN_DATA"]["ion_beam.source.einzel.rb_voltage"] - 6.0) < 0.1, 10,
                "einzel at 6 kV")
+
+
+def _fault_events(stack, key):
+    db = sqlite3.connect(stack.data_dir / "events.db")
+    rows = db.execute("SELECT metadata FROM events WHERE event_type='FAULT' ORDER BY id").fetchall()
+    db.close()
+    return [m["is_active"] for m in (orjson.loads(r[0]) for r in rows) if m.get("fault_key") == key]
+
+
+def test_einzel_arc_latches_a_plc_fault_until_reset(stack):
+    """Spellman service -> stat_arc_exceeded -> PLC service -> PLC fault word -> FAULT event."""
+    import src.sim as sim
+    sim.FAULTS_FILE = str(stack.data_dir / "sim_faults.txt")   # this test process -> the stack's data dir
+    sp = "SPELLMAN_DATA"
+    stack.wait(lambda l: abs(l[sp]["ion_beam.source.einzel.rb_voltage"] - 6.0) < 0.1, 10, "einzel at 6 kV")
+    assert stack.latest[sp]["ion_beam.source.einzel.stat_arc_exceeded"] == 0.0
+    sim.set_faults({"spellman_arc"})
+    try:
+        stack.wait(lambda l: l[sp]["ion_beam.source.einzel.stat_arc_exceeded"] == 1.0, 10, "arc latched")
+    finally:
+        sim.set_faults(set())
+    stack.wait(lambda l: abs(l[sp]["ion_beam.source.einzel.rb_voltage"] - 6.0) < 0.2, 10, "output back")
+    stack.wait(lambda l: _fault_events(stack, "Unit1_Arc_Exceeded")[-1:] == [True], 10, "PLC arc fault raised")
+    assert stack.latest[sp]["ion_beam.source.einzel.stat_arc_exceeded"] == 1.0    # still latched
+    assert stack.cmd("spellman", "ion_beam.system.cmd_fault_reset", True)["status"] == C.OK
+    stack.wait(lambda l: l[sp]["ion_beam.source.einzel.stat_arc_exceeded"] == 0.0, 5, "latch cleared")
+    stack.wait(lambda l: _fault_events(stack, "Unit1_Arc_Exceeded")[-1:] == [False], 10, "PLC arc fault cleared")
 
 
 def test_rejections_carry_reasons(stack):
@@ -79,8 +108,9 @@ def test_tolerance_event_when_magnet_sags(stack):
         set_faults(set())
     stack.wait(lambda l: l["MONITOR_DATA"][flag] == 0.0, 20, "flag clears")
     db = sqlite3.connect(stack.data_dir / "events.db")
-    sev = [r[0] for r in db.execute("SELECT severity FROM events WHERE event_type='TOLERANCE' ORDER BY id")]
+    rows = db.execute("SELECT severity, metadata FROM events WHERE event_type='TOLERANCE' ORDER BY id").fetchall()
     db.close()
+    sev = [s for s, m in rows if orjson.loads(m)["readback_tag"] == "ion_beam.beamline.magnet.rb_current"]
     assert sev[:2] == ["WARNING", "INFO"]
 
 

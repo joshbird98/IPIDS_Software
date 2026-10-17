@@ -1,7 +1,6 @@
 import json
 import logging
 import math
-import os
 
 log = logging.getLogger("payload_mapper")
 
@@ -13,7 +12,7 @@ class DynamicPayloadMapper:
         self._load_registry()
 
     def _load_registry(self):
-        registry_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '../../config/system_tags.json'))
+        from src.core.paths import REGISTRY_PATH as registry_path
 
         try:
             with open(registry_path, "r") as f:

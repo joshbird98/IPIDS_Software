@@ -398,7 +398,7 @@ class FaradaySMUWidget(QWidget):
         i_rb = data.get("ion_beam.beamline.faraday.smu.rb_current")
         v_sp = data.get("ion_beam.beamline.faraday.smu.sp_actual_voltage")
 
-        if v_rb is not None: self.lbl_bias_rb.setText(f"RB: {v_rb:.1f} V")
+        self.lbl_bias_rb.setText(f"RB: {v_rb:.1f} V" if v_rb is not None else "RB: --- V")
         # Readback-vs-setpoint tolerance flag from service_monitor (information, not a fault)
         if tolerance_flagged(data, ("ion_beam.beamline.faraday.smu.rb_voltage",)):
             self.lbl_bias_rb.setStyleSheet(TOLERANCE_STYLE)
@@ -418,3 +418,6 @@ class FaradaySMUWidget(QWidget):
 
             scale_max = self.scale_map.get(self.cb_gauge_scale.currentText(), 1e-6)
             self.speedo.update_gauge(i_rb, scale_max)
+        else:   # no current reading this cycle: don't leave the last one on screen
+            self.lbl_digital_current.setText("---")
+            self.lbl_speedo_text.setText("---")

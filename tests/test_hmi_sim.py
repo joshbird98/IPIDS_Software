@@ -5,14 +5,12 @@ import json
 import os
 import time
 
-import psutil
 import pytest
 
 from src.core import commands as C
 from tests.sim_stack import start_stack, stop_stack
 
-pytestmark = [pytest.mark.slow, pytest.mark.skip(
-    reason="written but not yet run/validated - first item in TODO_control_hardening.md")]
+pytestmark = pytest.mark.slow
 
 SHOTS = os.environ.get("IPIDS_TEST_SHOTS")   # set to a folder to save screenshots of each stage
 
@@ -104,6 +102,8 @@ def test_einzel_needs_two_clicks_to_enable_one_to_disable(hmi, app):
     assert btn.text().startswith("CONFIRM") and btn.styleSheet() == ARMED_STYLE
     assert not btn.isChecked()
     assert len(log_rows(hmi)) == n_before                 # nothing sent yet
+    hmi.src_dock.raise_()
+    pump(app, 0.2)
     shot(hmi, "1_einzel_armed")
     btn.click()                                           # confirm
     wait_for(app, lambda: hmi.master_telemetry_cache.get("ion_beam.source.einzel.stat_enabled") == 1.0, 10,
@@ -111,6 +111,30 @@ def test_einzel_needs_two_clicks_to_enable_one_to_disable(hmi, app):
     pump(app, 0.3)
     assert btn.isChecked() and btn.text() == "ENABLE"
     btn.click()                                           # OFF: single click
+    wait_for(app, lambda: hmi.master_telemetry_cache.get("ion_beam.source.einzel.stat_enabled") == 0.0, 10,
+             "einzel disabled")
+
+
+def test_einzel_setpoint_from_the_gui_brings_its_current_limit(hmi, app):
+    """The HMI sends a 50 uA current limit with each einzel voltage (it was always refused before
+    the limits were in mpd_config.json); without it the supply's output can't come up."""
+    ctrl = hmi.src_widget.psu_controls["Source Einzel"]
+    wait_for(app, ctrl["sp_box"].isEnabled, 15, "einzel setpoint box available")
+    n_before = len(log_rows(hmi))
+    ctrl["sp_box"].setValue(4.0)
+    ctrl["sp_box"].editingFinished.emit()
+    wanted = {"ion_beam.source.einzel.sp_requested_voltage", "ion_beam.source.einzel.sp_requested_current"}
+    def accepted_since():   # the log is newest-first
+        rows = log_rows(hmi)
+        return {r[3] for r in rows[:len(rows) - n_before] if r[5] == "OK"}
+    wait_for(app, lambda: wanted <= accepted_since(), 5, "voltage and current limit accepted")
+    btn = ctrl["btn_enable"]
+    btn.click()
+    btn.click()                                           # arm + confirm
+    wait_for(app, lambda: abs(hmi.master_telemetry_cache.get("ion_beam.source.einzel.rb_voltage", 0) - 4.0) < 0.1,
+             10, "einzel output at 4 kV")
+    assert hmi.master_telemetry_cache.get("ion_beam.source.einzel.sp_actual_current") == pytest.approx(50.0)
+    btn.click()                                           # off
     wait_for(app, lambda: hmi.master_telemetry_cache.get("ion_beam.source.einzel.stat_enabled") == 0.0, 10,
              "einzel disabled")
 
@@ -128,6 +152,8 @@ def test_arming_times_out(hmi, app):
 def test_rejection_is_shown_to_the_operator(hmi, app):
     hmi.cmd_thread.send_command("spellman", "ion_beam.source.einzel.sp_requested_voltage", 99.0)
     wait_for(app, lambda: any(r[5] == "REJECTED" and "range" in r[6] for r in log_rows(hmi)), 5, "rejection logged")
+    hmi.cmd_log_dock.raise_()
+    pump(app, 0.2)
     shot(hmi, "2_rejected_command")
 
 
@@ -142,6 +168,8 @@ def test_stopped_service_shows_unknown_not_last_value(hmi, app, stack):
         assert "---" in ctrl["lbl_rb"].text()
         assert "ion_beam.source.einzel.rb_voltage" not in hmi.master_telemetry_cache
         assert hmi.telemetry.get("ion_beam.source.einzel.rb_voltage") is not None   # raw value still kept
+        hmi.src_dock.raise_()
+        pump(app, 0.2)
         shot(hmi, "3_spellman_stopped_unknown")
     finally:
         stack.cmd("manager", "manager_cmd", {"command": "start", "service": "service_spellman_mpd"})

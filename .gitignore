@@ -11,7 +11,16 @@ __pycache__/
 .idea/
 
 # SCADA Data & Logs
+# Machine data written by the running system. NOTE: .gitignore doesn't affect files that
+# are already tracked - see TODO_control_hardening.md for untracking the parquet data safely.
+data/daily_logs/
+data/parquet_logs/
+data/events.db
+data/events.db-shm
+data/events.db-wal
 data/telemetry/
+# Data viewer's saved plot settings (per machine)
+config/plot_settings.json
 data/exports/
 data/scans/
 FaultLogs/

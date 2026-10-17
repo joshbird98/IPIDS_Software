@@ -102,6 +102,7 @@ def make_fake_smu(base_class):
                 return False
             self.sock = _NullSock()
             self.connected = True
+            self._volt = 0.0   # the real connect() sends *RST: source back to 0 V
             self.set_nplc(self.current_nplc)
             self.timeout_counter = 0
             return True

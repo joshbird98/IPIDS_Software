@@ -34,6 +34,7 @@ from PyQt6.QtCore import QTimer
 from PyQt6.QtWidgets import QApplication
 
 from src.core.data_cache import DualPipelineCache
+from src.core.paths import REGISTRY_PATH
 from src.gui.data_viewer.viewer_main import DataViewerApp
 
 HZ = {"service_plc_snap7": 10, "service_adam_monitor": 10, "service_faraday_smu": 10, "service_magnet": 20,
@@ -66,7 +67,7 @@ def main():
     app = QApplication(sys.argv)
     cache = DualPipelineCache(os.path.join(ROOT, "data"))
     cache.health_timer.stop()
-    reg = json.load(open(os.path.join(ROOT, "config", "system_tags.json")))
+    reg = json.load(open(REGISTRY_PATH))
     by = defaultdict(list)
     for t, i in reg.items():
         by[i.get("source")].append(t)

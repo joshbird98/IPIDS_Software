@@ -136,8 +136,8 @@ class ChannelSelectorDialog(QDialog):
 
     def _populate_tree(self):
         """Builds the UI tree directly from the Master Registry."""
-        import os, json
-        registry_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '../../../config/system_tags.json'))
+        import json
+        from src.core.paths import REGISTRY_PATH as registry_path
 
         try:
             with open(registry_path, "r", encoding="utf-8") as f:
