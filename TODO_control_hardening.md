@@ -41,7 +41,9 @@ simulator; none of it has been tried on the real hardware yet (see "Lab PC valid
   simulator or test run would have killed the live system's services) - now only its own; the HMI config editor
   never rebuilt the registry (wrong script path); the recipe builder's tag picker and fault list looked in
   src/config/ (never found); the viewer saved plot settings to src/config/ (now config/, old file still read);
-  HMI no longer fails to start without google-genai; Faraday panel no longer keeps showing the last reading.
+  HMI no longer fails to start without google-genai; Faraday panel no longer keeps showing the last reading;
+  EventHelper used a private ZeroMQ context that could deadlock when garbage-collected together with its socket
+  (froze the test run at exit; could have frozen the HMI/viewer if a window holding one was collected).
 
 ## To do
 1. Lab PC validation (real hardware):

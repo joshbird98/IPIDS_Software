@@ -19,8 +19,11 @@ class EventHelper:
         self.log = logging.getLogger(service_name)
         self._audit_log = logging.getLogger(f"{service_name}.audit")
 
-        # Automatic ZMQ Setup
-        self.context = zmq.Context()
+        # The process-wide context, not one of its own: a private context that is garbage-collected
+        # in the same cycle as its socket deadlocks (Context.__del__ -> term() waits for a socket
+        # that is only closed after it) - which froze the test run, and could freeze the HMI or
+        # viewer if a window holding an EventHelper were collected while running.
+        self.context = zmq.Context.instance()
         self.pub = self.context.socket(zmq.PUB)
         self.pub.setsockopt(zmq.LINGER, 500)
         self.pub.setsockopt(zmq.SNDHWM, 10000)

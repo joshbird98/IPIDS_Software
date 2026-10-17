@@ -61,6 +61,8 @@ def hmi(stack, app):
     w.resize(1700, 1000)
     w.show()
     wait_for(app, lambda: w.master_telemetry_cache.get("system.connected") is True, 20, "PLC telemetry in HMI")
+    wait_for(app, lambda: set(w.master_telemetry_cache.get("manager.services", {}).values()) == {"ONLINE"}, 20,
+             "service manager state in HMI")
     yield w
     w.close()
     pump(app, 0.5)
