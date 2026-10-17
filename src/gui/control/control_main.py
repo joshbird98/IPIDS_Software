@@ -145,6 +145,12 @@ class ControlMainWindow(QMainWindow):
         reset_action.triggered.connect(self._reset_layout)
         view_menu.addAction(reset_action)
 
+        # Thesis/report figures of the GUI itself: vector PDF/SVG + high-DPI PNG (also F12)
+        from src.gui.figure_capture import add_capture_action, install_figure_capture
+        view_menu.addSeparator()
+        add_capture_action(view_menu, self)
+        install_figure_capture(self)
+
         # 2. CONFIG EDITOR
         settings_action = QAction(FIF.SETTING.icon(icon_theme), "Config", self)
         settings_action.triggered.connect(self._show_config_editor)

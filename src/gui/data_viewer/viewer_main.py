@@ -212,6 +212,13 @@ class DataViewerApp(QMainWindow):
         self.last_ui_update = 0.0
         self.ui_lockout = 1.0 / 5.0  # Cap at 5 FPS
 
+        # F12: capture the GUI itself as a vector figure (src/gui/figure_capture.py)
+        from src.gui.figure_capture import install_figure_capture
+        install_figure_capture(self)
+        self.btn_export.setToolTip("Export data + publication figure for a time range.\n"
+                                   "To capture the GUI itself as a vector figure, press F12 "
+                                   "with the mouse over the part you want.")
+
         # Historical coverage check (was run every 100 ms render frame)
         self.history_check_timer = QTimer()
         self.history_check_timer.timeout.connect(self._check_and_fetch_history)
@@ -396,6 +403,10 @@ class DataViewerApp(QMainWindow):
         # Core container replaces the single PlotWidget
         self.layout_widget = pg.GraphicsLayoutWidget()
         layout.addWidget(self.layout_widget)
+        # readable names in the F12 figure-capture target list
+        self.layout_widget.setObjectName("Plot area")
+        self.sidebar_scroll.setObjectName("Sidebar")
+        main_widget.setObjectName("Window contents (no title bar)")
 
         # State dictionaries for the multi-lane system
         self.lanes = {}  # holds pg.PlotItem
