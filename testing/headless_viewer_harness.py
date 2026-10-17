@@ -47,6 +47,15 @@ def parse():
     ap.add_argument("--snap-dir", default=None, help="save PNGs here")
     ap.add_argument("--snap-every", type=float, default=15.0)
     ap.add_argument("--label", default="")
+    ap.add_argument("--hist-end", default=None,
+                    help="ISO datetime: park the view on historical data ending here (use with --rate 0)")
+    ap.add_argument("--exp", default="", help="comma list of experiments: noupdate,noaa,norender")
+    ap.add_argument("--bench-redraw", action="store_true",
+                    help="after data loads, time 60 small pans (each = one full redraw) and exit")
+    ap.add_argument("--profile", default=None, help="write cProfile stats of the event loop here")
+    ap.add_argument("--size", default="1920x1080", help="window size WxH (offscreen)")
+    ap.add_argument("--zoom-every", type=float, default=0.0,
+                    help="simulate a user zoom/pan step every N seconds (historical mode)")
     ap.add_argument("--log-lane", action="store_true",
                     help="put the last lane on log scale with pressure-like values")
     return ap.parse_args()
@@ -70,7 +79,39 @@ def main():
     if not keys:
         sys.exit("No channel keys: run src/utils/build_registry.py first to create config/system_tags.json")
 
+    if "grid0" in a.exp:
+        DataViewerApp.GRID_TICK_LEVEL = 0
     win = DataViewerApp(cache, window_title="harness")
+    w_, h_ = (int(v) for v in a.size.lower().split("x"))
+    win.showNormal()
+    win.resize(w_, h_)
+
+    exps = set(filter(None, a.exp.split(",")))
+    if "noaa" in exps:
+        import pyqtgraph as _pg
+        _pg.setConfigOptions(antialias=False)
+    if "noupdate" in exps:
+        win.layout_widget.scene().update = lambda *args: None
+    # count real scene redraws per second
+    _paints = [0]
+    _orig_paint = type(win.layout_widget).paintEvent
+    def _counting_paint(self_, ev, _o=_orig_paint):
+        _paints[0] += 1
+        return _o(self_, ev)
+    type(win.layout_widget).paintEvent = _counting_paint
+    from PyQt6.QtWidgets import QGraphicsView as _QGV
+    for _name, _mode in (("fullvp", "FullViewportUpdate"), ("brvp", "BoundingRectViewportUpdate"),
+                         ("minvp", "MinimalViewportUpdate"), ("smartvp", "SmartViewportUpdate")):
+        if _name in exps:
+            win.layout_widget.setViewportUpdateMode(getattr(_QGV.ViewportUpdateMode, _mode))
+    if "fps5" in exps:
+        win.render_timer.setInterval(200)
+    if "inspector" in exps:
+        QTimer.singleShot(1500, lambda: win.btn_inspector.setChecked(True))
+    if "ylock" in exps:
+        QTimer.singleShot(1500, win._toggle_y_lock)
+    if "norender" in exps:
+        win.render_timer.stop()
 
     # Select a handful of channels across lanes
     plot_tags = keys[: a.n_tags]
@@ -106,7 +147,69 @@ def main():
 
     feeder = QTimer()
     feeder.timeout.connect(feed)
-    feeder.start(20)
+    if a.rate > 0:
+        feeder.start(20)
+
+    # --- historical view + simulated zooming ---
+    from datetime import datetime as _dt
+    zoom_spans_h = [1, 6, 24, 72, 24 * 7, 24, 6, 1, 0.25]
+    zstate = {"i": 0, "end": None}
+    if a.hist_end:
+        zstate["end"] = _dt.fromisoformat(a.hist_end).timestamp()
+
+        def park():
+            win._toggle_scroll_lock(manual_break=True)
+            bp = list(win.lanes.values())[0]
+            bp.setXRange(zstate["end"] - 3600 - win.t0, zstate["end"] - win.t0, padding=0)
+        QTimer.singleShot(800, park)
+
+    def zoom_step():
+        if not win.lanes or zstate["end"] is None:
+            return
+        span = zoom_spans_h[zstate["i"] % len(zoom_spans_h)] * 3600
+        zstate["i"] += 1
+        bp = list(win.lanes.values())[0]
+        # emulate a wheel-zoom gesture: several small range changes, like Qt delivers
+        v0, v1 = bp.viewRange()[0]
+        c1 = zstate["end"] - win.t0
+        for k in range(1, 6):
+            w = (v1 - v0) + ((span) - (v1 - v0)) * k / 5
+            bp.setXRange(c1 - w, c1, padding=0)
+            app.processEvents()
+
+    zoomer = QTimer()
+    zoomer.timeout.connect(zoom_step)
+    if a.zoom_every > 0:
+        zoomer.start(int(a.zoom_every * 1000))
+
+    # query accounting
+    qstats = {"req": 0, "applied": 0}
+    _orig_req = cache.request_historical_window
+
+    def _req(*args, **kw):
+        qstats["req"] += 1
+        return _orig_req(*args, **kw)
+    cache.request_historical_window = _req
+    _orig_apply = win._refresh_plot_historical
+
+    def _apply(ts, vals, req_id=None):
+        if req_id is None or req_id == win.pending_hist_id:
+            qstats["applied"] += 1
+        return _orig_apply(ts, vals, req_id)
+    cache.historical_updated.disconnect(win._refresh_plot_historical)
+    cache.historical_updated.connect(_apply)
+
+    # event-loop lag probe: a 20 ms timer; lateness = GUI thread was busy
+    lag = {"last": time.perf_counter(), "samples": []}
+
+    def probe():
+        now = time.perf_counter()
+        lag["samples"].append((now - lag["last"] - 0.020) * 1000)
+        lag["last"] = now
+    prober = QTimer()
+    prober.timeout.connect(probe)
+    prober.start(20)
+    proc.cpu_percent(None)
 
     # --- checker ---
     worst = {"cov": 1.0, "blank_s": 0}
@@ -132,7 +235,7 @@ def main():
         el = time.time() - t_start
         cov = coverage()
         # Only judge once the buffer holds more than one view-span of data
-        settled = sent[0] / a.rate > a.span * 1.1
+        settled = a.rate > 0 and sent[0] / a.rate > a.span * 1.1
         rss = proc.memory_info().rss / 2**20
         flag = ""
         if cov is not None and settled:
@@ -143,8 +246,14 @@ def main():
             elif cov < 0.9:
                 flag = "  <-- partial"
         if int(el) % 5 == 0 or flag:
+            ls = np.array(lag["samples"]) if lag["samples"] else np.zeros(1)
+            lag["samples"] = []
             print(f"{a.label} t={el:6.1f}s ptr={cache.live_ptr:7d} wrapped={cache.buffer_wrapped!s:5} "
-                  f"coverage={'' if cov is None else f'{cov:4.0%}':>4} rss={rss:7.1f}MB{flag}", flush=True)
+                  f"coverage={'' if cov is None else f'{cov:4.0%}':>4} rss={rss:7.1f}MB "
+                  f"cpu={proc.cpu_percent(None):5.1f}% loop_lag p95={np.percentile(ls, 95):5.0f}ms "
+                  f"max={ls.max():5.0f}ms paints/s={_paints[0] / max(el, 1e-9):4.1f} "
+                  f"queries req={qstats['req']} shown={qstats['applied']}{flag}",
+                  flush=True)
         if a.snap_dir and el - last_snap[0] >= a.snap_every:
             last_snap[0] = el
             win.grab().save(os.path.join(a.snap_dir, f"{a.label or 'snap'}_{int(el):05d}s.png"))
@@ -153,11 +262,54 @@ def main():
                   f"seconds fully blank = {worst['blank_s']}, final RSS = {rss:.0f} MB", flush=True)
             app.quit()
 
+    def bench_redraw():
+        for _p in win.lanes.values():
+            if "nogrid" in exps:
+                _p.showGrid(x=False, y=False)
+            for _lvl in (0, 1):
+                if f"tick{_lvl}" in exps:
+                    for _ax in ("bottom", "left"):
+                        _p.getAxis(_ax).setStyle(maxTickLevel=_lvl)
+            if "solidgrid" in exps:
+                _p.showGrid(x=True, y=True, alpha=1.0)
+        if "nolegend" in exps:
+            for _l in win.lane_legends.values():
+                _l.hide()
+        app.processEvents()
+        bp = list(win.lanes.values())[0]
+        v0, v1 = bp.viewRange()[0]
+        step = (v1 - v0) * 0.005
+        times = []
+        for k in range(60):
+            t = time.perf_counter()
+            bp.setXRange(v0 + k * step, v1 + k * step, padding=0)
+            win.layout_widget.repaint()  # synchronous full redraw
+            app.processEvents()
+            times.append((time.perf_counter() - t) * 1000)
+        if a.snap_dir:
+            os.makedirs(a.snap_dir, exist_ok=True)
+            win.grab().save(os.path.join(a.snap_dir, f"{a.label}_after_bench.png"))
+        ts_ = np.array(times[5:])
+        npts = sum(len(c.xData) for c in win.hist_curves.values() if c.xData is not None)
+        print(f"{a.label} REDRAW: mean {ts_.mean():.1f} ms, p95 {np.percentile(ts_, 95):.1f} ms "
+              f"({len(win.hist_curves)} curves, {npts} pts loaded)", flush=True)
+        app.quit()
+    if a.bench_redraw:
+        QTimer.singleShot(8000, bench_redraw)
+
     checker = QTimer()
     checker.timeout.connect(check)
     checker.start(1000)
 
-    app.exec()
+    if a.profile:
+        import cProfile
+        pr = cProfile.Profile()
+        pr.enable()
+        app.exec()
+        pr.disable()
+        pr.dump_stats(a.profile)
+    else:
+        app.exec()
     os._exit(0)  # skip slow teardown of background threads
 
 

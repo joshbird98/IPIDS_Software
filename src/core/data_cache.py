@@ -16,6 +16,7 @@ from src.core.perf_utils import PerfTracker
 
 class StatelessQueryWorker(QThread):
     data_fetched = pyqtSignal(float, float, object, object, int)
+    TARGET_POINTS = 8000
 
     def __init__(self, engine):
         super().__init__()
@@ -35,15 +36,18 @@ class StatelessQueryWorker(QThread):
             )
 
             # Safety Valve Downsampling
-            if len(ts) > 4000:
+            # The viewer now fetches 2x the visible width (margin for panning), so
+            # 8000 points (4000 min/max bins) keeps ~1 bin per pixel on screen.
+            target = self.TARGET_POINTS
+            if len(ts) > target:
                 # PREVENT MUTATION: Save the raw time array to align with all raw value arrays
                 original_ts = ts
 
                 first_key = list(vals_dict.keys())[0]
-                ts, _ = self.engine.downsample_minmax(original_ts, vals_dict[first_key], target_points=4000)
+                ts, _ = self.engine.downsample_minmax(original_ts, vals_dict[first_key], target_points=target)
 
                 for k, v in vals_dict.items():
-                    _, vals_dict[k] = self.engine.downsample_minmax(original_ts, v, target_points=4000)
+                    _, vals_dict[k] = self.engine.downsample_minmax(original_ts, v, target_points=target)
 
             self.data_fetched.emit(self.req_start, self.req_end, ts, vals_dict, self.req_id)
         except Exception as e:

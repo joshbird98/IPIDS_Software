@@ -173,6 +173,10 @@ class TimeAxisItem(pg.AxisItem):
 # --- Main Application ---
 
 class DataViewerApp(QMainWindow):
+    HIST_MARGIN = 0.5        # extra view-widths fetched either side of the view
+    HIST_REFINE_ZOOM = 1.5   # re-query when zoomed in this much past the fetch
+    GRID_TICK_LEVEL = 1      # grid/tick levels drawn: 0 = major only (fastest), 1 = +minor, 2 = pyqtgraph default
+
     def __init__(self, shared_cache, window_title="IPIDS Data Viewer"):
         super().__init__()
         self.setWindowTitle(window_title)
@@ -243,6 +247,11 @@ class DataViewerApp(QMainWindow):
 
         self.last_ui_update = 0.0
         self.ui_lockout = 1.0 / 5.0  # Cap at 5 FPS
+
+        # Historical coverage check (was run every 100 ms render frame)
+        self.history_check_timer = QTimer()
+        self.history_check_timer.timeout.connect(self._check_and_fetch_history)
+        self.history_check_timer.start(500)
 
         # 5. Background Sync for multi-window marker updates
         self.marker_sync_timer = QTimer()
@@ -528,6 +537,7 @@ class DataViewerApp(QMainWindow):
         self.hist_curves.clear()
         self.marker_items.clear()
         self.time_axes = []
+        self._legend_tags = set()
 
         # Attempt to free up colours for next set of channels?
         self._assigned_colors = {}
@@ -575,6 +585,10 @@ class DataViewerApp(QMainWindow):
             log_axis = LogAxisItem(orientation='right')
             p = self.layout_widget.addPlot(row=i, col=0, axisItems={'bottom': time_axis, 'right': log_axis})
             p.showGrid(x=True, y=True, alpha=0.5)
+            # Grid lines dominate redraw cost (measured at 1080p: 3 tick levels
+            # = 56 ms/redraw, 2 levels = 25 ms, major only = 11 ms, no grid = 10 ms).
+            for _ax in ("bottom", "left"):
+                p.getAxis(_ax).setStyle(maxTickLevel=self.GRID_TICK_LEVEL)
             p.setMenuEnabled(False)
             p.hideButtons()
 
@@ -715,7 +729,9 @@ class DataViewerApp(QMainWindow):
     def _refresh_plot_live(self):
 
         if not self.cache.tags or not getattr(self, 'lanes', None): return
-        self._check_and_fetch_history()
+        # NOTE: _check_and_fetch_history() used to run here, i.e. every 100 ms frame.
+        # It now runs from history_check_timer (500 ms) and the debounced view-change
+        # handler, which is all it needs.
         for ta in getattr(self, 'time_axes', []): ta.set_offset(self.t0)
 
         # --- THE VIRTUAL WINDOW SLICER ---
@@ -782,8 +798,9 @@ class DataViewerApp(QMainWindow):
         self._render_curves(self.curves, x_slice, y_slice_dict, is_historical=False)
         PerfTracker.log("render", t_render)
 
-        if self.is_historical_mode and len(self.historical_x) > 0:
-            self._render_curves(self.hist_curves, self.historical_x, self.historical_y, is_historical=True)
+        # Historical curves are NOT re-set here: their data only changes when a
+        # query returns (_refresh_plot_historical). Re-setting ~8000-pt arrays every
+        # frame made pyqtgraph recompute bounds/paths for nothing.
 
         if self.auto_scroll:
             self._auto_panning = True
@@ -820,8 +837,17 @@ class DataViewerApp(QMainWindow):
 
     def _refresh_plot_historical(self, ts_array, vals_dict, req_id=None):
         #print(f"[DEBUG-UI] Received history for ID {req_id}. Expected ID: {self.pending_hist_id}. Points: {len(ts_array)}") # ADD THIS
-        if req_id is not None and req_id != self.pending_hist_id:
-            return
+        # Show any result newer than what is on screen. Previously only the exact
+        # latest request id was accepted, so while zooming/panning every completed
+        # query was discarded and the plot stayed coarse/stale until you stopped.
+        # Only results for THIS window's requests: the cache (and its request ids)
+        # is shared between viewer windows.
+        if req_id is not None:
+            mine = getattr(self, '_my_hist_ids', set())
+            if req_id not in mine or req_id < getattr(self, '_hist_shown_id', -1):
+                return
+            self._hist_shown_id = req_id
+            self._my_hist_ids = {i for i in mine if i > req_id}
         # if not self.is_historical_mode: return  ### not used right now?
         #t_start = time.perf_counter()
         self.historical_x = ts_array - self.t0
@@ -916,11 +942,15 @@ class DataViewerApp(QMainWindow):
                 else:
                     self.lanes[lane].addItem(c)
 
-                if not is_historical:
+                # One legend entry per channel, from whichever curve (live or
+                # historical) appears first. Previously only live curves added
+                # entries, so with no live data the plots had no legend at all.
+                if tag not in self._legend_tags:
                     label_text = cfg.get('label', tag)
                     unit = getattr(self, 'system_registry', {}).get(tag, {}).get("unit", "")
                     unit_str = f" [{unit}]" if unit else ""
                     self.lane_legends[lane].addItem(c, name=f"{label_text}{unit_str}")
+                    self._legend_tags.add(tag)
                 target_dict[tag] = c
 
             target_dict[tag].setVisible(True)
@@ -1017,6 +1047,7 @@ class DataViewerApp(QMainWindow):
         """
         # 1. Clear existing items and rebuild layout
         self._build_lanes()
+        self._hist_fetched = None  # channel set may have changed: force a re-query
 
         # 2. Reset inspector and legends
         self._ensure_inspector_items()
@@ -1226,28 +1257,34 @@ class DataViewerApp(QMainWindow):
         if start_ts < oldest_live_ts:
             self.is_historical_mode = True
 
-            # --- HYSTERESIS THRESHOLD ---
-            # Prevent Polars death-loop by requiring a minimum view shift
-            if not hasattr(self, 'last_hist_start'):
-                self.last_hist_start = 0.0
-                self.last_hist_end = 0.0
-
-            # Require a 2% shift in the view window before querying disk again
-            shift_threshold = span * 0.02
-
-            if abs(start_ts - self.last_hist_start) > shift_threshold or abs(
-                    end_ts - self.last_hist_end) > shift_threshold:
-                self.last_hist_start = start_ts
-                self.last_hist_end = end_ts
+            # --- COVERAGE-BASED REFETCH ---
+            # Fetch half a view-width of margin either side, then only query disk
+            # again when the view leaves that window or zooms in enough to need finer
+            # data. Small pans/zooms are served from what is already loaded, and the
+            # edges never show blank while a query is in flight.
+            fetched = getattr(self, '_hist_fetched', None)
+            need = fetched is None
+            if not need:
+                f_start, f_end, f_span = fetched
+                need = (start_ts < f_start or end_ts > f_end
+                        or span < f_span / self.HIST_REFINE_ZOOM)
+            if need:
+                margin = span * self.HIST_MARGIN
+                q_start, q_end = start_ts - margin, end_ts + margin
+                self._hist_fetched = (q_start, q_end, span)
                 currently_selected = [tag for tag in self.cache.tags if self.plot_config.get(tag, {}).get('selected')]
-                self.pending_hist_id = self.cache.request_historical_window(start_ts, end_ts,
+                self.pending_hist_id = self.cache.request_historical_window(q_start, q_end,
                                                                             selected_tags=currently_selected)
+                if not hasattr(self, '_my_hist_ids'):
+                    self._my_hist_ids = set()
+                self._my_hist_ids.add(self.pending_hist_id)
         else:
+            if self.is_historical_mode:
+                self._clear_historical_curves()
             self.is_historical_mode = False
-            self._clear_historical_curves()
+            self._hist_fetched = None
 
-        # Called every render frame (100 ms): only re-place markers from cache,
-        # don't hit SQLite here. The 1 s marker_sync_timer does the DB read.
+        # Only re-place markers from cache; the 1 s marker_sync_timer does the DB read.
         self._refresh_event_markers(reload=False)
 
     def _clear_historical_curves(self):
@@ -1767,7 +1804,9 @@ class DataViewerApp(QMainWindow):
                 if ts_str not in self.marker_items:
                     self._add_marker_to_graph(ts_str, data['text'], data['color'])
 
-        self.layout_widget.scene().update()
+        # (A forced self.layout_widget.scene().update() used to sit here. It made Qt
+        # repaint the whole scene 10x/s even when idle: ~45% CPU at 1080p. Adding or
+        # removing items already schedules the repaint Qt needs.)
 
     def _confirm_delete_marker(self, ts_key):
         """Optimistic UI: Removes from screen instantly, then publishes delete command."""

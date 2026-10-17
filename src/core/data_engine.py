@@ -23,6 +23,14 @@ class TimeSeriesEngine:
         # NEW: The Active Chunk Mart
         self.chunk_mart = {}
 
+    RAW_MAX_SPAN = 86400            # <= this: raw rows
+    MACRO_1M_MAX_SPAN = 20 * 86400  # <= this: 1-minute rollups from disk
+    RAW_FALLBACK_SPAN = 7 * 86400   # rollups missing for window: raw if span <= this
+    PRELOAD_1M_MART = False
+    RAW_BIN_ABOVE_SPAN = 600        # raw windows longer than this are min/max binned in polars
+                                    # (numpy nanmin/nanmax on the worker thread holds the GIL)
+    RAW_BINS = 4000                 # -> 8000 points, matching StatelessQueryWorker.TARGET_POINTS
+
     # Hoisting chunk files into RAM is OFF by default. Each 15-min chunk is ~0.2 MB
     # on disk but ~22 MB as a dense 317-column frame, so 68 chunks cost ~1.4 GB RSS.
     # Reading them lazily from disk (query_stateless already falls back to
@@ -54,12 +62,30 @@ class TimeSeriesEngine:
             del self.chunk_mart[k]
 
     def _get_files(self):
-        """Prevents hammering the OS filesystem. Only rescans the folder every 10 seconds."""
+        """Prevents hammering the OS filesystem. Only rescans the folder every 10 seconds.
+
+        Lists the two folders the logger/compactor actually write to
+        (data/parquet_logs, data/daily_logs) with one os.scandir each, instead of
+        four recursive '**' globs over all of data/ (exports, scans, ...). The glob
+        ran on the query worker thread as pure Python (~70 ms here, more on a big
+        Windows tree) and held the GIL, stalling the GUI thread. Falls back to the
+        old recursive search if those folders don't exist.
+        """
         if time.time() - self.last_glob_time > 10.0:
-            self.cached_files["chunks"] = glob.glob(os.path.join(self.data_root_dir, "**/chunk_*.parquet"),
-                                                    recursive=True)
-            self.cached_files["days"] = glob.glob(os.path.join(self.data_root_dir, "**/day_*.parquet"), recursive=True)
-            self.cached_files["raws"] = glob.glob(os.path.join(self.data_root_dir, "**/*_raw.parquet"), recursive=True)
+            known = [os.path.join(self.data_root_dir, d) for d in ("parquet_logs", "daily_logs")]
+            known = [d for d in known if os.path.isdir(d)]
+            if known:
+                names = []
+                for d in known:
+                    with os.scandir(d) as it:
+                        names += [e.path for e in it if e.name.endswith(".parquet")]
+            else:
+                names = glob.glob(os.path.join(self.data_root_dir, "**/*.parquet"), recursive=True)
+            base = os.path.basename
+            self.cached_files["chunks"] = [f for f in names if base(f).startswith("chunk_")]
+            self.cached_files["days"] = [f for f in names if base(f).startswith("day_")]
+            self.cached_files["raws"] = [f for f in names if f.endswith("_raw.parquet")]
+            self.cached_files["macro_1m"] = [f for f in names if f.endswith("macro_1m.parquet")]
             self.last_glob_time = time.time()
         return self.cached_files
 
@@ -102,6 +128,86 @@ class TimeSeriesEngine:
         # Use 'columns=' keyword argument instead of 'include_columns'
         return pl.scan_parquet(filepath).select(valid_cols)
 
+    def _query_raw(self, start_ts, end_ts, selected_tags, pruned_chunks, pruned_days, raws):
+        """Raw-row route. Schema-aware per file (cached), so each file only decodes
+        the timestamp + selected columns, and files lacking a tag don't break the
+        query."""
+        empty = (np.array([], dtype=np.float64), {})
+        target_files = [f for f in pruned_chunks if "_temp" not in f] + raws + \
+                       [f for f in pruned_days if "macro" not in f]
+        if not target_files:
+            return empty
+        fetch_cols = ["timestamp"] + list(selected_tags)
+        lfs = []
+        for f in target_files:
+            try:
+                if f in self.chunk_mart:
+                    df = self.chunk_mart[f]
+                    lfs.append(df.lazy().select([c for c in fetch_cols if c in df.columns]))
+                else:
+                    lfs.append(self.get_safe_scan(f, fetch_cols))
+            except Exception:
+                pass
+        if not lfs:
+            return empty
+        lf = pl.concat(lfs, how="diagonal_relaxed") \
+            .filter((pl.col("timestamp") >= start_ts) & (pl.col("timestamp") <= end_ts))
+        present = [t for t in selected_tags if t in lf.collect_schema().names()]
+
+        if (end_ts - start_ts) > self.RAW_BIN_ABOVE_SPAN:
+            # Min/max binning inside polars (Rust, multi-threaded) instead of pulling
+            # every row into numpy and thinning it afterwards: ~30% faster and
+            # ~170 MB less transient RAM for a 24 h window. Output matches
+            # downsample_minmax(): per bin (t_first, min), (t_last, max).
+            bin_ms = max(1, int((end_ts - start_ts) * 1000 / self.RAW_BINS))
+            aggs = [pl.col("timestamp").min().alias("_t0"), pl.col("timestamp").max().alias("_t1")]
+            aggs += [pl.col(t).cast(pl.Float64).fill_nan(None).min().alias(f"{t}__min") for t in present]
+            aggs += [pl.col(t).cast(pl.Float64).fill_nan(None).max().alias(f"{t}__max") for t in present]
+            df = lf.with_columns(pl.from_epoch(pl.col("timestamp"), time_unit="s").alias("_dt")) \
+                .sort("_dt").group_by_dynamic("_dt", every=f"{bin_ms}ms").agg(aggs).collect()
+            if df.height == 0:
+                return empty
+            n = df.height
+            ts_arr = np.empty(2 * n, dtype=np.float64)
+            ts_arr[0::2] = df["_t0"].to_numpy()
+            ts_arr[1::2] = df["_t1"].to_numpy()
+            vals = {}
+            for t in present:
+                v = np.empty(2 * n, dtype=np.float64)
+                v[0::2] = df[f"{t}__min"].to_numpy()
+                v[1::2] = df[f"{t}__max"].to_numpy()
+                vals[t] = v
+            return ts_arr, vals
+
+        df = lf.select(["timestamp"] + present).sort("timestamp").collect()
+        if df.height == 0:
+            return empty
+        ts_arr = df["timestamp"].to_numpy()
+        vals = {t: df[t].cast(pl.Float64).to_numpy() for t in present}
+        return ts_arr, vals
+
+    def _scan_macro_1m(self, start_ts, end_ts, selected_tags, files_1m):
+        """1-minute rollups for [start, end] read lazily from the per-day
+        day_YYYYMMDD_macro_1m.parquet files (~25-55 ms for 2-20 days)."""
+        sel = []
+        for f in files_1m:
+            m = re.search(r'day_(\d{8})', f)
+            if m:
+                try:
+                    day_ts = datetime.strptime(m.group(1), "%Y%m%d").timestamp()
+                    if day_ts > end_ts + 86400 or day_ts + 2 * 86400 < start_ts:
+                        continue
+                except ValueError:
+                    pass
+            sel.append(f)
+        if not sel:
+            return None
+        cols = ["timestamp_min", "timestamp_max"] + [f"{t}_{s}" for t in selected_tags for s in ("min", "max")]
+        lfs = [self.get_safe_scan(f, cols) for f in sel]
+        return pl.concat(lfs, how="diagonal_relaxed") \
+            .filter((pl.col("timestamp_min") >= start_ts) & (pl.col("timestamp_min") <= end_ts)) \
+            .sort("timestamp_min").collect()
+
     def populate_macro_marts(self):
         """Silently loads macro rollups into RAM for instantaneous slicing."""
         print("[Engine] Hoisting In-Memory Data Marts...")
@@ -118,7 +224,9 @@ class TimeSeriesEngine:
                 self.mart_20m = pl.concat(lfs_20m, how="diagonal").sort("timestamp_min").collect()
                 print(f"[Engine] 20m Mart online. Rows: {self.mart_20m.height}")
 
-            if files_1m:
+            # The 1m tier is now read lazily from disk per query (_scan_macro_1m), so it
+            # is no longer preloaded (saves up to ~230 MB for 30 days of 336 tags).
+            if files_1m and self.PRELOAD_1M_MART:
                 cutoff_ts = time.time() - (30 * 86400)
                 lfs_1m = [pl.scan_parquet(f) for f in files_1m]
                 self.mart_1m = pl.concat(lfs_1m, how="diagonal") \
@@ -174,68 +282,35 @@ class TimeSeriesEngine:
                 else:
                     pruned_days.append(f)
 
-            # --- 2. RAW ROUTING (< 24 Hours) ---
-            if span <= 86400 or self.mart_1m is None:
+            # --- 2. ROUTE SELECTION ---
+            #   span <= 24 h          -> raw rows from chunk/day files
+            #   24 h < span <= 20 d   -> 1-minute rollups, read lazily from disk
+            #   span > 20 d           -> 20-minute rollups (in RAM)
+            # Previously >24 h always used the in-RAM 1m mart, which only holds the
+            # last 30 days from *now*, so older data jumped straight from ~40 s/pt to
+            # 20 min/pt at the 24 h boundary ("have to zoom a long way in").
+            have_1m = bool(files.get("macro_1m"))
+            have_20m = self.mart_20m is not None
+            if span <= self.RAW_MAX_SPAN or not (have_1m or have_20m):
                 route_taken = "RAW_DISK"
-                target_files = pruned_chunks + raws + [f for f in pruned_days if "macro" not in f]
-
-                if not target_files:
-                    return safe_empty_ts, safe_empty_vals
-
-                fetch_cols = ["timestamp"] + selected_tags
-
-                lfs = []
-                for f in target_files:
-                    if "chunk_" in f and "_temp" not in f:
-                        # Pull instantly from RAM, or fallback to HDD if it's brand new
-                        if f in self.chunk_mart:
-                            lfs.append(self.chunk_mart[f].lazy())
-                        else:
-                            try:
-                                lfs.append(pl.scan_parquet(f))
-                            except Exception:
-                                pass
-                    else:
-                        try:
-                            lfs.append(pl.scan_parquet(f))
-                        except Exception:
-                            pass
-
-                df_lazy = pl.concat(lfs, how="diagonal") \
-                    .filter((pl.col("timestamp") >= start_ts) & (pl.col("timestamp") <= end_ts))
-
-                avail_cols = df_lazy.collect_schema().names()
-                valid_cols = [c for c in fetch_cols if c in avail_cols]
-
-                df = df_lazy.select(valid_cols).sort("timestamp").collect()
-
-                if df.height == 0:
-                    #self._log_perf(route_taken, span, 0, t0)
-                    return safe_empty_ts, safe_empty_vals
-
-                ts_arr = df["timestamp"].to_numpy()
-                vals_dict = {tag: df[tag].to_numpy() for tag in selected_tags if tag in df.columns}
-
-                #self._log_perf(route_taken, span, ts_arr, t0)
-                return ts_arr, vals_dict
+                return self._query_raw(start_ts, end_ts, selected_tags, pruned_chunks, pruned_days, raws)
 
             # --- 3. MACRO ROUTING WITH GAP STITCHING (> 24 Hours) ---
             else:
-                # The 1m mart only holds the last 30 days. Previously any 1-30 day
-                # window older than that hit the (empty) 1m mart and drew nothing.
-                # Use 1m only when it actually covers the window start.
-                one_m_covers = (
-                    self.mart_1m is not None and self.mart_1m.height > 0
-                    and start_ts >= self.mart_1m["timestamp_min"][0]
-                )
-                is_20m = span > (30 * 86400) or not one_m_covers
-                mart = self.mart_20m if is_20m and self.mart_20m is not None else self.mart_1m
-                route_taken = "MART_20M" if is_20m else "MART_1M"
+                if have_1m and (span <= self.MACRO_1M_MAX_SPAN or not have_20m):
+                    route_taken = "MART_1M_DISK"
+                    df_macro = self._scan_macro_1m(start_ts, end_ts, selected_tags, files["macro_1m"])
+                else:
+                    route_taken = "MART_20M"
+                    df_macro = self.mart_20m.filter(
+                        (pl.col("timestamp_min") >= start_ts) & (pl.col("timestamp_min") <= end_ts))
 
-                if mart is None:
+                if (df_macro is None or df_macro.height == 0) and span <= self.RAW_FALLBACK_SPAN:
+                    # No rollups for this window yet (e.g. not compacted): use raw rows.
+                    route_taken = "RAW_FALLBACK"
+                    return self._query_raw(start_ts, end_ts, selected_tags, pruned_chunks, pruned_days, raws)
+                if df_macro is None:
                     return safe_empty_ts, safe_empty_vals
-
-                df_macro = mart.filter((pl.col("timestamp_min") >= start_ts) & (pl.col("timestamp_min") <= end_ts))
 
                 ts_arr = safe_empty_ts
                 vals_dict = {tag: np.array([], dtype=np.float64) for tag in selected_tags}
