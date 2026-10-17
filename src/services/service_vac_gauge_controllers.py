@@ -1,15 +1,19 @@
+import json
+import logging
+import os
+import re
 import socket
 import time
-from errno import WSAEWOULDBLOCK
+from typing import Any, Dict, Optional
 
-import zmq
-import json
-import os
-from typing import Dict, Any, Optional
 import orjson
-import re
+import zmq
+
+from src.core.commands import CommandServer
 from src.core.event_helper import EventHelper
+from src.core.log_setup import Throttle, setup_logging
 from src.core.os_helper import harden_windows_process
+from src.core.paths import simulation_enabled
 
 # Force Windows high-resolution timers (1ms precision)
 if os.name == 'nt':
@@ -26,6 +30,10 @@ from src.core.network_map import (
 SOCKET_TIMEOUT = 0.3
 POLL_INTERVAL = 0.05
 MAX_CMD_AGE = 0.5  # TTL
+RECONNECT_DELAYS = (1.0, 2.0, 5.0)
+PRESSURE_STALE_S = 3.0   # a gauge with no good reading for this long is published as unknown
+
+log = logging.getLogger("service_vac_gauge_controllers")
 
 NODE_IDS = [10, 20]
 CHANNELS = [1, 2, 3]
@@ -50,16 +58,26 @@ RELAY_PARAMS = {
 class VacuumMicroservice:
     def __init__(self):
         self.context = zmq.Context()
+        # Created first: the config loaders below report problems through it
+        self.events = EventHelper("service_vac_gauge_controllers")
 
         # --- ZMQ Setup (Defense in Depth) ---
         self.pub_socket = self.context.socket(zmq.PUB)
         self.pub_socket.setsockopt(zmq.SNDHWM, 5)
         self.pub_socket.bind(ZMQ_PORT_VACUUM_PUB)
 
-        self.sub_socket = self.context.socket(zmq.SUB)
-        self.sub_socket.setsockopt(zmq.RCVHWM, 5)
-        self.sub_socket.bind(ZMQ_PORT_VACUUM_CMD)
-        self.sub_socket.setsockopt_string(zmq.SUBSCRIBE, "")
+        self.commands = CommandServer(ZMQ_PORT_VACUUM_CMD, "service_vac_gauge_controllers", context=self.context,
+                                      events=self.events, max_age=MAX_CMD_AGE)
+
+        self._sim = None
+        if simulation_enabled():
+            from src.sim.vacuum import shared_graphix
+            self._sim = shared_graphix()
+        self._throttle = Throttle(60.0)
+        self._connect_failures = 0
+        self._next_connect_at = 0.0
+        self._last_good_read: Dict[str, float] = {}
+        self.running = True
 
         # --- Hardware State ---
         self.sock = None
@@ -117,15 +135,22 @@ class VacuumMicroservice:
         self.stats_loop_times = []
         self.stats_detailed = {}
 
-        self.events = EventHelper("service_vac_gauge_controllers")
+    def stop(self):
+        self.running = False
+
+    def _heartbeat(self):
+        now = time.time()
+        if now - self.last_hb_time >= 0.5:
+            self.hb_socket.send_json({"service": "service_vac_gauge_controllers", "ts": now})
+            self.last_hb_time = now
 
     def _load_config(self) -> dict:
         config_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '../../config/vac_gauges_config.json'))
         try:
             with open(config_path, "r") as f:
                 return json.load(f)
-        except Exception as e:
-            self.events.log_general(f"CRITICAL: Failed to load config: {e}")
+        except (OSError, ValueError) as e:
+            self.events.log_general(f"CRITICAL: Failed to load config: {e}", severity="CRITICAL")
             return {}
 
     def _load_registry_limits(self) -> dict:
@@ -140,8 +165,8 @@ class VacuumMicroservice:
                             "min_val": data.get("min_val"),
                             "max_val": data.get("max_val")
                         }
-        except Exception as e:
-            self.events.log_general(f"Failed to load registry limits: {e}")
+        except (OSError, ValueError) as e:
+            self.events.log_general(f"Failed to load registry limits: {e}", severity="ERROR")
         return limits
 
     def _build_tag_map(self) -> dict:
@@ -183,23 +208,44 @@ class VacuumMicroservice:
                             pass
 
     def _connect_socket(self):
-        if self.sock:
+        if time.time() < self._next_connect_at:
+            return
+        if self._sim is not None:
+            from src.sim import injected_faults
+            if "vacuum_disconnect" not in injected_faults():
+                self.connected = True
+                self.state["system.connected"] = 1.0
+                self.events.log_general("Connected to simulated GRAPHIX controllers")
+                self._connect_failures = 0
+                return
+            err = "simulated: Waveshare bridge not reachable"
+        else:
+            if self.sock:
+                try:
+                    self.sock.close()
+                except OSError:
+                    pass
             try:
-                self.sock.close()
-            except Exception:
-                pass
-        try:
-            self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            self.sock.settimeout(SOCKET_TIMEOUT)
-            self.sock.connect((NOISY_RACK_WAVESHARE_IP, NOISY_RACK_WAVESHARE_PORT))
-            self.connected = True
-            self.state["system.connected"] = 1.0
-            self.events.log_general(f"Connected to {NOISY_RACK_WAVESHARE_IP}:{NOISY_RACK_WAVESHARE_PORT}")
-        except Exception as e:
-            self.connected = False
-            self.sock = None
-            self.state["system.connected"] = 0.0
-            self.events.log_general(f"Connection failed: {e}")
+                self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                self.sock.settimeout(SOCKET_TIMEOUT)
+                self.sock.connect((NOISY_RACK_WAVESHARE_IP, NOISY_RACK_WAVESHARE_PORT))
+                self.connected = True
+                self.state["system.connected"] = 1.0
+                self.events.log_general(f"Connected to {NOISY_RACK_WAVESHARE_IP}:{NOISY_RACK_WAVESHARE_PORT}")
+                self._connect_failures = 0
+                self._throttle.reset("connect")
+                return
+            except OSError as e:
+                err = e
+                self.sock = None
+        self.connected = False
+        self.state["system.connected"] = 0.0
+        self._connect_failures += 1
+        self._next_connect_at = time.time() + RECONNECT_DELAYS[min(self._connect_failures - 1,
+                                                                   len(RECONNECT_DELAYS) - 1)]
+        if (n := self._throttle.ready("connect")) is not None:
+            self.events.log_general(f"Connection to gauge controllers failed: {err}{Throttle.suffix(n)}",
+                                    severity="WARNING")
 
     # --- LEYBOLD HARDWARE PROTOCOL ---
     def _generate_read_frame(self, node_id: int, param_group: str, param_no: str) -> bytes:
@@ -218,10 +264,6 @@ class VacuumMicroservice:
                 if not discarded: break
         except (BlockingIOError, OSError):
             pass
-        except Exception as e:
-            self.connected = False
-            self.state["system.connected"] = 0.0
-            print(f"[NET DISCONNECT] Stale buffer clear error: {e}")
         finally:
             if self.sock:
                 self.sock.settimeout(SOCKET_TIMEOUT)
@@ -233,6 +275,16 @@ class VacuumMicroservice:
             self.stats_detailed[stat_key] = {"attempts": 0, "timeouts": 0, "garbage": 0}
 
         self.stats_detailed[stat_key]["attempts"] += 1
+
+        if self._sim is not None:
+            val = self._sim.read(node_id, param_group, param_no) if self.connected else None
+            if val is None:
+                self.stats_detailed[stat_key]["timeouts"] += 1
+                from src.sim import injected_faults
+                if "vacuum_disconnect" in injected_faults():
+                    self.connected = False
+                    self.state["system.connected"] = 0.0
+            return val
 
         if not self.connected or not self.sock:
             self.stats_detailed[stat_key]["timeouts"] += 1
@@ -283,7 +335,9 @@ class VacuumMicroservice:
 
         except socket.timeout:
             self.stats_detailed[stat_key]["timeouts"] += 1
-        except Exception:
+        except OSError as e:
+            if (n := self._throttle.ready("read-error")) is not None:
+                log.warning("Gauge read failed, reconnecting: %s%s", e, Throttle.suffix(n))
             self.connected = False
             self.state["system.connected"] = 0.0
             self.stats_detailed[stat_key]["garbage"] += 1
@@ -294,6 +348,8 @@ class VacuumMicroservice:
     def _write_transaction(self, node_id: int, param_group: str, param_no: str, value: str) -> str:
 
         if not self.connected: return "ERROR"
+        if self._sim is not None:
+            return self._sim.write(node_id, param_group, param_no, value)
         self._clear_stale_buffer()
         address = f"{node_id:02X}".encode('ascii')
         body = b'\x0e' + param_group.encode('ascii') + b';' + param_no.encode('ascii') + b';' + value.encode(
@@ -310,7 +366,8 @@ class VacuumMicroservice:
                 status = "ACK"
             elif b"\x15" in response:
                 status = "NACK"
-        except Exception:
+        except OSError as e:
+            log.warning("Gauge write failed: %s", e)
             self.connected = False
             self.state["system.connected"] = 0.0
 
@@ -321,6 +378,7 @@ class VacuumMicroservice:
         for _ in range(max_retries):
             val = self._read_transaction(node_id, param_group, param_no)
             if val is not None: return val
+            self._heartbeat()
             time.sleep(POLL_INTERVAL)
         return None
 
@@ -332,69 +390,77 @@ class VacuumMicroservice:
                 return True
             elif status == "NACK":
                 return False
+            self._heartbeat()
             time.sleep(POLL_INTERVAL)
         return False
 
     def _process_commands(self):
-        try:
-            while True:
-                msg = self.sub_socket.recv_json(flags=zmq.NOBLOCK)
-                tag = msg.get("tag", "")
-                value = msg.get("value")
-                ts = msg.get("ts", 0.0)
-                origin = msg.get("origin", "hmi")
+        for cmd in self.commands.poll():
+            tag, value, origin = cmd.tag, cmd.value, cmd.origin
 
-                age = time.time() - ts
-                if age > MAX_CMD_AGE:
-                    self.events.log_general(f"WARNING: Dropped stale command for '{tag}'")
+            # --- 1. ARBITRATION: Handle Control Mode Changes ---
+            if tag.endswith(".cmd_ctrl_mode"):
+                try:
+                    self.active_ctrl_mode = int(value)
+                except (ValueError, TypeError):
+                    cmd.reject(f"invalid control mode {value!r}")
+                    continue
+                self.events.log_general(f"Arbitration: Vacuum mode set to {self.active_ctrl_mode}")
+                cmd.ok()
+                continue
+
+            # --- 2. ARBITRATION: Enforce Lockout ---
+            if self.active_ctrl_mode > 0 and origin != "optimizer":
+                cmd.reject(f"locked out: vacuum is in automatic control mode {self.active_ctrl_mode}")
+                continue
+
+            parts = tag.split('.')
+            if len(parts) < 4:
+                cmd.reject("not a vacuum controller tag")
+                continue
+
+            if "controller_" in parts[2] and "relay_" in parts[3]:
+                # Fail-Safe check using registry limits (if configured in system_tags.json)
+                try:
+                    float_value = float(value)
+                except (TypeError, ValueError):
+                    cmd.reject(f"value {value!r} is not a number")
+                    continue
+                if tag in self.registry_limits:
+                    min_val = self.registry_limits[tag]["min_val"]
+                    max_val = self.registry_limits[tag]["max_val"]
+                    if min_val is None or max_val is None:
+                        cmd.reject("no min/max limits configured for this tag in system_tags.json")
+                        continue
+                    if not (min_val <= float_value <= max_val):
+                        cmd.reject(f"{float_value:g} is outside the allowed range [{min_val:g}, {max_val:g}]")
+                        continue
+                if not self.connected:
+                    cmd.reject("gauge controllers not connected")
+                    continue
+                try:
+                    node_id = int(parts[2].replace("controller_", ""))
+                    relay_str_parts = parts[3].split('_')
+                    relay_id = int(relay_str_parts[1])
+                    cmd_type = relay_str_parts[2]
+                    param_str = RELAY_PARAMS[relay_id][cmd_type]
+                except (ValueError, IndexError, KeyError):
+                    cmd.reject("cannot parse controller/relay/parameter from tag")
                     continue
 
-                # --- 1. ARBITRATION: Handle Control Mode Changes ---
-                if tag.endswith(".cmd_ctrl_mode"):
-                    try:
-                        self.active_ctrl_mode = int(value)
-                        self.events.log_general(f"Arbitration: Vacuum mode set to {self.active_ctrl_mode}")
-                    except (ValueError, TypeError):
-                        pass
-                    continue
+                target_val_str = f"{float_value:.1E}"
+                if self._write_transaction_with_retry(node_id, "4", param_str, target_val_str):
+                    self.events.log_general(
+                        f"Executed Relay Command: Node {node_id}, Relay {relay_id} {cmd_type.upper()} -> {target_val_str}")
+                    cmd.ok(f"relay {relay_id} {cmd_type} set to {target_val_str}")
+                else:
+                    cmd.fail("controller did not acknowledge the write")
 
-                # --- 2. ARBITRATION: Enforce Lockout ---
-                if self.active_ctrl_mode > 0 and origin != "optimizer":
-                    continue
-
-                parts = tag.split('.')
-                if len(parts) < 4:
-                    continue
-
-                if "controller_" in parts[2] and "relay_" in parts[3]:
-                    try:
-                        # Fail-Safe check using registry limits (if configured in system_tags.json)
-                        if tag in self.registry_limits:
-                            min_val = self.registry_limits[tag]["min_val"]
-                            max_val = self.registry_limits[tag]["max_val"]
-                            if min_val is None or max_val is None or not (min_val <= float(value) <= max_val):
-                                continue
-
-                        node_id = int(parts[2].replace("controller_", ""))
-                        relay_str_parts = parts[3].split('_')
-                        relay_id = int(relay_str_parts[1])
-                        cmd_type = relay_str_parts[2]
-
-                        if relay_id in RELAY_PARAMS:
-                            param_str = RELAY_PARAMS[relay_id][cmd_type]
-                            target_val_str = f"{float(value):.1E}"
-
-                            self._write_transaction_with_retry(node_id, "4", param_str, target_val_str)
-                            self.events.log_general(
-                                f"Executed Relay Command: Node {node_id}, Relay {relay_id} {cmd_type.upper()} -> {target_val_str}")
-                    except (ValueError, IndexError):
-                        pass
-
-                elif "vacuum_gauge_" in parts[2] and parts[3] == "cmd_name":
-                    pass
-
-        except zmq.Again:
-            pass
+            elif "vacuum_gauge_" in parts[2] and parts[3] == "cmd_name":
+                cmd.reject("renaming gauges is not implemented")
+            else:
+                cmd.reject("unsupported vacuum command")
+        self.commands.finish()
 
     def _read_static_data(self):
         self.events.log_general("Reading static sensor profiles...")
@@ -512,8 +578,9 @@ class VacuumMicroservice:
                             self.events.log_general("Aborted Relay Config due to NACK on writes.\n")
 
             self.events.log_general("--- VERIFICATION COMPLETE ---\n")
-        except Exception as e:
-            self.events.log_general(f"Failed to enforce startup config: {e}")
+        except Exception as e:  # keep running on whatever the controllers had; the cause goes to the log
+            log.exception("Failed to enforce startup config")
+            self.events.log_general(f"Failed to enforce startup config: {e}", severity="ERROR")
 
     def _evaluate_gv_permissive(self):
         is_safe = False
@@ -533,19 +600,40 @@ class VacuumMicroservice:
             if not comms_fail and not vg1_has_fault and not vg2_has_fault:
                 is_safe = True
 
-        except Exception:
+        except Exception:  # fail safe: no permissive if the evaluation itself breaks
+            log.exception("Gate-valve permissive evaluation failed - permissive withheld")
             is_safe = False
 
         self.state["ion_beam.vacuum.gv_permissive_ready"] = 1.0 if is_safe else 0.0
 
+    def _publish_disconnected(self):
+        """Controllers unreachable: say so (and keep heartbeating) instead of going silent.
+        The PLC still gets graphix comms-fail and no gate-valve permissive, exactly as when
+        the service used to stop publishing."""
+        for (node, ch), base_tag in self.tag_map.items():
+            self.state[f"{base_tag}.rb_pressure"] = None
+            self.state[f"{base_tag}.stat_comms_fail"] = 1.0
+        self.state["ion_beam.facilities.graphix1.stat_comms_fail"] = 1.0
+        self.state["ion_beam.facilities.graphix2.stat_comms_fail"] = 1.0
+        self.state["ion_beam.vacuum.rb_ctrl_mode"] = float(self.active_ctrl_mode)
+        self.state["ion_beam.vacuum.gv_permissive_ready"] = 0.0
+        self.state["system.connected"] = 0.0
+        self.state["timestamp"] = time.time()
+        try:
+            self.pub_socket.send_multipart([TOPIC_VACUUM_DATA, orjson.dumps(self.state)])
+        except zmq.ZMQError as e:
+            log.debug("publish failed: %s", e)
+        self._heartbeat()
+
     def run(self):
-        self.events.log_general("Daemon starting (ISA-95 Architecture)...")
+        self.events.log_general("Daemon starting (ISA-95 Architecture)..."
+                                + (" (SIMULATED CONTROLLERS)" if self._sim is not None else ""))
         global_rise_limit = float(self.config.get("system_interlocks", {}).get("rapid_rise_thresh_mb_s", 5.0e-5))
 
         global POLL_INTERVAL
         POLL_INTERVAL = 0.005
 
-        while True:
+        while self.running:
             cycle_start = time.perf_counter()
 
             if not self.connected:
@@ -554,7 +642,9 @@ class VacuumMicroservice:
                     self._read_static_data()
                     self._enforce_startup_config()
                 else:
-                    time.sleep(2.0)
+                    self._process_commands()
+                    self._publish_disconnected()
+                    time.sleep(0.25)
                     continue
 
             self._process_commands()
@@ -605,13 +695,17 @@ class VacuumMicroservice:
 
                             self.state[f"{base_tag}.stat_rapid_rise"] = 1.0 if is_rapid_rise else 0.0
                             self.state[f"{base_tag}.stat_comms_fail"] = 0.0
-
+                            self._last_good_read[base_tag] = current_time
 
                         except ValueError:
-                            pass
+                            log.debug("Unparseable pressure from node %s ch %s: %r", node, ch, raw_p)
                     elif base_tag:
                         # If a read fails on a connected network, flag the individual gauge comms offline
                         self.state[f"{base_tag}.stat_comms_fail"] = 1.0
+                        # Occasional garbled reads are normal on this bus; only after a few seconds
+                        # without a good reading is the last pressure withdrawn (published as unknown).
+                        if time.time() - self._last_good_read.get(base_tag, 0.0) > PRESSURE_STALE_S:
+                            self.state[f"{base_tag}.rb_pressure"] = None
 
                 val = None
                 if slow_task_name == "gauge_status":
@@ -642,7 +736,7 @@ class VacuumMicroservice:
 
 
                         except ValueError:
-                            pass
+                            log.debug("Unparseable gauge status from node %s: %r", node, val)
 
                 elif slow_task_name == "relay_status":
                     p = RELAY_PARAMS[slow_task_target]["status"]
@@ -665,7 +759,7 @@ class VacuumMicroservice:
 
 
                         except ValueError:
-                            pass
+                            log.debug("Unparseable relay status from node %s: %r", node, val)
 
                 elif slow_task_name in ["relay_on", "relay_off", "relay_ch"]:
                     p = RELAY_PARAMS[slow_task_target][slow_task_name.split("_")[1]]
@@ -676,7 +770,7 @@ class VacuumMicroservice:
                                 f"ion_beam.vacuum.controller_{node}.relay_{slow_task_target}_{slow_task_name.split('_')[1]}_sp"] = float(
                                 val)
                         except ValueError:
-                            pass
+                            log.debug("Unparseable relay set point from node %s: %r", node, val)
 
             self._slow_task_idx = (self._slow_task_idx + 1) % len(self.slow_tasks)
 
@@ -695,24 +789,27 @@ class VacuumMicroservice:
             self.state["system.cycle_time_ms"] = elapsed * 1000
 
             try:
-                topic = TOPIC_VACUUM_DATA if isinstance(TOPIC_VACUUM_DATA, bytes) else TOPIC_VACUUM_DATA.encode('utf-8')
-                self.pub_socket.send_multipart([topic, orjson.dumps(self.state)])
-            except Exception as e:
-                self.events.log_general(f"ZMQ Publish Error: {e}")
+                self.pub_socket.send_multipart([TOPIC_VACUUM_DATA, orjson.dumps(self.state)])
+            except zmq.ZMQError as e:
+                if (n := self._throttle.ready("publish")) is not None:
+                    log.error("ZMQ publish failed: %s%s", e, Throttle.suffix(n))
 
             current_time = time.time()
             if current_time - self.last_hb_time >= 0.5:
-                self.hb_socket.send_json({"service": "service_vac_gauge_controllers", "ts": current_time})
-                self.last_hb_time = current_time
-
+                self._heartbeat()
                 self.stats_time = current_time
                 self.stats_detailed.clear()
                 self.stats_loop_times.clear()
 
             time.sleep(max(0.0, 0.05 - elapsed))
 
+        self.commands.close()
+        for sock in (self.pub_socket, self.hb_socket):
+            sock.close(0)
+
 
 if __name__ == "__main__":
+    setup_logging("service_vac_gauge_controllers")
     harden_windows_process()
     service = VacuumMicroservice()
     service.run()

@@ -1,5 +1,14 @@
 import sys
 import os
+
+if __name__ == "__main__":
+    if __package__ in (None, ""):
+        # Started as a script: make 'src' importable from any working directory
+        sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "..")))
+    if "--sim" in sys.argv[1:]:
+        # Simulation mode: read data_sim/ (must be set before src.core.paths is imported)
+        os.environ["IPIDS_SIMULATE"] = "1"
+
 import time
 import numpy as np
 import copy
@@ -24,6 +33,7 @@ from PyQt6.QtCore import Qt, QDateTime, QTimer, QThread, pyqtSignal
 import pyqtgraph as pg
 
 from src.core.network_map import ZMQ_PORT_LOGGER_CMD
+from src.core import paths
 from src.gui.data_viewer.config_manager import load_registry
 from src.gui.data_viewer.channel_selector import ChannelSelectorDialog
 from src.core.data_cache import DualPipelineCache
@@ -94,7 +104,7 @@ class LogAxisItem(pg.AxisItem):
             try:
                 real_val = 10 ** float(v)
                 strings.append(f"{real_val:.1e}")
-            except:
+            except (OverflowError, ValueError):  # tick far outside the representable range
                 strings.append("")
         return strings
 
@@ -129,7 +139,7 @@ class TimeAxisItem(pg.AxisItem):
                 else:
                     fmt = '%H:%M:%S.%f'
                 strings.append(dt.strftime(fmt))
-            except:
+            except (OverflowError, OSError, ValueError):  # timestamp outside the platform's range
                 strings.append("")
         return strings
 
@@ -373,7 +383,9 @@ class DataViewerApp(QMainWindow):
             "Faults: Activated": ["FAULT_ACTIVE"],
             "Faults: Cleared": ["FAULT_CLEARED"],
             "Watchdog Drops": ["WATCHDOG_TRIP", "WATCHDOG_CLEAR"],
-            "Phase Changes": ["PHASE_CHANGE"]
+            "Phase Changes": ["PHASE_CHANGE"],
+            "Readback Tolerance": ["TOLERANCE"],
+            "Operator Commands (audit)": ["COMMAND"],
         }
         self.filter_checkboxes = {}
 
@@ -1567,7 +1579,7 @@ class DataViewerApp(QMainWindow):
 
     def _events_conn(self):
         """One persistent connection (needed for PRAGMA data_version change detection)."""
-        db_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '../../../data/events.db'))
+        db_path = paths.EVENTS_DB
         if getattr(self, '_ev_conn', None) is None:
             if not os.path.exists(db_path):
                 return None
@@ -1637,7 +1649,7 @@ class DataViewerApp(QMainWindow):
                     # Extract the active state from the metadata payload
                     try:
                         is_active = json.loads(meta).get("is_active", True) if meta else True
-                    except:
+                    except (ValueError, TypeError, AttributeError):
                         is_active = True
 
                     # Filter against UI checkboxes
@@ -1652,13 +1664,17 @@ class DataViewerApp(QMainWindow):
                 elif e_type == "USER_MARKER":
                     try:
                         color = json.loads(meta).get("color", "#00E5FF") if meta else "#00E5FF"
-                    except:
+                    except (ValueError, TypeError, AttributeError):
                         color = "#00E5FF"
 
                 elif "WATCHDOG" in e_type:
                     color = "#FF9800"  # Orange
                 elif e_type == "PHASE_CHANGE":
                     color = "#4CAF50"  # Green
+                elif e_type == "TOLERANCE":
+                    color = "#FFC107"  # Amber
+                elif e_type == "COMMAND":
+                    color = "#9E9E9E"  # Grey - high volume, off by default
 
                 markers[key] = {
                     "text": msg,
@@ -1929,7 +1945,7 @@ if __name__ == "__main__":
     # 1. Initialize the Single Master Cache
     current_dir = os.path.dirname(os.path.abspath(__file__))
     project_root = os.path.abspath(os.path.join(current_dir, "../../.."))
-    log_dir = os.path.join(project_root, "data")
+    log_dir = paths.DATA_DIR
     print(log_dir)
 
     print("[Launcher] Spinning up Master Data Cache...")

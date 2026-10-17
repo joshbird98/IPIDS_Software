@@ -10,6 +10,7 @@ from PyQt6.QtGui import QPainter, QPen, QColor, QFont
 from src.core.theme import (
     COLOR_OK, COLOR_FAULT, COLOR_INACTIVE, COLOR_WARNING, COLOR_BUTTON_STANDARD
 )
+from src.gui.control.widgets.source_widget import TOLERANCE_STYLE, TOLERANCE_TIP, tolerance_flagged
 
 
 class SpeedoWidget(QWidget):
@@ -398,6 +399,13 @@ class FaradaySMUWidget(QWidget):
         v_sp = data.get("ion_beam.beamline.faraday.smu.sp_actual_voltage")
 
         if v_rb is not None: self.lbl_bias_rb.setText(f"RB: {v_rb:.1f} V")
+        # Readback-vs-setpoint tolerance flag from service_monitor (information, not a fault)
+        if tolerance_flagged(data, ("ion_beam.beamline.faraday.smu.rb_voltage",)):
+            self.lbl_bias_rb.setStyleSheet(TOLERANCE_STYLE)
+            self.lbl_bias_rb.setToolTip(TOLERANCE_TIP)
+        elif self.lbl_bias_rb.styleSheet():
+            self.lbl_bias_rb.setStyleSheet("")
+            self.lbl_bias_rb.setToolTip("Live readback of the actual voltage currently being applied by the SMU.")
         if v_sp is not None and not self.sp_bias.hasFocus():
             self.sp_bias.blockSignals(True)
             self.sp_bias.setValue(float(v_sp))

@@ -19,3 +19,6 @@ SystemLogs/
 SystemLogsBin/
 *.npz
 *.log
+# Simulator data (run_simulation / --sim) and test caches
+data_sim/
+.pytest_cache/

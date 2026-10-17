@@ -1,5 +1,6 @@
 import time
 import json
+import logging
 import os
 from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QWidget,
@@ -18,6 +19,20 @@ from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.figure import Figure
 from PyQt6.QtCore import QThread, pyqtSignal
 from PyQt6.QtWidgets import QDockWidget, QFormLayout
+
+from src.gui.control.arming import ArmedAction, ArmedToggle
+from src.gui.control.widgets.source_widget import TOLERANCE_STYLE, TOLERANCE_TIP, setpoint_limits, tolerance_flagged
+
+log = logging.getLogger("hmi.optics")
+
+
+def _show_tolerance(label, data, tags):
+    if tolerance_flagged(data, tags):
+        label.setStyleSheet(TOLERANCE_STYLE)
+        label.setToolTip(TOLERANCE_TIP)
+    elif label.styleSheet():
+        label.setStyleSheet("")
+        label.setToolTip("")
 
 
 class MassScanWorker(QThread):
@@ -43,28 +58,41 @@ class MassScanWorker(QThread):
     def run(self):
         self.status_msg.emit("Starting Sweep...")
         current_points = np.linspace(self.low, self.high, self.steps)
+        failure = None
 
         for amps in current_points:
             if self.is_stopped: break
 
             # Send raw Amps command directly to the magnet target
-            self.cmd_thread.send_command("magnet", self.current_sp_tag, amps)
+            ticket = self.cmd_thread.send_command("magnet", self.current_sp_tag, float(amps))
 
             # Dwell
             start = time.time()
             while time.time() - start < self.dwell:
-                if self.is_stopped: return
+                if self.is_stopped:
+                    self.scan_finished.emit("stopped")
+                    return
                 time.sleep(0.05)
 
             if self.is_stopped: break
+            if ticket.done() and not ticket.ok:
+                failure = f"magnet refused {amps:.3f} A: {ticket.reason}"
+                break
 
-            # Measure
+            # Measure - only live values; a stale or missing reading stops the sweep
             actual_mag_amps = self.get_telemetry_cb(self.mag_rb_tag)
             measured_beam_current = self.get_telemetry_cb(self.beam_rb_tag)
-            self.data_point.emit(actual_mag_amps, measured_beam_current)
+            if actual_mag_amps is None or measured_beam_current is None:
+                failure = "magnet or Faraday cup telemetry is stale / unavailable"
+                break
+            self.data_point.emit(float(actual_mag_amps), float(measured_beam_current))
 
         # Modified completion emission
-        if not self.is_stopped:
+        if failure:
+            log.warning("Sweep stopped: %s", failure)
+            self.status_msg.emit(f"Sweep stopped: {failure}")
+            self.scan_finished.emit(f"stopped ({failure})")
+        elif not self.is_stopped:
             self.status_msg.emit("Scan Complete.")
             self.scan_finished.emit("complete")
         else:
@@ -117,6 +145,7 @@ class BeamlineOpticsWidget(QWidget):
 
         self.config_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../../config"))
         self.magnet_config = self._load_magnet_config()
+        self._limited_tags = setpoint_limits()
 
         # Telemetry Cache
         self._latest_telemetry = {}
@@ -152,14 +181,17 @@ class BeamlineOpticsWidget(QWidget):
     def _dispatch_spellman_setpoints(self, base_tag: str, voltage: float):
         """Dispatches voltage and autonomously sets a safe 50uA current limit to unclamp the CC loop."""
         self._dispatch_command(f"{base_tag}.sp_requested_voltage", voltage)
-        self._dispatch_command(f"{base_tag}.sp_requested_current", 50.0)
+        # Only once current limits are configured (the service refuses - and always dropped - it otherwise)
+        if f"{base_tag}.sp_requested_current" in self._limited_tags:
+            self._dispatch_command(f"{base_tag}.sp_requested_current", 50.0)
 
     def _load_magnet_config(self):
         try:
             path = os.path.join(self.config_dir, "magnet_config.json")
             with open(path, "r") as f:
                 return json.load(f)
-        except Exception:
+        except (OSError, ValueError) as e:
+            log.warning("magnet_config.json not loaded (%s); mass calibration falls back to identity", e)
             return {"mass_calibration_poly": [0.0, 1.0, 0.0, 0.0]}
 
     def _dispatch_command(self, tag: str, value):
@@ -173,8 +205,7 @@ class BeamlineOpticsWidget(QWidget):
             target = "plc"
         self.cmd_thread.send_command(target, tag, value)
 
-    def _toggle_master_steering(self):
-        state = self.btn_steer_en.isChecked()
+    def _toggle_master_steering(self, state: bool):
         self._dispatch_command("ion_beam.beamline.steering.cmd_enable", state)
         self._dispatch_command("ion_beam.beamline.steerer_magnet.cmd_enable", state)
 
@@ -208,7 +239,7 @@ class BeamlineOpticsWidget(QWidget):
         self.btn_steer_en = QPushButton("ENABLE STEERING")
         self.btn_steer_en.setCheckable(True)
         self.btn_steer_en.setStyleSheet(COLOR_BUTTON_STANDARD)
-        self.btn_steer_en.clicked.connect(self._toggle_master_steering)
+        self.arm_steer = ArmedToggle(self.btn_steer_en, self._toggle_master_steering, what="STEERING")
         # Span the button across rows 0 and 1
         layout.addWidget(self.btn_steer_en, 0, 3, 2, 1)
 
@@ -280,14 +311,17 @@ class BeamlineOpticsWidget(QWidget):
         self.btn_mag_en = QPushButton("ENABLE MAGNET")
         self.btn_mag_en.setCheckable(True)
         self.btn_mag_en.setStyleSheet(COLOR_BUTTON_STANDARD)
-        self.btn_mag_en.clicked.connect(
-            lambda *args: self._dispatch_command("ion_beam.beamline.magnet.cmd_enable", self.btn_mag_en.isChecked()))
+        self.arm_mag = ArmedToggle(self.btn_mag_en,
+                                   lambda on: self._dispatch_command("ion_beam.beamline.magnet.cmd_enable", on),
+                                   what="MAGNET")
         layout.addWidget(self.btn_mag_en, 1, 3)
 
         self.btn_mag_deg = QPushButton("DEGAUSS ROUTINE")
         self.btn_mag_deg.setStyleSheet("background-color: #9C27B0; color: white; font-weight: bold;")
-        self.btn_mag_deg.clicked.connect(
-            lambda *args: self._dispatch_command("ion_beam.beamline.magnet.cmd_degauss", True))
+        # Degauss swings the magnet up to the configured amps: confirm first
+        self.arm_deg = ArmedAction(self.btn_mag_deg,
+                                   lambda: self._dispatch_command("ion_beam.beamline.magnet.cmd_degauss", True),
+                                   what="DEGAUSS")
         layout.addWidget(self.btn_mag_deg, 1, 4)
 
         # --- Row 2: Auto-Tune Target ---
@@ -360,8 +394,10 @@ class BeamlineOpticsWidget(QWidget):
         group.setLayout(layout)
         self.main_layout.addWidget(group)
 
-    def _get_latest_telemetry(self, tag: str) -> float:
-        return float(self._latest_telemetry.get(tag, 0.0))
+    def _get_latest_telemetry(self, tag: str):
+        """Live value, or None if stale/unknown (the HMI only passes fresh values to widgets)."""
+        value = self._latest_telemetry.get(tag)
+        return float(value) if value is not None else None
 
     def _start_sweep(self):
         if not self.btn_mag_en.isChecked():
@@ -542,8 +578,8 @@ class BeamlineOpticsWidget(QWidget):
         btn_enable = QPushButton("ENABLE")
         btn_enable.setCheckable(True)
         btn_enable.setStyleSheet(COLOR_BUTTON_STANDARD)
-        btn_enable.clicked.connect(
-            lambda *args, b=btn_enable, t=base_tag: self._dispatch_command(f"{t}.cmd_enable", b.isChecked()))
+        arm = ArmedToggle(btn_enable, lambda on, t=base_tag: self._dispatch_command(f"{t}.cmd_enable", on),
+                          what=name.upper())
 
         sp_box = QDoubleSpinBox()
         sp_box.setRange(min_v, max_v)
@@ -559,8 +595,8 @@ class BeamlineOpticsWidget(QWidget):
         self.optics_layout.addWidget(sp_box, row, 2)
         self.optics_layout.addWidget(btn_enable, row, 3)
 
-        self.psu_controls[name] = {"lbl_rb": lbl_rb, "sp_box": sp_box, "btn_enable": btn_enable, "base_tag": base_tag,
-                                   "pri_unit": pri_unit, "sec_unit": sec_unit}
+        self.psu_controls[name] = {"lbl_rb": lbl_rb, "sp_box": sp_box, "btn_enable": btn_enable, "arm": arm,
+                                   "base_tag": base_tag, "pri_unit": pri_unit, "sec_unit": sec_unit}
 
     def update_telemetry(self, data: dict):
         self._latest_telemetry = data
@@ -595,13 +631,15 @@ class BeamlineOpticsWidget(QWidget):
         mag_i = data.get("ion_beam.beamline.magnet.rb_current")
         if mag_v is not None and mag_i is not None:
             self.lbl_mag_rb.setText(f"RB: {mag_i:.2f} A | {mag_v:.2f} V")
+        else:
+            self.lbl_mag_rb.setText("RB: --- A | --- V")
+        _show_tolerance(self.lbl_mag_rb, data, ("ion_beam.beamline.magnet.rb_current",))
 
         mag_en = data.get("ion_beam.beamline.magnet.stat_enabled")
         mag_deg = data.get("ion_beam.beamline.magnet.stat_degaussing")
 
-        if mag_en is not None:
-            self.btn_mag_en.setChecked(bool(mag_en))
-            self.btn_mag_en.setStyleSheet(COLOR_OK if mag_en else COLOR_BUTTON_STANDARD)
+        self.arm_mag.show_state(None if mag_en is None else bool(mag_en), COLOR_OK, COLOR_BUTTON_STANDARD,
+                                "Magnet output state unknown - no current data from the magnet service.")
 
         # ABORT SWEEP IF MAGNET DROPS OR FAULTS
         is_sweeping = self.scan_worker is not None and self.scan_worker.isRunning()
@@ -624,7 +662,7 @@ class BeamlineOpticsWidget(QWidget):
         mag_tt = f"Disabled: {mag_lock_reason}" if mag_lockout else "Click to enable Magnet Output"
 
         self.btn_mag_en.setEnabled(not mag_lockout)
-        self.btn_mag_en.setToolTip(mag_tt)
+        self.btn_mag_en.setToolTip(mag_tt if mag_lockout else "Click twice to switch the magnet ON (confirm); once to switch it OFF.")
 
         # --- Dynamic Control Lockouts & Tooltips ---
         if is_sweeping:
@@ -672,74 +710,79 @@ class BeamlineOpticsWidget(QWidget):
             self.sp_mass.setToolTip(
                 f"Disabled: {mag_lock_reason}" if mag_lockout else "Target mass for auto-tuning")
 
-        if mag_deg:
+        if self.arm_deg.armed:
+            pass  # waiting for the confirming click
+        elif mag_deg:
             self.btn_mag_deg.setText("DEGAUSSING...")
             self.btn_mag_deg.setStyleSheet("background-color: #E91E63; color: white; font-weight: bold;")
         else:
             self.btn_mag_deg.setText("DEGAUSS ROUTINE")
             self.btn_mag_deg.setStyleSheet("background-color: #9C27B0; color: white; font-weight: bold;")
 
-            # --- 2. Update Steerers ---
-            # PLC Telemetry handling (Y-Axis)
-            y_steer_en = bool(data.get("ion_beam.beamline.steering.stat_enabled", False))
-            y_rb = data.get("ion_beam.beamline.steering.sp_actual_y_volts")
+        # --- 2. Update Steerers ---
+        # PLC Telemetry handling (Y-Axis)
+        y_steer_en = bool(data.get("ion_beam.beamline.steering.stat_enabled", False))
+        y_rb = data.get("ion_beam.beamline.steering.sp_actual_y_volts")
 
-            self.lbl_y_rb.setText(f"RB: {y_rb:.1f} V" if y_rb is not None else "RB: --- V")
-            if y_rb is not None and y_steer_en and not self.sp_y_steer.hasFocus():
-                self.sp_y_steer.blockSignals(True)
-                self.sp_y_steer.setValue(float(y_rb))
-                self.sp_y_steer.blockSignals(False)
+        self.lbl_y_rb.setText(f"RB: {y_rb:.1f} V" if y_rb is not None else "RB: --- V")
+        if y_rb is not None and y_steer_en and not self.sp_y_steer.hasFocus():
+            self.sp_y_steer.blockSignals(True)
+            self.sp_y_steer.setValue(float(y_rb))
+            self.sp_y_steer.blockSignals(False)
 
-            # Microservice Telemetry handling (X-Axis Magnet)
-            x_steer_en = bool(data.get("ion_beam.beamline.steerer_magnet.stat_enabled", False))
-            x_v_rb = data.get("ion_beam.beamline.steerer_magnet.rb_voltage")
-            x_i_rb = data.get("ion_beam.beamline.steerer_magnet.rb_current")
-            x_i_sp = data.get("ion_beam.beamline.steerer_magnet.sp_actual_current")
+        # Microservice Telemetry handling (X-Axis Magnet)
+        x_steer_en = bool(data.get("ion_beam.beamline.steerer_magnet.stat_enabled", False))
+        x_v_rb = data.get("ion_beam.beamline.steerer_magnet.rb_voltage")
+        x_i_rb = data.get("ion_beam.beamline.steerer_magnet.rb_current")
+        x_i_sp = data.get("ion_beam.beamline.steerer_magnet.sp_actual_current")
 
-            if x_i_rb is not None and x_v_rb is not None:
-                self.lbl_x_rb.setText(f"RB: {x_i_rb:.2f} A | {x_v_rb:.1f} V")
-            else:
-                self.lbl_x_rb.setText("RB: --- A | --- V")
+        if x_i_rb is not None and x_v_rb is not None:
+            self.lbl_x_rb.setText(f"RB: {x_i_rb:.2f} A | {x_v_rb:.1f} V")
+        else:
+            self.lbl_x_rb.setText("RB: --- A | --- V")
+        _show_tolerance(self.lbl_x_rb, data, ("ion_beam.beamline.steerer_magnet.rb_current",))
 
-            if x_i_sp is not None and x_steer_en and not self.sp_x_steer.hasFocus():
-                self.sp_x_steer.blockSignals(True)
-                self.sp_x_steer.setValue(float(x_i_sp))
-                self.sp_x_steer.blockSignals(False)
+        if x_i_sp is not None and x_steer_en and not self.sp_x_steer.hasFocus():
+            self.sp_x_steer.blockSignals(True)
+            self.sp_x_steer.setValue(float(x_i_sp))
+            self.sp_x_steer.blockSignals(False)
 
-            # Master enable button shows OK only if BOTH steerers are verified active
-            both_steerers_en = y_steer_en and x_steer_en
-            self.btn_steer_en.setChecked(both_steerers_en)
-            self.btn_steer_en.setStyleSheet(COLOR_OK if both_steerers_en else COLOR_BUTTON_STANDARD)
+        # Master enable button shows OK only if BOTH steerers are verified active
+        both_steerers_en = y_steer_en and x_steer_en
+        steer_known = ("ion_beam.beamline.steering.stat_enabled" in data
+                       and "ion_beam.beamline.steerer_magnet.stat_enabled" in data)
+        self.arm_steer.show_state(both_steerers_en if steer_known else None, COLOR_OK, COLOR_BUTTON_STANDARD,
+                                  "Steering state unknown - no current data from the PLC or steerer service.")
 
-            steer_y_ctrl_mode = data.get("ion_beam.beamline.steering.y.rb_ctrl_mode", 0.0)
-            x_steer_ctrl_mode = data.get("ion_beam.beamline.steerer_magnet.rb_ctrl_mode", 0.0)
-            steer_auto_locked = (steer_y_ctrl_mode > 0.0) or (x_steer_ctrl_mode > 0.0)
+        steer_y_ctrl_mode = data.get("ion_beam.beamline.steering.y.rb_ctrl_mode", 0.0)
+        x_steer_ctrl_mode = data.get("ion_beam.beamline.steerer_magnet.rb_ctrl_mode", 0.0)
+        steer_auto_locked = (steer_y_ctrl_mode > 0.0) or (x_steer_ctrl_mode > 0.0)
 
-            # Heartbeat ID extracted from provided microservice code
-            steer_magnet_state = services.get("service_steerer_magnet_psu", "OFFLINE")
+        # Heartbeat ID extracted from provided microservice code
+        steer_magnet_state = services.get("service_steerer_magnet_psu", "OFFLINE")
 
-            # Steerer Lockouts
-            steer_lock_reason = ""
-            if steer_magnet_state != "ONLINE":
-                steer_lock_reason = "Steerer magnet microservice is offline."
-            elif master_comms_lost:
-                steer_lock_reason = "PLC communications are offline."
-            elif not relay_active:
-                steer_lock_reason = "Safety Relay is De-Energized."
-            elif steer_auto_locked:
-                steer_lock_reason = "Locked by automated sequencer."
+        # Steerer Lockouts
+        steer_lock_reason = ""
+        if steer_magnet_state != "ONLINE":
+            steer_lock_reason = "Steerer magnet microservice is offline."
+        elif master_comms_lost:
+            steer_lock_reason = "PLC communications are offline."
+        elif not relay_active:
+            steer_lock_reason = "Safety Relay is De-Energized."
+        elif steer_auto_locked:
+            steer_lock_reason = "Locked by automated sequencer."
 
-            steer_lockout = bool(steer_lock_reason)
+        steer_lockout = bool(steer_lock_reason)
 
-            self.btn_steer_en.setEnabled(not steer_lockout)
-            self.btn_steer_en.setToolTip(
-                f"Disabled: {steer_lock_reason}" if steer_lockout else "Enable Beam Steerer Outputs")
-            self.sp_y_steer.setEnabled(not steer_lockout)
-            self.sp_y_steer.setToolTip(
-                f"Disabled: {steer_lock_reason}" if steer_lockout else "Adjust Y-Axis Beam Deflection")
-            self.sp_x_steer.setEnabled(not steer_lockout)
-            self.sp_x_steer.setToolTip(
-                f"Disabled: {steer_lock_reason}" if steer_lockout else "Adjust X-Axis Magnet Current")
+        self.btn_steer_en.setEnabled(not steer_lockout)
+        self.btn_steer_en.setToolTip(
+            f"Disabled: {steer_lock_reason}" if steer_lockout else "Enable Beam Steerer Outputs")
+        self.sp_y_steer.setEnabled(not steer_lockout)
+        self.sp_y_steer.setToolTip(
+            f"Disabled: {steer_lock_reason}" if steer_lockout else "Adjust Y-Axis Beam Deflection")
+        self.sp_x_steer.setEnabled(not steer_lockout)
+        self.sp_x_steer.setToolTip(
+            f"Disabled: {steer_lock_reason}" if steer_lockout else "Adjust X-Axis Magnet Current")
 
         # --- 3. Update Manual Slit Inputs ---
         slit_lock_reason = "Events microservice is offline (Cannot log manual adjustments)."
@@ -775,6 +818,7 @@ class BeamlineOpticsWidget(QWidget):
             v_str = f"{rb_v:.2f}" if rb_v is not None else "---"
             i_str = f"{rb_i:.2f}" if rb_i is not None else "---"
             ctrl["lbl_rb"].setText(f"RB: {v_str} {ctrl['pri_unit']} | {i_str} {ctrl['sec_unit']}")
+            _show_tolerance(ctrl["lbl_rb"], data, (f"{base_tag}.rb_voltage", f"{base_tag}.rb_current"))
 
             sp_val = data.get(f"{base_tag}.sp_actual_voltage")
             if sp_val is not None and not ctrl["sp_box"].hasFocus():
@@ -783,11 +827,10 @@ class BeamlineOpticsWidget(QWidget):
                 ctrl["sp_box"].blockSignals(False)
 
             stat_en = data.get(f"{base_tag}.stat_enabled")
-            if stat_en is not None:
-                ctrl["btn_enable"].setChecked(bool(stat_en))
-                ctrl["btn_enable"].setStyleSheet(COLOR_OK if stat_en else COLOR_BUTTON_STANDARD)
-
             ctrl["btn_enable"].setEnabled(not spell_lockout)
-            ctrl["btn_enable"].setToolTip(spell_tt if spell_lockout else "Click to toggle power output")
+            ctrl["btn_enable"].setToolTip(spell_tt if spell_lockout
+                                          else "Click twice to switch ON (confirm); once to switch OFF")
+            ctrl["arm"].show_state(None if stat_en is None else bool(stat_en), COLOR_OK, COLOR_BUTTON_STANDARD,
+                                   f"{name} output state unknown - supply not answering or not configured.")
             ctrl["sp_box"].setEnabled(not spell_lockout)
             ctrl["sp_box"].setToolTip(spell_tt)

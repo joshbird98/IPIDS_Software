@@ -261,9 +261,12 @@ def get_spellman_tags(config_dir):
                 "description": f"{nice_name} Requested Voltage Command", "default_label": f"{nice_name} Voltage Cmd",
                 "short_name": "V_Cmd"
             }
+            # Current limit in uA: optional "min_current_ua"/"max_current_ua" in mpd_config.json.
+            # Without them the service refuses current-limit commands (fails safe).
             tags[f"{base_tag}.sp_requested_current"] = {
                 "source": "service_spellman", "datatype": "REAL", "writable": True,
-                "auto_controllable": True, "min_val": None, "max_val": None, # Fails safe until defined in JSON
+                "auto_controllable": True,
+                "min_val": dev_info.get("min_current_ua"), "max_val": dev_info.get("max_current_ua"),
                 "unit": "µA", "default_scale": "linear", "multiplier": 1.0,
                 "description": f"{nice_name} Requested Current Command", "default_label": f"{nice_name} Current Cmd",
                 "short_name": "I_Cmd"

@@ -1,12 +1,18 @@
-import time
-import zmq
+import json
+import logging
 import os
 import struct
-from typing import Dict, Any, Optional, Tuple
+import time
+from typing import Any, Dict, Optional, Tuple
+
 import orjson
-import json
+import zmq
+
+from src.core.commands import CommandServer
 from src.core.event_helper import EventHelper
+from src.core.log_setup import Throttle, setup_logging
 from src.core.os_helper import harden_windows_process
+from src.core.paths import simulation_enabled
 
 if os.name == 'nt':
     import ctypes
@@ -23,6 +29,10 @@ from src.core.network_map import (
 POLL_INTERVAL = 0.05
 MAX_CMD_AGE = 0.5
 PLC_WATCHDOG_AGE = 1.0
+RECONNECT_DELAYS = (0.5, 1.0, 2.0, 5.0)
+BASE = "ion_beam.beamline.magnet"
+
+log = logging.getLogger("service_magnet_psu")
 
 
 class MagnetModbusProtocol:
@@ -39,25 +49,28 @@ class MagnetModbusProtocol:
         if self.client:
             try:
                 self.client.close()
-            except Exception:
-                pass
+            except Exception as e:  # pymodbus raises various types on close of a dead socket
+                log.debug("close before reconnect: %s", e)
 
         self.client = ModbusTcpClient(self.ip, port=self.port, framer=FramerType.RTU, timeout=0.5)
         try:
             if self.client.connect():
                 self.connected = True
-                print(f"[Magnet Driver] Modbus TCP Connected to {self.ip}:{self.port}")
+                log.info("Modbus TCP connected to %s:%s", self.ip, self.port)
                 res = self.client.read_holding_registers(address=121, count=6)
                 if not res.isError():
                     regs = res.registers
                     self.nom_v = struct.unpack('>f', struct.pack('>HH', regs[0], regs[1]))[0]
                     self.nom_i = struct.unpack('>f', struct.pack('>HH', regs[2], regs[3]))[0]
                     self.nom_p = struct.unpack('>f', struct.pack('>HH', regs[4], regs[5]))[0]
+                else:
+                    log.warning("Could not read nominal ratings (%s); setpoint scaling may be wrong", res)
                 self.client.write_coil(402, True)
                 self.client.write_coil(411, True)
                 return True
             return False
-        except Exception as e:
+        except Exception as e:  # pymodbus ConnectionException / ModbusIOException / OSError
+            log.debug("connect failed: %s", e)
             self.connected = False
             return False
 
@@ -66,8 +79,8 @@ class MagnetModbusProtocol:
             try:
                 self.client.write_coil(405, False)
                 self.client.write_coil(402, False)
-            except:
-                pass
+            except Exception as e:
+                log.warning("Could not switch output off while disconnecting: %s", e)
             self.client.close()
             self.connected = False
 
@@ -79,17 +92,26 @@ class MagnetModbusProtocol:
     def _scale_from_modbus(self, hex_val: int, nominal: float) -> float:
         return (hex_val * nominal) / 52428.0
 
+    def _checked(self, res, what):
+        if res is not None and hasattr(res, "isError") and res.isError():
+            raise IOError(f"PSU refused {what}: {res}")
+        return True
+
     def set_voltage(self, v_set: float):
-        if self.connected: self.client.write_register(500, self._scale_to_modbus(v_set, self.nom_v))
+        if not self.connected: raise ConnectionError("PSU not connected")
+        return self._checked(self.client.write_register(500, self._scale_to_modbus(v_set, self.nom_v)), "voltage")
 
     def set_current(self, i_set: float):
-        if self.connected: self.client.write_register(501, self._scale_to_modbus(i_set, self.nom_i))
+        if not self.connected: raise ConnectionError("PSU not connected")
+        return self._checked(self.client.write_register(501, self._scale_to_modbus(i_set, self.nom_i)), "current")
 
     def set_output(self, state: bool):
-        if self.connected: self.client.write_coil(405, state)
+        if not self.connected: raise ConnectionError("PSU not connected")
+        return self._checked(self.client.write_coil(405, state), "output enable")
 
     def clear_alarms(self):
-        if self.connected: self.client.write_coil(411, True)
+        if not self.connected: raise ConnectionError("PSU not connected")
+        return self._checked(self.client.write_coil(411, True), "alarm clear")
 
     def read_telemetry(self) -> Optional[Tuple[float, float, bool, dict]]:
         if not self.connected: return None
@@ -109,23 +131,30 @@ class MagnetModbusProtocol:
             }
             return self._scale_from_modbus(regs[2], self.nom_v), self._scale_from_modbus(regs[3], self.nom_i), bool(
                 status_word & 0x00000080), alarms
-        except Exception:
+        except Exception as e:
+            log.warning("Telemetry read failed: %s", e)
             self.connected = False
             return None
+
+
+def _make_driver():
+    if simulation_enabled():
+        from src.sim.magnet import FakeMagnetModbus
+        return FakeMagnetModbus(MAGNET_IP, MAGNET_PORT, name="magnet", resistance=0.16, nom_v=30.0, nom_i=100.0)
+    return MagnetModbusProtocol(MAGNET_IP, MAGNET_PORT)
 
 
 class MagnetMicroservice:
     def __init__(self):
         self.context = zmq.Context()
+        self.events = EventHelper("service_magnet_psu")
 
         self.pub_socket = self.context.socket(zmq.PUB)
         self.pub_socket.setsockopt(zmq.SNDHWM, 5)
         self.pub_socket.bind(ZMQ_PORT_MAGNET_PUB)
 
-        self.sub_socket = self.context.socket(zmq.SUB)
-        self.sub_socket.setsockopt(zmq.RCVHWM, 5)
-        self.sub_socket.bind(ZMQ_PORT_MAGNET_CMD)
-        self.sub_socket.setsockopt_string(zmq.SUBSCRIBE, "")
+        self.commands = CommandServer(ZMQ_PORT_MAGNET_CMD, "service_magnet_psu", context=self.context,
+                                      events=self.events, max_age=MAX_CMD_AGE)
 
         self.plc_socket = self.context.socket(zmq.SUB)
         self.plc_socket.connect(ZMQ_PORT_PLC_PUB)
@@ -133,7 +162,7 @@ class MagnetMicroservice:
 
         self.limits = self._load_config()
         self.registry_limits = self._load_registry_limits()
-        self.hw = MagnetModbusProtocol(MAGNET_IP, MAGNET_PORT)
+        self.hw = _make_driver()
 
         self.stat_safety_relay = False
         self.last_plc_ts = 0.0
@@ -155,7 +184,13 @@ class MagnetMicroservice:
         self.hb_socket.connect(ZMQ_PORT_HEARTBEAT)
         self.last_hb_time = 0.0
 
-        self.events = EventHelper("service_magnet_psu")
+        self._throttle = Throttle(60.0)
+        self._connect_failures = 0
+        self._next_connect_at = 0.0
+        self.running = True
+
+    def stop(self):
+        self.running = False
 
     def _load_config(self) -> dict:
         config_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '../../config/magnet_config.json'))
@@ -173,8 +208,9 @@ class MagnetMicroservice:
         try:
             with open(config_path, "r") as f:
                 default_config.update(json.load(f))
-        except Exception:
-            pass
+        except (OSError, ValueError) as e:
+            self.events.log_general(f"magnet_config.json not loaded, using built-in defaults: {e}",
+                                    severity="WARNING")
         return default_config
 
     def _load_registry_limits(self) -> dict:
@@ -189,8 +225,9 @@ class MagnetMicroservice:
                             "min_val": data.get("min_val"),
                             "max_val": data.get("max_val")
                         }
-        except Exception as e:
-            print(f"[Magnet Service] Failed to load registry limits: {e}")
+        except (OSError, ValueError) as e:
+            self.events.log_general(f"Failed to load registry limits (setpoints will be refused): {e}",
+                                    severity="ERROR")
         return limits
 
     def _apply_smart_setpoint(self, target_current: float):
@@ -201,7 +238,6 @@ class MagnetMicroservice:
         # Enforce an absolute minimum of 1.0V and cap at hardware maximum
         target_voltage = max(1.0, target_current * nom_res * 1.50)
         target_voltage = min(target_voltage, max_v)
-        print(f"Target Voltage: {target_voltage}")
 
         # Get the currently requested current to determine the direction of travel
         current_sp_i = self.sp_cache.get("ion_beam.beamline.magnet.sp_actual_current", 0.0)
@@ -223,16 +259,26 @@ class MagnetMicroservice:
         try:
             while True:
                 topic, msg = self.plc_socket.recv_multipart(flags=zmq.NOBLOCK)
-                payload = orjson.loads(msg)
+                try:
+                    payload = orjson.loads(msg)
+                except ValueError:
+                    continue
                 self.last_plc_ts = time.time()
                 stat_safety_relay = payload.get("ion_beam.facilities.safety_relay_active")
-                if stat_safety_relay is not None:
-                    self.stat_safety_relay = bool(stat_safety_relay)
+                # null = PLC disconnected = relay state unknown -> treat as off
+                self.stat_safety_relay = bool(stat_safety_relay)
         except zmq.Again:
             pass
 
         comms_alive = (time.time() - self.last_plc_ts) < PLC_WATCHDOG_AGE
+        was_tripped = self.safety_tripped
         self.safety_tripped = not (self.stat_safety_relay and comms_alive)
+        if self.safety_tripped != was_tripped:
+            if self.safety_tripped:
+                why = "safety relay de-energised" if comms_alive else "no PLC telemetry"
+                self.events.log_general(f"Magnet output forced off: {why}", severity="WARNING")
+            else:
+                self.events.log_general("Magnet safety permissive restored")
         self.state["system.safe_to_run"] = 0.0 if self.safety_tripped else 1.0
 
     def _execute_degauss_cycle(self):
@@ -243,12 +289,17 @@ class MagnetMicroservice:
         steps = self.limits.get("degauss_steps_amps", [])
 
         if now - self.degauss_last_step_ts > step_delay:
-            print("Next Degauss Step")
             if self.degauss_step_idx < len(steps):
                 target_amps = steps[self.degauss_step_idx]
+                log.info("Degauss step %d/%d: %.1f A", self.degauss_step_idx + 1, len(steps), target_amps)
 
                 # Route degauss steps through the smart sequencer
-                self._apply_smart_setpoint(target_amps)
+                try:
+                    self._apply_smart_setpoint(target_amps)
+                except Exception as e:
+                    self.degauss_active = False
+                    self.events.log_general(f"Degauss aborted - PSU write failed: {e}", severity="ERROR")
+                    return
 
                 self.degauss_last_step_ts = now
                 self.degauss_step_idx += 1
@@ -256,95 +307,127 @@ class MagnetMicroservice:
                 self.degauss_active = False
                 self.events.log_general("Degaussing cycle completed.")
 
-    def _process_commands(self):
-        if not self.hw.connected: return
-
-        if self.safety_tripped:
+    def _force_safe_outputs(self):
+        """Safety relay off / PLC silent: hold the PSU at 0 V, 0 A, output off (every cycle, as before)."""
+        self.degauss_active = False
+        if not self.hw.connected:
+            return
+        try:
             self.hw.set_voltage(0.0)
             self.hw.set_current(0.0)
             self.hw.set_output(False)
-            self.degauss_active = False
-            try:
-                while True: self.sub_socket.recv_json(flags=zmq.NOBLOCK)
-            except zmq.Again:
-                pass
-            return
+            self.sp_cache["ion_beam.beamline.magnet.sp_actual_voltage"] = 0.0
+            self.sp_cache["ion_beam.beamline.magnet.sp_actual_current"] = 0.0
+        except Exception as e:
+            if (n := self._throttle.ready("force-safe")) is not None:
+                self.events.log_general(f"Could not force magnet outputs off: {e}{Throttle.suffix(n)}",
+                                        severity="ERROR")
+            self.hw.connected = False
 
-        # Execute automated degauss sequence if active
-        self._execute_degauss_cycle()
+    def _process_commands(self):
+        for cmd in self.commands.poll():
+            tag, raw_value, origin = cmd.tag, cmd.value, cmd.origin
 
-        try:
-            while True:
-                msg = self.sub_socket.recv_json(flags=zmq.NOBLOCK)
-                tag = msg.get("tag", "")
-                raw_value = msg.get("value", 0)
-                ts = msg.get("ts", 0.0)
-                origin = msg.get("origin", "hmi")
-
-                if time.time() - ts > MAX_CMD_AGE: continue
-
-                # --- 1. ARBITRATION: Handle Control Mode Changes ---
-                if tag == "ion_beam.beamline.magnet.cmd_ctrl_mode":
-                    try:
-                        self.active_ctrl_mode = int(raw_value)
-                        self.events.log_general(f"Arbitration: Magnet mode set to {self.active_ctrl_mode}")
-                    except (ValueError, TypeError):
-                        pass
-                    continue
-
-                # --- 2. ARBITRATION: Enforce Lockout ---
-                if self.active_ctrl_mode > 0 and (origin not in ["optimizer", "mass_scan"]):
-                    continue
-
-                # --- 3. Normal Command Processing ---
-                parts = tag.split('.')
-                if len(parts) < 3 or parts[1] != "beamline": continue
-                cmd_type = parts[-1]
-
+            # --- 1. ARBITRATION: Handle Control Mode Changes (never touches hardware, always allowed) ---
+            if tag == "ion_beam.beamline.magnet.cmd_ctrl_mode":
                 try:
-                    value = float(raw_value)
+                    self.active_ctrl_mode = int(raw_value)
                 except (ValueError, TypeError):
+                    cmd.reject(f"invalid control mode {raw_value!r}")
                     continue
+                self.events.log_general(f"Arbitration: Magnet mode set to {self.active_ctrl_mode}")
+                cmd.ok()
+                continue
 
+            # --- 2. ARBITRATION: Enforce Lockout ---
+            if self.active_ctrl_mode > 0 and (origin not in ["optimizer", "mass_scan"]):
+                cmd.reject(f"locked out: magnet is in automatic control mode {self.active_ctrl_mode}")
+                continue
+
+            # --- 3. Normal Command Processing ---
+            parts = tag.split('.')
+            if len(parts) < 3 or not tag.startswith(BASE + "."):
+                cmd.reject("not a magnet tag")
+                continue
+            cmd_type = parts[-1]
+
+            try:
+                value = float(raw_value)
+            except (ValueError, TypeError):
+                cmd.reject(f"value {raw_value!r} is not a number")
+                continue
+
+            if not self.hw.connected:
+                cmd.reject("magnet PSU not connected")
+                continue
+            if self.safety_tripped:
+                if cmd_type == "cmd_enable" and not value:
+                    cmd.ok("already off: safety interlock holds the output off")
+                else:
+                    cmd.reject("safety relay de-energised (or no PLC telemetry) - output held off")
+                continue
+
+            try:
                 if cmd_type == "sp_requested_voltage":
-                    pass
+                    cmd.reject("voltage is set automatically from the current setpoint")
 
                 elif cmd_type == "sp_requested_current":
                     tag_limits = self.registry_limits.get(tag, {})
                     min_i = tag_limits.get("min_val")
                     max_i = tag_limits.get("max_val")
-                    print(max_i)
 
                     # Fail safe: Do not execute if limits are undefined in the registry
                     if min_i is None or max_i is None:
-                        continue
-
-                    if min_i <= value <= max_i:
+                        cmd.reject("no min/max limits configured for this tag in system_tags.json")
+                    elif not (min_i <= value <= max_i):
+                        cmd.reject(f"{value:g} A is outside the allowed range [{min_i:g}, {max_i:g}] A")
+                    else:
                         self.degauss_active = False
                         self._apply_smart_setpoint(value)
                         self.last_setpoint_ts = time.time()
+                        cmd.ok()
 
                 elif cmd_type == "cmd_enable":
                     self.hw.set_output(bool(value))
                     self.last_setpoint_ts = time.time()
+                    cmd.ok("output on" if value else "output off")
 
-                elif cmd_type == "cmd_degauss" and bool(value):
-                    self.events.log_general("Initiating autonomous Degauss sequence...")
-                    self.degauss_active = True
-                    self.degauss_step_idx = 0
-                    self.degauss_last_step_ts = 0.0
-                    self.hw.set_output(True)
+                elif cmd_type == "cmd_degauss":
+                    if bool(value):
+                        self.events.log_general("Initiating autonomous Degauss sequence...")
+                        self.degauss_active = True
+                        self.degauss_step_idx = 0
+                        self.degauss_last_step_ts = 0.0
+                        self.hw.set_output(True)
+                        cmd.ok("degauss started")
+                    else:
+                        cmd.ok("nothing to do")
+                else:
+                    cmd.reject(f"unsupported command '{cmd_type}'")
+            except Exception as e:  # PSU write failed part-way (connection lost / Modbus exception)
+                cmd.fail(f"PSU write failed: {e}")
+                log.warning("Command %s failed: %s", cmd, e)
+                self.hw.connected = False
+        self.commands.finish()
 
-        except zmq.Again:
-            pass
+    def _publish_unknown(self):
+        self.state[f"{BASE}.stat_comms_fail"] = 1.0
+        for key in ("rb_voltage", "rb_current", "stat_enabled", "rb_resistance", "stat_psu_overtemp",
+                    "stat_psu_powerfail", "stat_psu_ovp", "stat_psu_ovc", "stat_short_circuit",
+                    "stat_open_circuit", "stat_unexpected_res"):
+            self.state[f"{BASE}.{key}"] = None
+        self.state[f"{BASE}.stat_degaussing"] = 1.0 if self.degauss_active else 0.0
+        self.state[f"{BASE}.rb_ctrl_mode"] = float(self.active_ctrl_mode)
 
     def _poll_device(self):
-        if not self.hw.connected: return
+        if not self.hw.connected:
+            self._publish_unknown()
+            return
         telemetry_data = self.hw.read_telemetry()
-        comms_fail = telemetry_data is None
-
-        self.state["ion_beam.beamline.magnet.stat_comms_fail"] = 1.0 if comms_fail else 0.0
-        if comms_fail: return
+        if telemetry_data is None:
+            self._publish_unknown()
+            return
+        self.state["ion_beam.beamline.magnet.stat_comms_fail"] = 0.0
 
         v_rb, i_rb, outp_enabled, internal_alarms = telemetry_data
 
@@ -369,7 +452,15 @@ class MagnetMicroservice:
         self.state["ion_beam.beamline.magnet.stat_psu_ovp"] = 1.0 if internal_alarms["OVP"] else 0.0
         self.state["ion_beam.beamline.magnet.stat_psu_ovc"] = 1.0 if internal_alarms["OCP"] else 0.0
 
-        if any(internal_alarms.values()): self.hw.clear_alarms()
+        if any(internal_alarms.values()):
+            active = ", ".join(k for k, v in internal_alarms.items() if v)
+            if (n := self._throttle.ready(f"alarm-{active}")) is not None:
+                self.events.log_general(f"Magnet PSU alarm: {active} (auto-clearing){Throttle.suffix(n)}",
+                                        severity="WARNING")
+            try:
+                self.hw.clear_alarms()
+            except Exception as e:
+                log.warning("Alarm clear failed: %s", e)
 
         short_fault, open_fault, unexp_fault = False, False, False
         is_settled = (time.time() - self.last_setpoint_ts) > 1.500
@@ -390,42 +481,53 @@ class MagnetMicroservice:
         self.state["ion_beam.beamline.magnet.stat_open_circuit"] = 1.0 if open_fault else 0.0
         self.state["ion_beam.beamline.magnet.stat_unexpected_res"] = 1.0 if unexp_fault else 0.0
 
+    def _try_connect(self):
+        if time.time() < self._next_connect_at:
+            return
+        if self.hw.connect():
+            if self._connect_failures:
+                self.events.log_general(f"Magnet PSU reconnected after {self._connect_failures} failed attempt(s)")
+            else:
+                self.events.log_general(f"Connected to magnet PSU at {MAGNET_IP}:{MAGNET_PORT}")
+            self._connect_failures = 0
+            self._throttle.reset("connect")
+        else:
+            self._connect_failures += 1
+            self._next_connect_at = time.time() + RECONNECT_DELAYS[
+                min(self._connect_failures - 1, len(RECONNECT_DELAYS) - 1)]
+            if (n := self._throttle.ready("connect")) is not None:
+                self.events.log_general(f"Magnet PSU at {MAGNET_IP}:{MAGNET_PORT} not reachable{Throttle.suffix(n)}",
+                                        severity="WARNING")
+
     def run(self):
-        self.events.log_general("[Magnet Service] Daemon Starting (Modbus Architecture)...")
-        last_connect_attempt = 0.0
-        reconnect_interval = 0.5
+        self.events.log_general("[Magnet Service] Daemon Starting (Modbus Architecture)..."
+                                + (" (SIMULATED PSU)" if simulation_enabled() else ""))
         next_tick = time.perf_counter() + POLL_INTERVAL
 
         try:
-            while True:
+            while self.running:
                 cycle_start = time.perf_counter()
 
                 if not self.hw.connected:
-                    if time.time() - last_connect_attempt > reconnect_interval:
-                        last_connect_attempt = time.time()
-                        self.hw.connect()
-                    else:
-                        sleep_time = next_tick - time.perf_counter()
-                        if sleep_time > 0.002: time.sleep(sleep_time - 0.002)
-                        while time.perf_counter() < next_tick: pass
-                        next_tick += POLL_INTERVAL
-                        continue
+                    self._try_connect()
 
                 self._update_safety_permissives()
+                if self.safety_tripped:
+                    self._force_safe_outputs()
+                elif self.hw.connected:
+                    self._execute_degauss_cycle()
 
-                if self.hw.connected:
-                    self._process_commands()
-                    self._poll_device()
+                self._process_commands()   # always answered, with a reason when refused
+                self._poll_device()
 
                 self.state["timestamp"] = time.time()
                 self.state["system.cycle_time_ms"] = round((time.perf_counter() - cycle_start) * 1000, 2)
 
                 try:
-                    topic = TOPIC_MAGNET_DATA if isinstance(TOPIC_MAGNET_DATA, bytes) else TOPIC_MAGNET_DATA.encode(
-                        'utf-8')
-                    self.pub_socket.send_multipart([topic, orjson.dumps(self.state)])
-                except Exception:
-                    pass
+                    self.pub_socket.send_multipart([TOPIC_MAGNET_DATA, orjson.dumps(self.state)])
+                except zmq.ZMQError as e:
+                    if (n := self._throttle.ready("publish")) is not None:
+                        log.error("ZMQ publish failed: %s%s", e, Throttle.suffix(n))
 
                 if time.time() - self.last_hb_time >= 0.5:
                     self.hb_socket.send_json({"service": "service_magnet_psu", "ts": time.time()})
@@ -435,17 +537,20 @@ class MagnetMicroservice:
                 if sleep_time > 0.002: time.sleep(sleep_time - 0.002)
                 while time.perf_counter() < next_tick: pass
                 next_tick += POLL_INTERVAL
+                if next_tick < time.perf_counter() - 1.0:
+                    next_tick = time.perf_counter() + POLL_INTERVAL
 
         except KeyboardInterrupt:
-            self.events.log_general("\n[Magnet Service] Process interrupted by user.")
+            self.events.log_general("[Magnet Service] Process interrupted by user.")
         finally:
             self.hw.disconnect()
-            self.pub_socket.close()
-            self.sub_socket.close()
-            self.plc_socket.close()
-            self.context.term()
+            self.commands.close()
+            self.pub_socket.close(0)
+            self.plc_socket.close(0)
+            self.hb_socket.close(0)
 
 
 if __name__ == "__main__":
+    setup_logging("service_magnet_psu")
     harden_windows_process()
     MagnetMicroservice().run()

@@ -6,6 +6,10 @@ import sys
 import csv
 
 from src.core.network_map import ZMQ_PORT_VACUUM_PUB, ZMQ_PORT_PLC_CMD, ZMQ_PORT_PLC_PUB
+try:
+    from testing.cmd_helper import send as send_ack
+except ImportError:
+    from cmd_helper import send as send_ack
 
 # --- FAULT BIT MAP ---
 BIT_SRC_BODY_TEMP_HIGH = 4
@@ -20,8 +24,7 @@ class CesiumFOPDTTester:
         self.current_temp = 0.0
         self.fault_word_2 = 0
         self.ctx = zmq.Context.instance()
-        self.cmd_socket = self.ctx.socket(zmq.PUB)
-        self.cmd_socket.connect(ZMQ_PORT_PLC_CMD)
+        # Commands are acknowledged now: they go through cmd_helper (see send_command)
         self.telemetry_socket = self.ctx.socket(zmq.SUB)
         self.telemetry_socket.connect(ZMQ_PORT_PLC_PUB)
         self.telemetry_socket.setsockopt(zmq.SUBSCRIBE, b"")
@@ -31,8 +34,10 @@ class CesiumFOPDTTester:
         time.sleep(1)
 
     def send_command(self, tag: str, value):
-        payload = {"tag": tag, "value": value, "ts": time.time()}
-        self.cmd_socket.send_json(payload)
+        reply = send_ack(tag, value, subsystem="plc", verbose=False)
+        if reply.get("status") not in ("ok", "accepted"):
+            print(f"[!] {tag} = {value} NOT executed: {reply.get('status')} - {reply.get('reason')}")
+        return reply
 
     def _telemetry_loop(self):
         while self.running:

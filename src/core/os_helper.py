@@ -1,4 +1,7 @@
+import logging
 import os
+
+log = logging.getLogger("os_helper")
 
 
 def harden_windows_process(limit_working_set=True):
@@ -12,6 +15,12 @@ def harden_windows_process(limit_working_set=True):
     pressure, Windows trims them towards 200 MB and they page heavily.
     """
     if os.name != 'nt':
+        return
+
+    from src.core.paths import simulation_enabled
+    if simulation_enabled():
+        # Simulated devices on a laptop: don't run a dozen spin-waiting processes at HIGH priority
+        log.info("Simulation mode: leaving process priority and working set at Windows defaults.")
         return
 
     import ctypes
@@ -47,10 +56,10 @@ def harden_windows_process(limit_working_set=True):
 
     # 1. Elevate Process Priority Class to HIGH
     if kernel32.SetPriorityClass(current_process, HIGH_PRIORITY_CLASS):
-        print("[SYS_HARDEN] Process priority class elevated to HIGH_PRIORITY_CLASS.")
+        log.info("Process priority class elevated to HIGH_PRIORITY_CLASS.")
     else:
         error_code = kernel32.GetLastError()
-        print(f"[SYS_HARDEN] WARNING: Failed to elevate process priority class. Win32 Error Code: {error_code}")
+        log.warning("Failed to elevate process priority class. Win32 error code: %s", error_code)
 
     if not limit_working_set:
         return
@@ -68,12 +77,12 @@ def harden_windows_process(limit_working_set=True):
 
     if process_handle:
         if kernel32.SetProcessWorkingSetSize(process_handle, min_size, max_size):
-            print("[SYS_HARDEN] Physical RAM Working Set locked (50MB/200MB boundaries).")
+            log.info("Physical RAM working set locked (50MB/200MB boundaries).")
         else:
             error_code = kernel32.GetLastError()
-            print(f"[SYS_HARDEN] WARNING: SetProcessWorkingSetSize allocation failed. Win32 Error Code: {error_code}")
+            log.warning("SetProcessWorkingSetSize failed. Win32 error code: %s", error_code)
         kernel32.CloseHandle(process_handle)
     else:
         error_code = kernel32.GetLastError()
-        print(
-            f"[SYS_HARDEN] WARNING: Security descriptor denied handle access for quota modifications. Win32 Error Code: {error_code}")
+        log.warning("Security descriptor denied handle access for quota modifications. Win32 error code: %s",
+                    error_code)

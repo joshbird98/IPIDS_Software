@@ -1,15 +1,42 @@
+import json
+import logging
+
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QGridLayout, QLabel,
     QPushButton, QGroupBox, QDoubleSpinBox
 )
 from PyQt6.QtCore import Qt
 
+from src.core import paths
 from src.core.theme import (
     COLOR_OK,
     COLOR_FAULT,
     COLOR_WARNING,
     COLOR_BUTTON_STANDARD
 )
+from src.core.tolerance import FLAG_PREFIX
+from src.gui.control.arming import ArmedToggle
+
+log = logging.getLogger("hmi.source")
+
+TOLERANCE_STYLE = "border: 2px solid #FFB300; border-radius: 3px; padding: 1px;"
+TOLERANCE_TIP = ("Readback has been outside its tolerance of the setpoint (not a fault).\n"
+                 "Rules and tolerances: config/readback_tolerance.json; events are in events.db (TOLERANCE).")
+
+
+def tolerance_flagged(data: dict, tags) -> bool:
+    return any(data.get(FLAG_PREFIX + t) == 1.0 for t in tags)
+
+
+def setpoint_limits():
+    """Tags that have both min_val and max_val in the registry (the services refuse the others)."""
+    try:
+        with open(paths.config_path("system_tags.json"), "r") as f:
+            reg = json.load(f)
+    except (OSError, ValueError) as e:
+        log.warning("Registry not readable for setpoint limits: %s", e)
+        return set()
+    return {t for t, m in reg.items() if m.get("min_val") is not None and m.get("max_val") is not None}
 
 
 # --- Ion Source Subsystem Component ---
@@ -19,6 +46,7 @@ class IonSourceWidget(QWidget):
         super().__init__()
         self.cmd_thread = cmd_thread
         self.fault_engine = fault_engine
+        self._limited_tags = setpoint_limits()
 
         self.main_layout = QVBoxLayout(self)
         self._init_psu_ui()
@@ -30,7 +58,10 @@ class IonSourceWidget(QWidget):
     def _dispatch_spellman_setpoints(self, base_tag: str, voltage: float):
         """Dispatches voltage and autonomously sets a safe 50uA current limit to unclamp the CC loop."""
         self._dispatch_command(f"{base_tag}.sp_requested_voltage", voltage)
-        self._dispatch_command(f"{base_tag}.sp_requested_current", 50.0)
+        # The service refuses current limits that have no min/max in the registry (and always
+        # silently did) - only send it once limits are configured (mpd_config.json max_current_ua).
+        if f"{base_tag}.sp_requested_current" in self._limited_tags:
+            self._dispatch_command(f"{base_tag}.sp_requested_current", 50.0)
 
     def _init_psu_ui(self):
         psu_group = QGroupBox("Source Power Supplies")
@@ -70,8 +101,9 @@ class IonSourceWidget(QWidget):
         btn_enable = QPushButton("ENABLE")
         btn_enable.setCheckable(True)
         btn_enable.setStyleSheet(COLOR_BUTTON_STANDARD)
-        btn_enable.clicked.connect(
-            lambda *args, b=btn_enable, t=base_tag: self._dispatch_command(f"{t}.cmd_enable", b.isChecked()))
+        # Switching ON needs a confirming second click; OFF is immediate
+        arm = ArmedToggle(btn_enable, lambda on, t=base_tag: self._dispatch_command(f"{t}.cmd_enable", on),
+                          what=name.upper())
 
         sp_box = QDoubleSpinBox()
         sp_box.setRange(min_v, max_v)
@@ -102,7 +134,7 @@ class IonSourceWidget(QWidget):
         self.psu_layout.addWidget(btn_enable, row, 4)
 
         self.psu_controls[name] = {
-            "lbl_rb": lbl_rb, "sp_box": sp_box, "btn_enable": btn_enable,
+            "lbl_rb": lbl_rb, "sp_box": sp_box, "btn_enable": btn_enable, "arm": arm,
             "lbl_badge": lbl_badge, "base_tag": base_tag,
             "pri_unit": pri_unit, "sec_unit": sec_unit, "is_voltage": is_voltage,
             "decimals": decimals
@@ -130,9 +162,8 @@ class IonSourceWidget(QWidget):
         btn_enable = QPushButton("HEATER ON")
         btn_enable.setCheckable(True)
         btn_enable.setStyleSheet(COLOR_BUTTON_STANDARD)
-        btn_enable.clicked.connect(
-            lambda *args, b=btn_enable: self._dispatch_command("ion_beam.source.cesium.cmd_ctrl_mode",
-                                                               1 if b.isChecked() else 0))
+        arm = ArmedToggle(btn_enable, lambda on: self._dispatch_command("ion_beam.source.cesium.cmd_ctrl_mode",
+                                                                        1 if on else 0), what="HEATER")
 
         btn_cool = QPushButton("FORCED COOLING")
         btn_cool.setCheckable(True)
@@ -154,7 +185,7 @@ class IonSourceWidget(QWidget):
         self.psu_layout.addWidget(btn_cool, row, 5)
 
         self.psu_controls["Cesium"] = {
-            "lbl_rb": lbl_rb, "sp_box": sp_box, "btn_enable": btn_enable,
+            "lbl_rb": lbl_rb, "sp_box": sp_box, "btn_enable": btn_enable, "arm": arm,
             "btn_cool": btn_cool, "lbl_badge": lbl_badge,
             "base_tag": "ion_beam.source.cesium", "is_voltage": False
         }
@@ -183,8 +214,8 @@ class IonSourceWidget(QWidget):
             self._update_power_supplies(data, relay_active, remote_lost, auto_sdown, active_step, master_comms_lost,
                                         spellman_comms_lost)
 
-        except Exception as e:
-            print(f"[UI Parser Error] Ion Source Runtime exception: {e}")
+        except Exception:  # never let one bad value freeze the whole panel; the cause goes to the log
+            log.exception("Ion source panel update failed")
 
     def _update_power_supplies(self, data: dict, relay_active: bool, remote_lost: bool, auto_sdown: bool,
                                active_step: int, master_comms_lost: bool, spellman_comms_lost: bool):
@@ -237,6 +268,9 @@ class IonSourceWidget(QWidget):
                         temp_str = f"{rb_val:.1f}" if rb_val is not None else "---"
 
                     ctrl["lbl_rb"].setText(f"RB: {temp_str} °C (H: {duty_cycle:.0f}%){stale_str}")
+                else:
+                    ctrl["lbl_rb"].setText("RB: --- °C")
+                rb_tags = (f"{base_tag}.rb_temp",)
             else:
                 rb_v = data.get(f"{base_tag}.rb_voltage")
                 rb_i = data.get(f"{base_tag}.rb_current")
@@ -254,6 +288,15 @@ class IonSourceWidget(QWidget):
                     i_str = f"{rb_i:.{pri_decimals}f}" if rb_i is not None else "---"
                     v_str = f"{rb_v:.{sec_decimals}f}" if rb_v is not None else "---"
                     ctrl["lbl_rb"].setText(f"RB: {i_str} {pri_unit} | {v_str} {sec_unit}{p_str}{stale_str}")
+                rb_tags = (f"{base_tag}.rb_voltage", f"{base_tag}.rb_current")
+
+            # Readback-vs-setpoint tolerance (information only, from service_monitor)
+            if tolerance_flagged(data, rb_tags):
+                ctrl["lbl_rb"].setStyleSheet(TOLERANCE_STYLE)
+                ctrl["lbl_rb"].setToolTip(TOLERANCE_TIP)
+            elif ctrl["lbl_rb"].styleSheet():
+                ctrl["lbl_rb"].setStyleSheet("")
+                ctrl["lbl_rb"].setToolTip("")
 
             # B. Active Setpoints
             sp_tag = "sp_actual_temp" if name == "Cesium" else (
@@ -269,11 +312,9 @@ class IonSourceWidget(QWidget):
 
             if name == "Cesium":
                 stat_en = data.get(f"{base_tag}.stat_enabled")
-                if stat_en is not None:
-                    ctrl["btn_enable"].setChecked(bool(stat_en))
-                    ctrl["btn_enable"].setStyleSheet(COLOR_OK if stat_en else COLOR_BUTTON_STANDARD)
-
                 ctrl["btn_enable"].setEnabled(not comp_lockout)
+                ctrl["arm"].show_state(None if stat_en is None else bool(stat_en), COLOR_OK, COLOR_BUTTON_STANDARD,
+                                       "State unknown: no current data from the PLC.")
                 ctrl["btn_enable"].setToolTip(
                     f"Disabled: {comp_lock_reason}" if comp_lockout else "Click to toggle Cesium Heater PID control.")
 
@@ -302,6 +343,7 @@ class IonSourceWidget(QWidget):
                     stat_disarming = bool(data.get(f"{base_tag}.stat_disarming", False))
 
                     if name == "Filament" and stat_disarming:
+                        ctrl["arm"].disarm()
                         ctrl["btn_enable"].blockSignals(True)
                         ctrl["btn_enable"].setChecked(True)
                         ctrl["btn_enable"].blockSignals(False)
@@ -313,16 +355,15 @@ class IonSourceWidget(QWidget):
                         ctrl["btn_enable"].setToolTip(
                             "Contactor remains closed while safe step-down ramp drops current to 0A.")
                     else:
-                        if name == "Filament":
-                            ctrl["btn_enable"].setText("ENABLE")
-
-                        if stat_en is not None:
-                            ctrl["btn_enable"].setChecked(bool(stat_en))
-                            ctrl["btn_enable"].setStyleSheet(COLOR_OK if stat_en else COLOR_BUTTON_STANDARD)
-
                         ctrl["btn_enable"].setEnabled(not comp_lockout)
                         ctrl["btn_enable"].setToolTip(
-                            f"Disabled: {comp_lock_reason}" if comp_lockout else f"Click to toggle {name} power output.")
+                            f"Disabled: {comp_lock_reason}" if comp_lockout
+                            else f"Click twice to switch {name} ON (confirm); once to switch it OFF.")
+                        # None = unknown (service down, supply not answering): shown as unknown,
+                        # never as the last known state
+                        ctrl["arm"].show_state(None if stat_en is None else bool(stat_en), COLOR_OK,
+                                               COLOR_BUTTON_STANDARD,
+                                               f"{name} output state unknown - no current data from its service.")
 
                 if name == "Thermionic" and "btn_auto" in ctrl:
                     auto_em_stat = data.get(f"{base_tag}.stat_auto_emission")

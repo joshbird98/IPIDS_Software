@@ -1,0 +1,47 @@
+{
+    "_comment": [
+        "Setpoint vs readback checks run by service_monitor. These are NOT faults: when a readback stays",
+        "outside its tolerance for delay_s, one TOLERANCE event is written to events.db (and another when it",
+        "comes back) and the HMI colours that readback amber. Nothing trips or stops.",
+        "Allowed deviation = max(abs_tol, rel_tol * |setpoint|), in the tags' own units (kV, A, mA, V, degC).",
+        "only_when: tag that must be 1 for the rule to apply (normally the output-enabled flag).",
+        "min_setpoint: ignore the rule while |setpoint| is below this. enabled: false switches a rule off.",
+        "Edit freely: the monitor reloads this file within a few seconds, no restart needed."
+    ],
+    "defaults": {
+        "delay_s": 5.0,
+        "abs_tol": 0.0,
+        "rel_tol": 0.05,
+        "min_setpoint": 0.0,
+        "enabled": true
+    },
+    "rules": [
+        {"name": "Source einzel voltage", "setpoint": "ion_beam.source.einzel.sp_actual_voltage",
+         "readback": "ion_beam.source.einzel.rb_voltage", "abs_tol": 0.1, "rel_tol": 0.02,
+         "only_when": "ion_beam.source.einzel.stat_enabled"},
+        {"name": "Extraction voltage", "setpoint": "ion_beam.source.extraction.sp_actual_voltage",
+         "readback": "ion_beam.source.extraction.rb_voltage", "abs_tol": 0.1, "rel_tol": 0.02,
+         "only_when": "ion_beam.source.extraction.stat_enabled"},
+        {"name": "Target voltage", "setpoint": "ion_beam.source.target.sp_actual_voltage",
+         "readback": "ion_beam.source.target.rb_voltage", "abs_tol": 0.1, "rel_tol": 0.02,
+         "only_when": "ion_beam.source.target.stat_enabled"},
+        {"name": "Filament current", "setpoint": "ion_beam.source.filament.sp_actual_current",
+         "readback": "ion_beam.source.filament.rb_current", "abs_tol": 0.2, "rel_tol": 0.05, "delay_s": 10.0,
+         "only_when": "ion_beam.source.filament.stat_enabled"},
+        {"name": "Thermionic current", "setpoint": "ion_beam.source.thermionic.sp_actual_current",
+         "readback": "ion_beam.source.thermionic.rb_current", "abs_tol": 5.0, "rel_tol": 0.10, "delay_s": 10.0,
+         "only_when": "ion_beam.source.thermionic.stat_enabled"},
+        {"name": "Analyser magnet current", "setpoint": "ion_beam.beamline.magnet.sp_actual_current",
+         "readback": "ion_beam.beamline.magnet.rb_current", "abs_tol": 0.05, "rel_tol": 0.01,
+         "only_when": "ion_beam.beamline.magnet.stat_enabled"},
+        {"name": "X steerer current", "setpoint": "ion_beam.beamline.steerer_magnet.sp_actual_current",
+         "readback": "ion_beam.beamline.steerer_magnet.rb_current", "abs_tol": 0.05, "rel_tol": 0.02,
+         "only_when": "ion_beam.beamline.steerer_magnet.stat_enabled"},
+        {"name": "Faraday cup bias", "setpoint": "ion_beam.beamline.faraday.smu.sp_actual_voltage",
+         "readback": "ion_beam.beamline.faraday.smu.rb_voltage", "abs_tol": 0.05, "rel_tol": 0.01,
+         "only_when": "ion_beam.beamline.faraday.smu.stat_enabled"},
+        {"name": "Cesium oven temperature", "setpoint": "ion_beam.source.cesium.sp_actual_temp",
+         "readback": "ion_beam.source.cesium.rb_temp", "abs_tol": 5.0, "rel_tol": 0.0, "delay_s": 900.0,
+         "only_when": "ion_beam.source.cesium.stat_enabled", "enabled": false}
+    ]
+}

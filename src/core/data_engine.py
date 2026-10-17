@@ -82,7 +82,8 @@ class TimeSeriesEngine:
             else:
                 names = glob.glob(os.path.join(self.data_root_dir, "**/*.parquet"), recursive=True)
             base = os.path.basename
-            self.cached_files["chunks"] = [f for f in names if base(f).startswith("chunk_")]
+            # (skip the logger's *_temp.parquet files: they are renamed into place once complete)
+            self.cached_files["chunks"] = [f for f in names if base(f).startswith("chunk_") and "_temp" not in base(f)]
             self.cached_files["days"] = [f for f in names if base(f).startswith("day_")]
             self.cached_files["raws"] = [f for f in names if f.endswith("_raw.parquet")]
             self.cached_files["macro_1m"] = [f for f in names if f.endswith("macro_1m.parquet")]
@@ -520,7 +521,7 @@ class TimeSeriesEngine:
         if match:
             try:
                 return datetime.strptime(match.group(1) + match.group(2), "%Y%m%d%H%M%S").timestamp()
-            except:
+            except ValueError:  # malformed date in a hand-renamed file
                 pass
         return 0
 

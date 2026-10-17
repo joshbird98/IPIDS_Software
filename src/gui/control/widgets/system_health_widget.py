@@ -32,6 +32,12 @@ class SystemHealthWidget(QWidget):
     def _dispatch_command(self, tag: str, value):
         self.cmd_thread.send_command("plc", tag, value)
 
+    def _reset_faults(self, *args):
+        # The PLC latches, plus the Spellman service's software arc latches (which previously
+        # could only be cleared by restarting that service: the reset only ever went to the PLC)
+        self.cmd_thread.send_command("plc", "ion_beam.system.cmd_fault_reset", True)
+        self.cmd_thread.send_command("spellman", "ion_beam.system.cmd_fault_reset", True)
+
     def _init_safety_ui(self):
         safety_group = QGroupBox("Master Safety && Sequence Control")
         sl = QGridLayout()
@@ -56,8 +62,7 @@ class SystemHealthWidget(QWidget):
 
         self.btn_reset_faults = QPushButton("RESET FAULTS")
         self.btn_reset_faults.setStyleSheet(COLOR_BUTTON_STANDARD)
-        self.btn_reset_faults.clicked.connect(
-            lambda *args: self._dispatch_command("ion_beam.system.cmd_fault_reset", True))
+        self.btn_reset_faults.clicked.connect(self._reset_faults)
 
         self.btn_shutdown = QPushButton("INITIATE SHUTDOWN")
         self.btn_shutdown.setStyleSheet("""

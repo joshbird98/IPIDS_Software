@@ -1,5 +1,6 @@
 {
-    "tick_rate_seconds": 0.050,
+    "tick_rate_seconds": 0.05,
     "flush_interval_seconds": 900.0,
+    "journal_interval_seconds": 5.0,
     "buffer_overhead_multiplier": 1.1
 }

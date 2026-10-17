@@ -6,6 +6,10 @@ import time
 # --- CONFIGURATION ---
 # Adjust these to match your actual network_map.py
 from src.core.network_map import ZMQ_PORT_VACUUM_PUB, ZMQ_PORT_VACUUM_CMD, TOPIC_VACUUM_DATA
+try:
+    from testing.cmd_helper import send as send_ack
+except ImportError:
+    from cmd_helper import send as send_ack
 
 
 def monitor_stream():
@@ -50,9 +54,7 @@ def monitor_stream():
 
 
 def main():
-    context = zmq.Context()
-    cmd_socket = context.socket(zmq.PUB)
-    cmd_socket.connect(ZMQ_PORT_VACUUM_CMD)
+    # Commands are acknowledged now (cmd_helper); the monitor thread below still subscribes
 
     # Start the background listener
     monitor_thread = threading.Thread(target=monitor_stream, daemon=True)
@@ -76,17 +78,8 @@ def main():
                 on_val = float(input("Enter Turn ON Pressure: "))
                 off_val = float(input("Enter Turn OFF Pressure: "))
 
-                payload = {
-                    "action": "set_relay",
-                    "node": 10,
-                    "relay": 1,
-                    "channel": 1,
-                    "on_val": on_val,
-                    "off_val": off_val
-                }
-
-                cmd_socket.send_json(payload)
-                print(f"[*] Command Sent: {payload}")
+                send_ack("ion_beam.vacuum.controller_10.relay_1_on", on_val, subsystem="vacuum")
+                send_ack("ion_beam.vacuum.controller_10.relay_1_off", off_val, subsystem="vacuum")
                 print("[*] Waiting for the round-robin queue to read it back...")
 
             except ValueError:

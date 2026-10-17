@@ -5,30 +5,18 @@ import sys
 
 # Import the command port from your project's network map
 from src.core.network_map import ZMQ_PORT_SPELLMAN_CMD
+try:
+    from testing.cmd_helper import send as send_ack
+except ImportError:
+    from cmd_helper import send as send_ack
 
 
 def run_commander():
-    context = zmq.Context()
-    cmd_socket = context.socket(zmq.PUB)
-
-    print(f"Connecting Commander to {ZMQ_PORT_SPELLMAN_CMD}...")
-    cmd_socket.connect(ZMQ_PORT_SPELLMAN_CMD)
-
-    # Prevent ZMQ "slow joiner" syndrome (messages sent during TCP handshake are dropped)
-    time.sleep(0.5)
-
-    # Change this if you need to control a different Spellman unit
-    target_device = "source_einzel"
+    # Change this if you need to control a different Spellman unit (tag prefix in the registry)
+    target_device = "ion_beam.source.einzel"
 
     def send_command(cmd_type: str, value: float):
-        tag = f"ion_beam.spellman.{target_device}.{cmd_type}"
-        payload = {
-            "tag": tag,
-            "value": value,
-            "ts": time.time()
-        }
-        cmd_socket.send_json(payload)
-        print(f"  -> Dispatched: {tag} = {value}")
+        send_ack(f"{target_device}.{cmd_type}", value, subsystem="spellman")
 
     print("\n=== SPELLMAN MPD COMMANDER ===")
     print(f"Targeting: {target_device}")
@@ -75,8 +63,7 @@ def run_commander():
     except KeyboardInterrupt:
         print("\nExiting commander...")
     finally:
-        cmd_socket.close()
-        context.term()
+        pass
 
 
 if __name__ == "__main__":

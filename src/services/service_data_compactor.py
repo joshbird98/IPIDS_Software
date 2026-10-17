@@ -1,21 +1,27 @@
+import logging
 import os
-import time
-import glob
-import zmq
 import re
 import shutil
 import sqlite3
-import polars as pl
-from pathlib import Path
+import time
 from datetime import datetime
-from src.core.network_map import ZMQ_PORT_HEARTBEAT, ZMQ_PORT_EVENTS_PUB
+from pathlib import Path
+
+import polars as pl
+import zmq
+
+from src.core import paths
+from src.core.log_setup import setup_logging
+from src.core.network_map import ZMQ_PORT_HEARTBEAT
 from src.core.os_helper import harden_windows_process
 
 # --- CONFIGURATION ---
-DATA_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), '../../data/parquet_logs'))
-DAILY_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), '../../data/daily_logs'))
-DB_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), '../../data/events.db'))
-EXPORTS_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), '../../data/exports'))
+DATA_DIR = paths.PARQUET_DIR
+DAILY_DIR = paths.DAILY_DIR
+DB_PATH = paths.EVENTS_DB
+EXPORTS_DIR = paths.EXPORTS_DIR
+
+log = logging.getLogger("service_data_compactor")
 
 COMPACTION_TIME = "02:00"  # 24-hour format
 
@@ -39,10 +45,10 @@ class OneDriveArchiver:
         Preserves relative directory structure if recursive is True.
         """
         if not self.local_dir.exists():
-            print(f"[Archiver] Error: Local directory not found: {self.local_dir}")
+            log.error(f"Local directory not found: {self.local_dir}")
             return False
 
-        print(f"[Archiver] Scanning {self.local_dir} for missing or updated backups...")
+        log.info(f"Scanning {self.local_dir} for missing or updated backups...")
         success = True
         sync_count = 0
 
@@ -62,13 +68,13 @@ class OneDriveArchiver:
             try:
                 # Condition A: File does not exist in OneDrive -> Copy
                 if not cloud_file.exists():
-                    print(f"[Archiver] Backing up new file: {relative_path}")
+                    log.info(f"Backing up new file: {relative_path}")
                     shutil.copy2(local_file, cloud_file)
                     sync_count += 1
 
                 # Condition C: File exists, but local is newer -> Archive & Replace
                 elif local_file.stat().st_mtime > cloud_file.stat().st_mtime:
-                    print(f"[Archiver] Modification detected for {relative_path}. Archiving old version.")
+                    log.info(f"Modification detected for {relative_path}. Archiving old version.")
 
                     timestamp = time.strftime("%Y%m%d_%H%M%S")
                     archive_name = f"{cloud_file.stem}_{timestamp}{cloud_file.suffix}"
@@ -79,10 +85,10 @@ class OneDriveArchiver:
                     sync_count += 1
 
             except Exception as e:
-                print(f"[Archiver] Failed to sync {relative_path}: {e}")
+                log.error(f"Failed to sync {relative_path}: {e}")
                 success = False
 
-        print(f"[Archiver] Backup scan complete. Synced {sync_count} files.")
+        log.info(f"Backup scan complete. Synced {sync_count} files.")
         return success
 
     def sync_database(self, local_db_path: str) -> bool:
@@ -91,7 +97,7 @@ class OneDriveArchiver:
         """
         db_file = Path(local_db_path)
         if not db_file.exists():
-            print(f"[Archiver] Database not found: {db_file}")
+            log.error(f"Database not found: {db_file}")
             return False
 
         cloud_file = self.onedrive_dir / db_file.name
@@ -99,13 +105,13 @@ class OneDriveArchiver:
         try:
             # Check if an archive is necessary
             if cloud_file.exists() and db_file.stat().st_mtime > cloud_file.stat().st_mtime:
-                print(f"[Archiver] Modification detected for {db_file.name}. Archiving old version.")
+                log.info(f"Modification detected for {db_file.name}. Archiving old version.")
                 timestamp = time.strftime("%Y%m%d_%H%M%S")
                 archive_name = f"{cloud_file.stem}_{timestamp}{cloud_file.suffix}"
                 archive_path = self.archive_dir / archive_name
                 shutil.move(str(cloud_file), str(archive_path))
 
-            print(f"[Archiver] Safely snapshotting live database: {db_file.name}...")
+            log.info(f"Snapshotting live database: {db_file.name}...")
             temp_cloud_db = cloud_file.with_suffix('.db.tmp')
 
             # 1. Open connections
@@ -122,16 +128,17 @@ class OneDriveArchiver:
 
             # Now that Python has released the lock, we can safely swap the files
             os.replace(temp_cloud_db, cloud_file)
-            print(f"[Archiver] Database snapshot successfully backed up.")
+            log.info("Database snapshot backed up.")
             return True
 
         except Exception as e:
-            print(f"[Archiver] Failed to sync database {db_file.name}: {e}")
+            log.error(f"Failed to sync database {db_file.name}: {e}")
             return False
 
 
 class DataCompactor:
     def __init__(self):
+        os.makedirs(DATA_DIR, exist_ok=True)
         os.makedirs(DAILY_DIR, exist_ok=True)
         os.makedirs(EXPORTS_DIR, exist_ok=True)
 
@@ -151,9 +158,9 @@ class DataCompactor:
                     dead_file = os.path.join(DATA_DIR, f)
                     try:
                         os.remove(dead_file)
-                        print(f"[Compactor] Deleted orphaned temporary file: {f}")
-                    except OSError:
-                        pass
+                        log.info(f"Deleted orphaned temporary file: {f}")
+                    except OSError as e:
+                        log.warning(f"Could not delete orphaned temporary file {f}: {e}")
 
         # 2. List all valid chunk files (Explicitly excluding any active temp files)
         all_chunks = [f for f in os.listdir(DATA_DIR)
@@ -179,10 +186,18 @@ class DataCompactor:
             output_file = os.path.join(DAILY_DIR, f"day_{d_str}.parquet")
 
             try:
-                print(f"[Compactor] Processing {d_str} ({len(fragments)} fragments)...")
+                log.info(f"Processing {d_str} ({len(fragments)} fragments)...")
 
                 lfs = [pl.scan_parquet(f) for f in fragments]
-                df = pl.concat(lfs, how="diagonal").sort("timestamp")
+                if os.path.exists(output_file):
+                    # Late fragments for a day that was already compacted (e.g. rows recovered
+                    # from the logger's crash journal after a restart): MERGE with the existing
+                    # day file. Writing only the new fragments would replace the whole day.
+                    log.warning(f"day_{d_str}.parquet already exists - merging {len(fragments)} late fragment(s) into it")
+                    lfs.insert(0, pl.scan_parquet(output_file))
+                df = (pl.concat(lfs, how="diagonal_relaxed")
+                      .unique(subset=["timestamp"], keep="first", maintain_order=True)
+                      .sort("timestamp"))
 
                 # 1. Collect into RAM ONCE
                 daily_df = df.collect()
@@ -201,12 +216,12 @@ class DataCompactor:
                 for f in fragments:
                     try:
                         os.remove(f)
-                    except OSError:
-                        pass
-                print(f"[Compactor] Finished {d_str}.")
+                    except OSError as e:
+                        log.warning(f"Could not delete compacted fragment {f}: {e} (it will be merged again, harmlessly)")
+                log.info(f"Finished {d_str}.")
 
             except Exception as e:
-                print(f"[Compactor] Error on date {d_str}: {e}")
+                log.exception(f"Error on date {d_str}: {e}")
 
     def generate_macro_rollups(self, df: pl.DataFrame, base_filename: str, output_dir: str):
         """
@@ -222,7 +237,7 @@ class DataCompactor:
         }
 
         for suffix, window_sec in tiers.items():
-            print(f"Generating {suffix} rollup...")
+            log.info(f"Generating {suffix} rollup...")
 
             lf = df.lazy().with_columns(
                 (pl.col("timestamp") / window_sec).floor().alias("bin")
@@ -245,45 +260,59 @@ class DataCompactor:
             macro_df.write_parquet(temp_path)
             os.replace(temp_path, out_path)
 
-            print(f"Saved {out_path} ({len(macro_df)} rows)")
+            log.info(f"Saved {out_path} ({len(macro_df)} rows)")
+
+    def _nightly_job(self):
+        try:
+            self.compact_all_past_dates()
+        except Exception:
+            log.exception("Compaction failed")
+
+        if paths.simulation_enabled():
+            log.info("Simulation mode: skipping the OneDrive backup.")
+            return
+
+        # --- Backup Sequence ---
+        try:
+            log.info("Initiating OneDrive backup sequence...")
+
+            # 1. Daily Logs & DB
+            archiver = OneDriveArchiver(local_dir=DAILY_DIR, onedrive_dir=ONEDRIVE_PATH)
+            archiver.sync_files(file_pattern="*.parquet", recursive=False)
+            archiver.sync_database(DB_PATH)
+
+            # 2. Exports Directory (Recursive Sync)
+            exports_onedrive_path = os.path.join(ONEDRIVE_PATH, "exports")
+            exports_archiver = OneDriveArchiver(local_dir=EXPORTS_DIR, onedrive_dir=exports_onedrive_path)
+            exports_archiver.sync_files(file_pattern="*", recursive=True)
+
+        except Exception as e:
+            log.exception(f"Backup sequence failed: {e}")
 
     def run(self):
-        print(f"[Compactor] Service Online. Scheduled for {COMPACTION_TIME} daily.")
+        import threading
+        log.info(f"Service online. Compaction scheduled for {COMPACTION_TIME} daily ({DATA_DIR} -> {DAILY_DIR}).")
+        job = None
+        last_run_day = None
 
         while True:
             now = datetime.now()
-            current_time_str = now.strftime("%H:%M")
 
-            # Heartbeat (so service_manager knows we are alive)
+            # Heartbeat (so service_manager knows we are alive). The nightly job runs in a
+            # thread so the heartbeat keeps going however long a big day takes to compact.
             self.hb_socket.send_json({"service": "service_data_compactor", "ts": time.time()})
 
-            if current_time_str == COMPACTION_TIME:
-                self.compact_all_past_dates()
+            if now.strftime("%H:%M") == COMPACTION_TIME and last_run_day != now.date() \
+                    and (job is None or not job.is_alive()):
+                last_run_day = now.date()
+                job = threading.Thread(target=self._nightly_job, name="nightly-compaction", daemon=True)
+                job.start()
 
-                # --- Backup Sequence ---
-                try:
-                    print("[Compactor] Initiating OneDrive Backup Sequence...")
-
-                    # 1. Daily Logs & DB
-                    archiver = OneDriveArchiver(local_dir=DAILY_DIR, onedrive_dir=ONEDRIVE_PATH)
-                    archiver.sync_files(file_pattern="*.parquet", recursive=False)
-                    archiver.sync_database(DB_PATH)
-
-                    # 2. Exports Directory (Recursive Sync)
-                    exports_onedrive_path = os.path.join(ONEDRIVE_PATH, "exports")
-                    exports_archiver = OneDriveArchiver(local_dir=EXPORTS_DIR, onedrive_dir=exports_onedrive_path)
-                    exports_archiver.sync_files(file_pattern="*", recursive=True)
-
-                except Exception as e:
-                    print(f"[Compactor] FATAL ERROR during backup sequence: {e}")
-
-                # Sleep for 70 seconds to ensure we don't trigger twice in the same minute
-                time.sleep(70)
-
-            time.sleep(10)
+            time.sleep(5)
 
 
 if __name__ == "__main__":
+    setup_logging("service_data_compactor")
     harden_windows_process()
     compactor = DataCompactor()
     compactor.run()

@@ -60,10 +60,6 @@ class RecipeExecutionWidget(QWidget):
         file_layout.addWidget(self.btn_refresh)
         file_layout.addWidget(self.btn_load)
         file_layout.addWidget(self.btn_edit)
-
-        file_layout.addWidget(self.cb_recipes, stretch=1)
-        file_layout.addWidget(self.btn_refresh)
-        file_layout.addWidget(self.btn_load)
         layout.addLayout(file_layout)
 
         # 2. Master Controls
@@ -73,7 +69,9 @@ class RecipeExecutionWidget(QWidget):
         self.btn_start.clicked.connect(self._start_recipe)
         self.btn_pause = QPushButton("⏸ PAUSE")
         self.btn_pause.clicked.connect(self._pause_recipe)
-        self.btn_abort = QPushButton("⏹ ABORT")
+        # STOP only stops stepping through the recipe; it does not switch anything off or revert
+        # setpoints (outputs stay as the completed steps left them).
+        self.btn_abort = QPushButton("⏹ STOP")
         self.btn_abort.clicked.connect(self._abort_recipe)
 
         ctrl_layout.addWidget(self.btn_start)
@@ -135,12 +133,14 @@ class RecipeExecutionWidget(QWidget):
                 reply = QMessageBox.warning(
                     self,
                     "Verification Failed",
-                    "The hardware conditions required to proceed have not been met.\n\nPlease verify your physical actions, then press Retry. Or press Abort to cancel the sequence.",
+                    "The hardware conditions required to proceed have not been met (or their readings are "
+                    "not live).\n\nPlease verify your physical actions, then press Retry. Or press Abort to "
+                    "stop the recipe here (nothing is switched off).",
                     QMessageBox.StandardButton.Retry | QMessageBox.StandardButton.Abort
                 )
 
                 if reply == QMessageBox.StandardButton.Abort:
-                    self.worker.abort()
+                    self.worker.stop()
                     break  # Break loop, engine will halt
 
     def _on_sequence_changed(self, breadcrumb_name: str):
@@ -198,7 +198,8 @@ class RecipeExecutionWidget(QWidget):
             self.btn_abort.setStyleSheet(COLOR_FAULT)
             self.btn_pause.setText("⏸ PAUSE")
             self.btn_pause.setToolTip("Suspend execution and freeze all timers.")
-            self.btn_abort.setToolTip("Halt the recipe immediately and revert hardware to manual mode.")
+            self.btn_abort.setToolTip("Stop stepping through the recipe now. Nothing is switched off or reverted: "
+                                      "outputs stay as the completed steps left them.")
 
         elif state == "PAUSED":
             self.btn_start.setEnabled(True)
@@ -226,7 +227,7 @@ class RecipeExecutionWidget(QWidget):
         if not self.btn_pause.isEnabled():
             self.btn_pause.setToolTip("Pause is only available while a recipe is running.")
         if not self.btn_abort.isEnabled():
-            self.btn_abort.setToolTip("Abort is only available while a recipe is running.")
+            self.btn_abort.setToolTip("Stop is only available while a recipe is running.")
 
     def _abort_recipe(self):
         # FIX: Immediately provide UI feedback that the button was clicked
@@ -234,7 +235,7 @@ class RecipeExecutionWidget(QWidget):
         self.btn_pause.setEnabled(False)
         self.btn_abort.setStyleSheet(COLOR_INACTIVE)
         self.btn_pause.setStyleSheet(COLOR_INACTIVE)
-        self.worker.abort()
+        self.worker.stop()
 
     def _populate_recipes(self):
         self.cb_recipes.clear()
@@ -295,8 +296,8 @@ class RecipeExecutionWidget(QWidget):
             self.lbl_status.setStyleSheet(COLOR_OK)
         elif status == "PAUSED":
             self.lbl_status.setStyleSheet(COLOR_WARNING)
-        elif "ABORT" in status:
-            self.lbl_status.setStyleSheet(COLOR_FAULT)
+        elif "STOP" in status or "ABORT" in status:
+            self.lbl_status.setStyleSheet(COLOR_WARNING)
 
     def _on_step_started(self, step_id: int, message: str):
         # Clear old highlights and set the active row to blue

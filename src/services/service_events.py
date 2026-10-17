@@ -1,33 +1,54 @@
-import sqlite3
+import logging
 import os
-import zmq
-import orjson
+import sqlite3
 import time
+
+import orjson
+import zmq
+
+from src.core import paths
+from src.core.log_setup import Throttle, setup_logging
 from src.core.network_map import ZMQ_PORT_EVENTS_SUB, ZMQ_PORT_HEARTBEAT
 from src.core.os_helper import harden_windows_process
 
 # --- CONFIGURATION ---
-DB_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), '../../data/events.db'))
+DB_PATH = paths.EVENTS_DB
+
+log = logging.getLogger("service_events")
 
 
 class EventLogger:
-    def __init__(self):
-        os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
-        self._init_db()
+    """Writes every published event to data/events.db.
+
+    One long-lived connection in WAL mode: readers (the viewer, exports, the nightly
+    backup) never block the writer, and everything that arrived in the same poll is
+    inserted in one transaction - the command audit trail can add tens of rows per
+    second while the optimiser or a mass scan is running.
+    """
+
+    def __init__(self, db_path: str = None):
+        self.db_path = db_path or DB_PATH
+        os.makedirs(os.path.dirname(self.db_path), exist_ok=True)
+        self.conn = None
+        self._open_db()
 
         self.context = zmq.Context()
         # Subscribe to all events
         self.sub_socket = self.context.socket(zmq.SUB)
+        self.sub_socket.setsockopt(zmq.RCVHWM, 100000)
         self.sub_socket.bind(ZMQ_PORT_EVENTS_SUB)
         self.sub_socket.setsockopt_string(zmq.SUBSCRIBE, "")
 
         self.hb_socket = self.context.socket(zmq.PUB)
         self.hb_socket.connect(ZMQ_PORT_HEARTBEAT)
+        self._throttle = Throttle(60.0)
+        self.running = True
 
-    def _init_db(self):
-        """Creates the events table if it doesn't exist."""
-        conn = sqlite3.connect(DB_PATH)
-        cursor = conn.cursor()
+    def _open_db(self):
+        self.conn = sqlite3.connect(self.db_path, timeout=5.0)
+        cursor = self.conn.cursor()
+        cursor.execute("PRAGMA journal_mode=WAL")
+        cursor.execute("PRAGMA synchronous=NORMAL")
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS events (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -41,78 +62,95 @@ class EventLogger:
         ''')
         # Indexing timestamp for fast GUI queries later
         cursor.execute('CREATE INDEX IF NOT EXISTS idx_timestamp ON events(timestamp)')
-        conn.commit()
-        conn.close()
+        # Filtering by type (e.g. hiding the COMMAND audit trail) without scanning everything
+        cursor.execute('CREATE INDEX IF NOT EXISTS idx_type_timestamp ON events(event_type, timestamp)')
+        self.conn.commit()
 
-    def handle_event(self, payload: dict):
-        try:
-            conn = sqlite3.connect(DB_PATH)
-            cursor = conn.cursor()
-
+    def handle_events(self, payloads):
+        """Write a batch of events in one transaction. Returns the number written."""
+        rows = []
+        deletes = []
+        for payload in payloads:
             if payload.get("type") == "DELETE_MARKER":
-                target_ts = float(payload.get("ts"))
+                try:
+                    deletes.append(float(payload.get("ts")))
+                except (TypeError, ValueError):
+                    log.warning("DELETE_MARKER without a valid timestamp: %r", payload)
+                continue
+            rows.append((
+                payload.get("ts", time.time()),
+                payload.get("service", "unknown"),
+                payload.get("severity", "INFO"),
+                payload.get("type", "GENERAL"),
+                payload.get("message", ""),
+                orjson.dumps(payload.get("metadata", {}), default=str).decode(),
+            ))
+        if not rows and not deletes:
+            return 0
+        try:
+            with self.conn:
+                if rows:
+                    self.conn.executemany('''
+                        INSERT INTO events (timestamp, service, severity, event_type, message, metadata)
+                        VALUES (?, ?, ?, ?, ?, ?)
+                    ''', rows)
+                for target_ts in deletes:
+                    # Using an epsilon window of 0.002 seconds to catch float rounding errors
+                    cur = self.conn.execute(
+                        "DELETE FROM events WHERE abs(timestamp - ?) < 0.002 AND event_type = 'USER_MARKER'",
+                        (target_ts,))
+                    log.info("Delete requested for marker at %.3f: %d row(s) deleted", target_ts, cur.rowcount)
+            return len(rows)
+        except sqlite3.Error as e:
+            if (n := self._throttle.ready("db")) is not None:
+                log.error("DB error, %d event(s) lost: %s%s", len(rows), e, Throttle.suffix(n))
+            # Reopen in case the handle is broken (disk unplugged, file replaced, ...)
+            try:
+                self.conn.close()
+            except sqlite3.Error:
+                pass
+            try:
+                self._open_db()
+            except sqlite3.Error as e2:
+                log.error("Cannot reopen %s: %s", self.db_path, e2)
+            return 0
 
-                # Using an epsilon window of 0.002 seconds to catch float rounding errors
-                cursor.execute(
-                    """
-                    DELETE FROM events 
-                    WHERE abs(timestamp - ?) < 0.002 
-                    AND event_type = 'USER_MARKER'
-                    """,
-                    (target_ts,)
-                )
-
-                # Diagnostic feedback so you know it actually worked
-                deleted_count = cursor.rowcount
-                print(f"[Event Logger] Delete requested for {target_ts:.3f}. Rows deleted: {deleted_count}")
-
-                conn.commit()
-                conn.close()
-
-            else:
-                # Serialize metadata dict to string if it exists
-                meta = orjson.dumps(payload.get("metadata", {})).decode()
-
-                cursor.execute('''
-                    INSERT INTO events (timestamp, service, severity, event_type, message, metadata)
-                    VALUES (?, ?, ?, ?, ?, ?)
-                ''', (
-                    payload.get("ts", time.time()),
-                    payload.get("service", "unknown"),
-                    payload.get("severity", "INFO"),
-                    payload.get("type", "GENERAL"),
-                    payload.get("message", ""),
-                    meta
-                ))
-                conn.commit()
-                conn.close()
-
-        except Exception as e:
-            print(f"[Event Logger] DB Error: {e}")
+    # Kept for anything that still calls the single-event API
+    def handle_event(self, payload: dict):
+        return self.handle_events([payload])
 
     def run(self):
-        print(f"[Event Logger] Service Online. Listening for events on {ZMQ_PORT_EVENTS_SUB}")
+        log.info("Service online. Listening for events on %s, writing %s", ZMQ_PORT_EVENTS_SUB, self.db_path)
         last_hb = 0
 
-        while True:
-            try:
-                # Non-blocking check for new events
-                if self.sub_socket.poll(timeout=100):
-                    topic, msg = self.sub_socket.recv_multipart()
-                    payload = orjson.loads(msg)
+        while self.running:
+            batch = []
+            if self.sub_socket.poll(timeout=100):
+                while len(batch) < 5000:
+                    try:
+                        topic, msg = self.sub_socket.recv_multipart(zmq.NOBLOCK)
+                    except zmq.Again:
+                        break
+                    except ValueError:
+                        continue  # wrong frame count
+                    try:
+                        batch.append(orjson.loads(msg))
+                    except ValueError:
+                        log.warning("Unreadable event dropped: %r", msg[:200])
+            if batch:
+                self.handle_events(batch)
 
-                    self.handle_event(payload)
+            # 2Hz Heartbeat
+            if time.time() - last_hb > 0.5:
+                self.hb_socket.send_json({"service": "service_events", "ts": time.time()})
+                last_hb = time.time()
 
-                # 2Hz Heartbeat
-                if time.time() - last_hb > 0.5:
-                    self.hb_socket.send_json({"service": "service_events", "ts": time.time()})
-                    last_hb = time.time()
-
-            except Exception as e:
-                print(f"[Event Logger] Loop Error: {e}")
-                time.sleep(1)
+        self.conn.close()
+        self.sub_socket.close(0)
+        self.hb_socket.close(0)
 
 
 if __name__ == "__main__":
+    setup_logging("service_events")
     harden_windows_process()
     EventLogger().run()

@@ -1,6 +1,32 @@
+import logging
 import time
+
 import numpy as np
 from scipy.signal import find_peaks
+
+from src.core.commands import describe, route_for_tag
+from src.core.telemetry_cache import fresh_value
+
+log = logging.getLogger("routines")
+
+STALE_HOLD_FAIL_S = 30.0   # a routine waiting on a value with no live data fails after this long
+
+
+def send(cmd_thread, target, value):
+    """Route and send one automation command; returns its ticket (None with an old-style cmd_thread)."""
+    return cmd_thread.send_command(route_for_tag(target), target, value, origin="recipe")
+
+
+def ticket_outcome(ticket):
+    """None while waiting; (True, '') or (False, reason) once the service has answered."""
+    if ticket is None or not hasattr(ticket, "done"):
+        return True, ""
+    if not ticket.done():
+        return None
+    if ticket.ok:
+        return True, ""
+    return False, describe(ticket.result)
+
 
 def evaluate_condition(current_val, condition_str, target_val) -> bool:
     if current_val is None: return False
@@ -20,6 +46,8 @@ class BaseRoutine:
     def __init__(self, parameters: dict):
         self.parameters = parameters
         self.state = "INIT"
+        self.fail_reason = ""
+        self._tickets = []
 
     def tick(self, telemetry_cache: dict, cmd_thread) -> str:
         """Called at 20Hz by the RecipeWorker. Must return RUNNING, DONE, or FAILED."""
@@ -30,14 +58,32 @@ class BaseRoutine:
         pass
 
     def _send_cmd(self, cmd_thread, target: str, value: float):
-        """Helper to route commands to the correct microservice."""
-        if "spellman" in target or "einzel" in target or "neutral_trap" in target:
-            subsystem = "spellman"
-        elif "magnet" in target:
-            subsystem = "magnet"
-        else:
-            subsystem = "plc"
-        cmd_thread.send_command(subsystem, target, value)
+        """Route by the tag registry and remember the ticket so a refusal fails the routine."""
+        ticket = send(cmd_thread, target, value)
+        if ticket is not None and hasattr(ticket, "done"):
+            self._tickets.append(ticket)
+        return ticket
+
+    def _command_failure(self):
+        """Reason of the first refused/failed command since the last check, else None."""
+        for t in list(self._tickets):
+            outcome = ticket_outcome(t)
+            if outcome is None:
+                continue
+            self._tickets.remove(t)
+            if not outcome[0]:
+                return outcome[1]
+        return None
+
+    def _fail(self, reason: str) -> str:
+        self.fail_reason = reason
+        log.warning("%s failed: %s", type(self).__name__, reason)
+        return "FAILED"
+
+    @staticmethod
+    def _get(telemetry, tag):
+        """Live value only - None if the tag's service is silent or the value is unknown."""
+        return fresh_value(telemetry, tag)
 
 
 class MassScanRoutine(BaseRoutine):
@@ -63,6 +109,10 @@ class MassScanRoutine(BaseRoutine):
         self.data_y = []
 
     def tick(self, telemetry_cache: dict, cmd_thread) -> str:
+        bad = self._command_failure()
+        if bad:
+            return self._fail(bad)
+
         if self.state == "INIT":
             self.current_val = self.start_val
             self._send_cmd(cmd_thread, self.sp_target, self.current_val)
@@ -76,8 +126,11 @@ class MassScanRoutine(BaseRoutine):
             return "RUNNING"
 
         elif self.state == "MEASURE":
-            # Record current data point
-            measurement = float(telemetry_cache.get(self.rb_target, 0.0))
+            # Record current data point (a stale reading would silently corrupt the scan)
+            measurement = self._get(telemetry_cache, self.rb_target)
+            if measurement is None:
+                return self._fail(f"no live value for {self.rb_target} during the scan")
+            measurement = float(measurement)
             self.data_x.append(self.current_val)
             self.data_y.append(measurement)
 
@@ -109,16 +162,16 @@ class MassScanRoutine(BaseRoutine):
                     best_peak_idx = peaks[np.argmax(properties["prominences"])]
                     optimal_mass = x_array[best_peak_idx]
 
-                    print(f"[ROUTINE] Mass Scan complete. Optimal mass found at: {optimal_mass}")
+                    log.info("Mass scan complete. Optimal value found at %s", optimal_mass)
                     self._send_cmd(cmd_thread, self.sp_target, optimal_mass)
                 else:
-                    print("[ROUTINE] Mass Scan complete. No distinct peaks found. Reverting to start value.")
+                    log.info("Mass scan complete. No distinct peaks found. Reverting to start value.")
                     self._send_cmd(cmd_thread, self.sp_target, self.start_val)
 
                 return "DONE"
-            except Exception as e:
-                print(f"[ROUTINE ERROR] Analysis failed: {e}")
-                return "FAILED"
+            except (ValueError, IndexError) as e:
+                log.exception("Mass scan analysis failed")
+                return self._fail(f"peak analysis failed: {e}")
 
         return "RUNNING"
 
@@ -156,14 +209,18 @@ class SafetyRelayRoutine(BaseRoutine):
         self.prompt_text = ""
 
     def tick(self, telemetry_cache: dict, cmd_thread) -> str:
+        bad = self._command_failure()
+        if bad:
+            return self._fail(bad)
+
         if self.state == "INIT":
-            if evaluate_condition(telemetry_cache.get(self.rb_relay), "==", 1.0):
+            if evaluate_condition(self._get(telemetry_cache, self.rb_relay), "==", 1.0):
                 return "DONE"
             self.state = "CHECK_GV_STATE"
             return "RUNNING"
 
         elif self.state == "CHECK_GV_STATE":
-            gv_is_open = evaluate_condition(telemetry_cache.get(self.gv_stat_open), "==", 1.0)
+            gv_is_open = evaluate_condition(self._get(telemetry_cache, self.gv_stat_open), "==", 1.0)
 
             if gv_is_open:
                 self.state = "CHECK_PERMISSIVES"
@@ -176,7 +233,7 @@ class SafetyRelayRoutine(BaseRoutine):
             return "RUNNING"
 
         elif self.state == "ATTEMPT_GV_OPEN":
-            permissive = evaluate_condition(telemetry_cache.get(self.gv_open_perm), "==", 1.0)
+            permissive = evaluate_condition(self._get(telemetry_cache, self.gv_open_perm), "==", 1.0)
             if not permissive:
                 self.prompt_text = "Gate Valve cannot be opened: Permissive is FALSE. Resolve vacuum/gauge fault, then click OK to retry."
                 self.next_state = "CHECK_GV_STATE"
@@ -189,7 +246,7 @@ class SafetyRelayRoutine(BaseRoutine):
             return "RUNNING"
 
         elif self.state == "WAIT_GV":
-            if evaluate_condition(telemetry_cache.get(self.gv_stat_open), "==", 1.0):
+            if evaluate_condition(self._get(telemetry_cache, self.gv_stat_open), "==", 1.0):
                 self.state = "CHECK_PERMISSIVES"
                 return "RUNNING"
             if time.time() - self.timer_start > self.gv_timeout_sec:
@@ -200,7 +257,7 @@ class SafetyRelayRoutine(BaseRoutine):
             return "RUNNING"
 
         elif self.state == "CHECK_PERMISSIVES":
-            gv_is_open = evaluate_condition(telemetry_cache.get(self.gv_stat_open), "==", 1.0)
+            gv_is_open = evaluate_condition(self._get(telemetry_cache, self.gv_stat_open), "==", 1.0)
 
             if not gv_is_open:
                 self.prompt_text = "Gate Valve is not fully open. Please remedy this and click OK to re-evaluate."
@@ -225,17 +282,16 @@ class SafetyRelayRoutine(BaseRoutine):
 
 
         elif self.state == "WAIT_PHYSICAL":
-            if evaluate_condition(telemetry_cache.get(self.rb_relay), "==", 1.0):
+            if evaluate_condition(self._get(telemetry_cache, self.rb_relay), "==", 1.0):
                 # Relay is active, start the stabilization countdown instead of finishing
-                print("[ROUTINE] Relay active. Stabilizing communications for 15s...")
+                log.info("Relay active. Stabilising communications for %.0f s...", self.stabilization_sec)
                 self.timer_start = time.time()
                 self.state = "WAIT_POST_RELAY_STABILIZATION"
                 return "RUNNING"
 
             if time.time() - self.timer_start > self.timeout_sec:
-                print("[ROUTINE] Safety Relay timeout: Physical button not pressed.")
                 self._send_cmd(cmd_thread, self.cmd_virtual, 0.0)
-                return "FAILED"
+                return self._fail("safety relay did not energise: physical PANEL START not pressed in time")
             return "RUNNING"
 
         elif self.state == "WAIT_POST_RELAY_STABILIZATION":
@@ -280,20 +336,39 @@ class HVConditioningRoutine(BaseRoutine):
         self.state = "INIT"
         self.arc_count = 0
         self.arc_cooldown_start = 0.0
+        self.unknown_since = None
 
     def tick(self, telemetry_cache: dict, cmd_thread) -> str:
+        bad = self._command_failure()
+        if bad:
+            return self._fail(bad)
+
+        # 0. Never ramp blind: if the pressure or arc signal has no live value (vacuum or PLC
+        #    service down), hold the setpoint where it is, and give up if it stays unknown.
+        watched = [t for t in (self.pressure_tag, self.arc_mode_tag) if t]
+        missing = [t for t in watched if self._get(telemetry_cache, t) is None]
+        if missing:
+            if self.unknown_since is None:
+                self.unknown_since = time.time()
+                log.warning("HV conditioning holding at %.3f: no live value for %s", self.current_sp, missing)
+            elif time.time() - self.unknown_since > STALE_HOLD_FAIL_S:
+                return self._fail(f"no live value for {', '.join(missing)} for {STALE_HOLD_FAIL_S:.0f} s")
+            if self.state == "HOLD":
+                self.timer_start = time.time()   # the hold only counts while we can see the pressure
+            return "RUNNING"
+        self.unknown_since = None
+
         # 1. Continuous Safety Checks (Priority Overrides)
 
         # Arc Detection
         # NOTE: Relying strictly on the PLC arc quench flag here. Calculating dI/dt and dV/dt
         # purely in software over a 20Hz polling loop is highly susceptible to aliasing and network jitter.
         # Please manually verify if a pure software threshold calculation is strictly required over the PLC flag.
-        if self.arc_mode_tag and evaluate_condition(telemetry_cache.get(self.arc_mode_tag), "==", 1.0):
+        if self.arc_mode_tag and evaluate_condition(self._get(telemetry_cache, self.arc_mode_tag), "==", 1.0):
             if self.state != "ARC_RECOVERY":
                 self.arc_count += 1
                 if self.arc_count > self.max_arcs:
-                    print(f"[HV_COND] Aborted: Exceeded max arcs ({self.max_arcs}).")
-                    return "FAILED"
+                    return self._fail(f"exceeded the maximum of {self.max_arcs} arcs")
 
                 self.current_sp = max(0.0, self.current_sp - self.backoff_step)
                 self._send_cmd(cmd_thread, self.cmd_tag, self.current_sp)
@@ -303,26 +378,28 @@ class HVConditioningRoutine(BaseRoutine):
 
         # Pressure Check
         if self.pressure_tag and self.state not in ["PAUSE_PRESSURE", "ARC_RECOVERY"]:
-            press = telemetry_cache.get(self.pressure_tag)
+            press = self._get(telemetry_cache, self.pressure_tag)
             if press is not None and float(press) > self.pressure_max:
                 self.state = "PAUSE_PRESSURE"
         #
         # 2. State Machine
         if self.state == "INIT":
-            start_val = telemetry_cache.get(self.rb_tag)
-            self.current_sp = float(start_val) if start_val is not None else 0.0
+            start_val = self._get(telemetry_cache, self.rb_tag)
+            if start_val is None:
+                return self._fail(f"no live readback {self.rb_tag} to start the ramp from")
+            self.current_sp = float(start_val)
             self.state = "RAMP"
             return "RUNNING"
 
         elif self.state == "ARC_RECOVERY":
             if time.time() - self.arc_cooldown_start > self.arc_cooldown_sec:
-                if not evaluate_condition(telemetry_cache.get(self.arc_mode_tag), "==", 1.0):
+                if not evaluate_condition(self._get(telemetry_cache, self.arc_mode_tag), "==", 1.0):
                     self.timer_start = time.time()
                     self.state = "HOLD"
             return "RUNNING"
 
         elif self.state == "PAUSE_PRESSURE":
-            press = telemetry_cache.get(self.pressure_tag)
+            press = self._get(telemetry_cache, self.pressure_tag)
             if press is not None and float(press) < self.pressure_recover:
                 self.timer_start = time.time()  # Reset hold timer to ensure thermal stability
                 self.state = "HOLD"
@@ -374,15 +451,18 @@ class PSUControlRoutine(BaseRoutine):
         self.state = "INIT"
 
     def tick(self, telemetry_cache: dict, cmd_thread) -> str:
+        bad = self._command_failure()
+        if bad:
+            return self._fail(bad)
+
         if self.state == "INIT":
             # 1. Check Safety Relay if required
             if self.requires_relay:
-                if not evaluate_condition(telemetry_cache.get(self.rb_relay), "==", 1.0):
-                    print(f"[PSU] Aborted: Safety relay is not active for {self.sp_tag}")
-                    return "FAILED"
+                if not evaluate_condition(self._get(telemetry_cache, self.rb_relay), "==", 1.0):
+                    return self._fail(f"safety relay is not active (needed for {self.sp_tag or self.cmd_enable})")
 
             # 2. Check if already enabled
-            if evaluate_condition(telemetry_cache.get(self.stat_enabled), "==", 1.0):
+            if evaluate_condition(self._get(telemetry_cache, self.stat_enabled), "==", 1.0):
                 self.state = "APPLY_SETPOINT"
             else:
                 self._send_cmd(cmd_thread, self.cmd_enable, 1.0)
@@ -391,13 +471,12 @@ class PSUControlRoutine(BaseRoutine):
             return "RUNNING"
 
         elif self.state == "WAIT_ENABLE":
-            if evaluate_condition(telemetry_cache.get(self.stat_enabled), "==", 1.0):
+            if evaluate_condition(self._get(telemetry_cache, self.stat_enabled), "==", 1.0):
                 self.state = "APPLY_SETPOINT"
                 return "RUNNING"
 
             if time.time() - self.timer_start > 5.0:  # Hardcoded 5s timeout just for the enable bit
-                print(f"[PSU] Aborted: Hardware refused to enable {self.cmd_enable}")
-                return "FAILED"
+                return self._fail(f"{self.stat_enabled} did not report enabled within 5 s of {self.cmd_enable}")
             return "RUNNING"
 
         elif self.state == "APPLY_SETPOINT":
@@ -414,15 +493,15 @@ class PSUControlRoutine(BaseRoutine):
                 return "DONE"
 
         elif self.state == "WAIT_READBACK":
-            current_rb = telemetry_cache.get(self.rb_tag)
+            current_rb = self._get(telemetry_cache, self.rb_tag)
             if current_rb is not None:
                 # Check if readback is within +/- tolerance of target
                 if abs(float(current_rb) - self.target_val) <= self.tolerance:
                     return "DONE"
 
             if time.time() - self.timer_start > self.timeout_sec:
-                print(f"[PSU] Timeout: {self.rb_tag} failed to reach {self.target_val} within {self.timeout_sec}s")
-                return "FAILED"
+                return self._fail(f"{self.rb_tag} did not reach {self.target_val} +/- {self.tolerance} within "
+                                  f"{self.timeout_sec:g} s (last live value: {current_rb})")
             return "RUNNING"
 
         return "RUNNING"

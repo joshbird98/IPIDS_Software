@@ -1,5 +1,6 @@
 import time
 import json
+import logging
 import os
 import numpy as np
 import pyqtgraph as pg
@@ -9,6 +10,8 @@ from PyQt6.QtWidgets import (
     QTreeWidgetItem, QDialogButtonBox, QHBoxLayout, QCheckBox
 )
 from PyQt6.QtCore import Qt, QThread, pyqtSignal, QRectF, QEvent
+
+log = logging.getLogger("hmi.optimiser")
 
 
 class Optimizer2DWorker(QThread):
@@ -48,27 +51,35 @@ class Optimizer2DWorker(QThread):
 
         self.is_stopped = False
 
-    def run(self):
-        self.status_msg.emit("Seizing Control (Mode=1)...")
-        self.cmd_thread.send_command(self.x_service, self.x_mode_tag, 1, origin="optimizer")
-        if self.x_mode_tag != self.y_mode_tag:
-            self.cmd_thread.send_command(self.y_service, self.y_mode_tag, 1, origin="optimizer")
-        time.sleep(0.5)
+    def _ok(self, result):
+        return result.get("status") in ("ok", "accepted")
 
-        self.status_msg.emit("Executing 2D Raster Sweep...")
+    def run(self):
+        failure = None
+        self.status_msg.emit("Seizing Control (Mode=1)...")
+        r = self.cmd_thread.send_command_sync(self.x_service, self.x_mode_tag, 1, origin="optimizer")
+        if not self._ok(r):
+            failure = f"could not take control of X ({r.get('status')}: {r.get('reason')})"
+        elif self.x_mode_tag != self.y_mode_tag:
+            r = self.cmd_thread.send_command_sync(self.y_service, self.y_mode_tag, 1, origin="optimizer")
+            if not self._ok(r):
+                failure = f"could not take control of Y ({r.get('status')}: {r.get('reason')})"
+        if not failure:
+            time.sleep(0.5)
+            self.status_msg.emit("Executing 2D Raster Sweep...")
         x_points = np.linspace(self.x_start, self.x_stop, self.x_steps)
         y_points = np.linspace(self.y_start, self.y_stop, self.y_steps)
 
         for i, val_x in enumerate(x_points):
-            if self.is_stopped: break
+            if self.is_stopped or failure: break
 
-            self.cmd_thread.send_command(self.x_service, self.x_tag, float(val_x), origin="optimizer")
+            tx = self.cmd_thread.send_command(self.x_service, self.x_tag, float(val_x), origin="optimizer")
             time.sleep(0.2)
 
             for j, val_y in enumerate(y_points):
-                if self.is_stopped: break
+                if self.is_stopped or failure: break
 
-                self.cmd_thread.send_command(self.y_service, self.y_tag, float(val_y), origin="optimizer")
+                ty = self.cmd_thread.send_command(self.y_service, self.y_tag, float(val_y), origin="optimizer")
 
                 start_t = time.time()
                 while time.time() - start_t < self.dwell:
@@ -76,9 +87,23 @@ class Optimizer2DWorker(QThread):
                     time.sleep(0.05)
 
                 if self.is_stopped: break
+                for t, axis in ((tx, "X"), (ty, "Y")):
+                    if t is not None and t.done() and not t.ok:
+                        failure = f"{axis} setpoint refused: {t.reason}"
+                if failure:
+                    break
 
+                # Live value only: a stale readback would put a fake flat region in the map
                 rb_val = self.get_telemetry_cb(self.rb_tag)
+                if rb_val is None:
+                    failure = f"readback {self.rb_tag} is not live"
+                    break
                 self.data_point.emit(i, j, float(rb_val))
+
+        if failure:
+            log.warning("Optimiser stopped: %s", failure)
+            self.status_msg.emit(f"STOPPED: {failure}")
+            self.is_stopped = True
 
         target_x = self.override_x if self.override_x is not None else self.restore_x
         target_y = self.override_y if self.override_y is not None else self.restore_y
@@ -211,7 +236,7 @@ class ParameterOptimizerWidget(QWidget):
             with open(path, "r") as f:
                 return json.load(f)
         except Exception as e:
-            print(f"[Optimizer] Failed to load registry: {e}")
+            log.error(f"Failed to load registry: {e}")
             return {}
 
     def _create_axis_config_ui(self, axis_label: str):
@@ -457,7 +482,7 @@ class ParameterOptimizerWidget(QWidget):
                 self.hover_text.show()
 
             except Exception as e:
-                print(f"[Hover Tooltip Exception] {e}")
+                log.debug(f"Hover tooltip error: {e}")
                 self.hover_text.hide()
         else:
             self.hover_text.hide()
@@ -536,6 +561,15 @@ class ParameterOptimizerWidget(QWidget):
 
         x_restore = self.get_telemetry_cb(self._derive_rb_tag(self.x_tag))
         y_restore = self.get_telemetry_cb(self._derive_rb_tag(self.y_tag))
+        if x_restore is None or y_restore is None:
+            # Previously a missing value read as 0.0, so the scan finished by driving that axis to 0
+            missing = [t for t, v in ((self._derive_rb_tag(self.x_tag), x_restore),
+                                      (self._derive_rb_tag(self.y_tag), y_restore)) if v is None]
+            QMessageBox.warning(self, "No live starting values",
+                                "The optimiser restores both axes to their current values when it finishes, "
+                                "but these have no live reading:\n\n" + "\n".join(missing) +
+                                "\n\nCheck that the services are running, then try again.")
+            return
 
         self.heatmap_data = np.full((x_steps, y_steps), np.nan)
         self.image_item.setImage(self.heatmap_data, autoLevels=False, levels=(0.0, 1.0))

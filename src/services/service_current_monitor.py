@@ -1,9 +1,11 @@
-import time
-import zmq
+import logging
 import os
 import socket
-from typing import Dict, Any
+import time
+from typing import Any, Dict
+
 import orjson
+import zmq
 
 if os.name == 'nt':
     import ctypes
@@ -11,7 +13,10 @@ if os.name == 'nt':
     ctypes.windll.winmm.timeBeginPeriod(1)
 
 from pymodbus.client import ModbusTcpClient
+
+from src.core.commands import CommandServer
 from src.core.event_helper import EventHelper
+from src.core.log_setup import setup_logging
 from src.core.os_helper import harden_windows_process
 
 from src.core.network_map import (
@@ -25,6 +30,8 @@ UDP_PORT = 1025
 NUM_BNC = 8
 RESISTOR_OHMS = 100000.0
 POLL_INTERVAL = 0.1  # 100ms
+
+log = logging.getLogger("service_adam_monitor")
 
 # --- Nomenclature Mapping ---
 BASE_PATHS = [
@@ -76,17 +83,14 @@ class AdamMicroservice:
         self.pub_socket.setsockopt(zmq.SNDHWM, 5)
         self.pub_socket.bind(ZMQ_PORT_ADAM_PUB)
 
-        self.sub_socket = self.context.socket(zmq.SUB)
-        self.sub_socket.setsockopt(zmq.RCVHWM, 5)
-        self.sub_socket.bind(ZMQ_PORT_ADAM_CMD)
-        self.sub_socket.setsockopt_string(zmq.SUBSCRIBE, "")
-
         self.hb_socket = self.context.socket(zmq.PUB)
         self.hb_socket.connect(ZMQ_PORT_HEARTBEAT)
         self.last_hb_time = 0.0
 
         self.client = ModbusTcpClient(ADAM_IP, port=TCP_PORT, timeout=0.5)
         self.events = EventHelper("service_adam_monitor")
+        self.commands = CommandServer(ZMQ_PORT_ADAM_CMD, "service_adam_monitor", context=self.context,
+                                      events=self.events, max_age=0.5)
 
         # Operational State
         self.op_modes = [0] * NUM_BNC  # 0 = Auto, 1-5 = Fixed Ranges
@@ -122,38 +126,33 @@ class AdamMicroservice:
         self.cooldowns[bnc_idx] = 10
 
     def _process_commands(self):
-        try:
-            while True:
-                msg = self.sub_socket.recv_json(flags=zmq.NOBLOCK)
-                tag = msg.get("tag", "")
-                raw_value = msg.get("value", 0)
-                ts = msg.get("ts", 0.0)
-
-                # Ignore stale commands > 500ms
-                if time.time() - ts > 0.5:
-                    continue
-
-                if tag.endswith(".cmd_range"):
-                    base_tag = tag.replace(".cmd_range", "")
-
-                    if base_tag in BASE_PATHS:
-                        bnc_idx = BASE_PATHS.index(base_tag)
-
-                        try:
-                            mode_idx = int(raw_value)
-                            if 0 <= mode_idx <= 5:
-                                self.op_modes[bnc_idx] = mode_idx
-
-                                if mode_idx != 0:
-                                    target_range = RANGE_ORDER[mode_idx - 1]
-                                    self._change_hardware_range(bnc_idx, target_range)
-                                else:
-                                    self.events.log_general(f"CH {bnc_idx} Set to Auto-Range")
-                        except (ValueError, TypeError):
-                            pass
-
-        except zmq.Again:
-            pass
+        for cmd in self.commands.poll():
+            tag, raw_value = cmd.tag, cmd.value
+            if not tag.endswith(".cmd_range"):
+                cmd.reject("unsupported ADAM command")
+                continue
+            base_tag = tag.replace(".cmd_range", "")
+            if base_tag not in BASE_PATHS:
+                cmd.reject("unknown ADAM channel")
+                continue
+            bnc_idx = BASE_PATHS.index(base_tag)
+            try:
+                mode_idx = int(raw_value)
+            except (ValueError, TypeError):
+                cmd.reject(f"invalid range index {raw_value!r}")
+                continue
+            if not 0 <= mode_idx <= 5:
+                cmd.reject("range index must be 0 (auto) to 5")
+                continue
+            self.op_modes[bnc_idx] = mode_idx
+            if mode_idx != 0:
+                target_range = RANGE_ORDER[mode_idx - 1]
+                self._change_hardware_range(bnc_idx, target_range)
+                cmd.ok(f"range {target_range}")
+            else:
+                self.events.log_general(f"CH {bnc_idx} Set to Auto-Range")
+                cmd.ok("auto-range")
+        self.commands.finish()
 
     def _process_autorange(self, bnc_idx: int, raw_val: int, voltage: float):
         if self.op_modes[bnc_idx] != 0 or self.cooldowns[bnc_idx] > 0:
@@ -220,7 +219,9 @@ class AdamMicroservice:
                     self.state[f"{base_tag}.rb_range_idx"] = RANGE_ORDER.index(active_range)
                     self.state[f"{base_tag}.rb_op_mode"] = self.op_modes[bnc_idx]
 
-        except Exception:
+        except Exception as e:  # pymodbus connection errors
+            if not self.comms_fail:
+                log.warning("ADAM read failed: %s", e)
             self.comms_fail = True
 
         self.state["system.facilities.adam.stat_comms_fail"] = 1.0 if self.comms_fail else 0.0
@@ -238,24 +239,27 @@ class AdamMicroservice:
                 if not self.client.connected:
                     if time.time() - last_connect_attempt > reconnect_interval:
                         last_connect_attempt = time.time()
+                        reconnect_interval = min(10.0, reconnect_interval * 2)
                         if self.client.connect():
+                            reconnect_interval = 0.5
                             self._initialize_hardware()
-                    else:
-                        self._sync_loop(next_tick)
-                        next_tick += POLL_INTERVAL
-                        continue
 
                 self._process_commands()
-                self._poll_device()
+                if self.client.connected:
+                    self._poll_device()
+                else:
+                    self.comms_fail = True
+                    self.state["system.facilities.adam.stat_comms_fail"] = 1.0
+                    for base_tag in BASE_PATHS:
+                        self.state[f"{base_tag}.rb_current"] = None
 
                 self.state["timestamp"] = time.time()
                 self.state["system.cycle_time_ms"] = round((time.perf_counter() - cycle_start) * 1000, 2)
 
                 try:
-                    topic = TOPIC_ADAM_DATA if isinstance(TOPIC_ADAM_DATA, bytes) else TOPIC_ADAM_DATA.encode('utf-8')
-                    self.pub_socket.send_multipart([topic, orjson.dumps(self.state)])
-                except Exception:
-                    pass
+                    self.pub_socket.send_multipart([TOPIC_ADAM_DATA, orjson.dumps(self.state)])
+                except zmq.ZMQError as e:
+                    log.debug("publish failed: %s", e)
 
                 if time.time() - self.last_hb_time >= 0.5:
                     self.hb_socket.send_json({"service": "service_adam_monitor", "ts": time.time()})
@@ -269,7 +273,7 @@ class AdamMicroservice:
         finally:
             self.client.close()
             self.pub_socket.close()
-            self.sub_socket.close()
+            self.commands.close()
             self.hb_socket.close()
             self.context.term()
 
@@ -282,5 +286,6 @@ class AdamMicroservice:
 
 
 if __name__ == "__main__":
+    setup_logging("service_adam_monitor")
     harden_windows_process()
     AdamMicroservice().run()

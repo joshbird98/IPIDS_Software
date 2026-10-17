@@ -1,5 +1,10 @@
 import json
+import logging
+import math
 import os
+
+log = logging.getLogger("payload_mapper")
+
 
 class DynamicPayloadMapper:
     def __init__(self):
@@ -14,8 +19,8 @@ class DynamicPayloadMapper:
             with open(registry_path, "r") as f:
                 registry = json.load(f)
                 self.valid_keys = set(registry.keys())
-        except Exception as e:
-            print(f"[Mapper] CRITICAL: Cannot load registry at {registry_path}: {e}")
+        except (OSError, ValueError) as e:
+            log.critical("Cannot load registry at %s - nothing will be logged: %s", registry_path, e)
 
     # --- ADDED 'topic' ARGUMENT HERE ---
     def parse(self, payload: dict, topic: str = "UNKNOWN") -> dict:
@@ -23,6 +28,11 @@ class DynamicPayloadMapper:
 
         for key, val in payload.items():
             if key in self.valid_keys:
+                if val is None:
+                    # Services publish null for "unknown" (device unreachable, supply unpowered):
+                    # log a gap rather than holding the last value
+                    parsed_data[key] = math.nan
+                    continue
                 try:
                     if isinstance(val, bool):
                         parsed_data[key] = 1.0 if val else 0.0

@@ -72,6 +72,7 @@
         "adam_pub": 5572,
         "adam_cmd": 5573,
         "steerer_magnet_pub": 5574,
-        "steerer_magnet_cmd": 5575
+        "steerer_magnet_cmd": 5575,
+        "monitor_pub": 5576
     }
 }

@@ -4,28 +4,21 @@ import json
 
 # Replace with absolute imports if running outside the project root
 from src.core.network_map import SMU_IP, ZMQ_PORT_SMU_CMD
+try:
+    from testing.cmd_helper import send as send_ack
+except ImportError:
+    from cmd_helper import send as send_ack
 
 
-def send_command(socket: zmq.Socket, tag: str, value: float):
-    payload = {
-        "tag": tag,
-        "value": value,
-        "ts": time.time()
-    }
-    socket.send_json(payload)
+def send_command(socket, tag: str, value: float):
+    """(socket argument kept for the old call sites; commands are acknowledged now)"""
     print(f"[TEST TX] {tag} -> {value}")
+    send_ack(tag, value, subsystem="smu")
 
 
 def run_test_sequence():
     context = zmq.Context()
-    pub_socket = context.socket(zmq.PUB)
-
-    # The microservice binds to this port, so the client must connect to it.
-    # Assuming localhost testing. Change to specific IP if running on a different machine.
-    pub_socket.connect(f"tcp://127.0.0.1:{ZMQ_PORT_SMU_CMD}")
-
-    # Allow time for the ZMQ connection handshake to complete
-    time.sleep(0.5)
+    pub_socket = None  # commands go through cmd_helper (acknowledged); kept so the calls below are unchanged
 
     print("--- Starting SMU Command Test Sequence ---")
 

@@ -1,4 +1,5 @@
 import time
+import logging
 import os
 import csv
 import math
@@ -16,6 +17,8 @@ from PyQt6.QtWidgets import (
     QApplication, QInputDialog  # <-- Added
 )
 from PyQt6.QtCore import Qt, QThread, pyqtSignal, QMutex, QMutexLocker, QTimer
+
+log = logging.getLogger("hmi.mass_scan")
 
 
 # --- Periodic Table Element Selector ---
@@ -115,7 +118,7 @@ class SmartCurrentAxis(pg.AxisItem):
                     strings.append(f"{val * 1e9:.1f} nA")
                 else:
                     strings.append(f"{val * 1e12:.1f} pA")
-            except:
+            except (OverflowError, ValueError):
                 strings.append("")
         return strings
 
@@ -145,6 +148,7 @@ class PrecisionScanWorker(QThread):
         self.loop_scan = config['loop']
 
         self.is_stopped = False
+        self.abort_reason = None
 
         self.mode_tag = "ion_beam.beamline.magnet.cmd_ctrl_mode"
         self.sp_tag = "ion_beam.beamline.magnet.sp_requested_current"
@@ -154,14 +158,35 @@ class PrecisionScanWorker(QThread):
         self.target_kv_tag = "ion_beam.source.target.rb_voltage"
         self.ext_kv_tag = "ion_beam.source.extraction.rb_voltage"
 
+    STALE_LIMIT_S = 5.0   # stop the scan if the magnet/SMU readings are not live for this long
+
+    def _live(self, tag):
+        """Fresh reading or None (the HMI's reader returns None for stale/missing values)."""
+        value = self.get_telemetry_cb(tag)
+        return None if value is None else float(value)
+
+    def _abandon(self, why):
+        self.abort_reason = why
+        self.is_stopped = True
+        self.status_msg.emit(f"Status: STOPPED - {why}")
+        self.event_helper.log_general(f"Mass Scan stopped: {why}", severity="WARNING")
+
     def run(self):
+        self.abort_reason = None
         try:
             self.event_helper.log_general(f"Mass Scan started: {self.start_a}A to {self.stop_a}A (NPLC: {self.nplc})")
             self.status_msg.emit("Status: Seizing Control & Configuring SMU...")
 
-            # Seize magnet control and set SMU integration
-            self.cmd_thread.send_command("magnet", self.mode_tag, 1, origin="mass_scan")
-            self.cmd_thread.send_command("smu", "ion_beam.beamline.faraday.smu.cmd_nplc", self.nplc, origin="mass_scan")
+            # Seize magnet control and set SMU integration - and confirm the services accepted it
+            r = self.cmd_thread.send_command_sync("magnet", self.mode_tag, 1, origin="mass_scan")
+            if r.get("status") not in ("ok", "accepted"):
+                self._abandon(f"could not take control of the magnet ({r.get('status')}: {r.get('reason')})")
+                return
+            r = self.cmd_thread.send_command_sync("smu", "ion_beam.beamline.faraday.smu.cmd_nplc", self.nplc,
+                                                  origin="mass_scan")
+            if r.get("status") not in ("ok", "accepted"):
+                self._abandon(f"SMU did not accept NPLC {self.nplc} ({r.get('status')}: {r.get('reason')})")
+                return
             time.sleep(0.5)
 
             num_steps = int(round(abs(self.stop_a - self.start_a) / self.step_a)) + 1
@@ -179,20 +204,28 @@ class PrecisionScanWorker(QThread):
 
                     point_start_t = time.time()
 
-                    self.cmd_thread.send_command("magnet", self.sp_tag, float(sp_amps), origin="mass_scan")
+                    ticket = self.cmd_thread.send_command("magnet", self.sp_tag, float(sp_amps), origin="mass_scan")
                     cmd_sent_t = time.time()
 
                     # --- 1. Dynamic Settling Phase ---
                     timeout_start = time.time()
                     while time.time() - timeout_start < 5.0:
                         if self.is_stopped: break
+                        if ticket.done() and not ticket.ok:
+                            self._abandon(f"magnet refused {sp_amps:.3f} A: {ticket.reason}")
+                            break
 
-                        mag_settled = abs(self.get_telemetry_cb(self.rb_mag_tag) - sp_amps) <= self.tolerance
-                        smu_settled = self.get_telemetry_cb(self.smu_settled_tag) == 1.0
+                        rb_mag = self._live(self.rb_mag_tag)
+                        settled_flag = self._live(self.smu_settled_tag)
+                        mag_settled = rb_mag is not None and abs(rb_mag - sp_amps) <= self.tolerance
+                        smu_settled = settled_flag == 1.0
 
                         if mag_settled and smu_settled:
                             break
                         time.sleep(0.05)
+                    else:
+                        if self._live(self.rb_mag_tag) is None or self._live(self.smu_settled_tag) is None:
+                            self._abandon("magnet or SMU telemetry is not live")
 
                     dynamic_settle_t = time.time()
 
@@ -203,12 +236,25 @@ class PrecisionScanWorker(QThread):
                     # --- 2. Sample Acquisition Phase ---
                     mag_buffer, beam_buffer, target_buffer, ext_buffer = [], [], [], []
                     samples_collected = 0
+                    last_live = time.time()
 
                     while samples_collected < self.samples:
                         if self.is_stopped: break
 
+                        settled_flag = self._live(self.smu_settled_tag)
+                        mag = self._live(self.rb_mag_tag)
+                        beam = self._live(self.rb_beam_tag)
+                        if settled_flag is None or mag is None or beam is None:
+                            # Stale readings must not go into the spectrum
+                            if time.time() - last_live > self.STALE_LIMIT_S:
+                                self._abandon("magnet or Faraday-cup readings stopped updating")
+                                break
+                            time.sleep(0.1)
+                            continue
+                        last_live = time.time()
+
                         # If SMU range changes mid-acquisition, flush buffer and wait
-                        if self.get_telemetry_cb(self.smu_settled_tag) != 1.0:
+                        if settled_flag != 1.0:
                             mag_buffer.clear()
                             beam_buffer.clear()
                             target_buffer.clear()
@@ -217,13 +263,13 @@ class PrecisionScanWorker(QThread):
                             time.sleep(0.1)  # Brief yield to allow SMU to settle
                             continue
 
-                        mag_buffer.append(self.get_telemetry_cb(self.rb_mag_tag))
-                        beam_buffer.append(self.get_telemetry_cb(self.rb_beam_tag))
+                        mag_buffer.append(mag)
+                        beam_buffer.append(beam)
 
-                        t_kv = self.get_telemetry_cb(self.target_kv_tag)
-                        e_kv = self.get_telemetry_cb(self.ext_kv_tag)
-                        target_buffer.append(float(t_kv) if t_kv is not None else 0.0)
-                        ext_buffer.append(float(e_kv) if e_kv is not None else 0.0)
+                        t_kv = self._live(self.target_kv_tag)
+                        e_kv = self._live(self.ext_kv_tag)
+                        target_buffer.append(t_kv if t_kv is not None else float("nan"))
+                        ext_buffer.append(e_kv if e_kv is not None else float("nan"))
 
                         samples_collected += 1
                         time.sleep(effective_interval)
@@ -241,8 +287,8 @@ class PrecisionScanWorker(QThread):
 
                     mean_mag = float(np.mean(mag_buffer))
                     mean_beam = float(np.mean(beam_buffer))
-                    mean_target_kv = float(np.mean(target_buffer))
-                    mean_ext_kv = float(np.mean(ext_buffer))
+                    mean_target_kv = float(np.nanmean(target_buffer)) if np.isfinite(target_buffer).any() else 0.0
+                    mean_ext_kv = float(np.nanmean(ext_buffer)) if np.isfinite(ext_buffer).any() else 0.0
                     total_energy_kev = mean_target_kv + mean_ext_kv
 
                     scan_results.append((sp_amps, mean_mag, mean_beam, mean_target_kv, mean_ext_kv))
@@ -254,7 +300,7 @@ class PrecisionScanWorker(QThread):
                     stat_time = static_settle_t - dynamic_settle_t
                     acq_time = acq_t - static_settle_t
                     tot_time = acq_t - point_start_t
-                    print(
+                    log.debug(
                         f"Point {idx + 1:03d}/{num_steps} [{sp_amps:.3f}A] -> Cmd: {cmd_time:.3f}s | DynSet: {dyn_time:.3f}s | StatSet: {stat_time:.3f}s | Acq: {acq_time:.3f}s | Total: {tot_time:.3f}s")
 
                 if not self.is_stopped:
@@ -270,11 +316,13 @@ class PrecisionScanWorker(QThread):
                     if self.is_stopped: break
                     time.sleep(0.05)
 
-        except Exception as e:
-            print(f"[MassScanWorker] FATAL: {e}")
+        except Exception:  # keep the release below running whatever happened
+            log.exception("Mass scan worker failed")
+            self.status_msg.emit("Status: STOPPED - internal error (see SystemLogs/hmi.log)")
         finally:
             self.event_helper.log_general("Mass Scan stopped/finished.")
-            self.status_msg.emit("Status: Releasing Control & Restoring SMU...")
+            if not self.abort_reason:
+                self.status_msg.emit("Status: Releasing Control & Restoring SMU...")
 
             # Release magnet control and restore fast SMU integration
             self.cmd_thread.send_command("magnet", self.mode_tag, 0, origin="mass_scan")
@@ -326,7 +374,7 @@ class PrecisionMassScannerWidget(QWidget):
     def _perform_safe_rebuild(self):
         self._update_mass_db()
         self._conditional_peak_update()
-        print("[Mass DB] Rebuild performed safely in main thread.")
+        log.info("Mass DB rebuilt in the main thread.")
 
     def _load_local_json_db(self):
         locker = QMutexLocker(self._cache_mutex)
@@ -337,9 +385,9 @@ class PrecisionMassScannerWidget(QWidget):
         try:
             with open(db_path, "r") as f:
                 self.__class__._isotope_cache = json.load(f)
-            print(f"[Mass DB] Instantly loaded {len(self.__class__._isotope_cache)} isotopes from JSON.")
+            log.info(f"Loaded {len(self.__class__._isotope_cache)} isotopes from JSON.")
         except FileNotFoundError:
-            print("[Mass DB] isotope_db.json not found! Falling back to minimal dataset.")
+            log.warning("isotope_db.json not found - falling back to a minimal dataset.")
             cache = []
             fallback_isos = {
                 "H": [(1.008, "1H", "<sup>1</sup>H", 0.999)],
@@ -1526,7 +1574,7 @@ class PrecisionMassScannerWidget(QWidget):
 
             self.lbl_data_source.setText(f"<b>Data Source:</b> Saved as {filename}")
         except Exception as e:
-            print(f"[Mass Scan] Export Failed: {e}")
+            log.error(f"Mass scan export failed: {e}")
 
     def _add_calibration_point(self, click_amu):
         if not self.amu_data:
@@ -1672,6 +1720,6 @@ class PrecisionMassScannerWidget(QWidget):
             with open(self.current_csv_path, 'w', newline='') as f:
                 writer = csv.writer(f)
                 writer.writerows(rows)
-            print(f"[Mass Scan] Updated CSV with new calibration: k={k:.2f}, I_off={i_off:.3f}")
+            log.info(f"Updated CSV with new calibration: k={k:.2f}, I_off={i_off:.3f}")
         except Exception as e:
-            print(f"[Mass Scan] Failed to update CSV calibration: {e}")
+            log.error(f"Failed to update CSV calibration: {e}")

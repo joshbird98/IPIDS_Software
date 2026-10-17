@@ -1,3 +1,4 @@
+import logging
 import os
 import sys
 import time
@@ -6,17 +7,20 @@ from PyQt6.QtCore import Qt, QTimer, QUrl, QSettings
 from PyQt6.QtGui import QAction
 from PyQt6.QtMultimedia import QSoundEffect
 
-from qfluentwidgets import FluentIcon as FIF, Theme
+from qfluentwidgets import FluentIcon as FIF, Theme, InfoBar, InfoBarPosition
 from src.core.theme import is_dark_mode
 
 from src.core.network_map import (
     ZMQ_PORT_PLC_PUB, ZMQ_PORT_VACUUM_PUB,
     ZMQ_PORT_SRC_TURBO_PUB, ZMQ_PORT_MANAGER_PUB,
     ZMQ_PORT_SPELLMAN_PUB, ZMQ_PORT_MAGNET_PUB, ZMQ_PORT_SMU_PUB,
-    ZMQ_PORT_ADAM_PUB, ZMQ_PORT_STEERER_MAGNET_PUB
+    ZMQ_PORT_ADAM_PUB, ZMQ_PORT_STEERER_MAGNET_PUB, ZMQ_PORT_MONITOR_PUB
 )
+from src.core.commands import SUCCESS, describe
 from src.core.event_helper import EventHelper
+from src.core.paths import simulation_enabled
 from src.core.recipe_engine import RecipeWorker
+from src.core.telemetry_cache import TelemetryCache
 
 # --- Core/Thread Imports ---
 from src.core.network_threads import ZMQTelemetryThread, ZMQCommandThread
@@ -35,6 +39,13 @@ from src.gui.control.widgets.faraday_smu_widget import FaradaySMUWidget
 from src.gui.control.widgets.optimiser_widget import ParameterOptimizerWidget
 from src.gui.control.widgets.current_monitor_widget import AdamMonitorWidget
 from src.gui.control.widgets.mass_scan_widget import PrecisionMassScannerWidget
+from src.gui.control.widgets.command_log_widget import CommandLogWidget
+
+log = logging.getLogger("hmi")
+
+# Command outcomes worth interrupting the operator for
+_PROBLEM_TITLES = {"rejected": "Command refused", "failed": "Command failed",
+                   "timeout": "No reply to command", "unreachable": "Service not running"}
 
 
 class AudioManager:
@@ -51,7 +62,7 @@ class AudioManager:
     def _load_sound(self, name: str, filename: str, volume: float):
         filepath = os.path.join(self.sounds_dir, filename)
         if not os.path.exists(filepath):
-            print(f"[Audio] Missing asset: {filepath}")
+            log.warning("Missing audio asset: %s", filepath)
             return
         effect = QSoundEffect()
         effect.setSource(QUrl.fromLocalFile(filepath))
@@ -66,7 +77,7 @@ class AudioManager:
 class ControlMainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("IPIDS Operator HMI")
+        self.setWindowTitle("IPIDS Operator HMI" + ("  [SIMULATION - fake devices]" if simulation_enabled() else ""))
         self.setObjectName("ControlMainWindow")
         self.resize(1600, 900)
         self.setDockOptions(QMainWindow.DockOption.AllowNestedDocks | QMainWindow.DockOption.AllowTabbedDocks)
@@ -84,18 +95,25 @@ class ControlMainWindow(QMainWindow):
         self.fault_engine = FaultRegistry(fault_map_path)
 
         self.cmd_thread = ZMQCommandThread()
+        self.cmd_thread.command_result.connect(self._on_command_result)
         self.cmd_thread.start()
+        self._last_problem_shown = {}
 
         self.event_helper = EventHelper("hmi_control")
+        # Every value with the service it came from and when: stale values are dropped from
+        # what the widgets see (shown as '---'), and automation only ever reads fresh ones.
+        self.telemetry = TelemetryCache()
+        # The fresh view handed to the widgets; refreshed in place 10x a second
         self.master_telemetry_cache = {}
 
-        self.recipe_worker = RecipeWorker(self.cmd_thread, lambda: self.master_telemetry_cache.copy())
+        self.recipe_worker = RecipeWorker(self.cmd_thread, self.telemetry.snapshot)
 
         telemetry_ports = [
             ZMQ_PORT_PLC_PUB, ZMQ_PORT_VACUUM_PUB,
             ZMQ_PORT_SRC_TURBO_PUB, ZMQ_PORT_MANAGER_PUB,
             ZMQ_PORT_SPELLMAN_PUB, ZMQ_PORT_MAGNET_PUB,
-            ZMQ_PORT_SMU_PUB, ZMQ_PORT_ADAM_PUB, ZMQ_PORT_STEERER_MAGNET_PUB
+            ZMQ_PORT_SMU_PUB, ZMQ_PORT_ADAM_PUB, ZMQ_PORT_STEERER_MAGNET_PUB,
+            ZMQ_PORT_MONITOR_PUB
         ]
         self.telemetry_thread = ZMQTelemetryThread(telemetry_ports)
         self.telemetry_thread.data_received.connect(self._route_telemetry)
@@ -110,8 +128,6 @@ class ControlMainWindow(QMainWindow):
             self.restoreGeometry(self.settings.value("geometry"))
         if self.settings.value("windowState"):
             self.restoreState(self.settings.value("windowState"))
-
-        self.last_seen = {"plc": 0.0, "vacuum": 0.0, "src_turbo": 0.0, "magnet": 0.0}
 
         self.watchdog_timer = QTimer(self)
         self.watchdog_timer.timeout.connect(self._ui_update_loop)
@@ -138,6 +154,7 @@ class ControlMainWindow(QMainWindow):
         view_menu.addAction(self.service_dock.toggleViewAction())
         view_menu.addAction(self.current_mon_dock.toggleViewAction())
         view_menu.addAction(self.mass_scan_dock.toggleViewAction())
+        view_menu.addAction(self.cmd_log_dock.toggleViewAction())
 
         view_menu.addSeparator()
 
@@ -210,7 +227,8 @@ class ControlMainWindow(QMainWindow):
 
         self.optimiser_dock = QDockWidget("Optimiser", self)
         self.optimiser_dock.setObjectName("OptimiserDock")
-        self.optimiser_widget = ParameterOptimizerWidget(self.cmd_thread, lambda tag: self.master_telemetry_cache.get(tag, 0.0), self.event_helper)
+        # Optimiser and scans read through telemetry.reader(): None (not 0.0) when stale or missing
+        self.optimiser_widget = ParameterOptimizerWidget(self.cmd_thread, self.telemetry.reader(), self.event_helper)
         self.optimiser_dock.setWidget(self.optimiser_widget)
         self.addDockWidget(Qt.DockWidgetArea.LeftDockWidgetArea, self.optimiser_dock)
         self.subsystems["optimiser"] = self.optimiser_widget
@@ -251,7 +269,7 @@ class ControlMainWindow(QMainWindow):
 
         self.mass_scan_dock = QDockWidget("Mass Scan", self)
         self.mass_scan_dock.setObjectName("MassScanDock")
-        self.mass_scan_widget = PrecisionMassScannerWidget(self.cmd_thread, lambda tag: self.master_telemetry_cache.get(tag, 0.0), self.event_helper)
+        self.mass_scan_widget = PrecisionMassScannerWidget(self.cmd_thread, self.telemetry.reader(), self.event_helper)
         self.mass_scan_dock.setWidget(self.mass_scan_widget)
         self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self.mass_scan_dock)
         self.subsystems["mass_scan"] = self.mass_scan_widget
@@ -275,55 +293,54 @@ class ControlMainWindow(QMainWindow):
         self.addDockWidget(Qt.DockWidgetArea.BottomDockWidgetArea, self.service_dock)
         self.subsystems["services"] = self.service_widget
 
-    def _route_telemetry(self, fresh_data: dict):
-        now = time.time()
-        if "system.connected" in fresh_data:
-            self.last_seen["plc"] = now
-            fresh_data["system.connected"] = True
-        if "ion_beam.source.turbo_pump.rb_speed_hz" in fresh_data:
-            self.last_seen["src_turbo"] = now
-            fresh_data["pump.connected"] = True
-        if any("vacuum_gauge" in key for key in fresh_data.keys()):
-            self.last_seen["vacuum"] = now
-            fresh_data["vacuum.connected"] = True
-        if "ion_beam.beamline.magnet.rb_voltage" in fresh_data:
-            self.last_seen["magnet"] = now
-            fresh_data["magnet.connected"] = True
-        if "ion_beam.beamline.faraday.smu.stat_comms_fail" in fresh_data:
-            self.last_seen["smu"] = time.time()
-            fresh_data["smu.connected"] = True
-        if "ion_beam.beamline.object_slits.left.rb_current" in fresh_data:
-            self.last_seen["current_mon"] = time.time()
-            fresh_data["current_mon.connected"] = True
+        self.cmd_log_dock = QDockWidget("Command Log", self)
+        self.cmd_log_dock.setObjectName("CommandLogDock")
+        self.cmd_log_widget = CommandLogWidget()
+        self.cmd_log_dock.setWidget(self.cmd_log_widget)
+        self.addDockWidget(Qt.DockWidgetArea.BottomDockWidgetArea, self.cmd_log_dock)
+        self.tabifyDockWidget(self.service_dock, self.cmd_log_dock)
+        self.service_dock.raise_()
 
-        self.master_telemetry_cache.update(fresh_data)
+    def _route_telemetry(self, topic: str, fresh_data: dict):
+        self.telemetry.ingest(topic, fresh_data)
+
+    def _on_command_result(self, result: dict):
+        """Every command outcome lands in the Command Log; problems also pop up briefly."""
+        self.cmd_log_widget.add_result(result)
+        status = result.get("status")
+        if status in SUCCESS:
+            return
+        # Don't bury the operator: one pop-up per (command, outcome) every few seconds
+        key = (result.get("subsystem"), result.get("tag"), status)
+        now = time.time()
+        if now - self._last_problem_shown.get(key, 0.0) < 5.0:
+            return
+        self._last_problem_shown[key] = now
+        title = _PROBLEM_TITLES.get(status, "Command problem")
+        origin = result.get("origin", "")
+        content = describe(result) + (f"  (from {origin})" if origin and origin != "hmi" else "")
+        try:
+            InfoBar.warning(title, content, orient=Qt.Orientation.Horizontal, isClosable=True,
+                            position=InfoBarPosition.TOP_RIGHT, duration=7000, parent=self) \
+                if status in ("timeout", "unreachable") else \
+                InfoBar.error(title, content, orient=Qt.Orientation.Horizontal, isClosable=True,
+                              position=InfoBarPosition.TOP_RIGHT, duration=7000, parent=self)
+        except Exception:  # a cosmetic pop-up must never take the HMI down
+            log.exception("Could not show command result pop-up")
 
     def _ui_update_loop(self):
-        now = time.time()
+        # Fresh values only: anything from a silent service is left out, so widgets show '---'
+        view = self.telemetry.view()
+        self.master_telemetry_cache.clear()
+        self.master_telemetry_cache.update(view)
 
-        if now - self.last_seen["plc"] > 2.5 and self.master_telemetry_cache.get("system.connected", True):
-            self.master_telemetry_cache["system.connected"] = False
-        if now - self.last_seen["src_turbo"] > 2.5 and self.master_telemetry_cache.get("pump.connected", True):
-            self.master_telemetry_cache["pump.connected"] = False
-        if now - self.last_seen["vacuum"] > 2.5 and self.master_telemetry_cache.get("vacuum.connected", True):
-            self.master_telemetry_cache["vacuum.connected"] = False
-        if now - self.last_seen["magnet"] > 2.5 and self.master_telemetry_cache.get("magnet.connected", True):
-            self.master_telemetry_cache["magnet.connected"] = False
-        if now - self.last_seen.get("smu", 0) > 2.5 and self.master_telemetry_cache.get("smu.connected", True):
-            self.master_telemetry_cache["smu.connected"] = False
-        if now - self.last_seen.get("current_mon", 0) > 2.5 and self.master_telemetry_cache.get("current_mon.connected", True):
-            self.master_telemetry_cache["current_mon.connected"] = False
-
-        self.vac_widget.update_telemetry(self.master_telemetry_cache)
-        self.src_widget.update_telemetry(self.master_telemetry_cache)
-        self.optics_widget.update_telemetry(self.master_telemetry_cache)
-        self.health_widget.update_telemetry(self.master_telemetry_cache)
-        self.service_widget.update_telemetry(self.master_telemetry_cache)
-        self.log_widget.update_telemetry(self.master_telemetry_cache)
-        self.smu_widget.update_telemetry(self.master_telemetry_cache)
-        self.current_mon_widget.update_telemetry(self.master_telemetry_cache)
-        self.optimiser_widget.update_telemetry(self.master_telemetry_cache)
-        self.mass_scan_widget.update_telemetry(self.master_telemetry_cache)
+        for widget in (self.vac_widget, self.src_widget, self.optics_widget, self.health_widget,
+                       self.service_widget, self.log_widget, self.smu_widget, self.current_mon_widget,
+                       self.optimiser_widget, self.mass_scan_widget):
+            try:
+                widget.update_telemetry(self.master_telemetry_cache)
+            except Exception:  # one widget's bug must not freeze every other panel
+                log.exception("%s.update_telemetry failed", type(widget).__name__)
 
         self._evaluate_audio_triggers()
 

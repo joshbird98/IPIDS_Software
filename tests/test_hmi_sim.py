@@ -1,0 +1,212 @@
+"""The operator HMI (offscreen) against the simulated stack: fresh-only telemetry,
+command feedback, arm-then-confirm, unknown state when a service stops, recipe
+failures with reasons, recipe Stop, and readback tolerance colouring."""
+import json
+import os
+import time
+
+import psutil
+import pytest
+
+from src.core import commands as C
+from tests.sim_stack import start_stack, stop_stack
+
+pytestmark = [pytest.mark.slow, pytest.mark.skip(
+    reason="written but not yet run/validated - first item in TODO_control_hardening.md")]
+
+SHOTS = os.environ.get("IPIDS_TEST_SHOTS")   # set to a folder to save screenshots of each stage
+
+
+@pytest.fixture(scope="module")
+def stack(tmp_path_factory):
+    s = start_stack(tmp_path_factory.mktemp("hmistack"))
+    yield s
+    stop_stack(s)
+
+
+@pytest.fixture(scope="module")
+def app():
+    from PyQt6.QtWidgets import QApplication
+    return QApplication.instance() or QApplication([])
+
+
+def pump(app, seconds):
+    end = time.time() + seconds
+    while time.time() < end:
+        app.processEvents()
+        time.sleep(0.02)
+
+
+def wait_for(app, predicate, timeout, what):
+    end = time.time() + timeout
+    while time.time() < end:
+        app.processEvents()
+        try:
+            if predicate():
+                return
+        except (KeyError, TypeError, AttributeError):
+            pass
+        time.sleep(0.05)
+    raise AssertionError(f"timed out waiting for {what}")
+
+
+def shot(window, name):
+    if SHOTS:
+        os.makedirs(SHOTS, exist_ok=True)
+        window.grab().save(os.path.join(SHOTS, f"{name}.png"))
+
+
+@pytest.fixture(scope="module")
+def hmi(stack, app):
+    from src.gui.control.control_main import ControlMainWindow
+    w = ControlMainWindow()
+    w.resize(1700, 1000)
+    w.show()
+    wait_for(app, lambda: w.master_telemetry_cache.get("system.connected") is True, 20, "PLC telemetry in HMI")
+    yield w
+    w.close()
+    pump(app, 0.5)
+
+
+def log_rows(w):
+    t = w.cmd_log_widget.table
+    return [[t.item(r, c).text() for c in range(t.columnCount())] for r in range(t.rowCount())]
+
+
+def test_fresh_view_and_services(hmi, app):
+    view = hmi.master_telemetry_cache
+    assert view["system.connected"] is True
+    assert set(view["manager.services"].values()) == {"ONLINE"}
+    assert "PLC_DATA/system.connected" in view            # generic keys kept per service
+    wait_for(app, lambda: len(hmi.service_widget.service_rows) >= 10, 5, "service rows")
+
+
+def test_gate_valve_and_relay_through_the_gui(hmi, app, stack):
+    hmi.cmd_thread.send_command("plc", "ion_beam.source.chamber.cmd_open_gv", True)
+    wait_for(app, lambda: hmi.master_telemetry_cache.get("ion_beam.source.chamber.stat_gv_open") == 1.0, 15,
+             "gate valve open (needs the simulated vacuum permissive)")
+    btn = hmi.health_widget.btn_enable_safety
+    wait_for(app, btn.isEnabled, 5, "relay button enabled")
+    btn.click()
+    wait_for(app, lambda: hmi.master_telemetry_cache.get("ion_beam.facilities.safety_relay_active") == 1.0, 10,
+             "relay active")
+    assert any(r[3] == "ion_beam.system.cmd_enable_safety" and r[5] == "OK" for r in log_rows(hmi))
+
+
+def test_einzel_needs_two_clicks_to_enable_one_to_disable(hmi, app):
+    from src.gui.control.arming import ARMED_STYLE
+    ctrl = hmi.src_widget.psu_controls["Source Einzel"]
+    btn = ctrl["btn_enable"]
+    wait_for(app, btn.isEnabled, 15, "einzel enable button available (Spellman sees the relay)")
+    n_before = len(log_rows(hmi))
+    btn.click()
+    pump(app, 0.5)
+    assert btn.text().startswith("CONFIRM") and btn.styleSheet() == ARMED_STYLE
+    assert not btn.isChecked()
+    assert len(log_rows(hmi)) == n_before                 # nothing sent yet
+    shot(hmi, "1_einzel_armed")
+    btn.click()                                           # confirm
+    wait_for(app, lambda: hmi.master_telemetry_cache.get("ion_beam.source.einzel.stat_enabled") == 1.0, 10,
+             "einzel enabled")
+    pump(app, 0.3)
+    assert btn.isChecked() and btn.text() == "ENABLE"
+    btn.click()                                           # OFF: single click
+    wait_for(app, lambda: hmi.master_telemetry_cache.get("ion_beam.source.einzel.stat_enabled") == 0.0, 10,
+             "einzel disabled")
+
+
+def test_arming_times_out(hmi, app):
+    btn = hmi.optics_widget.btn_mag_en
+    wait_for(app, btn.isEnabled, 10, "magnet enable available")
+    btn.click()
+    assert btn.text().startswith("CONFIRM")
+    pump(app, 4.6)
+    assert btn.text() == "ENABLE MAGNET"                  # disarmed by itself, nothing sent
+    assert hmi.master_telemetry_cache.get("ion_beam.beamline.magnet.stat_enabled") == 0.0
+
+
+def test_rejection_is_shown_to_the_operator(hmi, app):
+    hmi.cmd_thread.send_command("spellman", "ion_beam.source.einzel.sp_requested_voltage", 99.0)
+    wait_for(app, lambda: any(r[5] == "REJECTED" and "range" in r[6] for r in log_rows(hmi)), 5, "rejection logged")
+    shot(hmi, "2_rejected_command")
+
+
+def test_stopped_service_shows_unknown_not_last_value(hmi, app, stack):
+    from src.gui.control.arming import UNKNOWN_STYLE
+    ctrl = hmi.src_widget.psu_controls["Source Einzel"]
+    wait_for(app, lambda: "---" not in ctrl["lbl_rb"].text(), 10, "einzel readback present")
+    r = stack.cmd("manager", "manager_cmd", {"command": "stop", "service": "service_spellman_mpd"})
+    assert r["status"] == C.OK
+    try:
+        wait_for(app, lambda: ctrl["btn_enable"].styleSheet() == UNKNOWN_STYLE, 8, "unknown enable state")
+        assert "---" in ctrl["lbl_rb"].text()
+        assert "ion_beam.source.einzel.rb_voltage" not in hmi.master_telemetry_cache
+        assert hmi.telemetry.get("ion_beam.source.einzel.rb_voltage") is not None   # raw value still kept
+        shot(hmi, "3_spellman_stopped_unknown")
+    finally:
+        stack.cmd("manager", "manager_cmd", {"command": "start", "service": "service_spellman_mpd"})
+    wait_for(app, lambda: hmi.master_telemetry_cache.get("ion_beam.source.einzel.stat_enabled") is not None, 20,
+             "einzel back")
+
+
+def _run_recipe(hmi, app, tmp_path, steps, stop_after=None):
+    path = tmp_path / "recipe.json"
+    path.write_text(json.dumps({"recipe_name": "test", "steps": steps}))
+    finished = []
+    hmi.recipe_worker.sig_recipe_finished.connect(lambda ok, msg: finished.append((ok, msg)))
+    hmi.recipe_worker.load_recipe(str(path))
+    hmi.recipe_worker.play()
+    if stop_after is not None:
+        pump(app, stop_after)
+        hmi.recipe_worker.stop()
+    wait_for(app, lambda: finished, 20, "recipe to finish")
+    hmi.recipe_worker.sig_recipe_finished.disconnect()
+    hmi.recipe_widget._wire_signals()
+    hmi.recipe_worker.wait(3000)
+    return finished[0]
+
+
+def test_recipe_step_fails_with_the_services_reason(hmi, app, tmp_path):
+    ok, msg = _run_recipe(hmi, app, tmp_path, [
+        {"step_id": 1, "type": "ACTION", "target": "ion_beam.source.extraction.sp_requested_voltage", "value": 50.0}])
+    assert not ok and "Step 1 failed" in msg and "outside the allowed range" in msg
+
+
+def test_recipe_waits_only_on_live_values_and_routes_by_registry(hmi, app, tmp_path):
+    ok, msg = _run_recipe(hmi, app, tmp_path, [
+        # VERIFIED_ACTION on a PLC tag used to be sent to the Spellman service and time out
+        {"step_id": 1, "type": "VERIFIED_ACTION", "target": "ion_beam.source.target.sp_requested_voltage",
+         "value": 2.0, "pre_target": "ion_beam.facilities.safety_relay_active", "pre_condition": "==",
+         "pre_value": 1.0, "verify_target": "ion_beam.source.target.sp_actual_voltage", "verify_condition": ">=",
+         "verify_value": 1.99, "timeout_sec": 5},
+        {"step_id": 2, "type": "WAIT_TELEMETRY", "target": "ion_beam.source.target.sp_actual_voltage",
+         "condition": ">=", "value": 1.99, "timeout_sec": 5}])
+    assert ok, msg
+
+
+def test_recipe_stop_leaves_outputs_alone(hmi, app, tmp_path):
+    ok, msg = _run_recipe(hmi, app, tmp_path, [
+        {"step_id": 1, "type": "ACTION", "target": "ion_beam.source.target.sp_requested_voltage", "value": 3.0},
+        {"step_id": 2, "type": "WAIT_TIME", "duration_sec": 30}], stop_after=1.5)
+    assert not ok and "Stopped by operator" in msg
+    pump(app, 0.5)
+    assert hmi.master_telemetry_cache.get("ion_beam.source.target.sp_actual_voltage") == pytest.approx(3.0)
+
+
+def test_tolerance_colours_the_readback(hmi, app, stack):
+    import src.sim as sim
+    from src.gui.control.widgets.source_widget import TOLERANCE_STYLE
+    sim.FAULTS_FILE = str(stack.data_dir / "sim_faults.txt")
+    assert stack.cmd("magnet", "ion_beam.beamline.magnet.sp_requested_current", 25.0)["status"] == C.OK
+    assert stack.cmd("magnet", "ion_beam.beamline.magnet.cmd_enable", True)["status"] == C.OK
+    wait_for(app, lambda: abs(hmi.master_telemetry_cache["ion_beam.beamline.magnet.rb_current"] - 25) < 0.2, 15,
+             "magnet at 25 A")
+    sim.set_faults({"magnet_sag"})
+    try:
+        wait_for(app, lambda: hmi.optics_widget.lbl_mag_rb.styleSheet() == TOLERANCE_STYLE, 20, "amber readback")
+        hmi.optics_dock.raise_()
+        pump(app, 0.3)
+        shot(hmi, "4_magnet_out_of_tolerance")
+    finally:
+        sim.set_faults(set())
+    wait_for(app, lambda: hmi.optics_widget.lbl_mag_rb.styleSheet() == "", 20, "colour cleared")

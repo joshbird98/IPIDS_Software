@@ -1,8 +1,18 @@
-import time
 import json
+import logging
 import os
+import time
+
 from PyQt6.QtCore import QThread, pyqtSignal
-from src.core.routines import ROUTINE_REGISTRY
+
+from src.core.routines import ROUTINE_REGISTRY, send, ticket_outcome
+from src.core.telemetry_cache import fresh_value
+
+log = logging.getLogger("recipe_engine")
+
+STALE_FAIL_S = 10.0     # a step whose tag has had no live value for this long fails
+FAULT_STALE_S = 3.0     # the recipe stops if fault status can't be verified for this long
+
 
 def evaluate_condition(current_val, condition_str, target_val) -> bool:
     """Safely evaluates a string condition against a float value."""
@@ -44,13 +54,21 @@ class RecipeStep:
         self.type = step_data.get("type", "UNKNOWN")
         self.comment = step_data.get("comment", "No description")
         self.state = "IDLE"  # IDLE, RUNNING, DONE, FAILED
+        self.fail_reason = ""
 
     def execute(self, telemetry_cache: dict, cmd_thread) -> str:
         raise NotImplementedError()
 
+    def fail(self, reason: str) -> str:
+        self.state = "FAILED"
+        self.fail_reason = reason
+        log.warning("Step %s failed: %s", self.step_id, reason)
+        return self.state
+
     def reset(self):
         """Base reset clears the state flag."""
         self.state = "IDLE"
+        self.fail_reason = ""
 
     def add_pause_offset(self, duration: float):
         pass
@@ -70,25 +88,29 @@ class ActionStep(RecipeStep):
         super().__init__(step_data)
         self.target = step_data.get("target", "")
         self.value = step_data.get("value")
+        self.ticket = None
+
+    def reset(self):
+        super().reset()
+        self.ticket = None
 
     def execute(self, telemetry_cache: dict, cmd_thread) -> str:
         if self.state == "IDLE":
             if "cmd_fault_reset" in self.target:
-                print(f"[SECURITY] Step {self.step_id} aborted: Automated fault resets are strictly prohibited.")
-                self.state = "FAILED"
-                return self.state
-
+                return self.fail("automated fault resets are not allowed in recipes")
             self.state = "RUNNING"
+            # Routed by the tag registry (the old name test sent e.g. steerer/SMU/turbo tags to the PLC)
+            self.ticket = send(cmd_thread, self.target, self.value)
 
-            if "spellman" in self.target or "einzel" in self.target or "neutral_trap" in self.target:
-                subsystem = "spellman"
-            elif "magnet" in self.target:
-                subsystem = "magnet"
-            else:
-                subsystem = "plc"
-
-            cmd_thread.send_command(subsystem, self.target, self.value)
-            self.state = "DONE"
+        if self.state == "RUNNING":
+            # Done only once the service has confirmed it executed the command
+            outcome = ticket_outcome(self.ticket)
+            if outcome is not None:
+                ok, reason = outcome
+                if ok:
+                    self.state = "DONE"
+                else:
+                    return self.fail(reason)
         return self.state
 
     def get_description(self) -> str:
@@ -132,11 +154,13 @@ class WaitTelemetryStep(RecipeStep):
         self.target_value = float(step_data.get("value", 0.0))
         self.timeout_sec = float(step_data.get("timeout_sec", 0.0))
         self.start_time = 0.0
+        self.unknown_since = None
 
     def reset(self):
         """Ensure the timer stopwatch is zeroed out on restart."""
         super().reset()
         self.start_time = 0.0
+        self.unknown_since = None
 
     def execute(self, telemetry_cache: dict, cmd_thread) -> str:
         if self.state == "IDLE":
@@ -144,21 +168,32 @@ class WaitTelemetryStep(RecipeStep):
             self.state = "RUNNING"
 
         if self.state == "RUNNING":
-            current_val = telemetry_cache.get(self.target)
+            # Only a live value can satisfy the condition: a stale last value from a dead
+            # service used to be able to complete the wait.
+            current_val = fresh_value(telemetry_cache, self.target)
+            now = time.time()
+            if current_val is None:
+                if self.unknown_since is None:
+                    self.unknown_since = now
+                elif now - self.unknown_since > STALE_FAIL_S:
+                    return self.fail(f"no live value for {self.target} for {STALE_FAIL_S:.0f} s")
+            else:
+                self.unknown_since = None
+                if evaluate_condition(current_val, self.condition, self.target_value):
+                    self.state = "DONE"
+                    return self.state
 
-            # USE THE NEW HELPER
-            if evaluate_condition(current_val, self.condition, self.target_value):
-                self.state = "DONE"
-                return self.state
-
-            if self.timeout_sec > 0 and (time.time() - self.start_time) > self.timeout_sec:
-                self.state = "FAILED"
+            if self.timeout_sec > 0 and (now - self.start_time) > self.timeout_sec:
+                return self.fail(f"timed out after {self.timeout_sec:g} s waiting for "
+                                 f"{self.target} {self.condition} {self.target_value:g} (last: {current_val})")
 
         return self.state
 
     def add_pause_offset(self, duration: float):
         if self.state == "RUNNING":
             self.start_time += duration
+            if self.unknown_since is not None:
+                self.unknown_since += duration
 
     def get_description(self) -> str:
         short_target = self.target.split('.')[-1] if '.' in self.target else self.target
@@ -189,8 +224,7 @@ class UserPromptStep(RecipeStep):
             return True
 
         for cond in self.verify_conditions:
-            val = telemetry_cache.get(cond.get("target"))
-            # Reusing the evaluate_condition helper from earlier
+            val = fresh_value(telemetry_cache, cond.get("target"))   # stale values never verify
             if not evaluate_condition(val, cond.get("condition", "=="), cond.get("value", 1.0)):
                 return False
         return True
@@ -280,6 +314,7 @@ class RecipeWorker(QThread):
         self.paused = False
         self.abort_requested = False
         self.pause_start_time = 0.0
+        self._fault_unknown_since = None
 
     def acknowledge_prompt(self):
         """Called by UI. Returns True if successful, False if conditions failed."""
@@ -322,6 +357,7 @@ class RecipeWorker(QThread):
         self.paused = False
         self.running = True
         self.abort_requested = False
+        self._fault_unknown_since = None
         self.sig_status_update.emit("RUNNING")
 
         if not self.isRunning():
@@ -333,9 +369,13 @@ class RecipeWorker(QThread):
             self.pause_start_time = time.time()
             self.sig_status_update.emit("PAUSED")
 
-    def abort(self):
+    def stop(self):
+        """Stop stepping through the recipe. Nothing is switched off or reverted:
+        outputs stay exactly as the steps so far left them."""
         self.abort_requested = True
-        self.sig_status_update.emit("ABORTING...")
+        self.sig_status_update.emit("STOPPING...")
+
+    abort = stop  # old name
 
     def run(self):
         if not self.active_recipe:
@@ -347,9 +387,12 @@ class RecipeWorker(QThread):
         while self.running:
             if self.abort_requested:
                 self.running = False
+                step_txt = ""
+                if self.active_recipe and self.current_step_idx < len(self.active_recipe.steps):
+                    step_txt = f" at step {self.active_recipe.steps[self.current_step_idx].step_id}"
                 self.call_stack.clear()
-                self._execute_safe_abort()
-                self.sig_recipe_finished.emit(False, "Recipe aborted by user.")
+                self._stopped()
+                self.sig_recipe_finished.emit(False, f"Stopped by operator{step_txt} - outputs left as they were.")
                 return
 
             if self.paused:
@@ -388,12 +431,15 @@ class RecipeWorker(QThread):
                 policies_to_check.extend(self.active_recipe.fault_policy)
 
             fault_triggered = False
+            fault_unknown = []
             for fault in policies_to_check:
 
                 # Handling our new nicely formatted PLC Bit Faults
                 if fault.get("type") == "BIT_FAULT":
                     tag = fault.get("registry_tag")
-                    word_val = telemetry.get(tag)
+                    word_val = fresh_value(telemetry, tag)
+                    if word_val is None:
+                        fault_unknown.append(tag)
 
                     if word_val is not None:
                         try:
@@ -410,15 +456,31 @@ class RecipeWorker(QThread):
                             if bool(word_val & (1 << bit_pos)):
                                 self.running = False
                                 self.call_stack.clear()
-                                self._execute_safe_abort()
-                                self.sig_recipe_finished.emit(False, f"FAULT ABORT: {fault.get('name')} tripped!")
+                                self._stopped()
+                                self.sig_recipe_finished.emit(
+                                    False, f"Stopped: fault {fault.get('name')} is active (fault policy).")
                                 fault_triggered = True
                                 break
-                        except (ValueError, IndexError):
-                            pass
+                        except (ValueError, IndexError) as e:
+                            log.error("Bad BIT_FAULT entry %r in fault policy: %s", fault, e)
 
             if fault_triggered:
                 return  # Exit the thread completely
+
+            # A recipe must not keep running while its fault policy can't be checked
+            if fault_unknown:
+                if self._fault_unknown_since is None:
+                    self._fault_unknown_since = time.time()
+                elif time.time() - self._fault_unknown_since > FAULT_STALE_S:
+                    self.running = False
+                    self.call_stack.clear()
+                    self._stopped()
+                    self.sig_recipe_finished.emit(
+                        False, f"Stopped: fault status unknown for {FAULT_STALE_S:.0f} s "
+                               f"(no live PLC data for {', '.join(sorted(set(fault_unknown)))}).")
+                    return
+            else:
+                self._fault_unknown_since = None
 
             step = self.active_recipe.steps[self.current_step_idx]
 
@@ -455,8 +517,9 @@ class RecipeWorker(QThread):
             elif result == "FAILED":
                 self.running = False
                 self.call_stack.clear()
-                self._execute_safe_abort()
-                self.sig_recipe_finished.emit(False, f"Step {step.step_id} failed/timed out.")
+                self._stopped()
+                reason = getattr(step, "fail_reason", "") or "failed/timed out"
+                self.sig_recipe_finished.emit(False, f"Step {step.step_id} failed: {reason}")
                 return
 
             time.sleep(0.05)
@@ -464,9 +527,9 @@ class RecipeWorker(QThread):
         self.running = False
         self.sig_recipe_finished.emit(True, "Recipe completed successfully.")
 
-    def _execute_safe_abort(self):
-        self.sig_status_update.emit("REVERTING CONTROL MODES...")
-        # (Future implementation: ZMQ commands to 0.0V here)
+    def _stopped(self):
+        """Stepping has stopped. Deliberately does NOT change any output (see stop())."""
+        self.sig_status_update.emit("STOPPED")
 
 
 class RoutineCallStep(RecipeStep):
@@ -490,9 +553,7 @@ class RoutineCallStep(RecipeStep):
             if routine_class:
                 self.routine_instance = routine_class(self.parameters)
             else:
-                print(f"[ENGINE] Unknown routine: {self.routine_name}")
-                self.state = "FAILED"
-                return self.state
+                return self.fail(f"unknown routine '{self.routine_name}'")
 
         if self.routine_instance:
             res = self.routine_instance.tick(telemetry_cache, cmd_thread)
@@ -504,6 +565,8 @@ class RoutineCallStep(RecipeStep):
                 self.state = "WAITING_FOR_USER"
                 return self.state
 
+            if res == "FAILED":
+                return self.fail(getattr(self.routine_instance, "fail_reason", "") or f"routine {self.routine_name} failed")
             self.state = res
 
         return self.state
@@ -564,8 +627,8 @@ class ParallelStep(RecipeStep):
             if res == "FAILED": any_failed = True
 
         if any_failed:
-            self.state = "FAILED"
-            return "FAILED"
+            reasons = [s.fail_reason for s in self.sub_steps if s.state == "FAILED" and s.fail_reason]
+            return self.fail("; ".join(reasons) or "a parallel sub-step failed")
         elif all_done:
             self.state = "DONE"
             return "DONE"
@@ -614,44 +677,54 @@ class VerifiedActionStep(RecipeStep):
 
         self.timer_start = 0.0
         self.internal_state = "CHECK_PRE"
+        self.ticket = None
 
     def reset(self):
         super().reset()
         self.internal_state = "CHECK_PRE"
+        self.ticket = None
 
     def execute(self, telemetry_cache: dict, cmd_thread) -> str:
         if self.state == "IDLE":
             if "cmd_fault_reset" in self.target:
-                print(f"[SECURITY] Step {self.step_id} aborted: Automated fault resets are strictly prohibited.")
-                self.state = "FAILED"
-                return self.state
+                return self.fail("automated fault resets are not allowed in recipes")
             self.state = "RUNNING"
 
         if self.internal_state == "CHECK_PRE":
-            val = telemetry_cache.get(self.pre_target)
-            if evaluate_condition(val, self.pre_condition, self.pre_value):
-                self.internal_state = "FIRE"
-            else:
-                print(f"[VERIFIED_ACTION] Prerequisite failed on {self.pre_target}")
-                self.state = "FAILED"
-                return self.state
+            if self.pre_target:
+                val = fresh_value(telemetry_cache, self.pre_target)
+                if val is None:
+                    return self.fail(f"prerequisite {self.pre_target} has no live value")
+                if not evaluate_condition(val, self.pre_condition, self.pre_value):
+                    return self.fail(f"prerequisite not met: {self.pre_target} = {val} "
+                                     f"(needs {self.pre_condition} {self.pre_value})")
+            self.internal_state = "FIRE"
 
         if self.internal_state == "FIRE":
-            # Direct routing logic as defined in earlier base steps
-            subsystem = "plc" if "plc" in self.target else "spellman"  # Adjust routing logic as needed
-            cmd_thread.send_command(subsystem, self.target, self.value)
+            # Routed by the tag registry. (Was: "plc" if "plc" in the tag name else "spellman",
+            # which sent ordinary PLC tags such as ...extraction.cmd_enable to the Spellman service.)
+            self.ticket = send(cmd_thread, self.target, self.value)
             self.timer_start = time.time()
+            self.internal_state = "WAIT_ACK"
+
+        if self.internal_state == "WAIT_ACK":
+            outcome = ticket_outcome(self.ticket)
+            if outcome is None:
+                return self.state
+            ok, reason = outcome
+            if not ok:
+                return self.fail(reason)
             self.internal_state = "VERIFY"
 
         if self.internal_state == "VERIFY":
-            val = telemetry_cache.get(self.verify_target)
+            val = fresh_value(telemetry_cache, self.verify_target)
             if evaluate_condition(val, self.verify_condition, self.verify_value):
                 self.state = "DONE"
                 return self.state
 
             if time.time() - self.timer_start > self.timeout_sec:
-                print(f"[VERIFIED_ACTION] Timeout verifying {self.verify_target}")
-                self.state = "FAILED"
+                return self.fail(f"{self.verify_target} did not reach {self.verify_condition} {self.verify_value} "
+                                 f"within {self.timeout_sec:g} s (last live value: {val})")
 
         return self.state
 

@@ -1,27 +1,30 @@
-import time
-import zmq
-import orjson
+import logging
 import queue
+import time
+
+import orjson
+import zmq
 from PyQt6.QtCore import QThread, pyqtSignal
-from src.core.network_map import (
-    ZMQ_PORT_PLC_CMD,
-    ZMQ_PORT_SRC_TURBO_CMD,
-    ZMQ_PORT_MANAGER_CMD,
-    ZMQ_PORT_SPELLMAN_CMD,
-    ZMQ_PORT_MAGNET_CMD,
-    ZMQ_PORT_SMU_CMD,
-    ZMQ_PORT_STEERER_MAGNET_CMD
-)
+
+from src.core.commands import (CommandClient, CommandTicket, DEFAULT_TIMEOUT, SUCCESS, UNREACHABLE, describe,
+                               route_for_tag)
+from src.core.log_setup import Throttle
+
+log = logging.getLogger("hmi.network")
 
 # --- Background Network Workers ---
 
+
 class ZMQTelemetryThread(QThread):
-    data_received = pyqtSignal(dict)
+    """Receives every service's telemetry. Emits (topic, payload): the topic tells the
+    HMI's TelemetryCache which service a value came from, so it can tell when it goes stale."""
+    data_received = pyqtSignal(str, dict)
 
     def __init__(self, ports: list[str]):
         super().__init__()
         self.ports = ports
         self.running = True
+        self._throttle = Throttle(30.0)
 
     def run(self):
         ctx = zmq.Context.instance()
@@ -37,12 +40,21 @@ class ZMQTelemetryThread(QThread):
             while self.running:
                 socks = dict(poller.poll(timeout=100))
                 if sub_socket in socks and socks[sub_socket] == zmq.POLLIN:
-                    try:
-                        topic, payload = sub_socket.recv_multipart(flags=zmq.NOBLOCK)
-                        self.data_received.emit(orjson.loads(payload))
-                    except Exception as e:
-                        print(f"[ZMQ Telemetry Error] {e}") # This will print exact decoding/unpacking errors
-                        continue
+                    while True:
+                        try:
+                            topic, payload = sub_socket.recv_multipart(flags=zmq.NOBLOCK)
+                        except zmq.Again:
+                            break
+                        except ValueError:
+                            continue   # unexpected number of frames
+                        try:
+                            data = orjson.loads(payload)
+                        except ValueError as e:
+                            if (n := self._throttle.ready(topic)) is not None:
+                                log.warning("Undecodable telemetry on %r: %s%s", topic, e, Throttle.suffix(n))
+                            continue
+                        if isinstance(data, dict):
+                            self.data_received.emit(topic.decode("utf-8", "replace"), data)
         finally:
             sub_socket.setsockopt(zmq.LINGER, 0)
             sub_socket.close()
@@ -53,50 +65,74 @@ class ZMQTelemetryThread(QThread):
 
 
 class ZMQCommandThread(QThread):
-    def __init__(self):
+    """Sends commands to the services and collects their acknowledgements.
+
+    send_command() keeps its old signature, so every widget works unchanged, and
+    now returns a CommandTicket: automation code can wait on it, and every
+    outcome is also emitted as command_result(dict) for the HMI to display
+    (rejections, failures, timeouts and services that are not running).
+    """
+    command_result = pyqtSignal(dict)
+
+    def __init__(self, endpoints: dict = None, default_timeout: float = DEFAULT_TIMEOUT):
         super().__init__()
         self.cmd_queue = queue.Queue()
         self.running = True
+        self.endpoints = endpoints
+        self.default_timeout = default_timeout
+        self._tickets = {}
 
-    def send_command(self, subsystem: str, tag: str, value: any, origin: str = "hmi"):
-        self.cmd_queue.put((subsystem, tag, value, origin))
+    def send_command(self, subsystem: str, tag: str, value: any, origin: str = "hmi",
+                     timeout: float = None) -> CommandTicket:
+        if not subsystem:
+            subsystem = route_for_tag(tag)
+        ticket = CommandTicket(subsystem, tag, value, origin, timeout)
+        self.cmd_queue.put(ticket)
+        return ticket
+
+    def send_command_sync(self, subsystem: str, tag: str, value, origin: str = "hmi",
+                          timeout: float = None) -> dict:
+        """Blocking - for worker threads only, never the GUI thread."""
+        ticket = self.send_command(subsystem, tag, value, origin=origin, timeout=timeout)
+        result = ticket.wait((timeout or self.default_timeout) + 2.0)
+        return result or {"status": "timeout", "reason": "command thread did not respond", "tag": tag,
+                          "value": value, "subsystem": subsystem, "origin": origin}
+
+    def _resolve(self, result: dict):
+        ticket = self._tickets.pop(result.get("id"), None)
+        if ticket is not None:
+            ticket.resolve(result)
+        if result.get("status") not in SUCCESS:
+            log.warning("Command %s via %s: %s", result.get("origin"), result.get("subsystem"), describe(result))
+        self.command_result.emit(result)
 
     def run(self):
-        ctx = zmq.Context.instance()
-        sockets = {
-            "plc": ctx.socket(zmq.PUB),
-            "src_turbo": ctx.socket(zmq.PUB),
-            "manager": ctx.socket(zmq.PUB),
-            "spellman": ctx.socket(zmq.PUB),
-            "magnet": ctx.socket(zmq.PUB),
-            "smu": ctx.socket(zmq.PUB),
-            "steerer_magnet": ctx.socket(zmq.PUB)
-        }
-        sockets["plc"].connect(ZMQ_PORT_PLC_CMD)
-        sockets["src_turbo"].connect(ZMQ_PORT_SRC_TURBO_CMD)
-        sockets["manager"].connect(ZMQ_PORT_MANAGER_CMD)
-        sockets["spellman"].connect(ZMQ_PORT_SPELLMAN_CMD)
-        sockets["magnet"].connect(ZMQ_PORT_MAGNET_CMD)
-        sockets["smu"].connect(ZMQ_PORT_SMU_CMD)
-        sockets["steerer_magnet"].connect(ZMQ_PORT_STEERER_MAGNET_CMD)
-
+        client = CommandClient(self.endpoints, default_timeout=self.default_timeout, connect_wait=0.2)
         try:
             while self.running:
+                # 1. Send everything queued since the last pass
                 try:
-                    subsystem, tag, value, origin = self.cmd_queue.get(timeout=0.1)
-                    if subsystem == "manager":
-                        payload = value
-                    else:
-                        payload = {"tag": tag, "value": value, "ts": time.time(), "origin": origin}
-                    sockets[subsystem].send_json(payload)
+                    while True:
+                        ticket = self.cmd_queue.get_nowait()
+                        self._tickets[ticket.id] = ticket
+                        try:
+                            client.send(ticket.subsystem, ticket.tag, ticket.value, origin=ticket.origin,
+                                        timeout=ticket.timeout, cmd_id=ticket.id, ts=ticket.created)
+                        except Exception as e:  # never let one bad command kill the command thread
+                            log.exception("Could not send %r", ticket)
+                            self._resolve({"id": ticket.id, "status": UNREACHABLE, "reason": f"send failed: {e}",
+                                           "tag": ticket.tag, "value": ticket.value,
+                                           "subsystem": ticket.subsystem, "origin": ticket.origin})
                 except queue.Empty:
-                    continue
-                except:
-                    continue
+                    pass
+                # 2. Collect replies, timeouts and unreachables
+                for result in client.poll(20):
+                    self._resolve(result)
         finally:
-            for s in sockets.values():
-                s.setsockopt(zmq.LINGER, 0)
-                s.close()
+            client.close()
+            for ticket in list(self._tickets.values()):
+                ticket.resolve({"id": ticket.id, "status": "timeout", "reason": "HMI closing", "tag": ticket.tag,
+                                "value": ticket.value, "subsystem": ticket.subsystem, "origin": ticket.origin})
 
     def stop(self):
         self.running = False

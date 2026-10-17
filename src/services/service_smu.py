@@ -1,13 +1,18 @@
-import time
-import zmq
+import json
+import logging
 import os
 import socket
-from typing import Dict, Any, Optional, Tuple
-import orjson
-import json
+import time
+from typing import Any, Dict, Optional, Tuple
 
+import orjson
+import zmq
+
+from src.core.commands import CommandServer
 from src.core.event_helper import EventHelper
+from src.core.log_setup import Throttle, setup_logging
 from src.core.os_helper import harden_windows_process
+from src.core.paths import simulation_enabled
 
 if os.name == 'nt':
     import ctypes
@@ -23,6 +28,11 @@ POLL_INTERVAL = 0.1  # 10Hz target loop (will stretch automatically for high NPL
 MAX_CMD_AGE = 0.5
 PLC_WATCHDOG_AGE = 1.0
 DEBUG_VERBOSE = False
+CONNECT_TIMEOUT = 2.0
+RECONNECT_DELAYS = (1.0, 2.0, 5.0, 10.0)
+BASE = "ion_beam.beamline.faraday.smu"
+
+log = logging.getLogger("service_smu")
 
 # Keysight B2900A series standard current ranges
 CURRENT_RANGES = [10e-9, 100e-9, 1e-6, 10e-6, 100e-6, 1e-3]
@@ -57,10 +67,12 @@ class SmuScpiProtocol:
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 
         try:
-            if DEBUG_VERBOSE: print(f"[SYS] Attempting connection to {self.ip}:{self.port}...")
+            log.debug("Attempting connection to %s:%s", self.ip, self.port)
+            # Without a timeout an unreachable SMU blocked here for ~21 s (Windows default)
+            self.sock.settimeout(CONNECT_TIMEOUT)
             self.sock.connect((self.ip, self.port))
             self.connected = True
-            print(f"[SMU Driver] Raw SCPI Socket Connected to {self.ip}:{self.port}")
+            log.info("Raw SCPI socket connected to %s:%s", self.ip, self.port)
 
             # Allow enough time for standard initialization
             self.sock.settimeout(5.0)
@@ -99,34 +111,34 @@ class SmuScpiProtocol:
             self.timeout_counter = 0
             return True
 
-        except Exception as e:
-            if DEBUG_VERBOSE: print(f"[SYS] Connection failed: {e}")
+        except OSError as e:
+            log.debug("Connection failed: %s", e)
             self.connected = False
             return False
 
     def disconnect(self):
         if self.connected:
             try:
-                if DEBUG_VERBOSE: print("[SYS] Disconnecting from SMU and forcing output OFF.")
+                log.info("Disconnecting from SMU and forcing output to 0 V.")
                 self.set_output(False)
                 self.sock.close()
-            except:
-                pass
+            except OSError as e:
+                log.warning("Error while disconnecting from SMU: %s", e)
             self.connected = False
 
     def send_cmd(self, cmd: str):
         if not self.connected: return
         try:
-            if DEBUG_VERBOSE: print(f"[SCPI TX] {cmd}")
+            log.debug("SCPI TX %s", cmd)
             self.sock.sendall((cmd + '\n').encode('utf-8'))
-        except Exception as e:
-            if DEBUG_VERBOSE: print(f"[SCPI ERR] Send failed: {e}")
+        except OSError as e:
+            log.warning("SCPI send failed (%s): %s", cmd, e)
             self.connected = False
 
     def query(self, cmd: str) -> Optional[str]:
         if not self.connected: return None
         try:
-            if DEBUG_VERBOSE: print(f"[SCPI TX] {cmd}")
+            log.debug("SCPI TX %s", cmd)
             self.sock.sendall((cmd + '\n').encode('utf-8'))
             response = bytearray()
             while True:
@@ -138,18 +150,18 @@ class SmuScpiProtocol:
                 if self.terminator in chunk:
                     break
 
-            resp_str = response.decode('utf-8').strip()
+            resp_str = response.decode('utf-8', errors='replace').strip()
             self.timeout_counter = 0  # Reset strike counter on successful reply
-            if DEBUG_VERBOSE: print(f"[SCPI RX] {resp_str}")
+            log.debug("SCPI RX %s", resp_str)
             return resp_str
         except socket.timeout:
             self.timeout_counter += 1
-            if DEBUG_VERBOSE: print(f"[SCPI ERR] Query timeout ({self.timeout_counter}/3) for command: {cmd}")
+            log.warning("SCPI query timeout (%d/3) for %s", self.timeout_counter, cmd)
             if self.timeout_counter >= 3:
                 self.connected = False
             return None
-        except Exception as e:
-            if DEBUG_VERBOSE: print(f"[SCPI ERR] Query failed: {e}")
+        except OSError as e:
+            log.warning("SCPI query failed (%s): %s", cmd, e)
             self.connected = False
             return None
 
@@ -173,8 +185,7 @@ class SmuScpiProtocol:
         # Generous safety margin to prevent timeout cascades during auto-ranging or long integrations
         required_timeout = 5.0 + (nplc * 0.1)
         self.sock.settimeout(required_timeout)
-        if DEBUG_VERBOSE: print(
-            f"[SMU Config] Aperture set to {nplc} NPLC. Socket timeout adjusted to {required_timeout:.2f}s")
+        log.debug("Aperture set to %s NPLC; socket timeout %.2f s", nplc, required_timeout)
 
     def read_telemetry(self) -> Optional[Tuple[float, float, bool]]:
         if not self.connected: return None
@@ -189,23 +200,29 @@ class SmuScpiProtocol:
 
             return v_rb, i_rb, self.output_state
 
-        except Exception as e:
-            if DEBUG_VERBOSE: print(f"[SCPI ERR] Telemetry parse failed: {e}")
+        except (ValueError, IndexError) as e:
+            log.warning("Telemetry parse failed: %s", e)
             return None
+
+
+def _make_driver():
+    if simulation_enabled():
+        from src.sim.smu import make_fake_smu
+        return make_fake_smu(SmuScpiProtocol)(SMU_IP, SMU_PORT)
+    return SmuScpiProtocol(SMU_IP, SMU_PORT)
 
 
 class SmuMicroservice:
     def __init__(self):
         self.context = zmq.Context()
+        self.events = EventHelper("service_smu")
 
         self.pub_socket = self.context.socket(zmq.PUB)
         self.pub_socket.setsockopt(zmq.SNDHWM, 5)
         self.pub_socket.bind(ZMQ_PORT_SMU_PUB)
 
-        self.sub_socket = self.context.socket(zmq.SUB)
-        self.sub_socket.setsockopt(zmq.RCVHWM, 5)
-        self.sub_socket.bind(ZMQ_PORT_SMU_CMD)
-        self.sub_socket.setsockopt_string(zmq.SUBSCRIBE, "")
+        self.commands = CommandServer(ZMQ_PORT_SMU_CMD, "service_smu", context=self.context,
+                                      events=self.events, max_age=MAX_CMD_AGE)
 
         self.plc_socket = self.context.socket(zmq.SUB)
         self.plc_socket.connect(ZMQ_PORT_PLC_PUB)
@@ -213,7 +230,7 @@ class SmuMicroservice:
 
         self.limits = self._load_config()
         self.registry_limits = self._load_registry_limits()
-        self.hw = SmuScpiProtocol(SMU_IP, SMU_PORT)
+        self.hw = _make_driver()
 
         self.stat_safety_relay = False
         self.last_plc_ts = 0.0
@@ -229,10 +246,20 @@ class SmuMicroservice:
         self.hb_socket.connect(ZMQ_PORT_HEARTBEAT)
         self.last_hb_time = 0.0
 
-        self.events = EventHelper("service_smu")
+        self._throttle = Throttle(60.0)
+        self._connect_failures = 0
+        self.running = True
 
         self.range_idx = 0  # Default to 10nA
         self.state["ion_beam.beamline.faraday.smu.stat_range_settled"] = 0.0
+
+    def stop(self):
+        self.running = False
+
+    def _update_command_age_limit(self):
+        # A measurement at high NPLC blocks the loop for seconds, so a command can only be
+        # read that much later; scale the freshness limit with the integration time.
+        self.commands.max_age = MAX_CMD_AGE + 2.5 * 2 * self.hw.current_nplc / 50.0
 
     def _load_config(self) -> dict:
         config_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '../../config/smu_config.json'))
@@ -242,8 +269,8 @@ class SmuMicroservice:
         try:
             with open(config_path, "r") as f:
                 default_config.update(json.load(f))
-        except Exception:
-            pass
+        except (OSError, ValueError) as e:
+            log.warning("smu_config.json not loaded, using defaults: %s", e)
         return default_config
 
     def _load_registry_limits(self) -> dict:
@@ -255,19 +282,23 @@ class SmuMicroservice:
                 for tag, data in registry.items():
                     if data.get("source") == "service_faraday_smu" and data.get("auto_controllable"):
                         limits[tag] = {"min_val": data.get("min_val"), "max_val": data.get("max_val")}
-        except Exception:
-            pass
+        except (OSError, ValueError) as e:
+            self.events.log_general(f"Failed to load registry limits (setpoints will be refused): {e}",
+                                    severity="ERROR")
         return limits
 
     def _update_safety_permissives(self):
         try:
             while True:
                 topic, msg = self.plc_socket.recv_multipart(flags=zmq.NOBLOCK)
-                payload = orjson.loads(msg)
+                try:
+                    payload = orjson.loads(msg)
+                except ValueError:
+                    continue
                 self.last_plc_ts = time.time()
                 stat_safety_relay = payload.get("ion_beam.facilities.safety_relay_active")
-                if stat_safety_relay is not None:
-                    self.stat_safety_relay = bool(stat_safety_relay)
+                # null = PLC disconnected = relay state unknown -> treat as off
+                self.stat_safety_relay = bool(stat_safety_relay)
         except zmq.Again:
             pass
 
@@ -275,100 +306,120 @@ class SmuMicroservice:
         self.safety_tripped = not (self.stat_safety_relay and comms_alive)
         self.state["system.safe_to_run"] = 0.0 if self.safety_tripped else 1.0
 
-        if DEBUG_VERBOSE and self.safety_tripped != self._last_printed_safety_state:
-            print(f"[SAFETY] State changed. Tripped: {self.safety_tripped}")
+        if self.safety_tripped != self._last_printed_safety_state:
+            self.events.log_general(
+                "SMU bias forced to 0 V: safety relay off or no PLC telemetry" if self.safety_tripped
+                else "SMU safety permissive restored", severity="WARNING" if self.safety_tripped else "INFO")
             self._last_printed_safety_state = self.safety_tripped
 
     def _process_commands(self):
-        if not self.hw.connected: return
-
-        if self.safety_tripped:
-            is_physically_on = self.state.get("ion_beam.beamline.faraday.smu.stat_enabled", 0.0) == 1.0
-            rb_voltage = self.state.get("ion_beam.beamline.faraday.smu.rb_voltage", 0.0)
+        if self.safety_tripped and self.hw.connected:
+            is_physically_on = self.state.get(f"{BASE}.stat_enabled") == 1.0
+            rb_voltage = self.state.get(f"{BASE}.rb_voltage") or 0.0
 
             if not self._safety_lockout_active or is_physically_on or abs(rb_voltage) > 0.1:
-                if DEBUG_VERBOSE: print("[SAFETY] Hardware violation detected. Forcing Output OFF and 0V.")
+                log.warning("Safety interlock: forcing SMU output off and 0 V.")
                 self.hw.set_voltage(0.0)
                 self.hw.set_output(False)
                 self._safety_lockout_active = True
+        elif not self.safety_tripped:
+            self._safety_lockout_active = False
+
+        for cmd in self.commands.poll():
+            tag, raw_value, origin = cmd.tag, cmd.value, cmd.origin
+
+            if tag == f"{BASE}.cmd_ctrl_mode":
+                try:
+                    self.active_ctrl_mode = int(raw_value)
+                except (ValueError, TypeError):
+                    cmd.reject(f"invalid control mode {raw_value!r}")
+                    continue
+                self.events.log_general(f"Arbitration: SMU mode set to {self.active_ctrl_mode}")
+                cmd.ok()
+                continue
+
+            if self.active_ctrl_mode > 0 and origin != "optimizer" and origin != "mass_scan":
+                cmd.reject(f"locked out: SMU is in automatic control mode {self.active_ctrl_mode}")
+                continue
+
+            parts = tag.split('.')
+            if len(parts) < 3 or not tag.startswith(BASE + "."):
+                cmd.reject("not an SMU tag")
+                continue
+            cmd_type = parts[-1]
 
             try:
-                while True: self.sub_socket.recv_json(flags=zmq.NOBLOCK)
-            except zmq.Again:
-                pass
-            return
+                value = float(raw_value)
+            except (ValueError, TypeError):
+                cmd.reject(f"value {raw_value!r} is not a number")
+                continue
 
-        self._safety_lockout_active = False
+            if not self.hw.connected:
+                cmd.reject("SMU not connected")
+                continue
+            if self.safety_tripped and cmd_type in ("sp_requested_voltage", "cmd_enable") and \
+                    not (cmd_type == "cmd_enable" and not value):
+                cmd.reject("safety relay de-energised (or no PLC telemetry) - bias held at 0 V")
+                continue
 
-        try:
-            while True:
-                msg = self.sub_socket.recv_json(flags=zmq.NOBLOCK)
-                tag = msg.get("tag", "")
-                raw_value = msg.get("value", 0)
-                ts = msg.get("ts", 0.0)
-                origin = msg.get("origin", "hmi")
+            if cmd_type == "sp_requested_voltage":
+                if self.state.get(f"{BASE}.stat_enabled", 0.0) == 1.0:
+                    tag_limits = self.registry_limits.get(tag, {})
+                    min_v = tag_limits.get("min_val")
+                    max_v = tag_limits.get("max_val")
 
-                if time.time() - ts > MAX_CMD_AGE: continue
-
-                if tag == "ion_beam.beamline.faraday.smu.cmd_ctrl_mode":
-                    try:
-                        self.active_ctrl_mode = int(raw_value)
-                        self.events.log_general(f"Arbitration: SMU mode set to {self.active_ctrl_mode}")
-                    except:
-                        pass
-                    continue
-
-                if self.active_ctrl_mode > 0 and origin != "optimizer" and origin != "mass_scan":
-                    continue
-
-                parts = tag.split('.')
-                if len(parts) < 3 or parts[1] != "beamline": continue
-                cmd_type = parts[-1]
-
-                try:
-                    value = float(raw_value)
-                except:
-                    continue
-
-                if cmd_type == "sp_requested_voltage":
-                    if self.state.get("ion_beam.beamline.faraday.smu.stat_enabled", 0.0) == 1.0:
-                        tag_limits = self.registry_limits.get(tag, {})
-                        min_v = tag_limits.get("min_val")
-                        max_v = tag_limits.get("max_val")
-
-                        if min_v is not None and min_v <= value <= max_v:
-                            self.hw.set_voltage(value)
-                            self.sp_cache["ion_beam.beamline.faraday.smu.sp_actual_voltage"] = value
+                    if min_v is None or max_v is None:
+                        cmd.reject("no min/max limits configured for this tag in system_tags.json")
+                    elif not (min_v <= value <= max_v):
+                        cmd.reject(f"{value:g} V is outside the allowed range [{min_v:g}, {max_v:g}] V")
                     else:
-                        self.hw.set_output(False)
+                        self.hw.set_voltage(value)
+                        self.sp_cache[f"{BASE}.sp_actual_voltage"] = value
+                        cmd.ok() if self.hw.connected else cmd.fail("SMU connection lost while sending")
+                else:
+                    self.hw.set_output(False)
+                    cmd.reject("bias output is disabled - enable it before setting a voltage")
 
-                elif cmd_type == "cmd_enable":
-                    self.hw.set_output(bool(value))
+            elif cmd_type == "cmd_enable":
+                self.hw.set_output(bool(value))
+                cmd.ok("bias enabled" if value else "bias disabled (0 V)")
 
-                elif cmd_type == "cmd_nplc":
-                    self.hw.set_nplc(value)
-                    self.state["ion_beam.beamline.faraday.smu.rb_nplc"] = self.hw.current_nplc
+            elif cmd_type == "cmd_nplc":
+                self.hw.set_nplc(value)
+                self.state[f"{BASE}.rb_nplc"] = self.hw.current_nplc
+                self._update_command_age_limit()
+                cmd.ok(f"NPLC {self.hw.current_nplc:g}")
 
-                elif cmd_type == "cmd_range_val":
-                    self.hw.cached_range_val = float(value)
-                    if self.hw.connected and not self.hw.cached_auto_range:
-                        self.hw.send_cmd(f":SENS:CURR:RANG {self.hw.cached_range_val:.2e}")
+            elif cmd_type == "cmd_range_val":
+                self.hw.cached_range_val = float(value)
+                if self.hw.connected and not self.hw.cached_auto_range:
+                    self.hw.send_cmd(f":SENS:CURR:RANG {self.hw.cached_range_val:.2e}")
+                cmd.ok()
 
-                elif cmd_type == "cmd_azer":
-                    self.hw.cached_azer = bool(value)
-                    if self.hw.connected:
-                        self.hw.send_cmd(f":SYST:AZER {'ON' if value else 'OFF'}")
+            elif cmd_type == "cmd_azer":
+                self.hw.cached_azer = bool(value)
+                if self.hw.connected:
+                    self.hw.send_cmd(f":SYST:AZER {'ON' if value else 'OFF'}")
+                cmd.ok()
+            else:
+                cmd.reject(f"unsupported command '{cmd_type}'")
+        self.commands.finish()
 
-        except zmq.Again:
-            pass
+    def _publish_unknown(self):
+        self.state[f"{BASE}.stat_comms_fail"] = 1.0
+        for key in ("rb_voltage", "rb_current", "stat_enabled", "stat_range_settled"):
+            self.state[f"{BASE}.{key}"] = None
+        self.state[f"{BASE}.rb_ctrl_mode"] = float(self.active_ctrl_mode)
 
     def _poll_device(self):
-        if not self.hw.connected: return
+        if not self.hw.connected:
+            self._publish_unknown()
+            return
         telemetry_data = self.hw.read_telemetry()
-        comms_fail = telemetry_data is None
-
-        self.state["ion_beam.beamline.faraday.smu.stat_comms_fail"] = 1.0 if comms_fail else 0.0
-        if comms_fail: return
+        if telemetry_data is None:
+            self._publish_unknown()
+            return
+        self.state["ion_beam.beamline.faraday.smu.stat_comms_fail"] = 0.0
 
         v_rb, i_rb, outp_enabled = telemetry_data
 
@@ -408,52 +459,53 @@ class SmuMicroservice:
             self.state["ion_beam.beamline.faraday.smu.sp_actual_voltage"] = self.sp_cache[
                 "ion_beam.beamline.faraday.smu.sp_actual_voltage"]
 
-    def run(self):
-        self.events.log_general("[SMU Service] Daemon Starting...")
-        print("[SYS] Daemon Starting.")
+    def _try_connect(self):
+        if self.hw.connect():
+            comp_i = self.limits.get("compliance_current", 100e-6)
+            self.hw.send_cmd(f":SENS:CURR:PROT {comp_i:.6e}")
+            self._update_command_age_limit()
 
-        last_connect_attempt = 0.0
-        reconnect_interval = 1.0
+            last_v = self.sp_cache.get(f"{BASE}.sp_actual_voltage")
+            if last_v is not None and not self.safety_tripped:
+                self.events.log_general(f"SMU (re)connected - restoring previous bias of {last_v:g} V")
+                self.hw.set_voltage(last_v)
+                self.hw.set_output(True)
+            else:
+                self.events.log_general(f"Connected to SMU at {SMU_IP}:{SMU_PORT}")
+            self._connect_failures = 0
+            self._throttle.reset("connect")
+            return 0.0
+        self._connect_failures += 1
+        if (n := self._throttle.ready("connect")) is not None:
+            self.events.log_general(f"SMU at {SMU_IP}:{SMU_PORT} not reachable{Throttle.suffix(n)}",
+                                    severity="WARNING")
+        return RECONNECT_DELAYS[min(self._connect_failures - 1, len(RECONNECT_DELAYS) - 1)]
+
+    def run(self):
+        self.events.log_general("[SMU Service] Daemon Starting..." + (" (SIMULATED SMU)" if simulation_enabled() else ""))
+
+        next_connect_at = 0.0
         next_tick = time.perf_counter() + POLL_INTERVAL
 
         try:
-            while True:
+            while self.running:
                 cycle_start = time.perf_counter()
 
-                if not self.hw.connected:
-                    if time.time() - last_connect_attempt > reconnect_interval:
-                        last_connect_attempt = time.time()
-                        self.hw.connect()
-
-                        if self.hw.connected:
-                            comp_i = self.limits.get("compliance_current", 100e-6)
-                            self.hw.send_cmd(f":SENS:CURR:PROT {comp_i:.6e}")
-
-                            last_v = self.sp_cache.get("ion_beam.beamline.faraday.smu.sp_actual_voltage")
-                            if last_v is not None:
-                                self.hw.set_voltage(last_v)
-                                self.hw.set_output(True)
-                    else:
-                        sleep_time = next_tick - time.perf_counter()
-                        if sleep_time > 0.002: time.sleep(sleep_time - 0.002)
-                        while time.perf_counter() < next_tick: pass
-                        next_tick += POLL_INTERVAL
-                        continue
+                if not self.hw.connected and time.time() >= next_connect_at:
+                    next_connect_at = time.time() + self._try_connect()
 
                 self._update_safety_permissives()
-
-                if self.hw.connected:
-                    self._process_commands()
-                    self._poll_device()
+                self._process_commands()     # always answered, with a reason when refused
+                self._poll_device()
 
                 self.state["timestamp"] = time.time()
                 self.state["system.cycle_time_ms"] = round((time.perf_counter() - cycle_start) * 1000, 2)
 
                 try:
-                    topic = TOPIC_SMU_DATA if isinstance(TOPIC_SMU_DATA, bytes) else TOPIC_SMU_DATA.encode('utf-8')
-                    self.pub_socket.send_multipart([topic, orjson.dumps(self.state)])
-                except Exception:
-                    pass
+                    self.pub_socket.send_multipart([TOPIC_SMU_DATA, orjson.dumps(self.state)])
+                except zmq.ZMQError as e:
+                    if (n := self._throttle.ready("publish")) is not None:
+                        log.error("ZMQ publish failed: %s%s", e, Throttle.suffix(n))
 
                 if time.time() - self.last_hb_time >= 0.5:
                     self.hb_socket.send_json({"service": "service_smu", "ts": time.time()})
@@ -469,15 +521,16 @@ class SmuMicroservice:
                 while time.perf_counter() < next_tick: pass
 
         except KeyboardInterrupt:
-            print("\n[SYS] Keyboard interrupt received. Shutting down...")
+            log.info("Keyboard interrupt received. Shutting down...")
         finally:
             self.hw.disconnect()
-            self.pub_socket.close()
-            self.sub_socket.close()
-            self.plc_socket.close()
-            self.context.term()
+            self.commands.close()
+            self.pub_socket.close(0)
+            self.plc_socket.close(0)
+            self.hb_socket.close(0)
 
 
 if __name__ == "__main__":
+    setup_logging("service_smu")
     harden_windows_process()
     SmuMicroservice().run()
