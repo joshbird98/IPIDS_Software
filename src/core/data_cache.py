@@ -6,6 +6,7 @@ from PyQt6.QtCore import QObject, QThread, pyqtSignal, QTimer
 
 from src.core.data_engine import TimeSeriesEngine
 from src.core.zmq_listener import ZMQLiveEngine
+from src.core.live_buffer import LiveStore
 from src.core.network_map import (
     ZMQ_PORT_PLC_PUB, ZMQ_PORT_VACUUM_PUB, ZMQ_PORT_SRC_TURBO_PUB,
     ZMQ_PORT_SPELLMAN_PUB, ZMQ_PORT_MAGNET_PUB, ZMQ_PORT_SMU_PUB, ZMQ_PORT_ADAM_PUB,
@@ -56,6 +57,7 @@ class StatelessQueryWorker(QThread):
             self.data_fetched.emit(self.req_start, self.req_end, np.array([]), {}, self.req_id)
 
 class DualPipelineCache(QObject):
+    LIVE_KEEP_SECONDS = 1800.0   # live history kept per source (was ~15 min total)
     live_updated = pyqtSignal()
     historical_updated = pyqtSignal(object, object, int)
     markers_changed = pyqtSignal()
@@ -68,21 +70,16 @@ class DualPipelineCache(QObject):
         self.query_worker.data_fetched.connect(self._on_historical_fetched)
         self.query_worker.finished.connect(self._on_worker_finished)
 
+        # Live data: one ring per publisher (see src/core/live_buffer.py). Replaces the
+        # single 100k x 336-column ring (~270 MB, ~15 min) that wrote a full forward-
+        # filled row for every message from any service.
+        self.live = LiveStore(allowed_tags=self.engine.channel_keys, keep_seconds=self.LIVE_KEEP_SECONDS)
+
         self.zmq_listener = ZMQLiveEngine(
             ZMQ_PORT_PLC_PUB, ZMQ_PORT_VACUUM_PUB, ZMQ_PORT_SRC_TURBO_PUB,
-            ZMQ_PORT_SPELLMAN_PUB, ZMQ_PORT_MAGNET_PUB, ZMQ_PORT_SMU_PUB, ZMQ_PORT_ADAM_PUB, ZMQ_PORT_STEERER_MAGNET_PUB
+            ZMQ_PORT_SPELLMAN_PUB, ZMQ_PORT_MAGNET_PUB, ZMQ_PORT_SMU_PUB, ZMQ_PORT_ADAM_PUB, ZMQ_PORT_STEERER_MAGNET_PUB,
+            sink=self.live.ingest,
         )
-        self.zmq_listener.data_ready.connect(self._on_live_data)
-
-        self.live_capacity = 100000
-        self._x_live = np.zeros(self.live_capacity, dtype=np.float64)
-        self._y_live = {key: np.zeros(self.live_capacity, dtype=np.float64) for key in self.engine.channel_keys}
-
-        # Ring buffer pointer state
-        self.live_ptr = 0
-        self.buffer_wrapped = False
-
-        self.key_last_seen = {key: time.time() for key in self.engine.channel_keys}
 
         self.client_tags = {}
         self.tags = set()
@@ -99,15 +96,20 @@ class DualPipelineCache(QObject):
         mem_mb = self.process.memory_info().rss / (1024 * 1024)
         perf = PerfTracker.get_stats()
         print(
-            f"[UI] Time {time.time()} | CPU: {self.process.cpu_percent():>4.1f}% | RAM: {mem_mb:>6.1f} MB | {perf} | Buffer Pointer: {self.live_ptr}")
+            f"[UI] Time {time.time()} | CPU: {self.process.cpu_percent():>4.1f}% | RAM: {mem_mb:>6.1f} MB | {perf}")
+        rows = self.live.stats()
+        if rows:
+            print("[LIVE] source             msg/s  tags  buffered   MB")
+            for name, rate, ntags, span, mb in rows:
+                print(f"[LIVE] {name:<18} {rate:6.1f} {ntags:5d} {span / 60:7.1f} min {mb:5.1f}")
+        else:
+            print("[LIVE] no live data received")
         self._debug_memory_footprint()
 
     def _debug_memory_footprint(self):
         """Calculates the strict physical byte size of loaded data structures."""
         # 1. Measure the Live Circular Buffers (NumPy)
-        x_mb = self._x_live.nbytes / (1024 * 1024)
-        y_mb = sum(arr.nbytes for arr in self._y_live.values()) / (1024 * 1024)
-        live_total_mb = x_mb + y_mb
+        live_total_mb = self.live.nbytes() / (1024 * 1024)
 
         # 2. Measure the Preloaded Historical Data (Polars)
         # Note: If self.engine.chunk_mart uses a different naming convention, adjust accordingly.
@@ -175,31 +177,7 @@ class DualPipelineCache(QObject):
             # THIS DEFERRAL PERMANENTLY FIXES THE THREAD DEADLOCK
             QTimer.singleShot(0, self._dispatch_pending)
 
-    def _on_live_data(self, flat_data: dict):
-        t0 = time.perf_counter()
-        if not self.engine.channel_keys: return
-
-        current_time = time.time()
-
-        # O(1) True Ring Buffer Assignment
-        idx = self.live_ptr % self.live_capacity
-        self._x_live[idx] = current_time
-
-        for tag in self.engine.channel_keys:
-            if tag in flat_data:
-                val = flat_data[tag]
-                self.key_last_seen[tag] = current_time
-            else:
-                prev_idx = (self.live_ptr - 1) % self.live_capacity if self.live_ptr > 0 else 0
-                val = self._y_live[tag][prev_idx] if self.live_ptr > 0 else np.nan
-                if current_time - self.key_last_seen[tag] > 1.0: val = np.nan
-
-            self._y_live[tag][idx] = val
-
-        self.live_ptr += 1
-        if self.live_ptr >= self.live_capacity:
-            self.buffer_wrapped = True
-            self.live_ptr = self.live_ptr % self.live_capacity
-
-        # REMOVED the expensive np.concatenate logic entirely!
-        PerfTracker.log("ingest", t0)
+    def _on_live_data(self, flat_data: dict, source: str = "default"):
+        """Compatibility entry point (old signal-based path / tests): ingest one
+        message stamped with the current time."""
+        self.live.ingest(source, time.time(), flat_data)

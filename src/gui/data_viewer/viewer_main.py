@@ -34,6 +34,7 @@ from PyQt6.QtGui import QIcon, QPixmap, QColor
 from PyQt6.QtCore import QSize
 
 from src.core.perf_utils import PerfTracker
+from src.core.live_buffer import break_gaps
 
 class MarkerDialog(QDialog):
     def __init__(self, parent=None):
@@ -755,115 +756,58 @@ class DataViewerApp(QMainWindow):
         pass
 
     def _refresh_plot_live(self):
-
         if not self.cache.tags or not getattr(self, 'lanes', None): return
-        # NOTE: _check_and_fetch_history() used to run here, i.e. every 100 ms frame.
+        # NOTE: _check_and_fetch_history() used to run here, i.e. every frame.
         # It now runs from history_check_timer (500 ms) and the debounced view-change
         # handler, which is all it needs.
         for ta in getattr(self, 'time_axes', []): ta.set_offset(self.t0)
 
-        # --- THE VIRTUAL WINDOW SLICER ---
-        if self.cache.live_ptr == 0: return
+        live = self.cache.live
+        latest = live.latest_time()
+        if latest is None:
+            return
         t_slice = time.perf_counter()
-
-        x_raw = self.cache._x_live
-        cap = self.cache.live_capacity
-        ptr = self.cache.live_ptr % cap
-        wrapped = getattr(self.cache, 'buffer_wrapped', False)
 
         base_plot = list(self.lanes.values())[0]
         view_start, view_end = base_plot.viewRange()[0]
-        span = view_end - view_start
+        width = view_end - view_start
 
-        abs_slice_start = (view_start - span) + self.t0
-        abs_slice_end = (view_end + span) + self.t0
+        # Auto-scroll: move the view FIRST, so this frame's data window matches what
+        # is shown (previously the slice was taken for the old view, then scrolled).
+        if self.auto_scroll:
+            self.live_span = width
+            view_end = latest - self.t0
+            view_start = view_end - width
+            self._auto_panning = True
+            base_plot.setXRange(view_start, view_end, padding=0)
+            self._auto_panning = False
 
-        if not wrapped:
-            # Simple slice if we haven't hit the 5-million point wrap yet
-            x_valid = x_raw[:ptr]
-            start_idx = np.searchsorted(x_valid, abs_slice_start)
-            end_idx = np.searchsorted(x_valid, abs_slice_end, side='right')
+        pad = width * 0.25
+        selected = [t for t in self.cache.tags if self.plot_config.get(t, {}).get('selected')]
+        # {tag: (x_abs, y)} - each channel at its own source's timestamps
+        self.current_live = live.window(self.t0 + view_start - pad, self.t0 + view_end + pad, selected)
 
-            x_slice = x_valid[start_idx:end_idx] - self.t0
-            y_slice_dict = {tag: self.cache._y_live[tag][start_idx:end_idx]
-                            for tag in self.cache.tags
-                            if tag in self.cache._y_live}
-        else:
-            # Dual-Slice: Grab views of the Old Segment and New Segment independently
-            x_old = x_raw[ptr:]
-            x_new = x_raw[:ptr]
-
-            s_idx_old = np.searchsorted(x_old, abs_slice_start)
-            e_idx_old = np.searchsorted(x_old, abs_slice_end, side='right')
-
-            s_idx_new = np.searchsorted(x_new, abs_slice_start)
-            e_idx_new = np.searchsorted(x_new, abs_slice_end, side='right')
-
-            # Concat ONLY the tiny visible slices (< 0.1ms execution time)
-            x_slice = np.concatenate((x_old[s_idx_old:e_idx_old], x_new[s_idx_new:e_idx_new])) - self.t0
-
-            y_slice_dict = {}
-            for tag in self.cache.tags:
-                # Guard: a profile may reference a tag that is no longer in the
-                # registry. An unhandled KeyError in a Qt timer slot aborts the
-                # whole app under PyQt6, and this branch only runs after the
-                # first wrap (~15 min in), so it looked like a random crash.
-                if tag not in self.cache._y_live:
-                    continue
-                y_raw = self.cache._y_live[tag]
-                y_slice_old = y_raw[ptr:][s_idx_old:e_idx_old]
-                y_slice_new = y_raw[:ptr][s_idx_new:e_idx_new]
-                y_slice_dict[tag] = np.concatenate((y_slice_old, y_slice_new))
-
-        # Cache the current render payload for the Mouse Inspector to use
-        self.current_x_slice = x_slice
-        self.current_y_dict = y_slice_dict
-
-        PerfTracker.slice_size = len(x_slice)
+        PerfTracker.slice_size = sum(len(xy[0]) for xy in self.current_live.values())
         PerfTracker.log("slice", t_slice)
 
         t_render = time.perf_counter()
-        self._render_curves(self.curves, x_slice, y_slice_dict, is_historical=False)
+        self._render_live_curves(self.current_live)
         PerfTracker.log("render", t_render)
 
         # Historical curves are NOT re-set here: their data only changes when a
-        # query returns (_refresh_plot_historical). Re-setting ~8000-pt arrays every
-        # frame made pyqtgraph recompute bounds/paths for nothing.
-
-        if self.auto_scroll:
-            self._auto_panning = True
-            current_width = view_end - view_start
-            self.live_span = current_width
-
-            # Extract the newest relative timestamp efficiently
-            latest_idx = (ptr - 1) % cap if self.cache.live_ptr > 0 else 0
-            latest_x_relative = self.cache._x_live[latest_idx] - self.t0
-
-            base_plot.setXRange(latest_x_relative - current_width, latest_x_relative, padding=0)
-            self._auto_panning = False
-
+        # query returns (_refresh_plot_historical).
         self._settle_viewboxes()
 
         # --- UPDATE LIVE SIDEBAR READOUT ---
         if not self.btn_inspector.isChecked():
-            if self.cache.live_ptr > 0:
-                latest_idx = (self.cache.live_ptr - 1) % self.cache.live_capacity
-
-                for tag in self.cache.tags:
-                    # Use .get() to avoid KeyErrors if the tag isn't in the sidebar dictionary yet
-                    val_lbl = getattr(self, 'sidebar_value_labels', {}).get(tag)
-
-                    if val_lbl is not None and tag in self.cache._y_live:
-                        cfg = self.plot_config.get(tag, {})
-                        val = self.cache._y_live[tag][latest_idx]
-                        mult = cfg.get('multiplier', 1.0)
-                        val = val * mult if mult != 1.0 else val
-
-                        # --- Fetch unit and apply dynamic formatting ---
-                        base_unit = getattr(self, 'system_registry', {}).get(tag, {}).get("unit", "")
-                        formatted_str = self._format_with_si_prefix(val, base_unit)
-
-                        val_lbl.setText(formatted_str)
+            for tag, val_lbl in getattr(self, 'sidebar_value_labels', {}).items():
+                val = live.latest_value(tag)
+                if val is None:
+                    continue
+                cfg = self.plot_config.get(tag, {})
+                mult = cfg.get('multiplier', 1.0)
+                base_unit = getattr(self, 'system_registry', {}).get(tag, {}).get("unit", "")
+                val_lbl.setText(self._format_with_si_prefix(val * mult if mult != 1.0 else val, base_unit))
 
     def _settle_viewboxes(self):
         """Resolve pyqtgraph's deferred range/transform updates now, before Qt paints.
@@ -914,152 +858,97 @@ class DataViewerApp(QMainWindow):
         #t_end = time.perf_counter()
         #print(f"[UI] Historical Render Complete: {(t_end - t_prep) * 1000:.1f} ms (Total UI block: {(t_end - t_start) * 1000:.1f} ms)")
 
-    def _render_curves(self, target_dict, x_array, y_dict, is_historical):
-        sorted_tags = sorted(self.cache.tags)
-        active_axes = {lane: {'linear': False, 'log': False} for lane in self.lanes}
+    RENDER_LIMIT = 10000     # points per curve handed to pyqtgraph (min/max downsampled)
+    LIVE_GAP_SECONDS = 2.0   # live samples further apart than this break the line
 
-        # =========================================================
-        # --- 1. GLOBAL X-AXIS EXTRACTION (Run ONCE per frame) ---
-        # =========================================================
-        RENDER_LIMIT = 10000
-        needs_downsample = False
-        master_slice_start = 0
-        master_slice_end = 0
-        use_concat = False
-        start_idx = 0
-        end_idx = 0
+    def _curve_for(self, target_dict, tag, cfg, lane):
+        """Get (or create, add to its lane and legend) the curve for a channel."""
+        c = target_dict.get(tag)
+        if c is None:
+            pen = pg.mkPen(color=self._get_distinct_color(tag), width=1.0)
+            # clipToView/autoDownsample are off: the viewer already slices to the
+            # view and min/max-downsamples, and with them on pyqtgraph re-ran
+            # setData on every view change (part of the double-repaint cascade).
+            c = pg.PlotDataItem(pen=pen, autoDownsample=False, clipToView=False, connect='finite')
+            if cfg.get('scale') == 'log':
+                self.lane_axes[lane].addItem(c)
+            else:
+                self.lanes[lane].addItem(c)
+            # One legend entry per channel, from whichever curve (live or historical)
+            # appears first. Previously only live curves added entries, so with no
+            # live data the plots had no legend at all.
+            if tag not in self._legend_tags:
+                label_text = cfg.get('label', tag)
+                unit = getattr(self, 'system_registry', {}).get(tag, {}).get("unit", "")
+                unit_str = f" [{unit}]" if unit else ""
+                self.lane_legends[lane].addItem(c, name=f"{label_text}{unit_str}")
+                self._legend_tags.add(tag)
+            target_dict[tag] = c
+        c.setVisible(True)
+        return c
 
-        if not is_historical and self.cache.live_ptr > 0:
-            # x_array is ALREADY the chronological visible window built by
-            # _refresh_plot_live (which handles ring-buffer wrap itself).
-            # Previously this block re-indexed it with ring-buffer pointers,
-            # which after every wrap truncated the slice to its oldest
-            # `live_ptr` samples -> all live lines vanished for minutes.
-            # See testing/repro_ring_wrap.py.
-            x_chron = x_array
+    @staticmethod
+    def _scaled(cfg, y):
+        """Apply the channel multiplier and log scaling for plotting."""
+        y = np.asarray(y, dtype=np.float64)
+        mult = cfg.get('multiplier', 1.0)
+        if mult != 1.0:
+            y = y * mult
+        if cfg.get('scale') == 'log':
+            with np.errstate(all='ignore'):
+                y = np.log10(np.clip(y, 1e-12, None))
+        return y
 
-            # Viewport filtering (Binary Search)
-            try:
-                view_range = list(self.lanes.values())[0].viewRange()[0]
-                span = view_range[1] - view_range[0]
-
-                # Add heavy padding (25%) so auto-scrolling new data NEVER clips
-                v_min = view_range[0] - (span * 0.25)
-                v_max = view_range[1] + (span * 0.25)
-
-                master_slice_start = np.searchsorted(x_chron, v_min, side='left')
-                master_slice_end = np.searchsorted(x_chron, v_max, side='right')
-
-                # Failsafe: If the slice is empty, abort the filter and show all live data
-                if master_slice_start >= master_slice_end:
-                    master_slice_start, master_slice_end = 0, len(x_chron)
-
-                x_raw_master = x_chron[master_slice_start:master_slice_end]
-
-            except Exception:
-                x_raw_master = x_chron
-                master_slice_start = 0
-                master_slice_end = len(x_chron)
-
-        else:
-            x_raw_master = x_array
-            master_slice_start = 0
-            master_slice_end = len(x_array)
-
-        # Decide if we need to downsample this frame
-        if len(x_raw_master) > RENDER_LIMIT:
-            needs_downsample = True
-            # Downsample X once, globally!
-            x_plot_master, _ = self.cache.engine.downsample_minmax(x_raw_master, x_raw_master,
-                                                                   target_points=RENDER_LIMIT)
-        else:
-            x_plot_master = x_raw_master
-
-        # =========================================================
-        # --- 2. CHANNEL LOOP (Now ultra-lightweight) ---
-        # =========================================================
-        for idx, tag in enumerate(sorted_tags):
+    def _plot_targets(self, target_dict):
+        """Yield (tag, cfg, lane) for selected channels with a lane; hide the rest."""
+        for tag in sorted(self.cache.tags):
             cfg = self.plot_config.get(tag, {})
             lane = cfg.get('lane', 'Lane 1')
-
             if not cfg.get('selected') or lane not in self.lanes:
                 if tag in target_dict:
                     target_dict[tag].setVisible(False)
                 continue
+            yield tag, cfg, lane
 
-            if tag not in target_dict:
-                color = self._get_distinct_color(tag)
-                pen = pg.mkPen(color=color, width=1.0)
-                c = pg.PlotDataItem(pen=pen, autoDownsample=False, clipToView=False, connect='finite',
-                                    downsampleMethod='peak')
-
-                if cfg.get('scale') == 'log':
-                    self.lane_axes[lane].addItem(c)
-                else:
-                    self.lanes[lane].addItem(c)
-
-                # One legend entry per channel, from whichever curve (live or
-                # historical) appears first. Previously only live curves added
-                # entries, so with no live data the plots had no legend at all.
-                if tag not in self._legend_tags:
-                    label_text = cfg.get('label', tag)
-                    unit = getattr(self, 'system_registry', {}).get(tag, {}).get("unit", "")
-                    unit_str = f" [{unit}]" if unit else ""
-                    self.lane_legends[lane].addItem(c, name=f"{label_text}{unit_str}")
-                    self._legend_tags.add(tag)
-                target_dict[tag] = c
-
-            target_dict[tag].setVisible(True)
-
-            y = y_dict.get(tag, np.array([]))
-            if len(y) == 0:
-                target_dict[tag].setData([], [])
+    def _render_curves(self, target_dict, x_array, y_dict, is_historical=True):
+        """Historical curves: all channels share one time base (x_array, relative)."""
+        n = len(x_array)
+        downsample = n > self.RENDER_LIMIT
+        x_plot = None
+        for tag, cfg, lane in self._plot_targets(target_dict):
+            c = self._curve_for(target_dict, tag, cfg, lane)
+            y = y_dict.get(tag)
+            if y is None or len(y) == 0 or len(y) != n:
+                # (length mismatch would make pyqtgraph raise inside a Qt slot)
+                c.setData([], [])
                 continue
-
-            # Extract Y using the globally calculated indices
-            if not is_historical and self.cache.live_ptr > 0:
-                # y is already aligned with x_array (same window slice)
-                y_raw = y[master_slice_start:master_slice_end]
+            if downsample:
+                xs, y = self.cache.engine.downsample_minmax(x_array, y, target_points=self.RENDER_LIMIT)
+                if x_plot is None:
+                    x_plot = xs
             else:
-                y_raw = y
+                x_plot = x_array
+            c.setData(x_plot, self._scaled(cfg, y))
 
-            # Run min/max downsample ONLY if the view is zoomed out
-            if needs_downsample:
-                try:
-                    _, y_plot_pre = self.cache.engine.downsample_minmax(x_raw_master, y_raw, target_points=RENDER_LIMIT)
-                except Exception:
-                    # Catch NaN array crashes
-                    y_plot_pre = y_raw
-            else:
-                y_plot_pre = y_raw
-
-            # Apply multipliers and log scaling
-            try:
-                y_plot_pre = np.asarray(y_plot_pre, dtype=np.float64)
-                mult = cfg.get('multiplier', 1.0)
-                y_plot = y_plot_pre if mult == 1.0 else y_plot_pre * mult
-            except Exception:
+    def _render_live_curves(self, live):
+        """Live curves: each channel has its own source's timestamps (absolute)."""
+        for tag, cfg, lane in self._plot_targets(self.curves):
+            c = self._curve_for(self.curves, tag, cfg, lane)
+            xy = live.get(tag)
+            if xy is None or len(xy[0]) == 0:
+                c.setData([], [])
                 continue
-
-            if cfg.get('scale') == 'log':
-                active_axes[lane]['log'] = True
-                with np.errstate(all='ignore'):
-                    y_plot = np.log10(np.clip(y_plot, 1e-12, None))
-            else:
-                active_axes[lane]['linear'] = True
-
-            if len(y_plot) != len(x_plot_master):
-                # Mismatched arrays make pyqtgraph raise; blank this channel rather
-                # than take the frame (or, without the crash logger, the app) down.
-                target_dict[tag].setData([], [])
-                continue
-            target_dict[tag].setData(x_plot_master, y_plot)
-
-        # (Axis visibility used to be re-applied here on every frame. AxisItem.setStyle
-        # discards the axis' cached picture and re-runs its size calculation, so that
-        # was wasted work 5-10x/s; and because it was based on which curves had data
-        # in this particular call, it could flip-flop between live and historical
-        # renders. It is now applied once per layout build: _apply_lane_axis_styles.)
+            x, y = xy
+            if len(x) > self.RENDER_LIMIT:
+                x, y = self.cache.engine.downsample_minmax(x, y, target_points=self.RENDER_LIMIT)
+            x = x - self.t0
+            # Break the line across dropouts (a source going quiet), scaled so a
+            # zoomed-out, downsampled view isn't chopped up.
+            gap = self.LIVE_GAP_SECONDS
+            if len(x) > 2:
+                gap = max(gap, 4.0 * (x[-1] - x[0]) / len(x))
+            x, y = break_gaps(x, y, gap)
+            c.setData(x, self._scaled(cfg, y))
 
     # --- Event Handlers ---
 
@@ -1283,10 +1172,10 @@ class DataViewerApp(QMainWindow):
         view_range = base_plot.viewRange()[0]
         right_edge = view_range[1]
 
-        # If we are live, snap to the very end of the cache using the ring buffer pointer
-        if self.auto_scroll and self.cache.live_ptr > 0:
-            latest_idx = (self.cache.live_ptr - 1) % self.cache.live_capacity
-            right_edge = self.cache._x_live[latest_idx] - self.t0
+        # If we are live, snap to the newest live sample
+        latest = self.cache.live.latest_time()
+        if self.auto_scroll and latest is not None:
+            right_edge = latest - self.t0
 
         base_plot.setXRange(right_edge - span_seconds, right_edge, padding=0)
         self._check_and_fetch_history()  # History load happens under shield
@@ -1301,13 +1190,9 @@ class DataViewerApp(QMainWindow):
         end_ts = self.t0 + view_end
         span = end_ts - start_ts
 
-        if self.cache.live_ptr == 0:
+        oldest_live_ts = self.cache.live.oldest_time()
+        if oldest_live_ts is None:
             oldest_live_ts = time.time()
-        elif getattr(self.cache, 'buffer_wrapped', False):
-            ptr = self.cache.live_ptr % self.cache.live_capacity
-            oldest_live_ts = self.cache._x_live[ptr]
-        else:
-            oldest_live_ts = self.cache._x_live[0]
 
         if start_ts < oldest_live_ts:
             self.is_historical_mode = True
@@ -1346,14 +1231,41 @@ class DataViewerApp(QMainWindow):
         for c in self.hist_curves.values():
             c.setData([], [])
 
+    def _values_at(self, rel_x):
+        """Channel values at a time (relative x) for the inspector and pins.
+
+        Returns (snapped_rel_x, {tag: raw value}). Uses historical data when the
+        time is before the live buffer, otherwise the live window (step-hold per
+        channel, since channels now have their own source timestamps).
+        """
+        live_start = self.cache.live.oldest_time()
+        in_hist = (self.is_historical_mode and len(getattr(self, 'historical_x', [])) > 0
+                   and (live_start is None or rel_x + self.t0 < live_start))
+        vals = {}
+        if in_hist:
+            xs = self.historical_x
+            idx = int(np.clip(np.searchsorted(xs, rel_x, side='right') - 1, 0, len(xs) - 1))
+            for tag, y in self.historical_y.items():
+                if len(y) > idx:
+                    vals[tag] = float(y[idx])
+            return float(xs[idx]), vals
+        live = getattr(self, 'current_live', None) or {}
+        if not live:
+            return None, vals
+        abs_ts = rel_x + self.t0
+        for tag, (x, y) in live.items():
+            i = np.searchsorted(x, abs_ts, side='right') - 1
+            if 0 <= i < len(y):
+                vals[tag] = float(y[i])
+        return rel_x, vals
+
     def _on_mouse_moved(self, pos):
-        if not self.btn_inspector.isChecked():
+        if not self.btn_inspector.isChecked() or not self.lanes:
             return
 
         # 1. HOVER DETECTION
         hovered_plot = None
         min_dist = float('inf')
-
         for p in self.lanes.values():
             rect = p.sceneBoundingRect()
             if rect.left() <= pos.x() <= rect.right():
@@ -1361,37 +1273,12 @@ class DataViewerApp(QMainWindow):
                 if dist < min_dist:
                     min_dist = dist
                     hovered_plot = p
-
-        if not self.lanes: return
         ref_plot = hovered_plot if hovered_plot else list(self.lanes.values())[0]
 
         mouse_point = ref_plot.vb.mapSceneToView(pos)
-        mouse_x = mouse_point.x()
-
-        # 2. DYNAMIC PIPELINE ROUTER
-        if self.cache.live_ptr == 0: return
-
-        cap = self.cache.live_capacity
-        ptr = self.cache.live_ptr % cap
-        wrapped = getattr(self.cache, 'buffer_wrapped', False)
-
-        live_start_abs = self.cache._x_live[ptr] if wrapped else self.cache._x_live[0]
-        live_start_x = live_start_abs - self.t0
-
-        if self.is_historical_mode and mouse_x < live_start_x and len(self.historical_x) > 0:
-            x_source = self.historical_x
-            y_source = self.historical_y
-            ts_source = self.historical_x + self.t0
-        else:
-            if getattr(self, 'current_x_slice', None) is None or len(self.current_x_slice) == 0: return
-            x_source = self.current_x_slice
-            y_source = self.current_y_dict
-            ts_source = self.current_x_slice + self.t0
-
-        # 3. SNAP TO CLOSEST DATA POINT
-        idx = np.searchsorted(x_source, mouse_x, side='right') - 1
-        idx = np.clip(idx, 0, len(x_source) - 1)
-        actual_x = x_source[idx]
+        actual_x, values = self._values_at(mouse_point.x())
+        if actual_x is None:
+            return
 
         for v_line in self.v_lines:
             v_line.setPos(actual_x)
@@ -1401,17 +1288,13 @@ class DataViewerApp(QMainWindow):
         view_rect = ref_plot.vb.viewRect()
         x_pct = (mouse_point.x() - view_rect.left()) / view_rect.width()
         y_pct = (mouse_point.y() - view_rect.bottom()) / view_rect.height()
-
         anchor_x = 1.1 if x_pct > 0.8 else -0.1
         anchor_y = -0.2 if y_pct > 0.5 else 1.2
 
         active_pin = getattr(self, 'pin_timestamp', None)
         delta_msg = ""
-
         if active_pin is not None:
-            actual_ts = ts_source[idx]
-            dt = actual_ts - active_pin
-            delta_msg = f"Δt: {self._format_delta_time(dt)}"
+            delta_msg = f"Δt: {self._format_delta_time(actual_x + self.t0 - active_pin)}"
 
         for i, p in enumerate(self.lanes.values()):
             label = self.delta_labels[i]
@@ -1423,36 +1306,21 @@ class DataViewerApp(QMainWindow):
             else:
                 label.hide()
 
-            # --- SIDEBAR UPDATES ---
-            for tag, curve in self.curves.items():
-                cfg = self.plot_config.get(tag, {})
-                y_data = y_source.get(tag, np.array([]))
-
-                if len(y_data) <= idx:
-                    continue
-
-                val = y_data[idx]
-
-                # 1. Extract the unit early
-                base_unit = getattr(self, 'system_registry', {}).get(tag, {}).get("unit", "")
-
-                # 2. Format the main absolute value
-                display_text = self._format_with_si_prefix(val, base_unit)
-
-                # CROSS-DOMAIN DELTA MATH
-                if active_pin is not None:
-                    pin_val = getattr(self, 'pinned_values', {}).get(tag)
-                    if pin_val is not None:
-                        dy = val - pin_val
-
-                        # 3. Format the delta difference
-                        formatted_dy = self._format_with_si_prefix(dy, base_unit , is_delta=True)
-
-                        # Append the scaled and formatted delta to the main display text
-                        display_text = f" (\u0394: {formatted_dy})"
-
-                if tag in getattr(self, 'sidebar_value_labels', {}):
-                    self.sidebar_value_labels[tag].setText(display_text)
+        # --- SIDEBAR UPDATES --- (was inside the per-lane loop, i.e. repeated per lane)
+        pinned = getattr(self, 'pinned_values', {})
+        for tag, lbl in getattr(self, 'sidebar_value_labels', {}).items():
+            if tag not in values:
+                continue
+            cfg = self.plot_config.get(tag, {})
+            mult = cfg.get('multiplier', 1.0)   # same scaling as the live readout
+            val = values[tag] * mult
+            base_unit = getattr(self, 'system_registry', {}).get(tag, {}).get("unit", "")
+            display_text = self._format_with_si_prefix(val, base_unit)
+            if active_pin is not None and pinned.get(tag) is not None:
+                dy = val - pinned[tag] * mult
+                # Append the delta (previously this REPLACED the value text)
+                display_text += f"  (\u0394: {self._format_with_si_prefix(dy, base_unit, is_delta=True)})"
+            lbl.setText(display_text)
 
     def _on_graph_clicked(self, event):
         if not self.lanes: return
@@ -1471,39 +1339,13 @@ class DataViewerApp(QMainWindow):
         if event.button() == Qt.MouseButton.LeftButton and QApplication.keyboardModifiers() == Qt.KeyboardModifier.ControlModifier:
             if not self.btn_inspector.isChecked(): return
 
-            mouse_x = mouse_point.x()
+            snapped_x, values = self._values_at(mouse_point.x())
+            if snapped_x is None:
+                return
 
-            # --- VIRTUAL PIPELINE ROUTER ---
-            if self.cache.live_ptr == 0: return
-
-            cap = self.cache.live_capacity
-            ptr = self.cache.live_ptr % cap
-            wrapped = getattr(self.cache, 'buffer_wrapped', False)
-
-            live_start_abs = self.cache._x_live[ptr] if wrapped else self.cache._x_live[0]
-            live_start_x = live_start_abs - self.t0
-
-            if self.is_historical_mode and mouse_x < live_start_x and len(self.historical_x) > 0:
-                x_source = self.historical_x
-                y_source = self.historical_y
-                ts_source = self.historical_x + self.t0
-            else:
-                if getattr(self, 'current_x_slice', None) is None or len(self.current_x_slice) == 0: return
-                x_source = self.current_x_slice
-                y_source = self.current_y_dict
-                ts_source = self.current_x_slice + self.t0
-
-            idx = np.searchsorted(x_source, mouse_x, side='right') - 1
-            idx = np.clip(idx, 0, len(x_source) - 1)
-
-            # Store the absolute timestamp
-            self.pin_timestamp = ts_source[idx]
-
-            # CACHE THE EXACT Y-VALUES AT THE PIN LOCATION
-            self.pinned_values = {}
-            for tag in self.cache.tags:
-                y_data = y_source.get(tag, np.array([]))
-                self.pinned_values[tag] = y_data[idx] if len(y_data) > idx else None
+            # Store the absolute timestamp and the exact values at the pin
+            self.pin_timestamp = snapped_x + self.t0
+            self.pinned_values = {tag: values.get(tag) for tag in self.cache.tags}
 
             # Update visual pin lines
             for pin_line in self.pin_lines:
@@ -1544,7 +1386,7 @@ class DataViewerApp(QMainWindow):
         for v_line in self.v_lines:
             v_line.setVisible(is_on)
 
-        has_pin = self.pin_idx is not None
+        has_pin = getattr(self, 'pin_timestamp', None) is not None  # (was self.pin_idx, never set)
         for pin_line in self.pin_lines:
             pin_line.setVisible(is_on and has_pin)
 
@@ -1616,42 +1458,53 @@ class DataViewerApp(QMainWindow):
         base_plot = list(self.lanes.values())[0]
         view_start, view_end = base_plot.viewRange()[0]
 
-        # --- VIRTUAL PIPELINE ROUTER (HYBRID SAFE) ---
-        has_live = getattr(self, 'current_x_slice', None) is not None and len(self.current_x_slice) > 0
-        has_hist = getattr(self, 'is_historical_mode', False) and len(getattr(self, 'historical_x', [])) > 0
+        # --- BUILD THE TABLE FOR THE VISIBLE RANGE ---
+        # Historical rows only up to where live coverage starts (the old code
+        # concatenated overlapping historical + live arrays, so timestamps could go
+        # backwards), then live rows on a merged time base: the union of every
+        # channel's own sample times, each channel held at its latest sample.
+        v0_abs, v1_abs = view_start + self.t0, view_end + self.t0
+        live = getattr(self, 'current_live', None) or {}
+        live_start = self.cache.live.oldest_time() if live else None
+        x_parts, y_parts = [], {t: [] for t in selected_tags}
 
-        if has_hist and has_live:
-            # 1. Hybrid Viewport: Concatenate historical and live arrays chronologically
-            x_source = np.concatenate((self.historical_x, self.current_x_slice))
+        hist_x = getattr(self, 'historical_x', np.array([]))
+        if getattr(self, 'is_historical_mode', False) and len(hist_x) > 0:
+            hx = hist_x + self.t0
+            h_end = v1_abs if live_start is None else min(v1_abs, live_start)
+            m = (hx >= v0_abs) & (hx < h_end)
+            if m.any():
+                x_parts.append(hx[m])
+                for t in selected_tags:
+                    y = self.historical_y.get(t)
+                    y_parts[t].append(y[m] if y is not None and len(y) == len(hx) else np.full(int(m.sum()), np.nan))
 
-            y_source = {}
-            for tag in selected_tags:
-                hist_y = self.historical_y.get(tag, np.full(len(self.historical_x), np.nan))
-                live_y = self.current_y_dict.get(tag, np.full(len(self.current_x_slice), np.nan))
-                y_source[tag] = np.concatenate((hist_y, live_y))
+        live_x = [x[(x >= v0_abs) & (x <= v1_abs)] for t, (x, _) in live.items() if t in y_parts]
+        live_x = [x for x in live_x if len(x)]
+        if live_x:
+            base = np.unique(np.concatenate(live_x))
+            x_parts.append(base)
+            for t in selected_tags:
+                if t in live:
+                    x, y = live[t]
+                    k = np.searchsorted(x, base, side='right') - 1
+                    vals = np.where(k >= 0, y[np.clip(k, 0, len(y) - 1)], np.nan)
+                else:
+                    vals = np.full(len(base), np.nan)
+                y_parts[t].append(vals)
 
-        elif has_live:
-            # 2. Purely Live Viewport
-            x_source = self.current_x_slice
-            y_source = {tag: self.current_y_dict.get(tag, np.array([])) for tag in selected_tags}
-
-        elif has_hist:
-            # 3. Purely Historical Viewport
-            x_source = self.historical_x
-            y_source = {tag: self.historical_y.get(tag, np.array([])) for tag in selected_tags}
-
-        else:
+        if not x_parts:
             print("[Export] Aborting: No data available in current viewport.")
             self.btn_export.setEnabled(True)
             self.btn_export.setText("📸 Export Snapshot")
             return
 
-        # Restore absolute UNIX timestamp for the CSV
-        x_slice = x_source + self.t0
-        y_slices = y_source
+        x_slice = np.concatenate(x_parts)          # absolute UNIX time
+        y_slices = {t: np.concatenate(v) for t, v in y_parts.items()}
 
         from PyQt6 import QtSvg
         from PyQt6.QtCore import QBuffer, QIODevice, QRectF
+        prev_gl = pg.getConfigOption('useOpenGL')
         pg.setConfigOptions(useOpenGL=False)
 
         buffer = QBuffer()
@@ -1674,12 +1527,15 @@ class DataViewerApp(QMainWindow):
         painter.end()
         svg_data = buffer.data()
         buffer.close()
-        pg.setConfigOptions(useOpenGL=True)
+        # Restore the previous setting (this used to force OpenGL ON for every view
+        # created after the first export).
+        pg.setConfigOptions(useOpenGL=prev_gl)
 
         self.btn_export.setEnabled(False)
         self.btn_export.setText("⏳ Saving Lossless...")
         self.worker = ExportWorker(csv_path, svg_path, selected_tags, tag_labels, x_slice, y_slices, svg_data)
         self.worker.finished.connect(self._on_export_finished)
+        self.worker.error.connect(self._on_export_error)  # was never connected
         self.worker.start()
 
     def _on_export_finished(self, msg):

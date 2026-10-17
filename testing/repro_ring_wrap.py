@@ -1,5 +1,6 @@
 """
-Headless reproduction of the "all live lines suddenly disappear" bug.
+Headless reproduction of the "all live lines suddenly disappear" bug (in the ORIGINAL
+single-ring live cache; that cache has since been replaced by src/core/live_buffer.py).
 
 No Qt needed: this replays the exact index arithmetic from
   - DualPipelineCache._on_live_data        (src/core/data_cache.py)
