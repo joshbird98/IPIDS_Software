@@ -13,6 +13,7 @@ from src.core.event_helper import EventHelper
 from src.core.log_setup import Throttle, setup_logging
 from src.core.os_helper import harden_windows_process
 from src.core.paths import REGISTRY_PATH, simulation_enabled
+from src.core.relay_watch import RelayWatch
 
 if os.name == 'nt':
     import ctypes
@@ -163,8 +164,7 @@ class SteererMagnetMicroservice:
         self.plc_socket = self.context.socket(zmq.SUB)
         self.plc_socket.connect(ZMQ_PORT_PLC_PUB)
         self.plc_socket.setsockopt_string(zmq.SUBSCRIBE, "")
-        self.stat_safety_relay = False
-        self.last_plc_ts = 0.0
+        self.relay = RelayWatch(self.plc_socket, max_age=PLC_WATCHDOG_AGE)
         self.safety_tripped = True
         self._last_force_safe = 0.0
 
@@ -261,25 +261,14 @@ class SteererMagnetMicroservice:
         self.sp_cache["ion_beam.beamline.steerer_magnet.sp_actual_current"] = target_current
 
     def _update_safety_permissives(self):
-        try:
-            while True:
-                topic, msg = self.plc_socket.recv_multipart(flags=zmq.NOBLOCK)
-                try:
-                    payload = orjson.loads(msg)
-                except ValueError:
-                    continue
-                self.last_plc_ts = time.time()
-                # null = PLC disconnected = relay state unknown -> treat as off
-                self.stat_safety_relay = bool(payload.get("ion_beam.facilities.safety_relay_active"))
-        except zmq.Again:
-            pass
-
-        comms_alive = (time.time() - self.last_plc_ts) < PLC_WATCHDOG_AGE
+        # Every PLC message since the last check counts (relay off / null / a gap in the data),
+        # so a trip-and-reset while this loop was blocked by a slow PSU still forces the output off.
         was_tripped = self.safety_tripped
-        self.safety_tripped = not (self.stat_safety_relay and comms_alive)
+        self.safety_tripped = not self.relay.check()
         if self.safety_tripped != was_tripped:
             if self.safety_tripped:
-                why = "safety relay de-energised" if comms_alive else "no PLC telemetry"
+                why = ("no PLC telemetry" if time.time() - self.relay.last_rx >= PLC_WATCHDOG_AGE
+                       else "safety relay de-energised (or its state unknown)")
                 self.events.log_general(f"Steerer output forced off: {why}", severity="WARNING")
                 self._last_force_safe = 0.0   # act now, not on the next repeat
             else:

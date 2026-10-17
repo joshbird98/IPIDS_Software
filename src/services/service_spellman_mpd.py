@@ -50,8 +50,9 @@ log = logging.getLogger("service_spellman_mpd")
 ARC_DEFAULTS = {
     "collapse_fraction": 0.10,  # output below this fraction of the setpoint = collapsed = arc
     "min_setpoint_kv": 0.5,     # not judged below this setpoint (a low reading is normal there)
-    "settle_s": 3.0,            # longest wait for the output to come up after an enable / setpoint change
+    "settle_s": 3.0,            # longest the output may take to come up after an enable / setpoint change
     "overcurrent_ua": 500.0,    # a current above this counts as an arc too
+    "confirm_polls": 2,         # polls in a row that must show it (one garbled reading can't trip the PLC)
 }
 
 
@@ -59,53 +60,68 @@ class ArcDetector:
     """Software arc detection for one supply.
 
     During an arc the supply runs into its current limit and the output voltage
-    collapses to a small fraction of the setpoint; that collapse is what is detected
-    (readback below collapse_fraction x setpoint, or current above overcurrent_ua).
+    collapses to a small fraction of the setpoint; that collapse is what is detected.
     The result latches stat_arc_exceeded, which the PLC service turns into a PLC fault.
 
-    Not judged:
-      - below min_setpoint_kv: at a setpoint of a few volts a near-zero reading is normal;
-      - while the output is still coming up after an enable or a setpoint change. Watching
-        starts once the output has reached half the setpoint, or settle_s after the change,
-        whichever comes first - so small steps (the optimiser) never blind it, a large step
-        up can't trip it while the output ramps, and a supply that never comes up at all
-        (a short at switch-on) is still caught after settle_s.
+    - Output settled at its setpoint: collapsed = readback below collapse_fraction x setpoint
+      (or current above overcurrent_ua).
+    - Output moving after a setpoint change (until it reaches half the new setpoint, at most
+      settle_s after it started moving): a normal transition stays between the old and the new
+      setpoint, so only a collapse below collapse_fraction x the LOWER of the two counts. So a
+      large step up can't trip it while the output ramps, and an arc during setpoint steps
+      (the optimiser) is still caught straight away.
+    - Output coming up after an enable (or from a setpoint below min_setpoint_kv): there is
+      nothing to compare with until it is up, or settle_s has passed - so a supply that never
+      comes up (a short at switch-on) is caught after settle_s.
+    - Nothing is judged below min_setpoint_kv, and a collapse must be seen on confirm_polls
+      polls in a row.
     """
 
     def __init__(self, settings: Optional[dict] = None):
         self.s = {**ARC_DEFAULTS, **(settings or {})}
-        self._sp = None       # setpoint being watched (kV)
-        self._since = 0.0     # when that setpoint / the enable was first seen
-        self._armed = False
+        self.restart()
 
     def restart(self):
         """The output was switched on or off: wait for it to come up again before judging."""
-        self._sp = None
+        self._sp = None        # setpoint being watched (kV)
+        self._floor = 0.0      # while moving: the lower of the old and new setpoints
+        self._since = 0.0      # when the output started moving
+        self._settled = False
+        self._hits = 0         # consecutive polls showing an arc
 
     def update(self, enabled: bool, sp_kv: Optional[float], rb_kv: Optional[float],
                rb_ua: Optional[float], now: float) -> Optional[str]:
-        """Feed one poll of the supply; returns why it looks like an arc, else None."""
+        """Feed one poll of the supply; returns why it is an arc, else None."""
         if not enabled:
-            self._sp = None
+            self.restart()
             return None
         if sp_kv is None or rb_kv is None:
             return None
         sp, rb = abs(sp_kv), abs(rb_kv)
-        if self._sp is None or abs(sp - self._sp) > 1e-6:
-            self._sp, self._since, self._armed = sp, now, False
-        if not self._armed:
-            if rb >= 0.5 * sp or now - self._since >= self.s["settle_s"]:
-                self._armed = True
-            else:
-                return None
-        if sp < self.s["min_setpoint_kv"]:
+        if self._sp is None:                         # just switched on: the output starts from 0
+            self._sp, self._floor, self._since, self._settled = sp, 0.0, now, False
+        elif abs(sp - self._sp) > 1e-6:              # setpoint changed
+            if self._settled:
+                self._floor, self._since = min(self._sp, sp), now
+            else:                                    # changed again while still moving: the clock
+                self._floor = min(self._floor, sp)   # keeps running, so the wait is capped at settle_s
+            self._sp, self._settled = sp, False
+        if not self._settled and (rb >= 0.5 * sp or now - self._since >= self.s["settle_s"]):
+            self._settled = True
+
+        ref = sp if self._settled else self._floor
+        why = None
+        if ref >= self.s["min_setpoint_kv"]:
+            if rb < self.s["collapse_fraction"] * ref:
+                why = (f"output collapsed to {rb:.3f} kV, below {self.s['collapse_fraction']:.0%} "
+                       f"of the {ref:.3f} kV setpoint")
+            elif self._settled and rb_ua is not None and rb_ua > self.s["overcurrent_ua"]:
+                why = f"output current {rb_ua:.1f} uA above {self.s['overcurrent_ua']:g} uA"
+        if why is None:
+            self._hits = 0
             return None
-        if rb < self.s["collapse_fraction"] * sp:
-            return (f"output collapsed to {rb:.3f} kV, below {self.s['collapse_fraction']:.0%} "
-                    f"of the {sp:.3f} kV setpoint")
-        if rb_ua is not None and rb_ua > self.s["overcurrent_ua"]:
-            return f"output current {rb_ua:.1f} uA above {self.s['overcurrent_ua']:g} uA"
-        return None
+        self._hits += 1
+        return why if self._hits >= max(1, self.s["confirm_polls"]) else None
 
 
 def arc_settings(config: dict, dev_info: dict) -> dict:
@@ -399,7 +415,8 @@ class SpellmanMicroservice:
         for bus_id, _, dev_info in self._configured_devices():
             hw = self.buses.get(bus_id)
             if hw and hw.connected:
-                if hw.transaction(dev_info["address"], dev_info["dev_type"], "CF", "=", "1") is not None:
+                res = hw.transaction(dev_info["address"], dev_info["dev_type"], "CF", "=", "1")
+                if res and "*" not in res:
                     cleared += 1
         cmd.ok(f"software arc latches cleared; hardware fault clear sent to {cleared} supply(ies)")
 
@@ -510,11 +527,16 @@ class SpellmanMicroservice:
 
             elif cmd_type == "cmd_enable":
                 enable_str = "1" if value_float else "0"
-                if hw.transaction(addr, dtype, CMD_HV_ENABLE, "=", enable_str) is not None:
+                res = hw.transaction(addr, dtype, CMD_HV_ENABLE, "=", enable_str)
+                # Same rule as V1/I1: a reply containing '*' is a refusal. (Any reply used to count
+                # as success, so a refused 'disable' was reported as done while HV stayed on.)
+                if res and "*" not in res:
                     self._arc_detector(target_dev).restart()
                     cmd.ok("output enabled" if value_float else "output disabled")
-                else:
+                elif res is None:
                     cmd.fail("no reply from supply")
+                else:
+                    cmd.fail(f"supply refused the {'enable' if value_float else 'disable'} (reply: {res!r})")
             else:
                 cmd.reject(f"unsupported command '{cmd_type}'")
         self.commands.finish()

@@ -1,6 +1,7 @@
 """Spellman service against simulated supplies - including the 'enable state stays
 latched after the safety relay trips' bug reported on the real machine, and the
 software arc detection (output collapsed below 10 % of the setpoint)."""
+import threading
 import time
 
 import pytest
@@ -150,7 +151,43 @@ def test_no_arc_below_the_minimum_setpoint(stack, monkeypatch):
     assert tap.holds_for(lambda d: d[ARC] == 0.0, 4.0)   # longer than settle_s
 
 
+def test_arc_is_caught_while_the_setpoint_keeps_stepping(stack, monkeypatch):
+    """An arc during an optimiser-style sweep (a new setpoint every 0.25 s) is caught straight
+    away. (Each setpoint change used to restart a 3 s settle wait, so nothing latched until
+    3 s after the sweep stopped - by which time the arc may have cleared.)"""
+    plc, svc, tap = stack
+    c = C.CommandClient(default_timeout=3.0)
+    wait_powered(tap)
+    bring_up(c, tap, 6.0)
+    stop = threading.Event()
+
+    def sweep():
+        cl = C.CommandClient(default_timeout=2.0)
+        kv = 6.0
+        while not stop.is_set():
+            kv = 6.5 if kv == 6.0 else 6.0
+            cl.request("spellman", f"{EINZEL}.sp_requested_voltage", kv, origin="optimizer")
+            time.sleep(0.25)
+        cl.close()
+
+    t = threading.Thread(target=sweep, daemon=True)
+    t.start()
+    try:
+        time.sleep(0.5)
+        assert tap.holds_for(lambda d: d[ARC] == 0.0, 1.5)       # sweeping a healthy output: no arc
+        monkeypatch.setenv("IPIDS_SIM_FAULTS", "spellman_arc")
+        tap.wait_for(lambda d: d[ARC] == 1.0, timeout=2.5)        # caught while the sweep goes on
+    finally:
+        stop.set()
+        t.join(3)
+
+
 # ---------------------------------------------------------------- ArcDetector logic
+
+
+def det1(**settings):
+    """A detector that latches on the first poll showing an arc (the confirmation is tested separately)."""
+    return ArcDetector({"confirm_polls": 1, **settings})
 
 
 def feed(det, samples, enabled=True, ua=1.0):
@@ -159,7 +196,7 @@ def feed(det, samples, enabled=True, ua=1.0):
 
 
 def test_collapse_after_the_output_was_up():
-    det = ArcDetector()
+    det = det1()
     assert feed(det, [(0.0, 6.0, 0.2), (0.3, 6.0, 6.0), (0.6, 6.0, 5.99)]) == [None, None, None]
     why = det.update(True, 6.0, 0.4, 50.0, 0.9)       # 0.4 kV < 10 % of 6 kV
     assert why and "collapsed" in why and "6.000 kV" in why
@@ -167,37 +204,71 @@ def test_collapse_after_the_output_was_up():
 
 
 def test_short_at_switch_on_is_caught_after_settle_time():
-    det = ArcDetector()
+    det = det1()
     assert all(r is None for r in feed(det, [(t / 10, 6.0, 0.01) for t in range(30)]))   # 0 .. 2.9 s
     assert det.update(True, 6.0, 0.01, 50.0, 3.0)
 
 
 def test_large_step_up_does_not_trip_while_ramping():
-    det = ArcDetector()
+    det = det1()
     assert feed(det, [(0.0, 0.6, 0.6), (1.0, 0.6, 0.6)]) == [None, None]
     # 0.6 kV -> 10 kV: the output (0.6 kV) is below 10 % of the new setpoint while it ramps
     assert feed(det, [(1.1, 10.0, 0.6), (1.4, 10.0, 0.9), (1.7, 10.0, 5.5), (2.0, 10.0, 9.9)]) == [None] * 4
     assert det.update(True, 10.0, 0.5, 50.0, 2.3)     # up and then collapsed: arc
 
 
+def test_collapse_during_a_ramp_is_judged_against_the_lower_setpoint():
+    det = det1()
+    feed(det, [(0.0, 0.6, 0.6)])
+    why = det.update(True, 10.0, 0.01, 50.0, 0.3)     # stepped to 10 kV and collapsed at once
+    assert why and "0.600 kV" in why
+
+
 def test_small_steps_keep_watching():
-    """The optimiser moves the setpoint in small steps; detection must not pause for each."""
-    det = ArcDetector()
+    det = det1()
     feed(det, [(0.0, 6.0, 6.0)])
     assert det.update(True, 6.1, 6.0, 50.0, 0.1) is None   # new setpoint, output already near it
     assert det.update(True, 6.1, 0.2, 50.0, 0.2)            # collapse caught on the next sample
 
 
-def test_low_setpoint_is_not_judged():
+def test_arc_during_setpoint_steps_is_caught_at_once():
+    """The review's case: the arc starts with a setpoint step and the steps keep coming."""
+    det = ArcDetector()                                     # default: 2 polls in a row
+    feed(det, [(0.0, 6.0, 6.0)])
+    assert det.update(True, 6.25, 0.01, 50.0, 0.25) is None   # first collapsed poll
+    assert det.update(True, 6.5, 0.01, 50.0, 0.5)             # second: arc, though the setpoint moved again
+
+
+def test_blind_window_after_enable_is_capped_while_stepping():
+    """Stepping up from 0 kV with the output collapsed from the start: there is no lower setpoint
+    to judge against, but further steps don't extend the wait beyond settle_s."""
+    det = det1()
+    assert det.update(True, 0.0, 0.0, 0.0, 0.0) is None
+    results = {round(t * 0.25, 2): det.update(True, t * 0.25, 0.01, 50.0, t * 0.25) for t in range(1, 20)}
+    first = min(t for t, r in results.items() if r)
+    assert 3.0 <= first <= 3.5, results
+
+
+def test_one_bad_reading_does_not_trip():
+    """e.g. '21000.0' read as '1000.0' (a lost digit on the RS485 line): needs a second poll."""
     det = ArcDetector()
+    feed(det, [(0.0, 21.0, 21.0)])
+    assert det.update(True, 21.0, 1.0, 5.0, 0.5) is None
+    assert det.update(True, 21.0, 21.0, 5.0, 1.0) is None
+    assert det.update(True, 21.0, 1.0, 5.0, 1.5) is None
+    assert det.update(True, 21.0, 0.9, 5.0, 2.0)
+
+
+def test_low_setpoint_is_not_judged():
+    det = det1()
     assert all(r is None for r in feed(det, [(t, 0.4, 0.0) for t in range(10)]))
-    det2 = ArcDetector({"min_setpoint_kv": 0.1})
+    det2 = det1(min_setpoint_kv=0.1)
     assert det2.update(True, 0.4, 0.0, 1.0, 0.0) is None
     assert det2.update(True, 0.4, 0.0, 1.0, 5.0)
 
 
 def test_disable_and_restart_reset_the_watch():
-    det = ArcDetector()
+    det = det1()
     feed(det, [(0.0, 6.0, 6.0)])
     assert det.update(False, 6.0, 0.0, 0.0, 1.0) is None      # switched off: output falls, not an arc
     assert det.update(True, 6.0, 0.0, 0.0, 1.1) is None       # switched on again: wait for it
@@ -206,15 +277,15 @@ def test_disable_and_restart_reset_the_watch():
 
 
 def test_missing_readings_are_skipped_not_judged():
-    det = ArcDetector()
+    det = det1()
     feed(det, [(0.0, 6.0, 6.0)])
     assert det.update(True, 6.0, None, None, 0.5) is None
     assert det.update(True, None, 0.0, None, 0.6) is None
-    assert det.update(True, 6.0, 0.1, None, 0.7)              # still armed afterwards
+    assert det.update(True, 6.0, 0.1, None, 0.7)              # still watching afterwards
 
 
 def test_overcurrent_counts_as_arc():
-    det = ArcDetector()
+    det = det1()
     feed(det, [(0.0, 6.0, 6.0)])
     why = det.update(True, 6.0, 5.9, 600.0, 0.3)
     assert why and "current" in why
@@ -226,3 +297,13 @@ def test_arc_settings_merge_and_validation():
     assert s["collapse_fraction"] == 0.2 and s["min_setpoint_kv"] == 1.0
     assert s["settle_s"] == ARC_DEFAULTS["settle_s"] and "bogus" not in s
     assert arc_settings({}, {}) == ARC_DEFAULTS
+
+
+def test_refused_enable_is_reported_as_failed(stack, monkeypatch):
+    """A '*' reply is a refusal; it used to be acknowledged as 'output enabled/disabled'."""
+    plc, svc, tap = stack
+    wait_powered(tap)
+    monkeypatch.setenv("IPIDS_SIM_FAULTS", "spellman_refuse")
+    c = C.CommandClient(default_timeout=3.0)
+    r = c.request("spellman", f"{EINZEL}.cmd_enable", True)
+    assert r["status"] == C.FAILED and "refused" in r["reason"]

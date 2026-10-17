@@ -22,16 +22,21 @@ simulator; none of it has been tried on the real hardware yet (see "Lab PC valid
   (event type COMMAND); PLC batched writes honour `writable`; rotating per-process logs.
 - Simulator (`run_simulation.py`, fault menu) and tests (`tests/`, CI in `.github/workflows/tests.yml`).
 - Josh's decisions (Oct 2026):
-  - Spellman arc = output below 10 % of setpoint, not judged below 0.5 kV, nor while the output is still coming
-    up after an enable/setpoint change (until it reaches half the setpoint, max 3 s). Settings in
-    `mpd_config.json` -> `arc_detection`. Latches until fault reset (also checked end-to-end into the PLC fault word).
+  - Spellman arc = output below 10 % of setpoint on 2 polls in a row (so one garbled RS485 reading can't trip
+    the PLC), not judged below 0.5 kV. While the output moves after a setpoint change it is judged against the
+    lower of the old and new setpoints (so the optimiser's steps don't blind it); after an enable, from when the
+    output is up (half the setpoint) or 3 s. Settings in `mpd_config.json` -> `arc_detection`. Latches until
+    fault reset (also checked end-to-end into the PLC fault word).
   - Spellman current limits in `mpd_config.json` (0-330 uA, the MPD30's rating) - the HMI's automatic 50 uA limit
     is now actually sent and accepted.
   - X-steerer: software safety-relay interlock (output forced off and held off while the relay is off or the PLC
     is silent; stays off when the relay comes back).
   - SMU: after a reconnect the previous bias is re-applied only if fresh PLC data confirms the relay is on;
-    otherwise 0 V / bias off and the setpoint is forgotten (also if the relay tripped while it was disconnected,
-    or the operator had switched the bias off).
+    otherwise 0 V / bias off and the setpoint is forgotten (also if the relay tripped while it was disconnected -
+    even a trip-and-reset between two checks, or a gap in the PLC data - or the operator had switched it off).
+  - Independent review of the above (Oct 2026) found: arc detection blinded while the setpoint kept stepping, a
+    relay trip-and-reset between two checks missed by the SMU/steerer, and (older) a refused Spellman
+    enable/disable reported as OK. All fixed, with tests.
 - Found on the way and fixed: the manager's start-up purge killed every IPIDS service process on the PC (so a
   simulator or test run would have killed the live system's services) - now only its own; the HMI config editor
   never rebuilt the registry (wrong script path); the recipe builder's tag picker and fault list looked in
@@ -42,8 +47,9 @@ simulator; none of it has been tried on the real hardware yet (see "Lab PC valid
 1. Lab PC validation (real hardware):
    - every service connects and answers commands; Command Log shows OK / reasons;
    - relay trip: Spellman shows DISABLED, steerer output goes off and stays off, SMU bias to 0 V;
-   - einzel: voltage + 50 uA limit accepted, output comes up, **no false arc trips** during normal use (ramps,
-     optimiser, enable/disable) - this is the main thing to watch with the new 10 % arc test;
+   - einzel: voltage + 50 uA limit accepted, output comes up, enable/disable answered OK (refusals now show as
+     failed), **no false arc trips** during normal use (ramps, optimiser, enable/disable) - the main thing to
+     watch with the new 10 % arc test;
    - unplug a device: service stays ONLINE with comms-fail (no restart loop); SMU reconnect behaviour as above;
    - turbo start/stop; logger journal file appears in data/parquet_logs; tolerance rules sensible.
 2. Take the example parquet data out of git - on the lab PC (the files stay on disk; back up data/ first anyway):
@@ -54,7 +60,8 @@ simulator; none of it has been tried on the real hardware yet (see "Lab PC valid
    (.gitignore now lists them, so they won't be re-added.) Other clones that pull that commit lose their copies;
    the history keeps ~500 MB unless it is rewritten (git filter-repo + force push - only if wanted). Optional:
    point `IPIDS_DATA_DIR` at a folder outside the repo so git can never touch live data.
-3. Check the first GitHub Actions run (Linux) - the Qt libraries step may need adjusting.
+3. The magnet and Spellman services still judge the relay by the newest PLC message only (their loops are short,
+   so a missed trip-and-reset is much less likely there); switch them to `src/core/relay_watch.py` too?
 
 ## Decisions needed from Josh
 - Is the source einzel supply an MPD30 (30 kV, 0.33 mA)? max_current_ua = 330 assumes so.

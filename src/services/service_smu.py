@@ -13,6 +13,7 @@ from src.core.event_helper import EventHelper
 from src.core.log_setup import Throttle, setup_logging
 from src.core.os_helper import harden_windows_process
 from src.core.paths import REGISTRY_PATH, simulation_enabled
+from src.core.relay_watch import RelayWatch
 
 if os.name == 'nt':
     import ctypes
@@ -233,9 +234,7 @@ class SmuMicroservice:
         self.registry_limits = self._load_registry_limits()
         self.hw = _make_driver()
 
-        self.stat_safety_relay = False
-        self.last_plc_ts = 0.0       # when the last PLC message was received
-        self.last_plc_msg_ts = 0.0   # when the PLC service published it (its own timestamp)
+        self.relay = RelayWatch(self.plc_socket, max_age=PLC_WATCHDOG_AGE)
         self.safety_tripped = True
         self._last_printed_safety_state = True
         self._safety_lockout_active = False
@@ -290,24 +289,9 @@ class SmuMicroservice:
         return limits
 
     def _update_safety_permissives(self):
-        try:
-            while True:
-                topic, msg = self.plc_socket.recv_multipart(flags=zmq.NOBLOCK)
-                try:
-                    payload = orjson.loads(msg)
-                except ValueError:
-                    continue
-                self.last_plc_ts = time.time()
-                ts = payload.get("timestamp")
-                self.last_plc_msg_ts = ts if isinstance(ts, (int, float)) and ts > 0 else self.last_plc_ts
-                stat_safety_relay = payload.get("ion_beam.facilities.safety_relay_active")
-                # null = PLC disconnected = relay state unknown -> treat as off
-                self.stat_safety_relay = bool(stat_safety_relay)
-        except zmq.Again:
-            pass
-
-        comms_alive = (time.time() - self.last_plc_ts) < PLC_WATCHDOG_AGE
-        self.safety_tripped = not (self.stat_safety_relay and comms_alive)
+        # Every PLC message since the last check counts: this loop can be blocked for seconds by
+        # an unresponsive SMU, and a trip-and-reset (or a PLC data gap) in that time is still a trip.
+        self.safety_tripped = not self.relay.check()
         self.state["system.safe_to_run"] = 0.0 if self.safety_tripped else 1.0
         if self.safety_tripped:
             # A trip resets the bias - also when the SMU is disconnected at the time, so a
@@ -325,7 +309,7 @@ class SmuMicroservice:
         by the PLC's own timestamp, so a reconnect that took a few seconds doesn't act on what
         the relay was doing before it started."""
         self._update_safety_permissives()
-        return not self.safety_tripped and time.time() - self.last_plc_msg_ts < PLC_WATCHDOG_AGE
+        return not self.safety_tripped and self.relay.fresh()
 
     def _after_connect(self, bias_was_on: bool):
         """*RST on connect leaves the source at 0 V. Put back the bias that was live when the
@@ -410,8 +394,11 @@ class SmuMicroservice:
                         cmd.reject(f"{value:g} V is outside the allowed range [{min_v:g}, {max_v:g}] V")
                     else:
                         self.hw.set_voltage(value)
-                        self.sp_cache[f"{BASE}.sp_actual_voltage"] = value
-                        cmd.ok() if self.hw.connected else cmd.fail("SMU connection lost while sending")
+                        if self.hw.connected:
+                            self.sp_cache[SP_BIAS] = value   # only once sent (it may be restored later)
+                            cmd.ok()
+                        else:
+                            cmd.fail("SMU connection lost while sending")
                 else:
                     self.hw.set_output(False)
                     cmd.reject("bias output is disabled - enable it before setting a voltage")

@@ -62,8 +62,8 @@ GitHub runs them on every push (`.github/workflows/tests.yml`).
   `smu_config.json`, `vac_gauges_config.json`, `plc_config.json` or `fault_config.json` (the HMI's
   config editor does this itself), then restart the services and the HMI.
 - `mpd_config.json`: Spellman supplies - voltage and current-limit ranges, and the software arc
-  detection (`arc_detection`: an output collapsed below 10 % of its setpoint latches an arc fault
-  until fault reset; not judged below 0.5 kV).
+  detection (`arc_detection`: an output collapsed below 10 % of its setpoint on two polls in a row
+  latches an arc fault until fault reset; not judged below 0.5 kV).
 - `readback_tolerance.json`: readback-vs-setpoint tolerances. Out of tolerance is information,
   not a fault: an amber outline on the readback in the HMI and a TOLERANCE event. Edits are
   picked up while running.

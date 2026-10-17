@@ -2,11 +2,12 @@
   "_bus_comment": "Maps logical device names to physical RS485 addresses.",
   "_limits_comment": "min_value/max_value: allowed voltage setpoint range in V. min_current_ua/max_current_ua: allowed current-limit range in uA (without them every current-limit command is refused). Re-run src/utils/build_registry.py after changing any of these.",
   "arc_detection": {
-    "_comment": "Software arc detection, every supply (a device entry can carry its own 'arc_detection' to override). An enabled supply whose output collapses below collapse_fraction x setpoint (or whose current exceeds overcurrent_ua) is latched as an arc -> stat_arc_exceeded -> PLC fault, until fault reset. Not judged below min_setpoint_kv, nor while the output is still coming up after an enable or setpoint change (until it reaches half the setpoint, or settle_s has passed). Read when the Spellman service starts.",
+    "_comment": "Software arc detection, every supply (a device entry can carry its own 'arc_detection' to override). An enabled supply whose output collapses below collapse_fraction x setpoint (or whose current exceeds overcurrent_ua) on confirm_polls polls in a row is latched as an arc -> stat_arc_exceeded -> PLC fault, until fault reset. Not judged below min_setpoint_kv. While the output moves after a setpoint change it is judged against the lower of the old and new setpoints; after an enable, not until it is up (half the setpoint) or settle_s has passed. Read when the Spellman service starts.",
     "collapse_fraction": 0.1,
     "min_setpoint_kv": 0.5,
     "settle_s": 3.0,
-    "overcurrent_ua": 500.0
+    "overcurrent_ua": 500.0,
+    "confirm_polls": 2
   },
   "buses": [
     {
