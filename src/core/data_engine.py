@@ -354,17 +354,20 @@ class TimeSeriesEngine:
                         if relevant_chunks:
                             try:
                                 lfs = []
+                                stitch_cols = ["timestamp"] + list(selected_tags)
                                 for f in pruned_chunks:
                                     if "_temp" in f: continue
-                                    if f in self.chunk_mart:
-                                        lfs.append(self.chunk_mart[f].lazy())
-                                    else:
-                                        try:
-                                            lfs.append(pl.scan_parquet(f))
-                                        except Exception:
-                                            pass
+                                    try:
+                                        if f in self.chunk_mart:
+                                            _df = self.chunk_mart[f]
+                                            lfs.append(_df.lazy().select([c for c in stitch_cols if c in _df.columns]))
+                                        else:
+                                            # schema-aware projection (cached), as in _query_raw
+                                            lfs.append(self.get_safe_scan(f, stitch_cols))
+                                    except Exception:
+                                        pass
 
-                                df_chunks_lazy = pl.concat(lfs, how="diagonal") \
+                                df_chunks_lazy = pl.concat(lfs, how="diagonal_relaxed") \
                                     .filter((pl.col("timestamp") >= start_ts - 3600) & (pl.col("timestamp") <= end_ts + 3600))
 
                                 # 1. Get tags actually present in THIS specific chunk batch
@@ -378,8 +381,12 @@ class TimeSeriesEngine:
                                         aggregations.append(pl.col(c).min().alias(f"{c}_min"))
                                         aggregations.append(pl.col(c).max().alias(f"{c}_max"))
 
-                                    # 1. Cast timestamp using safe expression syntax
-                                    df_chunks_lazy = df_chunks_lazy.with_columns(
+                                    # 1. Cast timestamp using safe expression syntax.
+                                    # group_by_dynamic REQUIRES sorted input; chunk files are
+                                    # concatenated in directory order, so without this sort the
+                                    # stitch raised, was caught as "Stitching skipped", and today's
+                                    # data vanished from every view longer than 24 h.
+                                    df_chunks_lazy = df_chunks_lazy.sort("timestamp").with_columns(
                                         (pl.from_epoch(pl.col("timestamp"))).alias("ts_dt")
                                     )
 
