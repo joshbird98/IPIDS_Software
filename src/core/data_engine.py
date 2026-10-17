@@ -23,8 +23,18 @@ class TimeSeriesEngine:
         # NEW: The Active Chunk Mart
         self.chunk_mart = {}
 
+    # Hoisting chunk files into RAM is OFF by default. Each 15-min chunk is ~0.2 MB
+    # on disk but ~22 MB as a dense 317-column frame, so 68 chunks cost ~1.4 GB RSS.
+    # Reading them lazily from disk (query_stateless already falls back to
+    # pl.scan_parquet) costs only ~10-110 ms extra per query, and queries run on
+    # the StatelessQueryWorker thread, not the GUI thread.
+    HOIST_CHUNKS_TO_RAM = False
+
     def sync_active_chunks(self):
         """Background worker that preemptively hoists today's chunks into RAM."""
+        if not self.HOIST_CHUNKS_TO_RAM:
+            self.chunk_mart.clear()
+            return
         chunk_files = glob.glob(os.path.join(self.data_root_dir, "**/chunk_*.parquet"), recursive=True)
 
         # 1. Ignore temporary files that the logger is currently writing to

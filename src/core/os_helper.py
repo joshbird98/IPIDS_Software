@@ -1,10 +1,15 @@
 import os
 
 
-def harden_windows_process():
+def harden_windows_process(limit_working_set=True):
     """Programmatically shields the calling background microservice from Windows
     foreground boosting CPU starvation and memory working set trimming by
     explicitly enforcing native 64-bit Win32 API type compliance.
+
+    limit_working_set: apply the 50/200 MB working-set bounds. Pass False for
+    processes that legitimately need more than 200 MB resident (e.g. the data
+    viewer, whose live ring buffer alone is ~270 MB) - otherwise, under memory
+    pressure, Windows trims them towards 200 MB and they page heavily.
     """
     if os.name != 'nt':
         return
@@ -46,6 +51,9 @@ def harden_windows_process():
     else:
         error_code = kernel32.GetLastError()
         print(f"[SYS_HARDEN] WARNING: Failed to elevate process priority class. Win32 Error Code: {error_code}")
+
+    if not limit_working_set:
+        return
 
     # 2. Lock Working Set footprint to prevent paging memory blocks to storage
     min_size = ctypes.c_size_t(50 * 1024 * 1024)  # 50 MB

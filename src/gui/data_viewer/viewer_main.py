@@ -568,7 +568,12 @@ class DataViewerApp(QMainWindow):
             self.time_axes.append(time_axis)
 
             # B. Create the Plot Item
-            p = self.layout_widget.addPlot(row=i, col=0, axisItems={'bottom': time_axis})
+            # The log axis must be passed in as the PlotItem's 'right' axis:
+            # PlotItem already reserves layout cell (2, 2) for its own right axis,
+            # so adding a second item there later fails ("cell already taken")
+            # and the log axis was never displayed.
+            log_axis = LogAxisItem(orientation='right')
+            p = self.layout_widget.addPlot(row=i, col=0, axisItems={'bottom': time_axis, 'right': log_axis})
             p.showGrid(x=True, y=True, alpha=0.5)
             p.setMenuEnabled(False)
             p.hideButtons()
@@ -590,9 +595,7 @@ class DataViewerApp(QMainWindow):
                 vb.setDefaultPadding(0.15)
 
             # E. Setup Log Axis (Right side)
-            log_axis = LogAxisItem(orientation='right')
-            p.layout.addItem(log_axis, 2, 2)
-            log_axis.linkToView(right_vb)
+            log_axis.linkToView(right_vb)  # re-link from p.vb to the log ViewBox
             right_vb.setXLink(p)  # Sync X-axis between Linear and Log views
             self.log_axis_widgets[lane_name] = log_axis
 
@@ -1238,7 +1241,9 @@ class DataViewerApp(QMainWindow):
             self.is_historical_mode = False
             self._clear_historical_curves()
 
-        self._refresh_event_markers()
+        # Called every render frame (100 ms): only re-place markers from cache,
+        # don't hit SQLite here. The 1 s marker_sync_timer does the DB read.
+        self._refresh_event_markers(reload=False)
 
     def _clear_historical_curves(self):
         for c in self.hist_curves.values():
@@ -1714,14 +1719,21 @@ class DataViewerApp(QMainWindow):
         # Connect click, but pass the string key
         line.sigClicked.connect(lambda obj, ev, k=ts_str: self._confirm_delete_marker(k))
 
-    def _refresh_event_markers(self):
-        """Synchronizes RAM markers with SQLite database."""
+    def _refresh_event_markers(self, *_, reload=True):
+        """Synchronizes RAM markers with SQLite database.
+
+        reload=False only re-places markers for the current view from the
+        cached self.event_data (cheap). The SQLite read happens on the 1 s
+        marker_sync_timer, filter changes and UI rebuilds, not on every
+        render frame (it was previously hit ~11x per second).
+        """
         if not self.lanes: return
 
         base_plot = list(self.lanes.values())[0]
 
         # Pull fresh database state
-        self.event_data = self._load_markers()
+        if reload:
+            self.event_data = self._load_markers()
 
         # 1. Prune deleted or off-screen markers
         view_range = base_plot.viewRange()[0]
@@ -1864,7 +1876,9 @@ class DataViewerApp(QMainWindow):
 
 if __name__ == "__main__":
 
-    harden_windows_process()
+    # The viewer needs well over 200 MB resident (live ring buffer ~270 MB alone),
+    # so don't apply the services' 200 MB working-set ceiling here.
+    harden_windows_process(limit_working_set=False)
     app = QApplication(sys.argv)
 
     # 1. Initialize the Single Master Cache
