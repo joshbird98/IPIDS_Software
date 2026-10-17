@@ -962,6 +962,11 @@ class DataViewerApp(QMainWindow):
             else:
                 active_axes[lane]['linear'] = True
 
+            if len(y_plot) != len(x_plot_master):
+                # Mismatched arrays make pyqtgraph raise; blank this channel rather
+                # than take the frame (or, without the crash logger, the app) down.
+                target_dict[tag].setData([], [])
+                continue
             target_dict[tag].setData(x_plot_master, y_plot)
 
         # UI Cleanup
@@ -1874,7 +1879,38 @@ class DataViewerApp(QMainWindow):
         super().closeEvent(event)
 
 
+def _install_crash_logger(project_root):
+    """PyQt6 calls qFatal() (abort, exit code 134 / 0xC0000409 on Windows) on ANY
+    unhandled Python exception raised inside a Qt slot or timer callback, so a
+    single bad frame kills the whole viewer. Log the traceback instead and keep
+    running. Repeated identical errors (e.g. every 100 ms render frame) are only
+    printed on the 1st, 10th, 100th... occurrence."""
+    import traceback
+    log_dir = os.path.join(project_root, "SystemLogs")
+    os.makedirs(log_dir, exist_ok=True)
+    log_path = os.path.join(log_dir, "viewer_errors.log")
+    seen = {}
+
+    def hook(exc_type, exc, tb):
+        text = "".join(traceback.format_exception(exc_type, exc, tb))
+        n = seen.get(text, 0) + 1
+        seen[text] = n
+        if n in (1, 10, 100, 1000) or n % 10000 == 0:
+            stamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            msg = f"[{stamp}] Unhandled exception in viewer (occurrence #{n}):\n{text}\n"
+            sys.stderr.write(msg)
+            try:
+                with open(log_path, "a") as f:
+                    f.write(msg)
+            except OSError:
+                pass
+
+    sys.excepthook = hook
+
+
 if __name__ == "__main__":
+
+    _install_crash_logger(os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), "../../..")))
 
     # The viewer needs well over 200 MB resident (live ring buffer ~270 MB alone),
     # so don't apply the services' 200 MB working-set ceiling here.

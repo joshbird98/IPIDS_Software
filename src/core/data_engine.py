@@ -113,7 +113,9 @@ class TimeSeriesEngine:
         try:
             if files_20m:
                 lfs_20m = [pl.scan_parquet(f) for f in files_20m]
-                self.mart_20m = pl.concat(lfs_20m, how="diagonal").collect()
+                # glob() order is filesystem order, not time order: sort, or the
+                # plotted x goes backwards (breaks clipToView / downsampling).
+                self.mart_20m = pl.concat(lfs_20m, how="diagonal").sort("timestamp_min").collect()
                 print(f"[Engine] 20m Mart online. Rows: {self.mart_20m.height}")
 
             if files_1m:
@@ -121,6 +123,7 @@ class TimeSeriesEngine:
                 lfs_1m = [pl.scan_parquet(f) for f in files_1m]
                 self.mart_1m = pl.concat(lfs_1m, how="diagonal") \
                     .filter(pl.col("timestamp_min") >= cutoff_ts) \
+                    .sort("timestamp_min") \
                     .collect()
                 print(f"[Engine] 1m Mart online (30-day window). Rows: {self.mart_1m.height}")
         except Exception as e:
@@ -218,7 +221,14 @@ class TimeSeriesEngine:
 
             # --- 3. MACRO ROUTING WITH GAP STITCHING (> 24 Hours) ---
             else:
-                is_20m = span > (30 * 86400)
+                # The 1m mart only holds the last 30 days. Previously any 1-30 day
+                # window older than that hit the (empty) 1m mart and drew nothing.
+                # Use 1m only when it actually covers the window start.
+                one_m_covers = (
+                    self.mart_1m is not None and self.mart_1m.height > 0
+                    and start_ts >= self.mart_1m["timestamp_min"][0]
+                )
+                is_20m = span > (30 * 86400) or not one_m_covers
                 mart = self.mart_20m if is_20m and self.mart_20m is not None else self.mart_1m
                 route_taken = "MART_20M" if is_20m else "MART_1M"
 
@@ -258,6 +268,8 @@ class TimeSeriesEngine:
                             vals_dict[tag] = y_arr
 
                     # Stitch the "Today Gap"
+                    n_macro = ts_arr.size
+                    chunk_parts = {}
                     if pruned_chunks:
                         # CRITICAL FIX: Only stitch chunks that are within the last 24 hours
                         # This prevents the RAM explosion when zoomed out to months
@@ -341,30 +353,56 @@ class TimeSeriesEngine:
                                                 y_chunks[2::4] = y_max[1::2]
                                                 y_chunks[3::4] = y_min[1::2]
 
-                                                if tag in vals_dict and vals_dict[tag].size:
-                                                    vals_dict[tag] = np.concatenate((vals_dict[tag], y_chunks))
-                                                else:
-                                                    vals_dict[tag] = y_chunks
+                                                chunk_parts[tag] = y_chunks
+                                        vals_dict = self._stitch_parts(vals_dict, chunk_parts, selected_tags,
+                                                                       n_macro, ts_chunks.size)
                                     else:
                                         # Standard raw stitch
                                         ts_chunks = df_chunks["timestamp"].to_numpy()
                                         ts_arr = np.concatenate((ts_arr, ts_chunks)) if ts_arr.size else ts_chunks
                                         for tag in valid_tags:
                                             if tag in df_chunks.columns:
-                                                y_chunks = df_chunks[tag].to_numpy()
-                                                if tag in vals_dict and vals_dict[tag].size:
-                                                    vals_dict[tag] = np.concatenate((vals_dict[tag], y_chunks))
-                                                else:
-                                                    vals_dict[tag] = y_chunks
+                                                chunk_parts[tag] = df_chunks[tag].to_numpy()
+                                        vals_dict = self._stitch_parts(vals_dict, chunk_parts, selected_tags,
+                                                                       n_macro, ts_chunks.size)
 
                             except Exception as stitch_err:
                                 print(f"[Engine] Stitching skipped: {stitch_err}")
 
-                return ts_arr, vals_dict
+                return self._sort_by_time(ts_arr, vals_dict)
 
         except Exception as e:
             print(f"[Engine] Fatal Query Error: {e}")
             return safe_empty_ts, safe_empty_vals
+
+    @staticmethod
+    def _stitch_parts(macro_vals, chunk_parts, tags, n_macro, n_chunk):
+        """Join macro + chunk segments per tag, NaN-padding whichever side a tag
+        is missing from, so every value array matches the stitched timestamp
+        array. (Tags added/renamed over time exist in only one side; unequal
+        lengths make pyqtgraph raise inside a Qt slot, which aborts the app.)"""
+        out = {}
+        for tag in tags:
+            m = macro_vals.get(tag)
+            if m is None or len(m) != n_macro:
+                m = np.full(n_macro, np.nan)
+            c = chunk_parts.get(tag)
+            if c is None or len(c) != n_chunk:
+                c = np.full(n_chunk, np.nan)
+            out[tag] = np.concatenate((np.asarray(m, dtype=np.float64), np.asarray(c, dtype=np.float64)))
+        return out
+
+    @staticmethod
+    def _sort_by_time(ts_arr, vals_dict):
+        """Guarantee monotonic time (clipToView and downsample_minmax assume it)
+        and drop any value array whose length doesn't match the timestamps."""
+        n = len(ts_arr)
+        clean = {k: v for k, v in vals_dict.items() if len(v) == n}
+        if n > 1 and np.any(np.diff(ts_arr) < 0):
+            order = np.argsort(ts_arr, kind="stable")
+            ts_arr = ts_arr[order]
+            clean = {k: v[order] for k, v in clean.items()}
+        return ts_arr, clean
 
     def _get_chunk_ts(self, filepath):
         """Extracts timestamp from filename for filtering."""
