@@ -175,7 +175,8 @@ class TimeAxisItem(pg.AxisItem):
 class DataViewerApp(QMainWindow):
     HIST_MARGIN = 0.5        # extra view-widths fetched either side of the view
     HIST_REFINE_ZOOM = 1.5   # re-query when zoomed in this much past the fetch
-    GRID_TICK_LEVEL = 1      # grid/tick levels drawn: 0 = major only (fastest), 1 = +minor, 2 = pyqtgraph default
+    GRID_TICK_LEVEL = 0      # grid/tick levels drawn: 0 = major only (fastest), 1 = +minor, 2 = pyqtgraph default
+    LIVE_FPS = 5             # live plot refresh rate (was 10; ~halves live-mode CPU)
 
     def __init__(self, shared_cache, window_title="IPIDS Data Viewer"):
         super().__init__()
@@ -221,7 +222,7 @@ class DataViewerApp(QMainWindow):
 
         self.render_timer = QTimer()
         self.render_timer.timeout.connect(self._refresh_plot_live)
-        self.render_timer.start(100)
+        self.render_timer.start(int(1000 / self.LIVE_FPS))
 
         self.cache.historical_updated.connect(self._refresh_plot_historical)
 
@@ -684,6 +685,33 @@ class DataViewerApp(QMainWindow):
                     self.value_display_layout.addRow(name_lbl, val_lbl)
                     self.sidebar_value_labels[t] = val_lbl
 
+        self._apply_lane_axis_styles()
+
+    def _apply_lane_axis_styles(self):
+        """Per-lane axis/grid setup from the channel config (called on layout build).
+
+        Linear channels -> left axis values + horizontal grid from the left axis.
+        Log channels    -> right log axis; if the lane is log-only, its horizontal
+        grid comes from the log axis, so grid lines line up with the decades
+        instead of the hidden linear scale.
+        """
+        alpha = 128
+        for lane, p in self.lanes.items():
+            cfgs = [c for c in self.plot_config.values()
+                    if c.get('selected') and c.get('lane', 'Lane 1') == lane]
+            has_log = any(c.get('scale') == 'log' for c in cfgs)
+            has_lin = any(c.get('scale') != 'log' for c in cfgs)
+            left = p.getAxis('left')
+            left.setStyle(showValues=has_lin)
+            left.setGrid(alpha if has_lin else False)
+            if lane in self.lane_axes:
+                self.lane_axes[lane].setVisible(has_log)
+            log_axis = self.log_axis_widgets.get(lane)
+            if log_axis is not None:
+                log_axis.setStyle(maxTickLevel=self.GRID_TICK_LEVEL)
+                log_axis.setGrid(alpha if (has_log and not has_lin) else False)
+                log_axis.setVisible(has_log)
+
     def _format_with_si_prefix(self, value: float, base_unit: str, is_delta: bool = False) -> str:
         """Dynamically scales base units to a readable SI prefix string or scientific notation."""
         if value is None:
@@ -814,6 +842,8 @@ class DataViewerApp(QMainWindow):
             base_plot.setXRange(latest_x_relative - current_width, latest_x_relative, padding=0)
             self._auto_panning = False
 
+        self._settle_viewboxes()
+
         # --- UPDATE LIVE SIDEBAR READOUT ---
         if not self.btn_inspector.isChecked():
             if self.cache.live_ptr > 0:
@@ -835,6 +865,31 @@ class DataViewerApp(QMainWindow):
 
                         val_lbl.setText(formatted_str)
 
+    def _settle_viewboxes(self):
+        """Resolve pyqtgraph's deferred range/transform updates now, before Qt paints.
+
+        pyqtgraph applies a new X range (and the Y auto-range that depends on it)
+        lazily inside the paint (ViewBox.prepareForPaint). Applying the transform
+        mid-paint re-queues the auto-range on every ViewBox, which schedules a
+        SECOND full repaint ~15 ms later - so every live frame was painted twice.
+        Running the same preparation here (twice, so the auto-range that the
+        first transform update queues is also resolved) leaves nothing to change
+        during the paint, giving one repaint per frame.
+        """
+        if getattr(self, '_settling', False):
+            return  # prepareForPaint can emit sigRangeChanged -> _handle_view_change
+        self._settling = True
+        try:
+            for lane, p in self.lanes.items():
+                boxes = [p.vb]
+                if lane in self.lane_axes:
+                    boxes.append(self.lane_axes[lane])
+                for _ in range(2):
+                    for vb in boxes:
+                        vb.prepareForPaint()
+        finally:
+            self._settling = False
+
     def _refresh_plot_historical(self, ts_array, vals_dict, req_id=None):
         #print(f"[DEBUG-UI] Received history for ID {req_id}. Expected ID: {self.pending_hist_id}. Points: {len(ts_array)}") # ADD THIS
         # Show any result newer than what is on screen. Previously only the exact
@@ -854,6 +909,7 @@ class DataViewerApp(QMainWindow):
         self.historical_y = vals_dict
         #t_prep = time.perf_counter()
         self._render_curves(self.hist_curves, self.historical_x, self.historical_y, is_historical=True)
+        self._settle_viewboxes()
 
         #t_end = time.perf_counter()
         #print(f"[UI] Historical Render Complete: {(t_end - t_prep) * 1000:.1f} ms (Total UI block: {(t_end - t_start) * 1000:.1f} ms)")
@@ -934,7 +990,7 @@ class DataViewerApp(QMainWindow):
             if tag not in target_dict:
                 color = self._get_distinct_color(tag)
                 pen = pg.mkPen(color=color, width=1.0)
-                c = pg.PlotDataItem(pen=pen, autoDownsample=True, clipToView=True, connect='finite',
+                c = pg.PlotDataItem(pen=pen, autoDownsample=False, clipToView=False, connect='finite',
                                     downsampleMethod='peak')
 
                 if cfg.get('scale') == 'log':
@@ -999,14 +1055,11 @@ class DataViewerApp(QMainWindow):
                 continue
             target_dict[tag].setData(x_plot_master, y_plot)
 
-        # UI Cleanup
-        for lane, states in active_axes.items():
-            left_axis = self.lanes[lane].getAxis('left')
-            left_axis.show()
-            show_log = states['log']
-            self.lane_axes[lane].setVisible(show_log)
-            if lane in self.log_axis_widgets: self.log_axis_widgets[lane].setVisible(show_log)
-            left_axis.setStyle(showValues=states['linear'])
+        # (Axis visibility used to be re-applied here on every frame. AxisItem.setStyle
+        # discards the axis' cached picture and re-runs its size calculation, so that
+        # was wasted work 5-10x/s; and because it was based on which curves had data
+        # in this particular call, it could flip-flop between live and historical
+        # renders. It is now applied once per layout build: _apply_lane_axis_styles.)
 
     # --- Event Handlers ---
 
@@ -1027,6 +1080,8 @@ class DataViewerApp(QMainWindow):
 
         # ADD THIS: Reset the 150ms countdown every time the view shifts
         self._trigger_history_debounce()
+        # Settle all lanes now so a user zoom/pan step costs one repaint, not two.
+        self._settle_viewboxes()
 
     def _trigger_history_debounce(self):
         """Starts a 150ms countdown. If triggered again, the countdown resets."""
