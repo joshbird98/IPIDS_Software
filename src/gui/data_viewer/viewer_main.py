@@ -104,19 +104,30 @@ class ExportWorker(QThread):
             with open(self.svg_path, 'wb') as f:
                 f.write(self.svg_data)
 
-            # 2. Build CSV
-            with open(self.csv_path, 'w', newline='') as f:
-                writer = csv.writer(f)
-                header = ["Timestamp_UNIX", "Human_Time"] + self.tag_labels
-                writer.writerow(header)
-
-                for i in range(len(self.x_slice)):
-                    ts = self.x_slice[i]
-                    h_time = datetime.fromtimestamp(ts).strftime('%Y-%m-%d %H:%M:%S.%f')
-                    row = [ts, h_time]
-                    for tag in self.selected_tags:
-                        row.append(self.y_slices[tag][i])
-                    writer.writerow(row)
+            # 2. Build CSV with polars: the CSV encoder runs in Rust and releases the
+            # GIL. The old per-row csv.writer + datetime loop held the GIL for the
+            # whole export (216k rows: 3.6 s, GUI stalls up to ~250 ms).
+            import polars as pl
+            import time as _time
+            ts = np.asarray(self.x_slice, dtype=np.float64)
+            # Local wall-clock time, vectorised: UTC offset looked up once per hour
+            # bucket (handles DST), then formatted in polars.
+            hours = np.floor(ts / 3600.0).astype(np.int64)
+            uh, inv = np.unique(hours, return_inverse=True)
+            offs = np.array([_time.localtime(int(h) * 3600).tm_gmtoff for h in uh], dtype=np.float64)
+            # whole seconds and microseconds kept separate (as datetime.fromtimestamp
+            # does) - adding the offset in float first loses 1 us at ~1.8e15 us
+            sec = np.floor(ts)
+            local_us = ((sec.astype(np.int64) + offs[inv].astype(np.int64)) * 1_000_000
+                        + np.round((ts - sec) * 1e6).astype(np.int64))
+            cols = {"Timestamp_UNIX": ts,
+                    "Human_Time": pl.Series(local_us).cast(pl.Datetime("us")).dt.strftime("%Y-%m-%d %H:%M:%S%.6f")}
+            for tag, label in zip(self.selected_tags, self.tag_labels):
+                name, k = str(label), 2
+                while name in cols:            # duplicate labels would collide
+                    name, k = f"{label} ({k})", k + 1
+                cols[name] = pl.Series(np.asarray(self.y_slices[tag], dtype=np.float64)).fill_nan(None)
+            pl.DataFrame(cols).write_csv(self.csv_path, null_value="nan")
 
             self.finished.emit(f"Lossless Export Complete - {self.csv_path}")
         except Exception as e:
@@ -444,7 +455,7 @@ class DataViewerApp(QMainWindow):
         self.delta_labels = []  # Time delta text
 
         self.marker_items = {}
-        self.event_data = self._load_markers()
+        self.event_data = {}   # loaded per view window by _refresh_event_markers
 
         # Connect global mouse system_logs to the entire layout scene
         self.layout_widget.scene().sigMouseMoved.connect(self._on_mouse_moved)
@@ -1551,9 +1562,35 @@ class DataViewerApp(QMainWindow):
         QTimer.singleShot(2000, lambda: self.btn_export.setText("📸 Export Snapshot"))
 
 
-    def _load_markers(self):
-        """Reads filtered events directly from the SQLite database."""
+    def _events_conn(self):
+        """One persistent connection (needed for PRAGMA data_version change detection)."""
         db_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '../../../data/events.db'))
+        if getattr(self, '_ev_conn', None) is None:
+            if not os.path.exists(db_path):
+                return None
+            self._ev_conn = sqlite3.connect(db_path, timeout=0.5)
+        return self._ev_conn
+
+    def _events_db_version(self):
+        """Changes whenever ANOTHER connection (the events service) commits."""
+        conn = self._events_conn()
+        if conn is None:
+            return None
+        try:
+            return conn.execute("PRAGMA data_version").fetchone()[0]
+        except sqlite3.Error:
+            self._ev_conn = None
+            return None
+
+    def _active_event_types(self):
+        return tuple(sorted(t for label, cb in self.filter_checkboxes.items() if cb.isChecked()
+                            for t in self.event_filters[label]))
+
+    def _load_markers(self, t_start=None, t_end=None):
+        """Reads filtered events from the SQLite database, optionally only for a
+        time window (uses the events table's timestamp index; the old query had
+        no time bound and no usable index, so it scanned every event ever logged
+        by every service, every second, on the GUI thread)."""
 
         # 1. Determine which event types are currently checked in the UI
         active_types = []
@@ -1562,7 +1599,7 @@ class DataViewerApp(QMainWindow):
                 active_types.extend(self.event_filters[label])
 
         markers = {}
-        if not active_types or not os.path.exists(db_path):
+        if not active_types:
             return markers
 
         # 2. Map UI pseudo-types back to real database types
@@ -1576,54 +1613,58 @@ class DataViewerApp(QMainWindow):
 
         placeholders = ",".join("?" * len(db_query_types))
         query = f"SELECT timestamp, event_type, message, metadata FROM events WHERE event_type IN ({placeholders})"
+        params = list(db_query_types)
+        if t_start is not None:
+            query += " AND timestamp BETWEEN ? AND ?"
+            params += [t_start, t_end]
 
+        conn = self._events_conn()
+        if conn is None:
+            return markers
         try:
-            with sqlite3.connect(db_path) as conn:
-                conn.execute("PRAGMA journal_mode=WAL;")
-                conn.execute("PRAGMA synchronous=NORMAL;")
-                cursor = conn.cursor()
-                cursor.execute(query, db_query_types)
+            cursor = conn.execute(query, params)
 
-                for ts, e_type, msg, meta in cursor.fetchall():
-                    key = f"{ts:.3f}"
+            for ts, e_type, msg, meta in cursor.fetchall():
+                key = f"{ts:.3f}"
 
-                    # 3. Dynamic Filtering & Color Assignment
-                    color = "#FFFFFF"
+                # 3. Dynamic Filtering & Color Assignment
+                color = "#FFFFFF"
 
-                    if e_type == "FAULT":
-                        # Extract the active state from the metadata payload
-                        try:
-                            is_active = json.loads(meta).get("is_active", True) if meta else True
-                        except:
-                            is_active = True
+                if e_type == "FAULT":
+                    # Extract the active state from the metadata payload
+                    try:
+                        is_active = json.loads(meta).get("is_active", True) if meta else True
+                    except:
+                        is_active = True
 
-                        # Filter against UI checkboxes
-                        if is_active and "FAULT_ACTIVE" not in active_types:
-                            continue
-                        if not is_active and "FAULT_CLEARED" not in active_types:
-                            continue
+                    # Filter against UI checkboxes
+                    if is_active and "FAULT_ACTIVE" not in active_types:
+                        continue
+                    if not is_active and "FAULT_CLEARED" not in active_types:
+                        continue
 
-                        # Red for Activated, Blue for Cleared
-                        color = "#F44336" if is_active else "#2196F3"
+                    # Red for Activated, Blue for Cleared
+                    color = "#F44336" if is_active else "#2196F3"
 
-                    elif e_type == "USER_MARKER":
-                        try:
-                            color = json.loads(meta).get("color", "#00E5FF") if meta else "#00E5FF"
-                        except:
-                            color = "#00E5FF"
+                elif e_type == "USER_MARKER":
+                    try:
+                        color = json.loads(meta).get("color", "#00E5FF") if meta else "#00E5FF"
+                    except:
+                        color = "#00E5FF"
 
-                    elif "WATCHDOG" in e_type:
-                        color = "#FF9800"  # Orange
-                    elif e_type == "PHASE_CHANGE":
-                        color = "#4CAF50"  # Green
+                elif "WATCHDOG" in e_type:
+                    color = "#FF9800"  # Orange
+                elif e_type == "PHASE_CHANGE":
+                    color = "#4CAF50"  # Green
 
-                    markers[key] = {
-                        "text": msg,
-                        "color": color,
-                        "type": e_type
-                    }
+                markers[key] = {
+                    "text": msg,
+                    "color": color,
+                    "type": e_type
+                }
         except sqlite3.Error as e:
             print(f"[DB Error] Failed to read markers: {e}")
+            self._ev_conn = None  # reconnect next time
 
         return markers
 
@@ -1683,13 +1724,28 @@ class DataViewerApp(QMainWindow):
         if not self.lanes: return
 
         base_plot = list(self.lanes.values())[0]
+        view_range = base_plot.viewRange()[0]
 
-        # Pull fresh database state
-        if reload:
-            self.event_data = self._load_markers()
+        # Pull fresh database state - only when something actually changed:
+        #   * the DB was written by another connection (PRAGMA data_version),
+        #   * the overlay filters changed, or
+        #   * the view left the time window loaded last time.
+        # Each load is a time-windowed indexed query (view +/- 2 spans).
+        span = view_range[1] - view_range[0]
+        a0, a1 = view_range[0] + self.t0, view_range[1] + self.t0
+        types = self._active_event_types()
+        win = getattr(self, '_ev_window', None)
+        need = (win is None or a0 < win[0] or a1 > win[1] or types != getattr(self, '_ev_types', None))
+        if reload and not need:
+            version = self._events_db_version()
+            need = version != getattr(self, '_ev_version', None)
+        if need:
+            w0, w1 = a0 - 2 * span, a1 + 2 * span
+            self._ev_version = self._events_db_version()
+            self.event_data = self._load_markers(w0, w1)
+            self._ev_window, self._ev_types = (w0, w1), types
 
         # 1. Prune deleted or off-screen markers
-        view_range = base_plot.viewRange()[0]
         to_remove = []
 
         for ts_str, item in list(self.marker_items.items()):

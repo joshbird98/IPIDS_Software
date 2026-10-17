@@ -170,6 +170,18 @@ def main():
         n = {t: (0 if c.xData is None else int(np.isfinite(c.yData).sum())) for t, c in win.hist_curves.items()}
         check("historical data loaded for a past window", len(n) > 0 and all(v > 100 for v in n.values()),
               f"{ {k.split('.')[-1]: v for k, v in n.items()} }")
+        # markers: every USER_MARKER in the DB inside the view is drawn
+        db = os.path.join(ROOT, "data", "events.db")
+        if os.path.exists(db):
+            import sqlite3
+            v0, v1 = list(win.lanes.values())[0].viewRange()[0]
+            win._refresh_event_markers()
+            with sqlite3.connect(db) as conn:
+                expect = {f"{r[0]:.3f}" for r in conn.execute(
+                    "SELECT timestamp FROM events WHERE event_type='USER_MARKER' AND timestamp BETWEEN ? AND ?",
+                    (v0 + win.t0, v1 + win.t0))}
+            shown = {k for k in win.marker_items if v0 <= float(k) - win.t0 <= v1}
+            check("user markers in view are drawn", expect == shown, f"{len(shown)}/{len(expect)}")
         legend_items = sum(len(l.items) for l in win.lane_legends.values())
         check("legend present without live data", legend_items == len(win.plot_config), f"{legend_items} entries")
         app.quit()
