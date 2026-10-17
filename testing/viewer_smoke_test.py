@@ -8,7 +8,10 @@ Checks, against the real DataViewerApp + DualPipelineCache:
   3. inspector/pin values (_values_at) equal the latest live samples
   4. CSV export: timestamps strictly increasing, every channel populated, values
      consistent with the live buffer
-  5. historical view: data loads for a past window and has a legend
+  5. historical view: data loads for a past window and has a legend; markers drawn
+  6. export: exact export of a past window equals every logged sample (including a
+     channel with no data in that period - this used to crash the export), time-averaged
+     bins, figure + standalone make_figure.py, summary + caption, export dialog
 
 Run:  python testing/viewer_smoke_test.py
 Exit code 0 = all passed.
@@ -79,6 +82,26 @@ def main():
         cache.register_client_tags(win.client_id, list(win.plot_config))
         win.request_ui_refresh()
 
+    def export_options(t0, t1, mode, dest, bin_s=10.0, spread=False, screen_svg=False):
+        return {"t0": t0, "t1": t1, "mode": mode, "bin_s": bin_s, "spread": spread, "csv": True,
+                "parquet": True, "markers": True, "screen_svg": screen_svg, "figure": True,
+                "width_cm": 15.0, "lane_height_cm": 4.5, "font": "serif", "time_axis": "elapsed",
+                "dest": dest, "name": "snap"}
+
+    def wait_for_export(then, timeout_s=90):
+        t_end = time.time() + timeout_s
+
+        def poll():
+            w = getattr(win, "export_worker", None)
+            if w is not None and w.isFinished():
+                then(getattr(win, "last_export_folder", None) if win.btn_export.text() != "❌ Export failed" else None)
+                win.last_export_folder = None
+            elif time.time() > t_end:
+                then(None)
+            else:
+                QTimer.singleShot(200, poll)
+        QTimer.singleShot(300, poll)
+
     first = [sorted(by["service_plc_snap7"])[0], sorted(by["service_vacuum"])[0],
              sorted(by["service_magnet"])[0], sorted(by["service_adam_monitor"])[0]]
     second = [sorted(by["service_source_turbo"])[0], sorted(by["service_smu" if "service_smu" in by
@@ -126,35 +149,38 @@ def main():
         check("inspector values match latest live samples", len(diffs) == len(sel) and max(diffs) < 1e-9,
               f"{len(diffs)}/{len(sel)} channels")
 
-        # export
+        # export (as displayed, live) - options passed directly, no dialog
         tmp = tempfile.mkdtemp()
-        win.edit_export_path.setText(os.path.join(tmp, "snap"))
-        win._prepare_export()
-        QTimer.singleShot(2500, lambda: phase3(tmp, sel))
+        win._export_quiet = True
+        v0, v1 = list(win.lanes.values())[0].viewRange()[0]
+        win._prepare_export(export_options(v0 + win.t0, v1 + win.t0, "displayed", tmp, screen_svg=True))
+        wait_for_export(lambda folder: phase3(folder, sel))
 
-    def phase3(tmp, sel):
-        files = glob.glob(os.path.join(tmp, "snap_*.csv"))
-        ok_file = len(files) == 1 and len(glob.glob(os.path.join(tmp, "snap_*.svg"))) == 1
-        check("export wrote CSV + SVG", ok_file, str([os.path.basename(f) for f in os.listdir(tmp)]))
-        if files:
-            with open(files[0]) as f:
+    def phase3(folder, sel):
+        names = sorted(os.listdir(folder)) if folder else []
+        want = {"data.csv", "data.parquet", "metadata.json", "figure.pdf", "figure.svg", "figure.png",
+                "make_figure.py", "screen.svg", "summary.csv", "caption.txt"}
+        check("export folder has data, metadata, figure, script, screen snapshot", want <= set(names), str(names))
+        if folder and "data.csv" in names:
+            with open(os.path.join(folder, "data.csv")) as f:
                 rows = list(csv.reader(f))
             hdr, body = rows[0], rows[1:]
             ts = np.array([float(r[0]) for r in body])
             check("export timestamps strictly increasing", len(ts) > 100 and np.all(np.diff(ts) > 0),
                   f"{len(ts)} rows")
+            meta = json.load(open(os.path.join(folder, "metadata.json")))
+            colmap = {c["tag"]: c["column"] for c in meta["channels"]}
             cols = {h: np.array([float(r[i]) if r[i] not in ("", "nan") else np.nan for r in body])
-                    for i, h in enumerate(hdr) if i >= 2}
+                    for i, h in enumerate(hdr) if i >= 3}
             filled = {h: float(np.mean(np.isfinite(v))) for h, v in cols.items()}
             check("export: every channel populated", all(v > 0.9 for v in filled.values()),
-                  f"{ {k: round(v, 2) for k, v in filled.items()} }")
-            # spot-check every channel at several rows against the live buffer (step-hold)
+                  f"{len(filled)} columns")
             errs = []
             for t in sel:
                 x, y = cache.live.window(ts[0] - 5, ts[-1], [t])[t]
                 for r in np.linspace(0, len(ts) - 1, 7).astype(int):
                     k = np.searchsorted(x, ts[r], side='right') - 1
-                    errs.append(abs(y[k] - cols[t][r]))
+                    errs.append(abs(y[k] - cols[colmap[t]][r]))
             check("export values match live buffer", max(errs) < 1e-9, f"{len(errs)} cells, max err {max(errs):.2e}")
 
         # historical: park on July data and wait for the query
@@ -184,6 +210,61 @@ def main():
             check("user markers in view are drawn", expect == shown, f"{len(shown)}/{len(expect)}")
         legend_items = sum(len(l.items) for l in win.lane_legends.values())
         check("legend present without live data", legend_items == len(win.plot_config), f"{legend_items} entries")
+
+        # historical EXACT export incl. a channel with no data in July (crashed the original export)
+        set_channels(sorted(by["service_magnet"])[:2] + ["ion_beam.beamline.steerer_magnet.rb_current"])
+        QTimer.singleShot(1500, phase5)
+
+    def phase5():
+        end = time.mktime((2026, 7, 10, 12, 0, 0, 0, 0, -1))
+        tmp = tempfile.mkdtemp()
+        win._prepare_export(export_options(end - 2 * 3600, end, "exact", tmp))
+        wait_for_export(lambda folder: phase6(folder, end))
+
+    def phase6(folder, end):
+        import polars as pl
+        ok = folder is not None and os.path.exists(os.path.join(folder, "data.parquet"))
+        check("historical exact export succeeds with a channel that has no data", ok, str(folder))
+        if ok:
+            d = pl.read_parquet(os.path.join(folder, "data.parquet"))
+            meta = json.load(open(os.path.join(folder, "metadata.json")))
+            missing_tag = "ion_beam.beamline.steerer_magnet.rb_current"
+            present = [c for c in meta["channels"] if c["tag"] != missing_tag]
+            raw = pl.read_parquet(os.path.join(ROOT, "data/daily_logs/day_20260710.parquet"),
+                                  columns=["timestamp"] + [c["tag"] for c in present]).filter(
+                (pl.col("timestamp") >= end - 2 * 3600) & (pl.col("timestamp") <= end)).sort("timestamp")
+            same = d.height == raw.height and all(
+                np.allclose(d[c["column"]].to_numpy(), raw[c["tag"]].cast(pl.Float64).to_numpy(), equal_nan=True)
+                for c in present)
+            check("exact export == every logged sample in the day file", same, f"{d.height} vs {raw.height} rows")
+            miss = next(c["column"] for c in meta["channels"] if c["tag"] == missing_tag)
+            check("channel without data exported as empty column", d[miss].null_count() == d.height, miss)
+            # the standalone figure script regenerates the figure from the export folder
+            import subprocess
+            for f_ in ("figure.pdf", "figure.png", "figure.svg"):
+                os.remove(os.path.join(folder, f_))
+            r = subprocess.run([sys.executable, os.path.join(folder, "make_figure.py"), "--formats", "pdf,png"],
+                               capture_output=True, text=True, timeout=120)
+            check("make_figure.py regenerates the figure on its own", r.returncode == 0 and
+                  os.path.exists(os.path.join(folder, "figure.pdf")), (r.stderr or "")[-200:])
+        tmp = tempfile.mkdtemp()
+        win._prepare_export(export_options(end - 6 * 3600, end, "mean", tmp, bin_s=60.0, spread=True))
+        wait_for_export(lambda folder: phase7(folder))
+
+    def phase7(folder):
+        import polars as pl
+        ok = folder is not None
+        if ok:
+            d = pl.read_parquet(os.path.join(folder, "data.parquet"))
+            dt = np.diff(d["Timestamp_UNIX"].to_numpy())
+            ok = d.height == 360 and np.allclose(dt, 60.0) and any(c.endswith(" std") for c in d.columns)
+        check("time-averaged export: 6 h at 60 s = 360 bins with spread columns", ok,
+              f"{d.height if folder else 0} rows")
+        # the dialog itself builds and returns sane options
+        from src.gui.data_viewer.export_dialog import ExportDialog
+        dlg = ExportDialog(win, 1.0e9, 1.0e9 + 3600, 4, 0.05, 1000, tempfile.gettempdir(), "x")
+        o = dlg.options()
+        check("export dialog defaults", abs(o["t1"] - o["t0"] - 3600) < 1e-3 and o["bin_s"] > 0, str(o["mode"]))
         app.quit()
 
     QTimer.singleShot(40_000, phase1)    # let 40 s of live data accumulate

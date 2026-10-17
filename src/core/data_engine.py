@@ -237,6 +237,60 @@ class TimeSeriesEngine:
         except Exception as e:
             print(f"[Engine] Data Mart population failed: {e}")
 
+    @staticmethod
+    def _prune_files(all_chunks, all_days, start_ts, end_ts):
+        """Keep only chunk/day files whose filename date can overlap [start, end]
+        (HDD optimisation: avoids opening files that cannot contain the window)."""
+        pruned_chunks = []
+        for f in all_chunks:
+            match = re.search(r'chunk_(\d{8})_(\d{6})', f)
+            if match:
+                try:
+                    chunk_ts = datetime.strptime(match.group(1) + match.group(2), "%Y%m%d%H%M%S").timestamp()
+                    if chunk_ts <= (end_ts + 3600) and (chunk_ts + 3600) >= start_ts:
+                        pruned_chunks.append(f)
+                except ValueError:
+                    pruned_chunks.append(f)
+            else:
+                pruned_chunks.append(f)
+
+        pruned_days = []
+        for f in all_days:
+            match = re.search(r'day_(\d{8})', f)
+            if match:
+                try:
+                    day_ts = datetime.strptime(match.group(1), "%Y%m%d").timestamp()
+                    if day_ts <= (end_ts + 86400) and (day_ts + 172800) >= start_ts:
+                        pruned_days.append(f)
+                except ValueError:
+                    pruned_days.append(f)
+            else:
+                pruned_days.append(f)
+        return sorted(pruned_chunks), sorted(pruned_days)
+
+    def iter_exact_frames(self, start_ts, end_ts, selected_tags, refresh_listing=False):
+        """Yield every logged row in [start, end] as polars DataFrames, one per
+        source file (bounded memory for long exports): columns 'timestamp' plus
+        each selected tag present in that file (Float64), sorted by time.
+        Uses raw day/chunk files only - never the min/max rollups."""
+        if refresh_listing:
+            self.last_glob_time = 0
+        files = self._get_files()
+        chunks, days = self._prune_files(files.get("chunks", []), files.get("days", []), start_ts, end_ts)
+        targets = [f for f in days if "macro" not in f] + files.get("raws", []) + \
+                  [f for f in chunks if "_temp" not in f]
+        cols = ["timestamp"] + list(selected_tags)
+        for f in targets:
+            try:
+                lf = self.get_safe_scan(f, cols)
+                df = lf.filter((pl.col("timestamp") >= start_ts) & (pl.col("timestamp") <= end_ts)) \
+                       .sort("timestamp").collect()
+            except Exception as e:
+                print(f"[Engine] export: skipped {os.path.basename(f)}: {e}")
+                continue
+            if df.height:
+                yield df.with_columns([pl.col(c).cast(pl.Float64) for c in df.columns])
+
     def query_stateless(self, start_ts: float, end_ts: float, selected_tags: list):
         # 1. GUARANTEED FALLBACKS
         safe_empty_ts = np.array([], dtype=np.float64)
@@ -254,33 +308,7 @@ class TimeSeriesEngine:
             all_days = files.get("days", [])
             raws = files.get("raws", [])
 
-            # --- AST BLOAT PRE-FILTER (HDD Optimization) ---
-            pruned_chunks = []
-            for f in all_chunks:
-                match = re.search(r'chunk_(\d{8})_(\d{6})', f)
-                if match:
-                    try:
-                        dt_str = match.group(1) + match.group(2)
-                        chunk_ts = datetime.strptime(dt_str, "%Y%m%d%H%M%S").timestamp()
-                        if chunk_ts <= (end_ts + 3600) and (chunk_ts + 3600) >= start_ts:
-                            pruned_chunks.append(f)
-                    except ValueError:
-                        pruned_chunks.append(f)
-                else:
-                    pruned_chunks.append(f)
-
-            pruned_days = []
-            for f in all_days:
-                match = re.search(r'day_(\d{8})', f)
-                if match:
-                    try:
-                        day_ts = datetime.strptime(match.group(1), "%Y%m%d").timestamp()
-                        if day_ts <= (end_ts + 86400) and (day_ts + 172800) >= start_ts:
-                            pruned_days.append(f)
-                    except ValueError:
-                        pruned_days.append(f)
-                else:
-                    pruned_days.append(f)
+            pruned_chunks, pruned_days = self._prune_files(all_chunks, all_days, start_ts, end_ts)
 
             # --- 2. ROUTE SELECTION ---
             #   span <= 24 h          -> raw rows from chunk/day files
