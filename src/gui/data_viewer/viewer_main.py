@@ -117,8 +117,9 @@ class ExportWorker(QThread):
                         row.append(self.y_slices[tag][i])
                     writer.writerow(row)
 
-            self.finished.emit("Lossless Export Complete")
+            self.finished.emit(f"Lossless Export Complete - {self.csv_path}")
         except Exception as e:
+            print(e)
             self.error.emit(str(e))
 
 # --- Custom Axis Items ---
@@ -352,8 +353,8 @@ class DataViewerApp(QMainWindow):
         path_layout = QHBoxLayout()
         self.edit_export_path = QLineEdit()
         # Default to root/exports
-        current_direc = os.path.dirname(os.path.abspath(__file__))
-        default_path = os.path.join(os.path.dirname(current_direc), "exports")
+        default_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '../../../data/exports'))
+
         if not os.path.exists(default_path): os.makedirs(default_path)
 
         self.edit_export_path.setText(os.path.join(default_path, "IPIDS_Snapshot"))
@@ -1517,12 +1518,39 @@ class DataViewerApp(QMainWindow):
         base_plot = list(self.lanes.values())[0]
         view_start, view_end = base_plot.viewRange()[0]
 
-        # Retrieve the exact data currently rendered on the screen
-        if getattr(self, 'current_x_slice', None) is None or len(self.current_x_slice) == 0: return
+        # --- VIRTUAL PIPELINE ROUTER (HYBRID SAFE) ---
+        has_live = getattr(self, 'current_x_slice', None) is not None and len(self.current_x_slice) > 0
+        has_hist = getattr(self, 'is_historical_mode', False) and len(getattr(self, 'historical_x', [])) > 0
+
+        if has_hist and has_live:
+            # 1. Hybrid Viewport: Concatenate historical and live arrays chronologically
+            x_source = np.concatenate((self.historical_x, self.current_x_slice))
+
+            y_source = {}
+            for tag in selected_tags:
+                hist_y = self.historical_y.get(tag, np.full(len(self.historical_x), np.nan))
+                live_y = self.current_y_dict.get(tag, np.full(len(self.current_x_slice), np.nan))
+                y_source[tag] = np.concatenate((hist_y, live_y))
+
+        elif has_live:
+            # 2. Purely Live Viewport
+            x_source = self.current_x_slice
+            y_source = {tag: self.current_y_dict.get(tag, np.array([])) for tag in selected_tags}
+
+        elif has_hist:
+            # 3. Purely Historical Viewport
+            x_source = self.historical_x
+            y_source = {tag: self.historical_y.get(tag, np.array([])) for tag in selected_tags}
+
+        else:
+            print("[Export] Aborting: No data available in current viewport.")
+            self.btn_export.setEnabled(True)
+            self.btn_export.setText("📸 Export Snapshot")
+            return
 
         # Restore absolute UNIX timestamp for the CSV
-        x_slice = self.current_x_slice + self.t0
-        y_slices = {tag: self.current_y_dict[tag] for tag in selected_tags}
+        x_slice = x_source + self.t0
+        y_slices = y_source
 
         from PyQt6 import QtSvg
         from PyQt6.QtCore import QBuffer, QIODevice, QRectF
@@ -1548,7 +1576,6 @@ class DataViewerApp(QMainWindow):
         painter.end()
         svg_data = buffer.data()
         buffer.close()
-
         pg.setConfigOptions(useOpenGL=True)
 
         self.btn_export.setEnabled(False)

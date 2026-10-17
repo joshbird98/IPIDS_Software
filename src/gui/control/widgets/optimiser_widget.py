@@ -13,7 +13,7 @@ from PyQt6.QtCore import Qt, QThread, pyqtSignal, QRectF, QEvent
 
 class Optimizer2DWorker(QThread):
     data_point = pyqtSignal(int, int, float)
-    scan_finished = pyqtSignal()
+    scan_finished = pyqtSignal(str)
     status_msg = pyqtSignal(str)
 
     def __init__(self, cmd_thread, get_telemetry_cb,
@@ -95,10 +95,12 @@ class Optimizer2DWorker(QThread):
         if self.x_mode_tag != self.y_mode_tag:
             self.cmd_thread.send_command(self.y_service, self.y_mode_tag, 0, origin="optimizer")
 
+        # Modified completion emission
         if not self.is_stopped and self.override_x is None:
             self.status_msg.emit("Optimization Complete.")
-
-        self.scan_finished.emit()
+            self.scan_finished.emit("complete")
+        else:
+            self.scan_finished.emit("stopped")
 
     def stop(self):
         self.is_stopped = True
@@ -170,10 +172,12 @@ class OptimizerTagSelectorDialog(QDialog):
 
 
 class ParameterOptimizerWidget(QWidget):
-    def __init__(self, cmd_thread, get_telemetry_cb):
+    def __init__(self, cmd_thread, get_telemetry_cb, event_helper=None):  # Added event_helper
         super().__init__()
         self.cmd_thread = cmd_thread
         self.get_telemetry_cb = get_telemetry_cb
+        self.event_helper = event_helper  # Store event helper reference
+        self.active_scan_start_str = None  # Track active start timestamp string
 
         self.config_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../../../config"))
         self.registry = self._load_registry()
@@ -540,19 +544,28 @@ class ParameterOptimizerWidget(QWidget):
         y_height = y_stop - y_start
         self.image_item.setRect(QRectF(x_start, y_start, x_width, y_height))
 
-        # Clear existing limits to prevent clamping conflicts during transition
         self.plot_widget.setLimits(xMin=None, xMax=None, yMin=None, yMax=None)
-
-        # Apply the new bounding limits first
         self.plot_widget.setLimits(xMin=min(x_start, x_stop), xMax=max(x_start, x_stop),
                                    yMin=min(y_start, y_stop), yMax=max(y_start, y_stop))
 
-        # Set the viewable ranges
         self.plot_widget.setXRange(x_start, x_stop, padding=0)
         self.plot_widget.setYRange(y_start, y_stop, padding=0)
 
         self._lock_ui(True)
         self.live_crosshair.hide()
+
+        # --- EVENT LOGGING: START ---
+        start_t = time.time()
+        self.active_scan_start_str = time.strftime('%H:%M:%S',
+                                                   time.localtime(start_t)) + f":{int((start_t % 1) * 1000):03d}"
+
+        x_label = self.x_meta.get("default_label", self.x_tag)
+        y_label = self.y_meta.get("default_label", self.y_tag)
+
+        if self.event_helper:
+            start_msg = f"Scan of {x_label} against {y_label} started at {self.active_scan_start_str}"
+            self.event_helper.log_user_marker(start_t, start_msg, "#00E5FF")  # Logged as Cyan
+        # --- EVENT LOGGING: END ---
 
         x_target_service = self.route_map.get(self.x_meta["source"], "plc")
         y_target_service = self.route_map.get(self.y_meta["source"], "plc")
@@ -620,8 +633,16 @@ class ParameterOptimizerWidget(QWidget):
         self._lock_ui(False)
         self.lbl_status.setText("Status: Aborted by User.")
 
-    def _on_scan_finished(self):
+    def _on_scan_finished(self, status: str):  # Updated to receive terminal status
         self._lock_ui(False)
+
+        # --- EVENT LOGGING: COMPLETION/STOP ---
+        if self.active_scan_start_str and self.event_helper:
+            end_t = time.time()
+            end_msg = f"Scan from {self.active_scan_start_str} {status}"
+            self.event_helper.log_user_marker(end_t, end_msg, "#00E5FF")
+        self.active_scan_start_str = None
+        # --- EVENT LOGGING: END ---
 
     def _lock_ui(self, is_running: bool):
         self.btn_x.setEnabled(not is_running)

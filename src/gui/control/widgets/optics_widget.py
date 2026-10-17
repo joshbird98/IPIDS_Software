@@ -22,7 +22,7 @@ from PyQt6.QtWidgets import QDockWidget, QFormLayout
 
 class MassScanWorker(QThread):
     data_point = pyqtSignal(float, float)
-    scan_finished = pyqtSignal()
+    scan_finished = pyqtSignal(str)
     status_msg = pyqtSignal(str)
 
     def __init__(self, cmd_thread, get_telemetry_cb, low: float, high: float, steps: int, dwell: float):
@@ -63,10 +63,12 @@ class MassScanWorker(QThread):
             measured_beam_current = self.get_telemetry_cb(self.beam_rb_tag)
             self.data_point.emit(actual_mag_amps, measured_beam_current)
 
+        # Modified completion emission
         if not self.is_stopped:
             self.status_msg.emit("Scan Complete.")
-
-        self.scan_finished.emit()
+            self.scan_finished.emit("complete")
+        else:
+            self.scan_finished.emit("stopped")
 
     def stop(self):
         self.is_stopped = True
@@ -111,6 +113,7 @@ class BeamlineOpticsWidget(QWidget):
         super().__init__()
         self.cmd_thread = cmd_thread
         self.event_helper = event_helper
+        self.active_scan_start_str = None  # Track active start timestamp string
 
         self.config_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../../config"))
         self.magnet_config = self._load_magnet_config()
@@ -393,6 +396,16 @@ class BeamlineOpticsWidget(QWidget):
         else:
             dwell = 5.0
 
+        # --- EVENT LOGGING: START ---
+        start_t = time.time()
+        self.active_scan_start_str = time.strftime('%H:%M:%S',
+                                                   time.localtime(start_t)) + f":{int((start_t % 1) * 1000):03d}"
+
+        start_msg = (f"Mass Scan started at {self.active_scan_start_str} | "
+                     f"Range: {low:.2f} A to {high:.2f} A | Steps: {steps} | Dwell: {dwell}s")
+        self.event_helper.log_user_marker(start_t, start_msg, "#FF9800")  # Logged as Orange
+        # --- EVENT LOGGING: END ---
+
         self.scan_worker = MassScanWorker(self.cmd_thread, self._get_latest_telemetry, low, high, steps, dwell)
 
         if self.plot_widget is not None:
@@ -409,8 +422,16 @@ class BeamlineOpticsWidget(QWidget):
             self.scan_worker.wait()
         self._update_sweep_ui_lock(False)
 
-    def _on_sweep_finished(self):
+    def _on_sweep_finished(self, status: str):  # Updated to receive terminal status
         self._update_sweep_ui_lock(False)
+
+        # --- EVENT LOGGING: COMPLETION/STOP ---
+        if self.active_scan_start_str:
+            end_t = time.time()
+            end_msg = f"Mass Scan from {self.active_scan_start_str} {status}"
+            self.event_helper.log_user_marker(end_t, end_msg, "#FF9800")
+            self.active_scan_start_str = None
+        # --- EVENT LOGGING: END ---
 
     def _toggle_plot(self):
         # Lazy-load the dock if it hasn't been created yet

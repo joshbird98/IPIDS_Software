@@ -204,7 +204,7 @@ class ControlMainWindow(QMainWindow):
 
         self.optimiser_dock = QDockWidget("Optimiser", self)
         self.optimiser_dock.setObjectName("OptimiserDock")
-        self.optimiser_widget = ParameterOptimizerWidget(self.cmd_thread, lambda tag: self.master_telemetry_cache.get(tag, 0.0))
+        self.optimiser_widget = ParameterOptimizerWidget(self.cmd_thread, lambda tag: self.master_telemetry_cache.get(tag, 0.0), self.event_helper)
         self.optimiser_dock.setWidget(self.optimiser_widget)
         self.addDockWidget(Qt.DockWidgetArea.LeftDockWidgetArea, self.optimiser_dock)
         self.subsystems["optimiser"] = self.optimiser_widget
