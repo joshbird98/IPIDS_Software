@@ -108,8 +108,12 @@ class DualPipelineCache(QObject):
         # 2. Measure the Preloaded Historical Data (Polars)
         # Note: If self.engine.chunk_mart uses a different naming convention, adjust accordingly.
         try:
-            chunk_mart_mb = sum(df.estimated_size("mb") for df in self.engine.chunk_mart.values())
-        except AttributeError:
+            # list() snapshots the dict atomically: sync_active_chunks() mutates
+            # chunk_mart from a background thread, and iterating it live can raise
+            # "dictionary changed size during iteration" inside this Qt timer slot,
+            # which aborts the app under PyQt6.
+            chunk_mart_mb = sum(df.estimated_size("mb") for df in list(self.engine.chunk_mart.values()))
+        except Exception:
             chunk_mart_mb = 0.0
 
         try:

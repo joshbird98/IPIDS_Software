@@ -757,6 +757,12 @@ class DataViewerApp(QMainWindow):
 
             y_slice_dict = {}
             for tag in self.cache.tags:
+                # Guard: a profile may reference a tag that is no longer in the
+                # registry. An unhandled KeyError in a Qt timer slot aborts the
+                # whole app under PyQt6, and this branch only runs after the
+                # first wrap (~15 min in), so it looked like a random crash.
+                if tag not in self.cache._y_live:
+                    continue
                 y_raw = self.cache._y_live[tag]
                 y_slice_old = y_raw[ptr:][s_idx_old:e_idx_old]
                 y_slice_new = y_raw[:ptr][s_idx_new:e_idx_new]
@@ -797,7 +803,7 @@ class DataViewerApp(QMainWindow):
                     # Use .get() to avoid KeyErrors if the tag isn't in the sidebar dictionary yet
                     val_lbl = getattr(self, 'sidebar_value_labels', {}).get(tag)
 
-                    if val_lbl is not None:
+                    if val_lbl is not None and tag in self.cache._y_live:
                         cfg = self.plot_config.get(tag, {})
                         val = self.cache._y_live[tag][latest_idx]
                         mult = cfg.get('multiplier', 1.0)
@@ -839,19 +845,13 @@ class DataViewerApp(QMainWindow):
         end_idx = 0
 
         if not is_historical and self.cache.live_ptr > 0:
-            ptr = self.cache.live_ptr
-            cap = self.cache.live_capacity
-
-            N_total = min(ptr, cap)
-            start_idx = (ptr - N_total) % cap
-            end_idx = ptr % cap
-
-            # Reconstruct chronological X array
-            if start_idx < end_idx:
-                x_chron = x_array[start_idx:end_idx]
-            else:
-                x_chron = np.concatenate((x_array[start_idx:], x_array[:end_idx]))
-                use_concat = True
+            # x_array is ALREADY the chronological visible window built by
+            # _refresh_plot_live (which handles ring-buffer wrap itself).
+            # Previously this block re-indexed it with ring-buffer pointers,
+            # which after every wrap truncated the slice to its oldest
+            # `live_ptr` samples -> all live lines vanished for minutes.
+            # See testing/repro_ring_wrap.py.
+            x_chron = x_array
 
             # Viewport filtering (Binary Search)
             try:
@@ -929,12 +929,8 @@ class DataViewerApp(QMainWindow):
 
             # Extract Y using the globally calculated indices
             if not is_historical and self.cache.live_ptr > 0:
-                if not use_concat:
-                    y_chron = y[start_idx:end_idx]
-                else:
-                    y_chron = np.concatenate((y[start_idx:], y[:end_idx]))
-
-                y_raw = y_chron[master_slice_start:master_slice_end]
+                # y is already aligned with x_array (same window slice)
+                y_raw = y[master_slice_start:master_slice_end]
             else:
                 y_raw = y
 
