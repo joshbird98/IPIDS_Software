@@ -265,6 +265,20 @@ def main():
         dlg = ExportDialog(win, 1.0e9, 1.0e9 + 3600, 4, 0.05, 1000, tempfile.gettempdir(), "x")
         o = dlg.options()
         check("export dialog defaults", abs(o["t1"] - o["t0"] - 3600) < 1e-3 and o["bin_s"] > 0, str(o["mode"]))
+
+        # the real button: click -> dialog -> export (dialog auto-accepted with test options)
+        import src.gui.data_viewer.export_dialog as ed
+        tmp = tempfile.mkdtemp()
+        end = time.mktime((2026, 7, 10, 12, 0, 0, 0, 0, -1))
+        shown = []
+        ed.ExportDialog.exec = lambda self: (shown.append(1), 1)[1]
+        ed.ExportDialog.options = lambda self: export_options(end - 600, end, "exact", tmp)
+        win.btn_export.click()
+        wait_for_export(lambda folder: phase8(folder, shown))
+
+    def phase8(folder, shown):
+        check("clicking the Export button opens the dialog and exports", bool(shown) and folder is not None
+              and os.path.exists(os.path.join(folder, "figure.pdf")), str(folder))
         app.quit()
 
     QTimer.singleShot(40_000, phase1)    # let 40 s of live data accumulate

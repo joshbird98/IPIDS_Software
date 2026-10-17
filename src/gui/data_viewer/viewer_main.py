@@ -240,7 +240,7 @@ class DataViewerApp(QMainWindow):
 
         self.btn_scroll_lock = QPushButton("🟢 Scroll: LOCKED")
         self.btn_scroll_lock.setStyleSheet("background-color: #4CAF50; color: white; font-weight: bold; padding: 10px;")
-        self.btn_scroll_lock.clicked.connect(self._toggle_scroll_lock)
+        self.btn_scroll_lock.clicked.connect(lambda: self._toggle_scroll_lock())
         sidebar_layout.addWidget(self.btn_scroll_lock)
 
         self.btn_y_lock = QPushButton("🔓 Y-Scale: AUTO")
@@ -341,7 +341,9 @@ class DataViewerApp(QMainWindow):
 
         self.btn_export = QPushButton("📸 Export Snapshot")
         self.btn_export.setStyleSheet("background-color: #673AB7; color: white; font-weight: bold; padding: 8px;")
-        self.btn_export.clicked.connect(self._prepare_export)
+        # lambda: QPushButton.clicked passes checked=False, which PyQt would feed
+        # into _prepare_export's `options` parameter (export then did nothing)
+        self.btn_export.clicked.connect(lambda: self._prepare_export())
         sidebar_layout.addWidget(self.btn_export)
 
         sidebar_layout.addSpacing(20)
@@ -1482,6 +1484,8 @@ class DataViewerApp(QMainWindow):
     def _prepare_export(self, options=None):
         """Export button: choose range / resolution / outputs, then export in the background.
         `options` (dict as returned by ExportDialog.options) skips the dialog."""
+        if not isinstance(options, dict):
+            options = None   # e.g. a stray `checked` bool from a signal
         if not self.cache.tags or not self.lanes:
             return
         channels = self._export_channels()
