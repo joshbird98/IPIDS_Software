@@ -270,6 +270,8 @@ class ControlMainWindow(QMainWindow):
         self.mass_scan_dock = QDockWidget("Mass Scan", self)
         self.mass_scan_dock.setObjectName("MassScanDock")
         self.mass_scan_widget = PrecisionMassScannerWidget(self.cmd_thread, self.telemetry.reader(), self.event_helper)
+        # "Calculate & set amps" in the optics panel uses the mass scan's calibration
+        self.optics_widget.mass_calibration = self.mass_scan_widget.current_calibration
         self.mass_scan_dock.setWidget(self.mass_scan_widget)
         self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self.mass_scan_dock)
         self.subsystems["mass_scan"] = self.mass_scan_widget

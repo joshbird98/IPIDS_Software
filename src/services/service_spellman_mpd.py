@@ -14,6 +14,7 @@ from src.core.event_helper import EventHelper
 from src.core.log_setup import Throttle, setup_logging
 from src.core.os_helper import harden_windows_process
 from src.core.paths import REGISTRY_PATH, simulation_enabled
+from src.core.relay_watch import RelayWatch
 
 # Force Windows high-resolution timers (1ms precision)
 if os.name == 'nt':
@@ -260,7 +261,7 @@ class SpellmanMicroservice:
         }
 
         self.safety_relay_active = False
-        self.last_plc_ts = 0.0
+        self.relay = RelayWatch(self.plc_socket, max_age=PLC_TELEMETRY_TIMEOUT)
         self.config = self._load_config()
         self.net_config = self._load_net_config()
         self.registry_limits = self._load_registry_limits()
@@ -334,28 +335,19 @@ class SpellmanMicroservice:
         return limits
 
     def _update_safety_permissives(self):
-        try:
-            while True:
-                topic, msg = self.plc_socket.recv_multipart(flags=zmq.NOBLOCK)
-                try:
-                    payload = orjson.loads(msg)
-                except ValueError:
-                    continue
-                relay_state = payload.get("ion_beam.facilities.safety_relay_active")
-                self.last_plc_ts = time.time()
-                new_state = bool(relay_state)  # None (PLC disconnected) counts as off
-                if self.safety_relay_active != new_state:
-                    self.events.log_general(
-                        f"Safety relay {'ENERGISED' if new_state else 'DE-ENERGISED'} - Spellman supplies "
-                        f"{'powered' if new_state else 'unpowered, outputs reported disabled'}")
-                self.safety_relay_active = new_state
-        except zmq.Again:
-            pass
-        # If the PLC service goes quiet we cannot know the relay state: treat it as off
-        if self.safety_relay_active and time.time() - self.last_plc_ts > PLC_TELEMETRY_TIMEOUT:
-            self.events.log_general("No PLC telemetry - safety relay state unknown, treating as de-energised",
-                                    severity="WARNING")
-            self.safety_relay_active = False
+        # Every PLC message since the last check counts: a trip-and-reset (or a gap in the PLC data)
+        # while this loop was held up by a slow supply still counts as the supplies losing power.
+        new_state = self.relay.check()
+        if self.safety_relay_active != new_state:
+            if new_state:
+                self.events.log_general("Safety relay ENERGISED - Spellman supplies powered")
+            elif time.time() - self.relay.last_rx >= PLC_TELEMETRY_TIMEOUT:
+                self.events.log_general("No PLC telemetry - safety relay state unknown, treating as de-energised",
+                                        severity="WARNING")
+            else:
+                self.events.log_general("Safety relay DE-ENERGISED (or its state unknown) - Spellman supplies "
+                                        "unpowered, outputs reported disabled")
+        self.safety_relay_active = new_state
 
     def _manage_connections(self):
         ws_list = self.net_config.get("waveshares", {}).get("spellman", {})

@@ -7,12 +7,6 @@
   "resistance_tolerance": 0.2,
   "short_circuit_threshold": 0.05,
   "open_circuit_threshold": 2.0,
-  "mass_calibration_poly": [
-    0.0,
-    1.25,
-    -0.005,
-    0.0
-  ],
   "degauss_steps_amps": [
     50.0,
     0.0,

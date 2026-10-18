@@ -1,4 +1,4 @@
-"""The safety-relay permissive used by the software-interlocked services (X-steerer, SMU).
+"""The safety-relay permissive used by the Spellman, magnet, X-steerer and SMU services.
 
 The review found that only the newest PLC message used to count: a relay trip-and-reset
 between two checks (the SMU's loop can be blocked for seconds by an unresponsive SMU) went
@@ -107,3 +107,57 @@ def test_smu_reconnect_after_unseen_trip_does_not_restore_bias(monkeypatch):
         svc.commands.close()
         for sock in (svc.pub_socket, svc.plc_socket, svc.hb_socket):
             sock.close(0)
+
+
+def _close(svc):
+    svc.commands.close()
+    for sock in (svc.pub_socket, svc.plc_socket, svc.hb_socket):
+        sock.close(0)
+
+
+def test_magnet_trip_between_checks_forces_output_off(monkeypatch):
+    monkeypatch.setenv("IPIDS_SIMULATE", "1")
+    from src.sim import magnet as simmag
+    simmag._STATE.clear()
+    from src.services.service_magnet_psu import MagnetMicroservice
+    svc = MagnetMicroservice()
+    try:
+        sub = FakeSub()
+        svc.relay.sock = sub
+        assert svc.hw.connect()
+        sub.push(1.0, time.time())
+        svc._update_safety_permissives()
+        assert not svc.safety_tripped
+        svc.hw.set_current(20.0)
+        svc.hw.set_output(True)
+        now = time.time()
+        sub.push(0.0, now - 0.2)                     # tripped and reset before the next check
+        sub.push(1.0, now - 0.1)
+        svc._update_safety_permissives()
+        assert svc.safety_tripped
+        svc._force_safe_outputs()
+        assert svc.hw.psu.output is False and svc.hw.psu.i_set == 0.0
+    finally:
+        _close(svc)
+
+
+def test_spellman_trip_between_checks_counts_as_power_loss(monkeypatch):
+    monkeypatch.setenv("IPIDS_SIMULATE", "1")
+    from src.services.service_spellman_mpd import SpellmanMicroservice
+    svc = SpellmanMicroservice()
+    try:
+        sub = FakeSub()
+        svc.relay.sock = sub
+        sub.push(1.0, time.time())
+        svc._update_safety_permissives()
+        assert svc.safety_relay_active
+        now = time.time()
+        sub.push(None, now - 0.2)                    # PLC lost, then back with the relay on
+        sub.push(1.0, now - 0.1)
+        svc._update_safety_permissives()
+        assert not svc.safety_relay_active          # one cycle off: buses severed, state reset
+        sub.push(1.0, time.time())
+        svc._update_safety_permissives()
+        assert svc.safety_relay_active
+    finally:
+        _close(svc)

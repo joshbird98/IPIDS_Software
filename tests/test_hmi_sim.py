@@ -240,3 +240,27 @@ def test_tolerance_colours_the_readback(hmi, app, stack):
     finally:
         sim.set_faults(set())
     wait_for(app, lambda: hmi.optics_widget.lbl_mag_rb.styleSheet() == "", 20, "colour cleared")
+
+
+def test_calculate_and_set_amps_puts_the_mass_on_the_cup(hmi, app, stack):
+    """Optics 'Calculate & set amps' with the Mass Scan panel's calibration lands on the Si-28
+    peak (the simulated beam uses the same model: k = 1391.9, I_off = 0.223, E = target + extraction)."""
+    from src.core.mass_calibration import current_for_mass
+    for tag, value in (("ion_beam.source.extraction.sp_requested_voltage", 15.0),
+                       ("ion_beam.source.target.sp_requested_voltage", 5.0),
+                       ("ion_beam.source.extraction.cmd_enable", True),
+                       ("ion_beam.source.target.cmd_enable", True)):
+        assert stack.cmd("plc", tag, value)["status"] == C.OK, tag
+    assert stack.cmd("magnet", "ion_beam.beamline.magnet.cmd_enable", True)["status"] == C.OK
+    view = hmi.master_telemetry_cache
+    wait_for(app, lambda: abs(view["ion_beam.source.extraction.rb_voltage"] - 15.0) < 0.05
+             and abs(view["ion_beam.source.target.rb_voltage"] - 5.0) < 0.05, 15, "20 keV beam")
+    cal = hmi.mass_scan_widget.current_calibration()
+    assert cal["source"].startswith("default")
+    wait_for(app, hmi.optics_widget.btn_calc_mass.isEnabled, 5, "Calculate & set amps available")
+    hmi.optics_widget.sp_mass.setValue(28.0)
+    hmi.optics_widget.btn_calc_mass.click()
+    expected = current_for_mass(28.0, 20000.0, cal["k"], cal["i_off"])
+    wait_for(app, lambda: abs(view["ion_beam.beamline.magnet.rb_current"] - expected) < 0.05, 15,
+             f"magnet at {expected:.2f} A")
+    wait_for(app, lambda: view["ion_beam.beamline.faraday.smu.rb_current"] > 100e-9, 15, "Si-28 beam on the cup")

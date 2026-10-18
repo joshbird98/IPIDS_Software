@@ -1,6 +1,6 @@
 """The safety-relay permissive as a hardware service sees it, from the PLC service's telemetry.
 
-Used by the services whose outputs are interlocked in software (X-steerer, SMU bias).
+Used by every service that acts on the relay state (Spellman, analyser magnet, X-steerer, SMU).
 """
 import time
 

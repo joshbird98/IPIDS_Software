@@ -27,8 +27,8 @@ simulator; none of it has been tried on the real hardware yet (see "Lab PC valid
     lower of the old and new setpoints (so the optimiser's steps don't blind it); after an enable, from when the
     output is up (half the setpoint) or 3 s. Settings in `mpd_config.json` -> `arc_detection`. Latches until
     fault reset (also checked end-to-end into the PLC fault word).
-  - Spellman current limits in `mpd_config.json` (0-330 uA, the MPD30's rating) - the HMI's automatic 50 uA limit
-    is now actually sent and accepted.
+  - Spellman current limits in `mpd_config.json` (0-330 uA, the MPD30's rating, confirmed) - the HMI's automatic
+    50 uA limit is now actually sent and accepted.
   - X-steerer: software safety-relay interlock (output forced off and held off while the relay is off or the PLC
     is silent; stays off when the relay comes back).
   - SMU: after a reconnect the previous bias is re-applied only if fresh PLC data confirms the relay is on;
@@ -36,7 +36,15 @@ simulator; none of it has been tried on the real hardware yet (see "Lab PC valid
     even a trip-and-reset between two checks, or a gap in the PLC data - or the operator had switched it off).
   - Independent review of the above (Oct 2026) found: arc detection blinded while the setpoint kept stepping, a
     relay trip-and-reset between two checks missed by the SMU/steerer, and (older) a refused Spellman
-    enable/disable reported as OK. All fixed, with tests.
+    enable/disable reported as OK. All fixed, with tests. All four relay-dependent services (Spellman, magnet,
+    steerer, SMU) now use the same check, `src/core/relay_watch.py`.
+  - Recipes live in `config/recipes/` (in git). The HMI used to save to src/config/recipes/ (not in git); on
+    start-up it copies anything there across, never overwriting (a clash is saved as "<name> (from
+    src-config).json"). data/recipes/ held stale copies and was removed; its one unique file, an early HV
+    conditioning sketch the engine can't run, is in archive/recipe_sketches/.
+  - "Calculate & set amps" uses the Mass Scan panel's calibration (AMU = k (I + I_off)^2 / E, from the peaks you
+    mark and "Calculate Fit") and the live beam energy (target + extraction), and records which calibration it
+    used. (It had always been amps = amu: the placeholder polynomial it meant to use was never found.)
 - Found on the way and fixed: the manager's start-up purge killed every IPIDS service process on the PC (so a
   simulator or test run would have killed the live system's services) - now only its own; the HMI config editor
   never rebuilt the registry (wrong script path); the recipe builder's tag picker and fault list looked in
@@ -62,15 +70,10 @@ simulator; none of it has been tried on the real hardware yet (see "Lab PC valid
    (.gitignore now lists them, so they won't be re-added.) Other clones that pull that commit lose their copies;
    the history keeps ~500 MB unless it is rewritten (git filter-repo + force push - only if wanted). Optional:
    point `IPIDS_DATA_DIR` at a folder outside the repo so git can never touch live data.
-3. The magnet and Spellman services still judge the relay by the newest PLC message only (their loops are short,
-   so a missed trip-and-reset is much less likely there); switch them to `src/core/relay_watch.py` too?
+3. After the first HMI start on the lab PC: check config/recipes/ for recipes copied from src/config/recipes/
+   (the HMI log says which), commit them, then delete src/config/.
+4. Possible later: approach the magnet current from below in "Calculate & set amps" (hysteresis - the scan
+   calibrates on the way up), if the landing isn't repeatable enough.
 
-## Decisions needed from Josh
-- Is the source einzel supply an MPD30 (30 kV, 0.33 mA)? max_current_ua = 330 assumes so.
-- "Calculate & set amps" (Beamline Optics) has always used amps = amu: the widget looks for magnet_config.json
-  in src/config/, which doesn't exist. Fixing the path would switch it to `mass_calibration_poly` in
-  config/magnet_config.json ([0, 1.25, -0.005, 0] - looks like a placeholder; the mass scan uses k = 1391.9,
-  I_off = 0.223 instead). Which calibration should it use? Not changed yet.
-- Recipes saved from the HMI go to src/config/recipes/ (created automatically, not in git), while the recipes in
-  git are in config/recipes/. Move the HMI to config/recipes/ (and copy yours over)? Not changed yet.
+## Notes
 - If the ADAM module is repaired: its manager key must be `service_adam_monitor` (matches its heartbeat name).

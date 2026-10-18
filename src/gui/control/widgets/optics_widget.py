@@ -1,9 +1,7 @@
 import time
-import json
 import logging
-import os
 from PyQt6.QtWidgets import (
-    QApplication, QMainWindow, QWidget,
+    QMainWindow, QWidget,
     QVBoxLayout, QHBoxLayout, QGridLayout, QLabel, QPushButton, QFrame,
     QGroupBox, QDoubleSpinBox, QMessageBox, QComboBox)
 from PyQt6.QtCore import Qt
@@ -20,6 +18,7 @@ from matplotlib.figure import Figure
 from PyQt6.QtCore import QThread, pyqtSignal
 from PyQt6.QtWidgets import QDockWidget, QFormLayout
 
+from src.core.mass_calibration import current_for_mass
 from src.gui.control.arming import ArmedAction, ArmedToggle
 from src.gui.control.widgets.source_widget import TOLERANCE_STYLE, TOLERANCE_TIP, setpoint_limits, tolerance_flagged
 
@@ -143,8 +142,8 @@ class BeamlineOpticsWidget(QWidget):
         self.event_helper = event_helper
         self.active_scan_start_str = None  # Track active start timestamp string
 
-        self.config_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../../config"))
-        self.magnet_config = self._load_magnet_config()
+        # Set by the main window: returns the Mass Scan panel's calibration {"k", "i_off", "source"}
+        self.mass_calibration = None
         self._limited_tags = setpoint_limits()
 
         # Telemetry Cache
@@ -184,15 +183,6 @@ class BeamlineOpticsWidget(QWidget):
         # Only once current limits are configured (the service refuses - and always dropped - it otherwise)
         if f"{base_tag}.sp_requested_current" in self._limited_tags:
             self._dispatch_command(f"{base_tag}.sp_requested_current", 50.0)
-
-    def _load_magnet_config(self):
-        try:
-            path = os.path.join(self.config_dir, "magnet_config.json")
-            with open(path, "r") as f:
-                return json.load(f)
-        except (OSError, ValueError) as e:
-            log.warning("magnet_config.json not loaded (%s); mass calibration falls back to identity", e)
-            return {"mass_calibration_poly": [0.0, 1.0, 0.0, 0.0]}
 
     def _dispatch_command(self, tag: str, value):
         if "einzel" in tag or "neutral_trap" in tag:
@@ -507,31 +497,45 @@ class BeamlineOpticsWidget(QWidget):
             self.btn_calc_mass.setEnabled(False)
             self.btn_calc_mass.setToolTip(sweep_lock_msg)
 
+    def _warn(self, title: str, text: str):
+        QMessageBox.warning(self, title, text)
+
     def _calculate_mass(self):
+        """Set the magnet for the target mass using the Mass Scan panel's calibration
+        (AMU = k (I + I_off)^2 / E) and the live beam energy (target + extraction voltage),
+        the same model and energy the mass scan uses.
+
+        (This used a polynomial from magnet_config.json, which was never actually loaded - the
+        path pointed at src/config - so it had always been amps = amu. Hysteresis still applies:
+        a scan calibrates on the way up, so approach the current from below, or degauss first.)"""
         target_amu = self.sp_mass.value()
-
-        app = QApplication.instance()
-        main_win = next(w for w in app.topLevelWidgets() if isinstance(w, QMainWindow))
-        cache = main_win.master_telemetry_cache
-
-        extr_kv = cache.get("ion_beam.source.extraction.rb_voltage", 0.0)
-
-        if extr_kv <= 0:
-            QMessageBox.warning(self, "Calculation Error", "Beam energy is 0V. Cannot resolve mass.")
+        cal = self.mass_calibration() if callable(self.mass_calibration) else None
+        if not cal:
+            self._warn("No mass calibration", "The Mass Scan panel's calibration is not available.")
+            return
+        data = self._latest_telemetry or {}
+        tgt_kv = data.get("ion_beam.source.target.rb_voltage")
+        ext_kv = data.get("ion_beam.source.extraction.rb_voltage")
+        if tgt_kv is None or ext_kv is None:
+            self._warn("Beam energy unknown",
+                       "No live target / extraction voltage readback, so the beam energy is unknown.")
+            return
+        energy_ev = (tgt_kv + ext_kv) * 1000.0
+        try:
+            amps = current_for_mass(target_amu, energy_ev, cal["k"], cal["i_off"])
+        except ValueError:
+            self._warn("Calculation error", f"Beam energy is {energy_ev / 1000.0:.3f} keV - cannot resolve a mass.")
+            return
+        if not 0.0 <= amps <= self.sp_mag_current.maximum():
+            self._warn("Out of range", f"{target_amu:g} amu at {energy_ev / 1000.0:.3f} keV needs {amps:.2f} A, "
+                                       f"outside 0 - {self.sp_mag_current.maximum():g} A.")
             return
 
-        poly_coeffs = self.magnet_config.get("mass_calibration_poly", [0.0, 1.0, 0.0, 0.0])
-        x_factor = (target_amu * extr_kv) ** 0.5
-
-        required_amps = sum(coeff * (x_factor ** idx) for idx, coeff in enumerate(poly_coeffs))
-        required_amps = max(0.0, min(required_amps, self.sp_mag_current.maximum()))
-
-        self.sp_mag_current.setValue(required_amps)
-        self._dispatch_command("ion_beam.beamline.magnet.sp_requested_current", required_amps)
-
-        self.event_helper.log_user_marker(time.time(),
-                                          f"Auto-Tuned Magnet to {required_amps:.2f} A for {target_amu} amu at {extr_kv:.2f} kV",
-                                          "#2196F3")
+        self.sp_mag_current.setValue(amps)
+        self._dispatch_command("ion_beam.beamline.magnet.sp_requested_current", amps)
+        self.event_helper.log_user_marker(
+            time.time(), f"Magnet set to {amps:.3f} A for {target_amu:g} amu at {energy_ev / 1000.0:.3f} keV "
+                         f"(k = {cal['k']:.2f}, I_off = {cal['i_off']:.3f}; calibration {cal['source']})", "#2196F3")
 
     def _init_post_magnet_ui(self):
         group = QGroupBox("3. Post-Magnet Tuning")
@@ -704,7 +708,10 @@ class BeamlineOpticsWidget(QWidget):
 
             self.btn_calc_mass.setEnabled(not mag_lockout)
             self.btn_calc_mass.setToolTip(
-                f"Disabled: {mag_lock_reason}" if mag_lockout else "Click to auto-tune magnet current for target mass")
+                f"Disabled: {mag_lock_reason}" if mag_lockout else
+                "Set the magnet current for the target mass, from the Mass Scan panel's calibration (k, I_off) "
+                "and the live beam energy. Hysteresis: the scan calibrates on the way up, so approach from "
+                "below (or degauss first) for the best match.")
 
             self.sp_mass.setEnabled(not mag_lockout)
             self.sp_mass.setToolTip(

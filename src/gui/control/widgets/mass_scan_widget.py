@@ -769,6 +769,10 @@ class PrecisionMassScannerWidget(QWidget):
         self.sp_i_offset.setSingleStep(0.01)
         self.sp_i_offset.setValue(0.223)
         self.sp_i_offset.valueChanged.connect(self._recalculate_mass_axis)
+        # Where the k / I_off in use came from (shown with "Calculate & set amps" in the optics panel)
+        self.calibration_source = "default values (not fitted this session)"
+        self.sp_k_factor.editingFinished.connect(self._calibration_typed)
+        self.sp_i_offset.editingFinished.connect(self._calibration_typed)
 
         calib_layout.addWidget(QLabel("<b>Model:</b> AMU = k * (I + I_off)² / E"), 0, 0, 1, 2)
         calib_layout.addWidget(QLabel("Beam Energy (E):"), 1, 0)
@@ -1230,6 +1234,7 @@ class PrecisionMassScannerWidget(QWidget):
             self.btn_save_csv.setEnabled(True)
 
             if calib_k is not None and calib_i_off is not None:
+                self.calibration_source = f"from trace {os.path.basename(filepath)}"
                 self.sp_k_factor.blockSignals(True)
                 self.sp_i_offset.blockSignals(True)
                 self.sp_k_factor.setValue(calib_k)
@@ -1653,6 +1658,7 @@ class PrecisionMassScannerWidget(QWidget):
                 k_new = (m * E) / ((I + i_off) ** 2)
                 self.sp_k_factor.setValue(k_new)
                 self.lbl_fit_stats.setText("Fit: 1 point (I_off fixed)")
+                self.calibration_source = f"fitted to 1 peak at {time.strftime('%H:%M')} (I_off kept)"
                 self._save_calib_to_csv(k_new, i_off)
         else:
             x_vals = np.array([pt['amps'] for pt in self.calib_points])
@@ -1680,10 +1686,18 @@ class PrecisionMassScannerWidget(QWidget):
                 self._recalculate_mass_axis()
 
                 self.lbl_fit_stats.setText(f"Fit R² = {r_squared:.5f} (n={n})")
+                self.calibration_source = f"fitted to {n} peaks at {time.strftime('%H:%M')} (R² {r_squared:.5f})"
                 self._save_calib_to_csv(k_new, i_off_new)
             else:
                 QMessageBox.warning(self, "Fit Error", "Negative slope derived. Check input values.")
                 self.lbl_fit_stats.setText("Fit Error")
+
+    def _calibration_typed(self):
+        self.calibration_source = "entered by hand"
+
+    def current_calibration(self) -> dict:
+        """The calibration in use: AMU = k (I + I_off)^2 / E, and where it came from."""
+        return {"k": self.sp_k_factor.value(), "i_off": self.sp_i_offset.value(), "source": self.calibration_source}
 
     def _save_calib_to_csv(self, k, i_off):
         if not hasattr(self, 'current_csv_path') or not self.current_csv_path:

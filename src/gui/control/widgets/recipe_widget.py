@@ -7,6 +7,7 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QColor
 
+from src.core.recipe_files import RECIPES_DIR, migrate_legacy_recipes
 from src.gui.control.dialogs.recipe_builder_dialog import RecipeBuilderDialog
 
 # --- SCADA Standard Colors ---
@@ -22,8 +23,11 @@ class RecipeExecutionWidget(QWidget):
         super().__init__()
         self.worker = recipe_worker
         self.telemetry_cache = telemetry_cache_ref # Save the reference
-        self.config_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../../config/recipes"))
+        # config/recipes (in git). This used to resolve to src/config/recipes, which isn't in git:
+        # anything saved there is copied across once (never overwriting).
+        self.config_dir = RECIPES_DIR
         os.makedirs(self.config_dir, exist_ok=True)
+        self.migrated_recipes = migrate_legacy_recipes()
         self._init_ui()
         self._wire_signals()
 
