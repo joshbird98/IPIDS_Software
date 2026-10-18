@@ -1,0 +1,114 @@
+{
+  "_comment": [
+    "Alarm rules for service_alarms (src/alarms/rules.py documents every key).",
+    "priority: 1 critical, 2 high, 3 medium (these sound until acknowledged), 4 low (listed only).",
+    "delay_on / delay_off: seconds a condition must hold before the alarm goes active / clears.",
+    "overrides: per alarm id or id pattern, e.g. {\"plc.Air_Pressure_Low\": {\"priority\": 2}, \"plc.*_Comms_Fail\": {\"delay_on\": 10}}; \"enabled\": false removes an alarm.",
+    "Changes are read when the alarm service starts (restart it from the Service Manager)."
+  ],
+  "first_out_groups": [
+    "plc"
+  ],
+  "shelve_max_minutes": 480,
+  "rules": [
+    {
+      "kind": "plc_faults"
+    },
+    {
+      "kind": "stale",
+      "topic": "PLC_DATA",
+      "id": "comms.plc_service",
+      "priority": 1,
+      "delay_on": 3,
+      "message": "No data from the PLC service - machine state unknown"
+    },
+    {
+      "kind": "flag",
+      "tag": "PLC_DATA/system.connected",
+      "active_when": 0.0,
+      "id": "comms.plc",
+      "priority": 1,
+      "delay_on": 3,
+      "message": "The PLC service has lost the PLC"
+    },
+    {
+      "kind": "stale",
+      "topic": "MANAGER",
+      "id": "comms.service_manager",
+      "priority": 2,
+      "delay_on": 5,
+      "message": "No data from the service manager"
+    },
+    {
+      "kind": "services",
+      "priority": 2,
+      "delay_on": 10
+    },
+    {
+      "kind": "flag",
+      "match": "*.vacuum_gauge_*.stat_comms_fail",
+      "id": "comms.{path}",
+      "priority": 3,
+      "delay_on": 5,
+      "message": "{device}: communication lost",
+      "suppressed_by": [
+        "comms.facilities.graphix*"
+      ]
+    },
+    {
+      "kind": "flag",
+      "match": "*.stat_comms_fail",
+      "exclude": [
+        "*.vacuum_gauge_*"
+      ],
+      "id": "comms.{path}",
+      "priority": 3,
+      "delay_on": 5,
+      "message": "{device}: communication lost"
+    },
+    {
+      "kind": "flag",
+      "match": "*.stat_above_sp",
+      "id": "vacuum.{path}.above_sp",
+      "priority": 2,
+      "message": "{device}: pressure above its set point"
+    },
+    {
+      "kind": "flag",
+      "match": "*.stat_approaching_sp",
+      "id": "vacuum.{path}.approaching_sp",
+      "priority": 3,
+      "delay_on": 2,
+      "message": "{device}: pressure approaching its set point"
+    },
+    {
+      "kind": "flag",
+      "match": "*.stat_rapid_rise",
+      "id": "vacuum.{path}.rapid_rise",
+      "priority": 2,
+      "message": "{device}: pressure rising rapidly"
+    },
+    {
+      "kind": "flag",
+      "match": "*.stat_arc_exceeded",
+      "id": "hv.{path}.arc",
+      "priority": 2,
+      "message": "{device}: arc (output collapsed) - latched until fault reset"
+    },
+    {
+      "kind": "sequencer",
+      "priority": 3
+    }
+  ],
+  "overrides": {
+    "plc.Safety_Relay_Tripped": {
+      "priority": 1
+    },
+    "plc.PC_Watchdog_Timeout": {
+      "priority": 1
+    },
+    "plc.*_Comms_Fail": {
+      "delay_on": 10
+    }
+  }
+}

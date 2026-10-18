@@ -403,6 +403,18 @@ def test_closing_the_gate_valve_trips_the_relay(hmi, app, stack):
     assert view["ion_beam.source.target.stat_enabled"] == 1.0
     hmi.vac_widget.btn_gv_close.click()
     wait_for(app, lambda: view.get("ion_beam.facilities.safety_relay_active") == 0.0, 10, "relay tripped")
+    # ... and the Alarms panel: unacknowledged, critical, sounding, first out
+    panel = hmi.alarm_widget
+    wait_for(app, lambda: any(a["id"] == "plc.Safety_Relay_Tripped" and a["state"] == "UNACK"
+                              for a in panel.alarms), 10, "relay-trip alarm")
+    trip = next(a for a in panel.alarms if a["id"] == "plc.Safety_Relay_Tripped")
+    assert trip["priority"] == 1 and panel.horn.playing == 1
+    hmi.alarm_dock.raise_()
+    pump(app, 0.3)
+    shot(hmi, "8_relay_trip_alarm")
+    panel.btn_ack_all.click()
+    wait_for(app, lambda: all(a["state"] != "UNACK" for a in panel.alarms), 5, "alarms acknowledged")
+    assert panel.horn.playing is None
     wait_for(app, lambda: view.get("ion_beam.source.target.stat_enabled") == 0.0
              and view.get("ion_beam.source.einzel.stat_enabled") == 0.0, 10, "supplies off")
     assert "Safety_Relay_Tripped" in {f["name"] for f in hmi.fault_engine.get_active_faults(

@@ -1,6 +1,19 @@
+"""PLC fault words (config/fault_config.json): which faults a 32-bit fault word says are active.
+
+Bit "x.y" is byte x, bit y of the Siemens DWORD (big-endian), i.e. bit (3 - x) * 8 + y of the
+integer value.
+"""
+import logging
+
 import orjson
-import os
-# --- Global Fault Map Parser ---
+
+log = logging.getLogger("fault_registry")
+
+
+def bit_position(bit_str: str) -> int:
+    byte_idx, bit_idx = (int(p) for p in bit_str.split("."))
+    return (3 - byte_idx) * 8 + bit_idx
+
 
 class FaultRegistry:
     def __init__(self, file_path: str):
@@ -8,35 +21,24 @@ class FaultRegistry:
         self._load_map(file_path)
 
     def _load_map(self, file_path: str):
-        if not os.path.exists(file_path):
-            print(f"[Fault Engine] Critical Error: {file_path} not found.")
-            return
         try:
-            with open(file_path, "r") as f:
+            with open(file_path, "rb") as f:
                 self.fault_structures = orjson.loads(f.read())
-        except Exception as e:
-            print(f"[Fault Engine] Failed to parse JSON: {e}")
+        except FileNotFoundError:
+            log.error("Fault map %s not found - PLC faults will not be named", file_path)
+        except (OSError, ValueError) as e:
+            log.error("Fault map %s not readable: %s", file_path, e)
 
-    def get_active_faults(self, udt_key: str, word_value: int) -> list[dict]:
-        active_faults = []
+    def get_active_faults(self, udt_key: str, word_value: int) -> list:
         udt_group = self.fault_structures.get(udt_key)
-        if not udt_group or word_value == 0:
-            return active_faults
-
-        bits_definition = udt_group.get("bits", {})
-        for bit_str, info in bits_definition.items():
+        if not udt_group or not word_value:
+            return []
+        active = []
+        for bit_str, info in udt_group.get("bits", {}).items():
             try:
-                parts = bit_str.split('.')
-                x = int(parts[0])
-                y = int(parts[1])
-                bit_pos = (3 - x) * 8 + y
-
-                if bool(word_value & (1 << bit_pos)):
-                    active_faults.append({
-                        "name": info["name"],
-                        "severity": info["severity"],
-                        "description": info.get("description", "No description provided.")
-                    })
-            except Exception as e:
-                continue
-        return active_faults
+                if word_value & (1 << bit_position(bit_str)):
+                    active.append({"name": info["name"], "severity": info.get("severity", 1),
+                                   "description": info.get("description", "No description provided.")})
+            except (ValueError, KeyError, TypeError) as e:
+                log.warning("Bad fault map entry %s / %s: %s", udt_key, bit_str, e)
+        return active

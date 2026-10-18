@@ -18,6 +18,9 @@ data/parquet_logs/
 data/events.db
 data/events.db-shm
 data/events.db-wal
+# Alarm acknowledgements and shelves (service_alarms)
+data/alarm_state.json
+data/alarm_state.json.tmp
 data/telemetry/
 # Data viewer's saved plot settings (per machine)
 config/plot_settings.json

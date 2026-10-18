@@ -1,9 +1,7 @@
-import time
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QGridLayout, QLabel, QPushButton,
     QGroupBox, QListWidget, QListWidgetItem
 )
-from PyQt6.QtCore import Qt
 
 from src.core.theme import (
     COLOR_OK,
@@ -92,7 +90,7 @@ class SystemHealthWidget(QWidget):
         self.main_layout.addWidget(safety_group)
 
     def _init_faults_ui(self):
-        fault_group = QGroupBox("System Faults && Alarms")
+        fault_group = QGroupBox("PLC Faults (latched until RESET FAULTS - see the Alarms panel)")
         fault_layout = QVBoxLayout()
 
         fault_layout.addWidget(QLabel("<b>ACTIVE FAULTS:</b>"))
@@ -286,24 +284,10 @@ class SystemHealthWidget(QWidget):
             self.active_faults_list.addItem(item)
             return
 
-        word_mapping = {
-            "ion_beam.faults.word_0_system": "UDT_Fault_Word_0_System",
-            "ion_beam.faults.word_1_pumps": "UDT_Fault_Word_1_Pumps",
-            "ion_beam.faults.word_2_source": "UDT_Fault_Word_2_Source",
-            "ion_beam.faults.word_4_magnet": "UDT_Fault_Word_4_Magnet",
-            "ion_beam.faults.word_5_gauges": "UDT_Fault_Word_5_Gauges"
-        }
-
-        for tag, udt_key in word_mapping.items():
-            raw_word = data.get(tag)
-            if raw_word is not None:
-                active_faults = self.fault_engine.get_active_faults(udt_key, int(raw_word))
-                active_names = [f["name"] for f in active_faults]
-
-                udt_info = self.fault_engine.fault_structures.get(udt_key, {})
-                for bit_str, info in udt_info.get("bits", {}).items():
-                    name = info["name"]
-                    if name in active_names:
-                        desc = info.get("description", "No description provided.")
-                        list_item = QListWidgetItem(f"⚠️ {name.upper()}: {desc}")
-                        self.active_faults_list.addItem(list_item)
+        # Every fault word in fault_config.json (word_3_spellman used to be missing here)
+        for udt_key, udt_info in self.fault_engine.fault_structures.items():
+            raw_word = data.get(udt_info.get("registry_tag", ""))
+            if raw_word is None:
+                continue
+            for fault in self.fault_engine.get_active_faults(udt_key, int(raw_word)):
+                self.active_faults_list.addItem(QListWidgetItem(f"⚠️ {fault['name'].upper()}: {fault['description']}"))

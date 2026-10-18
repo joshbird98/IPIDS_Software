@@ -36,6 +36,7 @@ SERVICES_CONFIG = {
                                "timeout": 215.0, "boot_grace": 215.0},
     "service_plc": {"script": os.path.join(CURRENT_DIR, "service_plc.py"), "tier": 1, "timeout": 2.0, "boot_grace": 15.0},
     "service_monitor": {"script": os.path.join(CURRENT_DIR, "service_monitor.py"), "tier": 1, "timeout": 3.0, "boot_grace": 15.0},
+    "service_alarms": {"script": os.path.join(CURRENT_DIR, "service_alarms.py"), "tier": 1, "timeout": 3.0, "boot_grace": 15.0},
     "service_vac_gauge_controllers": {"script": os.path.join(CURRENT_DIR, "service_vac_gauge_controllers.py"),
                                       "tier": 2, "timeout": 2.0, "boot_grace": 15.0},
     "service_source_turbo": {"script": os.path.join(CURRENT_DIR, "service_source_turbo.py"), "tier": 2, "timeout": 2.0, "boot_grace": 15.0},

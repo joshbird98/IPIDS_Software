@@ -2,9 +2,8 @@ import logging
 import os
 import time
 from PyQt6.QtWidgets import QMainWindow, QDockWidget, QMessageBox, QInputDialog, QLineEdit
-from PyQt6.QtCore import Qt, QTimer, QUrl
+from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtGui import QAction
-from PyQt6.QtMultimedia import QSoundEffect
 
 from qfluentwidgets import FluentIcon as FIF, Theme, InfoBar, InfoBarPosition
 from src.core.theme import is_dark_mode
@@ -14,7 +13,8 @@ from src.core.network_map import (
     ZMQ_PORT_PLC_PUB, ZMQ_PORT_VACUUM_PUB,
     ZMQ_PORT_SRC_TURBO_PUB, ZMQ_PORT_MANAGER_PUB,
     ZMQ_PORT_SPELLMAN_PUB, ZMQ_PORT_MAGNET_PUB, ZMQ_PORT_SMU_PUB,
-    ZMQ_PORT_ADAM_PUB, ZMQ_PORT_STEERER_MAGNET_PUB, ZMQ_PORT_MONITOR_PUB, ZMQ_PORT_SEQUENCER_PUB
+    ZMQ_PORT_ADAM_PUB, ZMQ_PORT_STEERER_MAGNET_PUB, ZMQ_PORT_MONITOR_PUB, ZMQ_PORT_SEQUENCER_PUB,
+    ZMQ_PORT_ALARMS_PUB
 )
 from src.core.commands import SUCCESS, describe
 from src.core.event_helper import EventHelper
@@ -41,38 +41,13 @@ from src.gui.control.widgets.current_monitor_widget import AdamMonitorWidget
 from src.gui.control.widgets.mass_scan import PrecisionMassScannerWidget
 from src.gui.control.widgets.command_log_widget import CommandLogWidget
 from src.gui.control.widgets.automation_bar import AutomationBar
+from src.gui.control.widgets.alarm_widget import AlarmPanel
 
 log = logging.getLogger("hmi")
 
 # Command outcomes worth interrupting the operator for
 _PROBLEM_TITLES = {"rejected": "Command refused", "failed": "Command failed",
                    "timeout": "No reply to command", "unreachable": "Service not running"}
-
-
-class AudioManager:
-    def __init__(self):
-        self.sounds = {}
-        self.base_dir = os.path.dirname(os.path.abspath(__file__))
-        self.sounds_dir = os.path.join(self.base_dir, "assets", "sounds")
-
-        self._load_sound("warning", "warning.wav", volume=0.7)
-        self._load_sound("fault", "fault.wav", volume=1.0)
-        self._load_sound("critical", "critical_comms_loss.wav", volume=1.0)
-        self._load_sound("trip", "relay_trip.wav", volume=0.8)
-
-    def _load_sound(self, name: str, filename: str, volume: float):
-        filepath = os.path.join(self.sounds_dir, filename)
-        if not os.path.exists(filepath):
-            log.warning("Missing audio asset: %s", filepath)
-            return
-        effect = QSoundEffect()
-        effect.setSource(QUrl.fromLocalFile(filepath))
-        effect.setVolume(volume)
-        self.sounds[name] = effect
-
-    def play(self, name: str):
-        if name in self.sounds:
-            self.sounds[name].play()
 
 
 class ControlMainWindow(QMainWindow):
@@ -84,12 +59,6 @@ class ControlMainWindow(QMainWindow):
         self.setDockOptions(QMainWindow.DockOption.AllowNestedDocks | QMainWindow.DockOption.AllowTabbedDocks)
 
         self.settings = gui_settings("SurreyIonBeam", "SINDIE_HMI")
-        self.audio = AudioManager()
-
-        self.memory_active_faults = set()
-        self.memory_vg_warnings = {i: False for i in range(1, 7)}
-        self.memory_vg_trips = {i: False for i in range(1, 7)}
-        self.memory_comms_lost = False
 
         current_dir = os.path.dirname(os.path.abspath(__file__))
         fault_map_path = os.path.abspath(os.path.join(current_dir, "../../../config/fault_config.json"))
@@ -114,7 +83,7 @@ class ControlMainWindow(QMainWindow):
             ZMQ_PORT_SRC_TURBO_PUB, ZMQ_PORT_MANAGER_PUB,
             ZMQ_PORT_SPELLMAN_PUB, ZMQ_PORT_MAGNET_PUB,
             ZMQ_PORT_SMU_PUB, ZMQ_PORT_ADAM_PUB, ZMQ_PORT_STEERER_MAGNET_PUB,
-            ZMQ_PORT_MONITOR_PUB, ZMQ_PORT_SEQUENCER_PUB
+            ZMQ_PORT_MONITOR_PUB, ZMQ_PORT_SEQUENCER_PUB, ZMQ_PORT_ALARMS_PUB
         ]
         self.telemetry_thread = ZMQTelemetryThread(telemetry_ports)
         self.telemetry_thread.data_received.connect(self._route_telemetry)
@@ -160,6 +129,7 @@ class ControlMainWindow(QMainWindow):
         view_menu.addAction(self.current_mon_dock.toggleViewAction())
         view_menu.addAction(self.mass_scan_dock.toggleViewAction())
         view_menu.addAction(self.cmd_log_dock.toggleViewAction())
+        view_menu.addAction(self.alarm_dock.toggleViewAction())
 
         view_menu.addSeparator()
 
@@ -299,6 +269,15 @@ class ControlMainWindow(QMainWindow):
         self.addDockWidget(Qt.DockWidgetArea.BottomDockWidgetArea, self.service_dock)
         self.subsystems["services"] = self.service_widget
 
+        # Alarms (service_alarms): list, acknowledge / shelve, and the horn
+        self.alarm_dock = QDockWidget("Alarms", self)
+        self.alarm_dock.setObjectName("AlarmDock")
+        self.alarm_widget = AlarmPanel(self.cmd_thread)
+        self.alarm_dock.setWidget(self.alarm_widget)
+        self.addDockWidget(Qt.DockWidgetArea.BottomDockWidgetArea, self.alarm_dock)
+        self.splitDockWidget(self.health_dock, self.alarm_dock, Qt.Orientation.Horizontal)
+        self.subsystems["alarms"] = self.alarm_widget
+
         self.cmd_log_dock = QDockWidget("Command Log", self)
         self.cmd_log_dock.setObjectName("CommandLogDock")
         self.cmd_log_widget = CommandLogWidget()
@@ -344,58 +323,13 @@ class ControlMainWindow(QMainWindow):
 
         for widget in (self.vac_widget, self.src_widget, self.optics_widget, self.health_widget,
                        self.service_widget, self.log_widget, self.smu_widget, self.current_mon_widget,
-                       self.optimiser_widget, self.mass_scan_widget, self.recipe_widget, self.automation_bar):
+                       self.optimiser_widget, self.mass_scan_widget, self.recipe_widget, self.automation_bar,
+                       self.alarm_widget):
             try:
                 widget.update_telemetry(self.master_telemetry_cache)
             except Exception:  # one widget's bug must not freeze every other panel
                 log.exception("%s.update_telemetry failed", type(widget).__name__)
 
-        self._evaluate_audio_triggers()
-
-    def _evaluate_audio_triggers(self):
-        data = self.master_telemetry_cache
-        comms_lost = not bool(data.get("system.connected", False)) or bool(
-            data.get("ion_beam.system.pc_plc_comms_lost", False))
-
-        if comms_lost and not self.memory_comms_lost:
-            self.audio.play("critical")
-        self.memory_comms_lost = comms_lost
-
-        if comms_lost:
-            return
-
-        gauge_locations = {1: "source", 2: "beamline", 3: "beamline", 4: "beamline", 5: "endstation", 6: "loadlock"}
-        for i in range(1, 7):
-            loc = gauge_locations[i]
-            approaching = bool(data.get(f"ion_beam.{loc}.vacuum_gauge_{i}.stat_approaching_sp", False))
-            tripped = bool(data.get(f"ion_beam.{loc}.vacuum_gauge_{i}.stat_above_sp", False))
-
-            if approaching and not self.memory_vg_warnings[i]:
-                self.audio.play("warning")
-            self.memory_vg_warnings[i] = approaching
-
-            if tripped and not self.memory_vg_trips[i]:
-                self.audio.play("trip")
-            self.memory_vg_trips[i] = tripped
-
-        current_active_faults = set()
-        word_mapping = {
-            "ion_beam.faults.word_0_system": "UDT_Fault_Word_0_System",
-            "ion_beam.faults.word_1_vacuum": "UDT_Fault_Word_1_Vacuum",
-            "ion_beam.faults.word_2_source": "UDT_Fault_Word_2_Source",
-        }
-
-        for tag, udt_key in word_mapping.items():
-            raw_word = data.get(tag)
-            if raw_word is not None:
-                faults = self.fault_engine.get_active_faults(udt_key, int(raw_word))
-                for f in faults:
-                    current_active_faults.add(f["name"])
-
-        new_faults = current_active_faults - self.memory_active_faults
-        if new_faults:
-            self.audio.play("fault")
-        self.memory_active_faults = current_active_faults
 
     def closeEvent(self, event):
         self.settings.setValue("geometry", self.saveGeometry())
