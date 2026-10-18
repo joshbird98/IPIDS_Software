@@ -1,17 +1,21 @@
+"""Recipe files and their steps.
+
+A recipe is a JSON file in config/recipes: a name, an optional fault policy and a list of steps.
+The steps are small state machines: execute(telemetry, cmd) is called repeatedly and returns
+the step's state (RUNNING, DONE, FAILED, WAITING_FOR_USER, or CALL_SUB_RECIPE). They are run by
+the sequencer service (src/sequencer/recipe_job.py), which gives them a snapshot of the live
+telemetry and its command port (commands carry the recipe's control lease).
+"""
 import json
 import logging
-import os
 import time
 
-from PyQt6.QtCore import QThread, pyqtSignal
-
-from src.core.routines import ROUTINE_REGISTRY, send, ticket_outcome
+from src.core.routines import send, ticket_outcome
 from src.core.telemetry_cache import fresh_value
 
 log = logging.getLogger("recipe_engine")
 
 STALE_FAIL_S = 10.0     # a step whose tag has had no live value for this long fails
-FAULT_STALE_S = 3.0     # the recipe stops if fault status can't be verified for this long
 
 
 def evaluate_condition(current_val, condition_str, target_val) -> bool:
@@ -34,17 +38,21 @@ def evaluate_condition(current_val, condition_str, target_val) -> bool:
         return True
     return False
 
-def create_step(step_data: dict):
+class RecipeError(ValueError):
+    """A recipe file that can't be run (bad JSON, unknown step type, ...)."""
+
+
+def create_step(step_data: dict, in_parallel: bool = False):
+    if not isinstance(step_data, dict):
+        raise RecipeError(f"a step must be a JSON object, not {type(step_data).__name__}")
     stype = step_data.get("type")
-    if stype == "ACTION": return ActionStep(step_data)
-    elif stype == "WAIT_TIME": return WaitTimeStep(step_data)
-    elif stype == "WAIT_TELEMETRY": return WaitTelemetryStep(step_data)
-    elif stype == "USER_PROMPT": return UserPromptStep(step_data)
-    elif stype == "SUB_RECIPE": return SubRecipeStep(step_data)
-    elif stype == "ROUTINE_CALL": return RoutineCallStep(step_data)
-    elif stype == "VERIFIED_ACTION": return VerifiedActionStep(step_data)
-    elif stype == "PARALLEL": return ParallelStep(step_data)
-    return RecipeStep(step_data) # Fallback
+    cls = STEP_TYPES.get(stype)
+    if cls is None:
+        raise RecipeError(f"step {step_data.get('step_id', '?')}: unknown step type {stype!r} "
+                          f"(expected one of {', '.join(sorted(STEP_TYPES))})")
+    if in_parallel and cls is SubRecipeStep:
+        raise RecipeError(f"step {step_data.get('step_id', '?')}: a SUB_RECIPE can't run inside a PARALLEL step")
+    return cls(step_data)
 
 
 
@@ -204,30 +212,28 @@ class UserPromptStep(RecipeStep):
     def __init__(self, step_data: dict):
         super().__init__(step_data)
         self.prompt_text = step_data.get("prompt_text", "Please acknowledge to continue.")
-        # Now accepts a list of condition dictionaries
+        # Conditions that must hold (live) before the operator's OK is accepted
         self.verify_conditions = step_data.get("verify_conditions", [])
-        self.has_emitted = False
-
-    def reset(self):
-        super().reset()
-        self.has_emitted = False
 
     def execute(self, telemetry_cache: dict, cmd_thread) -> str:
         if self.state == "IDLE":
             self.state = "WAITING_FOR_USER"
-            self.has_emitted = False
         return self.state
 
     def verify(self, telemetry_cache: dict) -> bool:
         """Checks if all physical conditions are met before allowing the OK."""
-        if not self.verify_conditions:
-            return True
+        return not self.unmet_conditions(telemetry_cache)
 
+    def unmet_conditions(self, telemetry_cache) -> list:
+        """The conditions not met now, as text ('<tag> = 0.0, needs == 1'); stale values never verify."""
+        unmet = []
         for cond in self.verify_conditions:
-            val = fresh_value(telemetry_cache, cond.get("target"))   # stale values never verify
+            tag = cond.get("target")
+            val = fresh_value(telemetry_cache, tag)
             if not evaluate_condition(val, cond.get("condition", "=="), cond.get("value", 1.0)):
-                return False
-        return True
+                shown = "no live value" if val is None else f"{val}"
+                unmet.append(f"{tag} = {shown}, needs {cond.get('condition', '==')} {cond.get('value', 1.0)}")
+        return unmet
 
     def get_description(self) -> str:
         return f"PROMPT: {self.prompt_text}"
@@ -265,272 +271,20 @@ class Recipe:
         self._load()
 
     def _load(self):
-        with open(self.filepath, 'r') as f:
-            data = json.load(f)
+        try:
+            with open(self.filepath, 'r') as f:
+                data = json.load(f)
+        except ValueError as e:
+            raise RecipeError(f"{self.filepath} is not valid JSON: {e}") from e
+        if not isinstance(data, dict):
+            raise RecipeError(f"{self.filepath}: a recipe must be a JSON object")
 
         self.name = data.get("recipe_name", "Unknown Recipe")
         self.version = data.get("version", "1.0")
         self.parameters = data.get("parameters", {})
         self.fault_policy = data.get("fault_policy", {})
-
-        for step_data in data.get("steps", []):
-            stype = step_data.get("type")
-            if stype == "ACTION":
-                self.steps.append(ActionStep(step_data))
-            elif stype == "WAIT_TIME":
-                self.steps.append(WaitTimeStep(step_data))
-            elif stype == "WAIT_TELEMETRY":
-                self.steps.append(WaitTelemetryStep(step_data))
-            elif stype == "USER_PROMPT":
-                self.steps.append(UserPromptStep(step_data))
-            elif stype == "SUB_RECIPE":
-                self.steps.append(SubRecipeStep(step_data))
-            elif stype == "ROUTINE_CALL":
-                self.steps.append(RoutineCallStep(step_data))
-            elif stype == "PARALLEL":
-                self.steps.append(ParallelStep(step_data))
-            elif stype == "VERIFIED_ACTION":
-                self.steps.append(VerifiedActionStep(step_data))
-
-class RecipeWorker(QThread):
-    sig_status_update = pyqtSignal(str)
-    sig_step_started = pyqtSignal(int, str)
-    sig_step_completed = pyqtSignal(int)
-    sig_recipe_finished = pyqtSignal(bool, str)
-    sig_user_prompt = pyqtSignal(int, str)
-    sig_sequence_changed = pyqtSignal(str)
-
-    def __init__(self, cmd_thread, get_telemetry_cb):
-        super().__init__()
-        self.cmd_thread = cmd_thread
-        self.get_telemetry_cb = get_telemetry_cb
-
-        self.root_recipe = None  # The absolute parent
-        self.active_recipe = None  # The currently executing recipe
-        self.current_step_idx = 0
-        self.call_stack = []  # Holds tuples of (parent_recipe, parent_step_idx)
-
-        self.running = False
-        self.paused = False
-        self.abort_requested = False
-        self.pause_start_time = 0.0
-        self._fault_unknown_since = None
-
-    def acknowledge_prompt(self):
-        """Called by UI. Returns True if successful, False if conditions failed."""
-        if self.active_recipe and self.current_step_idx < len(self.active_recipe.steps):
-            step = self.active_recipe.steps[self.current_step_idx]
-
-            # Delegate the logic directly to the step (works for USER_PROMPT, ROUTINE, or PARALLEL!)
-            return step.acknowledge(self.get_telemetry_cb())
-
-        return True
-
-    def _get_breadcrumb(self):
-        """Builds 'Master Recipe > Sub Recipe' string for the UI"""
-        names = [r[0].name for r in self.call_stack]
-        names.append(self.active_recipe.name)
-        return " > ".join(names)
-
-    def load_recipe(self, filepath: str):
-        self.root_recipe = Recipe(filepath)
-        self.active_recipe = self.root_recipe
-        self.current_step_idx = 0
-        self.call_stack.clear()
-
-    def play(self):
-        # 1. RESTART INTERCEPT: If the UI forced us to index 0, this is a fresh run.
-        if self.current_step_idx == 0 and not self.call_stack:
-            self.paused = False # Drop the pause flag so we don't apply an offset!
-            self.active_recipe = self.root_recipe
-            for step in self.active_recipe.steps:
-                step.reset()
-            self.sig_sequence_changed.emit(self.active_recipe.name)
-
-        # 2. RESUME MATH: Only applies if we were actually paused mid-sequence
-        if self.paused:
-            pause_duration = time.time() - self.pause_start_time
-            if self.active_recipe and self.current_step_idx < len(self.active_recipe.steps):
-                self.active_recipe.steps[self.current_step_idx].add_pause_offset(pause_duration)
-
-        # 3. GO LIVENESS
-        self.paused = False
-        self.running = True
-        self.abort_requested = False
-        self._fault_unknown_since = None
-        self.sig_status_update.emit("RUNNING")
-
-        if not self.isRunning():
-            self.start()
-
-    def pause(self):
-        if not self.paused:
-            self.paused = True
-            self.pause_start_time = time.time()
-            self.sig_status_update.emit("PAUSED")
-
-    def stop(self):
-        """Stop stepping through the recipe. Nothing is switched off or reverted:
-        outputs stay exactly as the steps so far left them."""
-        self.abort_requested = True
-        self.sig_status_update.emit("STOPPING...")
-
-    abort = stop  # old name
-
-    def run(self):
-        if not self.active_recipe:
-            self.sig_recipe_finished.emit(False, "No recipe loaded.")
-            return
-
-        self.sig_status_update.emit("RUNNING")
-
-        while self.running:
-            if self.abort_requested:
-                self.running = False
-                step_txt = ""
-                if self.active_recipe and self.current_step_idx < len(self.active_recipe.steps):
-                    step_txt = f" at step {self.active_recipe.steps[self.current_step_idx].step_id}"
-                self.call_stack.clear()
-                self._stopped()
-                self.sig_recipe_finished.emit(False, f"Stopped by operator{step_txt} - outputs left as they were.")
-                return
-
-            if self.paused:
-                time.sleep(0.1)
-                continue
-
-            # --- STACK POPPING LOGIC ---
-            if self.current_step_idx >= len(self.active_recipe.steps):
-                if self.call_stack:
-                    # We finished a sub-recipe. Pop the parent back into focus.
-                    parent_recipe, parent_idx = self.call_stack.pop()
-                    self.active_recipe = parent_recipe
-                    self.current_step_idx = parent_idx
-
-                    # Mark the SUB_RECIPE step that called us as DONE
-                    completed_step = self.active_recipe.steps[self.current_step_idx]
-                    completed_step.state = "DONE"
-                    self.sig_step_completed.emit(completed_step.step_id)
-                    self.current_step_idx += 1
-
-                    # Tell UI to redraw the parent list
-                    self.sig_sequence_changed.emit(self._get_breadcrumb())
-                    continue
-                else:
-                    # Root recipe finished
-                    break
-
-            telemetry = self.get_telemetry_cb()
-
-            # --- EVALUATE FAULT POLICY ---
-            # We must check BOTH the master root recipe and the local sub-recipe policies
-            policies_to_check = []
-            if isinstance(self.root_recipe.fault_policy, list):
-                policies_to_check.extend(self.root_recipe.fault_policy)
-            if self.active_recipe != self.root_recipe and isinstance(self.active_recipe.fault_policy, list):
-                policies_to_check.extend(self.active_recipe.fault_policy)
-
-            fault_triggered = False
-            fault_unknown = []
-            for fault in policies_to_check:
-
-                # Handling our new nicely formatted PLC Bit Faults
-                if fault.get("type") == "BIT_FAULT":
-                    tag = fault.get("registry_tag")
-                    word_val = fresh_value(telemetry, tag)
-                    if word_val is None:
-                        fault_unknown.append(tag)
-
-                    if word_val is not None:
-                        try:
-                            word_val = int(word_val)
-                            bit_str = fault.get("bit_str", "0.0")
-                            parts = bit_str.split('.')
-                            x = int(parts[0])
-                            y = int(parts[1])
-
-                            # Your Siemens DWORD endianness math
-                            bit_pos = (3 - x) * 8 + y
-
-                            # If the specific fault bit is HIGH
-                            if bool(word_val & (1 << bit_pos)):
-                                self.running = False
-                                self.call_stack.clear()
-                                self._stopped()
-                                self.sig_recipe_finished.emit(
-                                    False, f"Stopped: fault {fault.get('name')} is active (fault policy).")
-                                fault_triggered = True
-                                break
-                        except (ValueError, IndexError) as e:
-                            log.error("Bad BIT_FAULT entry %r in fault policy: %s", fault, e)
-
-            if fault_triggered:
-                return  # Exit the thread completely
-
-            # A recipe must not keep running while its fault policy can't be checked
-            if fault_unknown:
-                if self._fault_unknown_since is None:
-                    self._fault_unknown_since = time.time()
-                elif time.time() - self._fault_unknown_since > FAULT_STALE_S:
-                    self.running = False
-                    self.call_stack.clear()
-                    self._stopped()
-                    self.sig_recipe_finished.emit(
-                        False, f"Stopped: fault status unknown for {FAULT_STALE_S:.0f} s "
-                               f"(no live PLC data for {', '.join(sorted(set(fault_unknown)))}).")
-                    return
-            else:
-                self._fault_unknown_since = None
-
-            step = self.active_recipe.steps[self.current_step_idx]
-
-            if step.state == "IDLE":
-                self.sig_step_started.emit(step.step_id, f"Executing {step.type}")
-
-            result = step.execute(telemetry, self.cmd_thread)
-
-            # --- STACK PUSHING LOGIC ---
-            if result == "CALL_SUB_RECIPE":
-                # Push current state to stack
-                self.call_stack.append((self.active_recipe, self.current_step_idx))
-
-                # Load the new JSON relative to the current one
-                base_dir = os.path.dirname(self.active_recipe.filepath)
-                sub_path = os.path.join(base_dir, step.target_file)
-
-                self.active_recipe = Recipe(sub_path)
-                self.current_step_idx = 0
-
-                # Tell UI to redraw with the sub-recipe list
-                self.sig_sequence_changed.emit(self._get_breadcrumb())
-                continue
-
-            elif result == "WAITING_FOR_USER":
-                if not getattr(step, 'has_emitted', False):
-                    self.sig_user_prompt.emit(step.step_id, getattr(step, 'prompt_text', 'Action Required'))
-                    step.has_emitted = True
-
-            elif result == "DONE":
-                self.sig_step_completed.emit(step.step_id)
-                self.current_step_idx += 1
-
-            elif result == "FAILED":
-                self.running = False
-                self.call_stack.clear()
-                self._stopped()
-                reason = getattr(step, "fail_reason", "") or "failed/timed out"
-                self.sig_recipe_finished.emit(False, f"Step {step.step_id} failed: {reason}")
-                return
-
-            time.sleep(0.05)
-
-        self.running = False
-        self.sig_recipe_finished.emit(True, "Recipe completed successfully.")
-
-    def _stopped(self):
-        """Stepping has stopped. Deliberately does NOT change any output (see stop())."""
-        self.sig_status_update.emit("STOPPED")
-
+        # Unknown step types used to be skipped silently, so a recipe could run with steps missing
+        self.steps = [create_step(step_data) for step_data in data.get("steps", [])]
 
 class RoutineCallStep(RecipeStep):
     def __init__(self, step_data: dict):
@@ -581,7 +335,6 @@ class RoutineCallStep(RecipeStep):
     def acknowledge(self, telemetry_cache: dict) -> bool:
         if self.state == "WAITING_FOR_USER":
             self.state = "RUNNING"
-            self.has_emitted = False  # Reset emission flag for future prompts
             # Pass the acknowledgment down to the actual routine!
             if self.routine_instance and hasattr(self.routine_instance, 'acknowledge'):
                 self.routine_instance.acknowledge()
@@ -590,18 +343,7 @@ class RoutineCallStep(RecipeStep):
 class ParallelStep(RecipeStep):
     def __init__(self, step_data: dict):
         super().__init__(step_data)
-        self.sub_steps = [self._instantiate_step(s) for s in step_data.get("steps", [])]
-
-    def _instantiate_step(self, step_data):
-        # Helper to map types to classes
-        mapping = {"ACTION": ActionStep,
-                   "ROUTINE_CALL": RoutineCallStep,
-                   "WAIT_TIME": WaitTimeStep,
-                   "WAIT_TELEMETRY": WaitTelemetryStep,
-                   "USER_PROMPT": UserPromptStep,
-                   "VERIFIED_ACTION": VerifiedActionStep,
-                   "PARALLEL": ParallelStep}
-        return mapping[step_data["type"]](step_data)
+        self.sub_steps = [create_step(s, in_parallel=True) for s in step_data.get("steps", [])]
 
     def reset(self):
         super().reset()
@@ -612,28 +354,32 @@ class ParallelStep(RecipeStep):
         if self.state == "IDLE":
             self.state = "RUNNING"
 
-        all_done = True
-        any_failed = False
-
+        # Tick every unfinished sub-step
         for step in self.sub_steps:
-            if step.state in ["DONE", "FAILED"]:
-                if step.state == "FAILED": any_failed = True
-                continue
+            if step.state not in ("DONE", "FAILED"):
+                step.execute(telemetry_cache, cmd_thread)
 
-            # Tick every non-finished sub-step
-            res = step.execute(telemetry_cache, cmd_thread)
-
-            if res != "DONE": all_done = False
-            if res == "FAILED": any_failed = True
-
-        if any_failed:
-            reasons = [s.fail_reason for s in self.sub_steps if s.state == "FAILED" and s.fail_reason]
-            return self.fail("; ".join(reasons) or "a parallel sub-step failed")
-        elif all_done:
+        failed = [s for s in self.sub_steps if s.state == "FAILED"]
+        if failed:
+            return self.fail("; ".join(s.fail_reason for s in failed if s.fail_reason) or "a parallel sub-step failed")
+        if all(s.state == "DONE" for s in self.sub_steps):
             self.state = "DONE"
             return "DONE"
-
+        # A prompt inside a PARALLEL used to wait forever: the container never reported it
+        waiting = [s for s in self.sub_steps if s.state == "WAITING_FOR_USER"]
+        if waiting:
+            self.prompt_text = " / ".join(getattr(s, "prompt_text", "") or "Action required" for s in waiting)
+            self.state = "WAITING_FOR_USER"
+            return self.state
+        self.state = "RUNNING"
         return "RUNNING"
+
+    def unmet_conditions(self, telemetry_cache) -> list:
+        unmet = []
+        for step in self.sub_steps:
+            if step.state == "WAITING_FOR_USER" and hasattr(step, "unmet_conditions"):
+                unmet.extend(step.unmet_conditions(telemetry_cache))
+        return unmet
 
     def add_pause_offset(self, duration: float):
         for step in self.sub_steps:
@@ -651,7 +397,6 @@ class ParallelStep(RecipeStep):
         # Un-pause the parallel container if all sub-steps cleared
         if success and self.state == "WAITING_FOR_USER":
             self.state = "RUNNING"
-            self.has_emitted = False
         return success
 
     def get_display_name(self):
@@ -731,3 +476,15 @@ class VerifiedActionStep(RecipeStep):
     def add_pause_offset(self, duration: float):
         if self.internal_state == "VERIFY":
             self.timer_start += duration
+
+
+STEP_TYPES = {
+    "ACTION": ActionStep,
+    "WAIT_TIME": WaitTimeStep,
+    "WAIT_TELEMETRY": WaitTelemetryStep,
+    "USER_PROMPT": UserPromptStep,
+    "SUB_RECIPE": SubRecipeStep,
+    "ROUTINE_CALL": RoutineCallStep,
+    "VERIFIED_ACTION": VerifiedActionStep,
+    "PARALLEL": ParallelStep,
+}

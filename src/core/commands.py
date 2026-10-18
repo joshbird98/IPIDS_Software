@@ -6,8 +6,10 @@ command arrived and what happened to it. So every service binds a ZeroMQ
 ROUTER socket on its existing *_cmd port, clients connect DEALER sockets, and
 every request gets exactly one reply.
 
-Request   {"id": "...", "tag": "...", "value": ..., "ts": <unix time of the click>, "origin": "hmi"}
-Reply     {"id": "...", "status": ..., "reason": "...", "tag": "...", "service": "...", "ts": ...}
+Request   {"id": "...", "tag": "...", "value": ..., "ts": <unix time of the click>, "origin": "hmi",
+           "holder": "..." (optional: the control lease it is sent under, src/core/leases.py)}
+Reply     {"id": "...", "status": ..., "reason": "...", "tag": "...", "service": "...", "ts": ...,
+           "data": ... (optional: a result, e.g. the points of a scan the sequencer was asked for)}
 
 Status values
     ok          executed (written to the PLC / power supply)
@@ -69,7 +71,7 @@ class Command:
     """One received request. Call exactly one of ok() / accept() / reject() / fail()."""
 
     __slots__ = ("id", "tag", "value", "ts", "origin", "received", "replied", "status", "reason",
-                 "raw", "_server", "_envelope")
+                 "data", "raw", "_server", "_envelope")
 
     def __init__(self, server, envelope, msg, received):
         self._server = server
@@ -87,6 +89,7 @@ class Command:
         self.replied = False
         self.status = None
         self.reason = ""
+        self.data = None
 
     @property
     def age(self) -> float:
@@ -102,7 +105,9 @@ class Command:
         h = self.raw.get("holder") if isinstance(self.raw, dict) else None
         return str(h) if h else None
 
-    def ok(self, note: str = ""):
+    def ok(self, note: str = "", data=None):
+        """Executed. `data` (anything JSON-serialisable) goes back to the sender as reply["data"]."""
+        self.data = data
         self._reply(OK, note)
 
     def accept(self, note: str = ""):
@@ -216,6 +221,8 @@ class CommandServer:
     def _send_reply(self, cmd: Command):
         reply = {"id": cmd.id, "status": cmd.status, "reason": cmd.reason, "tag": cmd.tag,
                  "value": cmd.value, "service": self.service, "ts": time.time()}
+        if cmd.data is not None:
+            reply["data"] = cmd.data
         try:
             self.sock.send_multipart(cmd._envelope + [orjson.dumps(reply, default=str)], zmq.NOBLOCK)
         except zmq.ZMQError as e:  # client vanished / HWM - it will time out on its side
@@ -293,6 +300,12 @@ class CommandClient:
             self._socks[subsystem] = sock
             self._poller.register(sock, zmq.POLLIN)
         return sock
+
+    def connect_all(self):
+        """Open the connection to every endpoint now, so the first command to each one does not
+        wait for it (a long-running client such as the sequencer service)."""
+        for subsystem in self.endpoints:
+            self._socket(subsystem)
 
     def send(self, subsystem: str, tag: str, value, origin: str = "hmi", timeout: float = None,
              cmd_id: str = None, ts: float = None, extra: dict = None, holder: str = None) -> str:
@@ -447,9 +460,22 @@ class CommandTicket:
     def reason(self) -> str:
         return (self.result or {}).get("reason", "")
 
+    @property
+    def data(self):
+        return (self.result or {}).get("data")
+
     def resolve(self, result: dict):
         self.result = result
         self._event.set()
+
+    @classmethod
+    def answered(cls, subsystem, tag, value, origin, status, reason, holder=None):
+        """A ticket answered on the sender's side, without sending anything (e.g. a sequence
+        that has lost control of the subsystem)."""
+        ticket = cls(subsystem, tag, value, origin, holder=holder)
+        ticket.resolve({"id": ticket.id, "status": status, "reason": reason, "tag": tag, "value": value,
+                        "subsystem": subsystem, "origin": origin, "service": None})
+        return ticket
 
     def __repr__(self):
         return f"CommandTicket({self.subsystem}:{self.tag}={self.value!r} -> {self.status})"

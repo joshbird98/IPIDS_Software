@@ -73,6 +73,10 @@
         "adam_cmd": 5573,
         "steerer_magnet_pub": 5574,
         "steerer_magnet_cmd": 5575,
-        "monitor_pub": 5576
+        "monitor_pub": 5576,
+        "sequencer_pub": 5577,
+        "sequencer_cmd": 5578,
+        "alarms_pub": 5579,
+        "alarms_cmd": 5580
     }
 }

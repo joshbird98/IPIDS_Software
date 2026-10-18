@@ -9,6 +9,7 @@ simulator and the automated tests never touch real machine data:
     SINDIE_LOG_DIR=...   explicit folder for the per-process log files
     SINDIE_REGISTRY=...  tag registry to use instead of config/system_tags.json
                          (the tests build a fresh one from the config files)
+    SINDIE_RECIPES_DIR=... recipe folder instead of config/recipes (the tests use a copy)
 (The machine's old name also works: IPIDS_SIMULATE etc., see src/core/env.py.)
 
 The values are read once at import, so set the variables before starting a
@@ -52,6 +53,14 @@ _registry_override = getenv("REGISTRY").strip()
 # The tag registry built by src/utils/build_registry.py from the config files
 REGISTRY_PATH = os.path.abspath(_registry_override) if _registry_override else os.path.join(CONFIG_DIR,
                                                                                              "system_tags.json")
+
+
+def recipes_dir(environ=None) -> str:
+    override = getenv("RECIPES_DIR", environ=environ).strip()
+    return os.path.abspath(override) if override else os.path.join(CONFIG_DIR, "recipes")
+
+
+RECIPES_DIR = recipes_dir()
 
 
 def config_path(name: str) -> str:

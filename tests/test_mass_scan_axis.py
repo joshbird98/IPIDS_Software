@@ -3,7 +3,7 @@
 import numpy as np
 import pytest
 
-from src.gui.control.widgets.mass_scan_widget import SmartCurrentAxis, symlog, symlog_inv
+from src.gui.control.widgets.mass_scan.axis import SmartCurrentAxis, symlog, symlog_inv
 
 
 def test_symlog_round_trip_and_sign():
@@ -26,13 +26,13 @@ def test_axis_labels_decades_both_sides(scan):
 def scan():
     from PyQt6.QtWidgets import QApplication
     app = QApplication.instance() or QApplication([])
-    from src.gui.control.widgets.mass_scan_widget import PrecisionMassScannerWidget
+    from src.gui.control.widgets.mass_scan import PrecisionMassScannerWidget
 
     class Nothing:
         def __getattr__(self, name):
             return lambda *a, **k: None
 
-    w = PrecisionMassScannerWidget(Nothing(), lambda: {}, Nothing())
+    w = PrecisionMassScannerWidget(Nothing(), Nothing())
     yield w
     w.deleteLater()
     app.processEvents()

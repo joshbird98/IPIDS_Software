@@ -133,6 +133,11 @@ class TelemetryCache:
     def topic_of(self, tag: str):
         return self._tag_topic.get(tag)
 
+    def keys(self) -> list:
+        """Every tag seen so far (fresh or not)."""
+        with self._lock:
+            return list(self._values)
+
     @property
     def topics(self):
         return dict(self._topic_seen)

@@ -18,7 +18,8 @@ HOST = _cfg["host"]
 PORT_OFFSET = int(getenv("PORT_OFFSET", "0") or 0)
 
 # Ports added after a config file was written fall back to these defaults.
-_DEFAULT_PORTS = {"monitor_pub": 5576}
+_DEFAULT_PORTS = {"monitor_pub": 5576, "sequencer_pub": 5577, "sequencer_cmd": 5578, "alarms_pub": 5579,
+                  "alarms_cmd": 5580}
 
 
 def _endpoint(name: str) -> str:
@@ -106,6 +107,14 @@ ZMQ_PORT_STEERER_MAGNET_CMD = _endpoint("steerer_magnet_cmd")
 # Readback-vs-setpoint tolerance monitor (service_monitor.py)
 ZMQ_PORT_MONITOR_PUB = _endpoint("monitor_pub")
 
+# Sequencer (service_sequencer.py): recipes, mass scans and the optimiser
+ZMQ_PORT_SEQUENCER_PUB = _endpoint("sequencer_pub")
+ZMQ_PORT_SEQUENCER_CMD = _endpoint("sequencer_cmd")
+
+# Alarm management (service_alarms.py)
+ZMQ_PORT_ALARMS_PUB = _endpoint("alarms_pub")
+ZMQ_PORT_ALARMS_CMD = _endpoint("alarms_cmd")
+
 # Port of the service manager's single-instance lock (plain TCP, not ZMQ); moved down by the
 # offset so a test/simulation stack has its own lock
 MANAGER_LOCK_PORT = 65432 - (PORT_OFFSET % 60000)
@@ -121,6 +130,8 @@ COMMAND_ENDPOINTS = {
     "smu": ZMQ_PORT_SMU_CMD,
     "adam": ZMQ_PORT_ADAM_CMD,
     "manager": ZMQ_PORT_MANAGER_CMD,
+    "sequencer": ZMQ_PORT_SEQUENCER_CMD,
+    "alarms": ZMQ_PORT_ALARMS_CMD,
 }
 
 # --- ZMQ Topics ---
@@ -135,4 +146,6 @@ TOPIC_SMU_DATA = b"SMU_DATA"
 TOPIC_ADAM_DATA = b"ADAM_DATA"
 TOPIC_STEERER_MAGNET_DATA = b"STEEER_MAGNET_DATA"
 TOPIC_MONITOR_DATA = b"MONITOR_DATA"
+TOPIC_SEQUENCER_DATA = b"SEQUENCER_DATA"
+TOPIC_ALARMS_DATA = b"ALARMS_DATA"
 TOPIC_MANAGER = b"MANAGER"

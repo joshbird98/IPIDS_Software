@@ -1,12 +1,12 @@
 {
   "recipe_name": "Automated Mass Resolution",
-  "version": "1.0",
+  "version": "1.1",
   "fault_policy": [],
   "steps": [
     {
       "step_id": 1,
       "type": "ACTION",
-      "target": "ion_beam.beamline_diagnostics.cmd_insert_fc",
+      "target": "ion_beam.beamline.diagnostics.cmd_insert_fc",
       "value": true,
       "comment": "Ensure Faraday Cup is inserted"
     },
@@ -15,14 +15,14 @@
       "type": "ROUTINE_CALL",
       "routine_name": "mass_scan",
       "parameters": {
-        "sp_target": "ion_beam.beamline.magnet.sp_requested_mass",
-        "rb_target": "ion_beam.beamline_diagnostics.rb_fc_current",
-        "start_val": 25.0,
-        "end_val": 35.0,
-        "step_size": 0.2,
-        "dwell_sec": 1.0
+        "start_a": 20.0,
+        "stop_a": 30.0,
+        "step_a": 0.05,
+        "samples": 5,
+        "nplc": 1.0,
+        "goto_peak": true
       },
-      "comment": "Execute high-res Mass Scan (25-35 amu)"
+      "comment": "Mass scan 20-30 A, then set the magnet on the strongest peak"
     },
     {
       "step_id": 3,

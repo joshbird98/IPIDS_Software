@@ -1,6 +1,5 @@
 import logging
 import os
-import sys
 import time
 from PyQt6.QtWidgets import QMainWindow, QDockWidget, QMessageBox, QInputDialog, QLineEdit
 from PyQt6.QtCore import Qt, QTimer, QUrl
@@ -15,13 +14,13 @@ from src.core.network_map import (
     ZMQ_PORT_PLC_PUB, ZMQ_PORT_VACUUM_PUB,
     ZMQ_PORT_SRC_TURBO_PUB, ZMQ_PORT_MANAGER_PUB,
     ZMQ_PORT_SPELLMAN_PUB, ZMQ_PORT_MAGNET_PUB, ZMQ_PORT_SMU_PUB,
-    ZMQ_PORT_ADAM_PUB, ZMQ_PORT_STEERER_MAGNET_PUB, ZMQ_PORT_MONITOR_PUB
+    ZMQ_PORT_ADAM_PUB, ZMQ_PORT_STEERER_MAGNET_PUB, ZMQ_PORT_MONITOR_PUB, ZMQ_PORT_SEQUENCER_PUB
 )
 from src.core.commands import SUCCESS, describe
 from src.core.event_helper import EventHelper
 from src.core.paths import simulation_enabled
-from src.core.recipe_engine import RecipeWorker
 from src.core.telemetry_cache import TelemetryCache
+from src.gui.control.sequencer_link import FETCH_ORIGIN
 
 # --- Core/Thread Imports ---
 from src.core.network_threads import ZMQTelemetryThread, ZMQCommandThread
@@ -39,8 +38,9 @@ from src.gui.control.dialogs.config_editor_dialog import ConfigEditorDialog
 from src.gui.control.widgets.faraday_smu_widget import FaradaySMUWidget
 from src.gui.control.widgets.optimiser_widget import ParameterOptimizerWidget
 from src.gui.control.widgets.current_monitor_widget import AdamMonitorWidget
-from src.gui.control.widgets.mass_scan_widget import PrecisionMassScannerWidget
+from src.gui.control.widgets.mass_scan import PrecisionMassScannerWidget
 from src.gui.control.widgets.command_log_widget import CommandLogWidget
+from src.gui.control.widgets.automation_bar import AutomationBar
 
 log = logging.getLogger("hmi")
 
@@ -107,20 +107,24 @@ class ControlMainWindow(QMainWindow):
         # The fresh view handed to the widgets; refreshed in place 10x a second
         self.master_telemetry_cache = {}
 
-        self.recipe_worker = RecipeWorker(self.cmd_thread, self.telemetry.snapshot)
-
+        # Recipes, mass scans and the optimiser run in the sequencer service; their panels are
+        # clients of it (src/gui/control/sequencer_link.py)
         telemetry_ports = [
             ZMQ_PORT_PLC_PUB, ZMQ_PORT_VACUUM_PUB,
             ZMQ_PORT_SRC_TURBO_PUB, ZMQ_PORT_MANAGER_PUB,
             ZMQ_PORT_SPELLMAN_PUB, ZMQ_PORT_MAGNET_PUB,
             ZMQ_PORT_SMU_PUB, ZMQ_PORT_ADAM_PUB, ZMQ_PORT_STEERER_MAGNET_PUB,
-            ZMQ_PORT_MONITOR_PUB
+            ZMQ_PORT_MONITOR_PUB, ZMQ_PORT_SEQUENCER_PUB
         ]
         self.telemetry_thread = ZMQTelemetryThread(telemetry_ports)
         self.telemetry_thread.data_received.connect(self._route_telemetry)
         self.telemetry_thread.start()
 
         self.subsystems = {}
+
+        # Which sequence holds which controls, with Take control buttons
+        self.automation_bar = AutomationBar(self.cmd_thread, self)
+        self.addToolBar(Qt.ToolBarArea.TopToolBarArea, self.automation_bar)
 
         self._init_docks()
         self._setup_menus()
@@ -221,15 +225,14 @@ class ControlMainWindow(QMainWindow):
 
         self.recipe_dock = QDockWidget("Recipe Execution", self)
         self.recipe_dock.setObjectName("RecipeDock")
-        self.recipe_widget = RecipeExecutionWidget(self.recipe_worker, self.master_telemetry_cache)
+        self.recipe_widget = RecipeExecutionWidget(self.cmd_thread)
         self.recipe_dock.setWidget(self.recipe_widget)
         self.addDockWidget(Qt.DockWidgetArea.LeftDockWidgetArea, self.recipe_dock)
         self.subsystems["recipe"] = self.recipe_widget
 
         self.optimiser_dock = QDockWidget("Optimiser", self)
         self.optimiser_dock.setObjectName("OptimiserDock")
-        # Optimiser and scans read through telemetry.reader(): None (not 0.0) when stale or missing
-        self.optimiser_widget = ParameterOptimizerWidget(self.cmd_thread, self.telemetry.reader(), self.event_helper)
+        self.optimiser_widget = ParameterOptimizerWidget(self.cmd_thread, self.event_helper)
         self.optimiser_dock.setWidget(self.optimiser_widget)
         self.addDockWidget(Qt.DockWidgetArea.LeftDockWidgetArea, self.optimiser_dock)
         self.subsystems["optimiser"] = self.optimiser_widget
@@ -270,7 +273,7 @@ class ControlMainWindow(QMainWindow):
 
         self.mass_scan_dock = QDockWidget("Mass Scan", self)
         self.mass_scan_dock.setObjectName("MassScanDock")
-        self.mass_scan_widget = PrecisionMassScannerWidget(self.cmd_thread, self.telemetry.reader(), self.event_helper)
+        self.mass_scan_widget = PrecisionMassScannerWidget(self.cmd_thread, self.event_helper)
         # "Calculate & set amps" in the optics panel uses the mass scan's calibration
         self.optics_widget.mass_calibration = self.mass_scan_widget.current_calibration
         self.mass_scan_dock.setWidget(self.mass_scan_widget)
@@ -309,6 +312,8 @@ class ControlMainWindow(QMainWindow):
 
     def _on_command_result(self, result: dict):
         """Every command outcome lands in the Command Log; problems also pop up briefly."""
+        if result.get("origin") == FETCH_ORIGIN:
+            return              # panels fetching scan points from the sequencer: not operator actions
         self.cmd_log_widget.add_result(result)
         status = result.get("status")
         if status in SUCCESS:
@@ -339,7 +344,7 @@ class ControlMainWindow(QMainWindow):
 
         for widget in (self.vac_widget, self.src_widget, self.optics_widget, self.health_widget,
                        self.service_widget, self.log_widget, self.smu_widget, self.current_mon_widget,
-                       self.optimiser_widget, self.mass_scan_widget):
+                       self.optimiser_widget, self.mass_scan_widget, self.recipe_widget, self.automation_bar):
             try:
                 widget.update_telemetry(self.master_telemetry_cache)
             except Exception:  # one widget's bug must not freeze every other panel

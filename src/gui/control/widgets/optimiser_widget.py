@@ -1,285 +1,100 @@
-import time
+"""Optimiser panel: a 2D raster of two setpoints against a beam reading, shown as a heat map.
+
+The sweep runs in the sequencer service (src/sequencer/optimiser.py), which holds both
+setpoints for it and puts them back afterwards; this panel starts and stops it and draws the
+map as the points come in. On the map: drag a box to sweep that region again (finer);
+double-click to end a running sweep at that point, or (when idle) to go there."""
 import json
 import logging
-import os
+
 import numpy as np
 import pyqtgraph as pg
-from PyQt6.QtWidgets import (
-    QWidget, QVBoxLayout, QGridLayout, QLabel, QPushButton,
-    QGroupBox, QDoubleSpinBox, QMessageBox, QDialog, QTreeWidget,
-    QTreeWidgetItem, QDialogButtonBox, QHBoxLayout, QCheckBox
-)
-from PyQt6.QtCore import Qt, QThread, pyqtSignal, QRectF, QEvent
+from PyQt6.QtCore import QEvent, QRectF
+from PyQt6.QtWidgets import (QCheckBox, QDoubleSpinBox, QGridLayout, QGroupBox, QHBoxLayout, QLabel, QMessageBox,
+                             QPushButton, QVBoxLayout, QWidget)
 
 from src.core import paths
+from src.core.commands import route_for_tag
+from src.gui.control.dialogs.optimiser_tag_dialog import OptimizerTagSelectorDialog
+from src.gui.control.sequencer_link import OFFLINE_TEXT, SequencerSlot
+from src.sequencer import protocol as P
+from src.sequencer.optimiser import DEFAULT_RB_TAG, restore_tags
 
 log = logging.getLogger("hmi.optimiser")
 
-
-class Optimizer2DWorker(QThread):
-    data_point = pyqtSignal(int, int, float)
-    scan_finished = pyqtSignal(str)
-    status_msg = pyqtSignal(str)
-
-    def __init__(self, cmd_thread, get_telemetry_cb,
-                 x_service, x_tag, x_mode_tag, x_start, x_stop, x_steps,
-                 y_service, y_tag, y_mode_tag, y_start, y_stop, y_steps,
-                 rb_tag, dwell, restore_x, restore_y):
-        super().__init__()
-        self.cmd_thread = cmd_thread
-        self.get_telemetry_cb = get_telemetry_cb
-
-        self.x_service = x_service
-        self.x_tag = x_tag
-        self.x_mode_tag = x_mode_tag
-        self.x_start = x_start
-        self.x_stop = x_stop
-        self.x_steps = x_steps
-
-        self.y_service = y_service
-        self.y_tag = y_tag
-        self.y_mode_tag = y_mode_tag
-        self.y_start = y_start
-        self.y_stop = y_stop
-        self.y_steps = y_steps
-
-        self.rb_tag = rb_tag
-        self.dwell = dwell
-
-        self.restore_x = restore_x
-        self.restore_y = restore_y
-        self.override_x = None
-        self.override_y = None
-
-        self.is_stopped = False
-
-    def _ok(self, result):
-        return result.get("status") in ("ok", "accepted")
-
-    def run(self):
-        failure = None
-        self.status_msg.emit("Seizing Control (Mode=1)...")
-        r = self.cmd_thread.send_command_sync(self.x_service, self.x_mode_tag, 1, origin="optimizer")
-        if not self._ok(r):
-            failure = f"could not take control of X ({r.get('status')}: {r.get('reason')})"
-        elif self.x_mode_tag != self.y_mode_tag:
-            r = self.cmd_thread.send_command_sync(self.y_service, self.y_mode_tag, 1, origin="optimizer")
-            if not self._ok(r):
-                failure = f"could not take control of Y ({r.get('status')}: {r.get('reason')})"
-        if not failure:
-            time.sleep(0.5)
-            self.status_msg.emit("Executing 2D Raster Sweep...")
-        x_points = np.linspace(self.x_start, self.x_stop, self.x_steps)
-        y_points = np.linspace(self.y_start, self.y_stop, self.y_steps)
-
-        for i, val_x in enumerate(x_points):
-            if self.is_stopped or failure: break
-
-            tx = self.cmd_thread.send_command(self.x_service, self.x_tag, float(val_x), origin="optimizer")
-            time.sleep(0.2)
-
-            for j, val_y in enumerate(y_points):
-                if self.is_stopped or failure: break
-
-                ty = self.cmd_thread.send_command(self.y_service, self.y_tag, float(val_y), origin="optimizer")
-
-                start_t = time.time()
-                while time.time() - start_t < self.dwell:
-                    if self.is_stopped: break
-                    time.sleep(0.05)
-
-                if self.is_stopped: break
-                for t, axis in ((tx, "X"), (ty, "Y")):
-                    if t is not None and t.done() and not t.ok:
-                        failure = f"{axis} setpoint refused: {t.reason}"
-                if failure:
-                    break
-
-                # Live value only: a stale readback would put a fake flat region in the map
-                rb_val = self.get_telemetry_cb(self.rb_tag)
-                if rb_val is None:
-                    failure = f"readback {self.rb_tag} is not live"
-                    break
-                self.data_point.emit(i, j, float(rb_val))
-
-        if failure:
-            log.warning("Optimiser stopped: %s", failure)
-            self.status_msg.emit(f"STOPPED: {failure}")
-            self.is_stopped = True
-
-        target_x = self.override_x if self.override_x is not None else self.restore_x
-        target_y = self.override_y if self.override_y is not None else self.restore_y
-
-        status_txt = "Jumping to override coords..." if self.override_x is not None else "Restoring pre-scan values..."
-        self.status_msg.emit(status_txt)
-
-        self.cmd_thread.send_command(self.x_service, self.x_tag, float(target_x), origin="optimizer")
-        self.cmd_thread.send_command(self.y_service, self.y_tag, float(target_y), origin="optimizer")
-        time.sleep(0.5)
-
-        self.status_msg.emit("Releasing Control (Mode=0)...")
-        self.cmd_thread.send_command(self.x_service, self.x_mode_tag, 0, origin="optimizer")
-        if self.x_mode_tag != self.y_mode_tag:
-            self.cmd_thread.send_command(self.y_service, self.y_mode_tag, 0, origin="optimizer")
-
-        # Modified completion emission
-        if not self.is_stopped and self.override_x is None:
-            self.status_msg.emit("Optimization Complete.")
-            self.scan_finished.emit("complete")
-        else:
-            self.scan_finished.emit("stopped")
-
-    def stop(self):
-        self.is_stopped = True
+BUTTON_STYLE = """
+    QPushButton {{ background-color: {}; color: white; font-weight: bold; }}
+    QPushButton:disabled {{ background-color: #555555; color: #888888; }}
+"""
 
 
-class OptimizerTagSelectorDialog(QDialog):
-    def __init__(self, registry: dict, axis_label: str, parent=None):
-        super().__init__(parent)
-        self.setWindowTitle(f"Select {axis_label}-Axis Sweep Parameter")
-        self.resize(500, 500)
-        self.registry = registry
-        self.selected_tag = None
-        self.selected_meta = None
-
-        layout = QVBoxLayout(self)
-        self.tree = QTreeWidget()
-        self.tree.setHeaderLabels(["ISA-95 Hierarchy / Parameter", "Unit"])
-        self.tree.setColumnWidth(0, 350)
-        layout.addWidget(self.tree)
-
-        self.tree.itemDoubleClicked.connect(self._on_double_click)
-
-        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
-        buttons.accepted.connect(self.accept_selection)
-        buttons.rejected.connect(self.reject)
-        layout.addWidget(buttons)
-
-        self._populate_tree()
-
-    def _populate_tree(self):
-        folder_nodes = {}
-        for full_tag, meta in self.registry.items():
-            if not meta.get("auto_controllable") or meta.get("min_val") is None or meta.get("max_val") is None:
-                continue
-
-            parts = full_tag.split('.')
-            parent_node = self.tree.invisibleRootItem()
-            current_path = ""
-
-            for part in parts[:-1]:
-                current_path = f"{current_path}.{part}" if current_path else part
-                if current_path not in folder_nodes:
-                    node = QTreeWidgetItem(parent_node)
-                    node.setText(0, part.replace('_', ' ').title())
-                    folder_nodes[current_path] = node
-                parent_node = folder_nodes[current_path]
-
-            item = QTreeWidgetItem(parent_node)
-            item.setText(0, meta.get("default_label", parts[-1]))
-            item.setText(1, meta.get("unit", ""))
-            item.setData(0, Qt.ItemDataRole.UserRole, {"tag": full_tag, "meta": meta})
-
-        self.tree.collapseAll()
-        for i in range(self.tree.topLevelItemCount()):
-            self.tree.topLevelItem(i).setExpanded(True)
-
-    def _on_double_click(self, item, column):
-        self.accept_selection()
-
-    def accept_selection(self):
-        items = self.tree.selectedItems()
-        if items and items[0].data(0, Qt.ItemDataRole.UserRole):
-            data = items[0].data(0, Qt.ItemDataRole.UserRole)
-            self.selected_tag = data["tag"]
-            self.selected_meta = data["meta"]
-            self.accept()
-        else:
-            self.reject()
+def subsystem_of(tag: str, data: dict):
+    """The subsystem a tag belongs to: the longest prefix with a published permit."""
+    parts = tag.split(".")
+    for n in range(len(parts) - 1, 0, -1):
+        sub = ".".join(parts[:n])
+        if f"{sub}.permit" in data:
+            return sub
+    return None
 
 
 class ParameterOptimizerWidget(QWidget):
-    def __init__(self, cmd_thread, get_telemetry_cb, event_helper=None):  # Added event_helper
+    def __init__(self, cmd_thread, event_helper=None):
         super().__init__()
         self.cmd_thread = cmd_thread
-        self.get_telemetry_cb = get_telemetry_cb
-        self.event_helper = event_helper  # Store event helper reference
-        self.active_scan_start_str = None  # Track active start timestamp string
-
-        self.config_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../../../config"))
+        self.event_helper = event_helper
+        self.slot = SequencerSlot(cmd_thread, P.OPTIMISER)
+        self.follower = self.slot.follower()
         self.registry = self._load_registry()
-
-        self.rb_metric_tag = "ion_beam.beamline.faraday.smu.rb_current"
-
-        self.x_tag = None
-        self.x_meta = None
-        self.y_tag = None
-        self.y_meta = None
-
-        self.scan_worker = None
+        self.rb_metric_tag = DEFAULT_RB_TAG
+        self.x_tag = self.x_meta = self.y_tag = self.y_meta = None
         self.heatmap_data = None
-
-        self.route_map = {
-            "service_plc_snap7": "plc",
-            "service_magnet": "magnet",
-            "service_steerer_magnet": "steerer_magnet",
-            "service_spellman": "spellman",
-            "service_vacuum": "vacuum",
-            "service_source_turbo": "source_turbo",
-            "service_faraday_smu": "smu"
-        }
-
+        self.map_cfg = None               # settings of the sweep on the map
+        self._run_shown = None
+        self._tickets = {}
+        self._was_active = None
+        self._data = {}
         self.main_layout = QVBoxLayout(self)
         self._init_ui()
 
-    def _load_registry(self) -> dict:
+    @staticmethod
+    def _load_registry() -> dict:
         try:
-            path = paths.REGISTRY_PATH
-            with open(path, "r") as f:
+            with open(paths.REGISTRY_PATH, "r") as f:
                 return json.load(f)
-        except Exception as e:
-            log.error(f"Failed to load registry: {e}")
+        except (OSError, ValueError) as e:
+            log.error("Failed to load registry: %s", e)
             return {}
 
+    # ================================================================== UI
     def _create_axis_config_ui(self, axis_label: str):
         group = QGroupBox(f"{axis_label}-Axis Configuration")
         layout = QGridLayout()
-
         btn_select = QPushButton(f"Select {axis_label}-Axis Parameter...")
         btn_select.setStyleSheet("text-align: center; font-style: italic; padding: 6px;")
         layout.addWidget(btn_select, 0, 0, 1, 4)
-
-        sp_start = QDoubleSpinBox()
-        sp_start.setPrefix("Start: ")
-        sp_start.setDecimals(3)
-        sp_start.setKeyboardTracking(False)
-        layout.addWidget(sp_start, 1, 0, 1, 2)
-
-        sp_stop = QDoubleSpinBox()
-        sp_stop.setPrefix("Stop: ")
-        sp_stop.setDecimals(3)
-        sp_stop.setKeyboardTracking(False)
-        layout.addWidget(sp_stop, 1, 2, 1, 2)
-
-        sp_steps = QDoubleSpinBox()
-        sp_steps.setPrefix("Steps: ")
-        sp_steps.setDecimals(0)
+        boxes = []
+        for prefix, decimals in (("Start: ", 3), ("Stop: ", 3), ("Steps: ", 0)):
+            box = QDoubleSpinBox()
+            box.setPrefix(prefix)
+            box.setDecimals(decimals)
+            box.setKeyboardTracking(False)
+            boxes.append(box)
+        sp_start, sp_stop, sp_steps = boxes
         sp_steps.setRange(2, 500)
         sp_steps.setValue(20)
+        layout.addWidget(sp_start, 1, 0, 1, 2)
+        layout.addWidget(sp_stop, 1, 2, 1, 2)
         layout.addWidget(sp_steps, 2, 0, 1, 4)
-
         group.setLayout(layout)
         return group, btn_select, sp_start, sp_stop, sp_steps
 
     def _init_ui(self):
         ctrl_layout = QVBoxLayout()
-
         x_group, self.btn_x, self.sp_x_start, self.sp_x_stop, self.sp_x_steps = self._create_axis_config_ui("X")
         y_group, self.btn_y, self.sp_y_start, self.sp_y_stop, self.sp_y_steps = self._create_axis_config_ui("Y")
-
         self.btn_x.clicked.connect(lambda: self._open_selector("X"))
         self.btn_y.clicked.connect(lambda: self._open_selector("Y"))
-
         axes_layout = QHBoxLayout()
         axes_layout.addWidget(x_group)
         axes_layout.addWidget(y_group)
@@ -287,482 +102,308 @@ class ParameterOptimizerWidget(QWidget):
 
         exec_group = QGroupBox("Execution")
         exec_layout = QHBoxLayout()
-
         self.sp_dwell = QDoubleSpinBox()
         self.sp_dwell.setPrefix("Dwell Time: ")
         self.sp_dwell.setSuffix(" s")
         self.sp_dwell.setDecimals(2)
         self.sp_dwell.setRange(0.10, 60.0)
         self.sp_dwell.setValue(0.25)
-        exec_layout.addWidget(self.sp_dwell)
-
-        # NEW: Log Scale Toggle
         self.cb_log_z = QCheckBox("Log Scale (Z)")
         self.cb_log_z.toggled.connect(self._update_image_render)
-        exec_layout.addWidget(self.cb_log_z)
-
         self.btn_start = QPushButton("START 2D RASTER SWEEP")
-        self.btn_start.setStyleSheet("""
-            QPushButton { background-color: #FF9800; color: white; font-weight: bold; }
-            QPushButton:disabled { background-color: #555555; color: #888888; }
-        """)
+        self.btn_start.setStyleSheet(BUTTON_STYLE.format("#FF9800"))
         self.btn_start.setEnabled(False)
         self.btn_start.clicked.connect(self._start_optimization)
-        exec_layout.addWidget(self.btn_start)
-
         self.btn_stop = QPushButton("ABORT")
-        self.btn_stop.setStyleSheet("""
-            QPushButton { background-color: #F44336; color: white; font-weight: bold; }
-            QPushButton:disabled { background-color: #555555; color: #888888; }
-        """)
+        self.btn_stop.setStyleSheet(BUTTON_STYLE.format("#F44336"))
         self.btn_stop.setEnabled(False)
         self.btn_stop.clicked.connect(self._stop_optimization)
-        exec_layout.addWidget(self.btn_stop)
-
+        for w in (self.sp_dwell, self.cb_log_z, self.btn_start, self.btn_stop):
+            exec_layout.addWidget(w)
         exec_group.setLayout(exec_layout)
         ctrl_layout.addWidget(exec_group)
-
         self.lbl_status = QLabel("Status: Idle")
+        self.lbl_status.setWordWrap(True)
         ctrl_layout.addWidget(self.lbl_status)
         self.main_layout.addLayout(ctrl_layout)
 
         pg.setConfigOption('background', '#1E1E1E')
         pg.setConfigOption('foreground', 'w')
-
         self.glw = pg.GraphicsLayoutWidget()
         self.plot_widget = self.glw.addPlot(title="Beam Current Heat Map (A)")
         self.plot_widget.setLabel('bottom', "X-Axis Parameter")
         self.plot_widget.setLabel('left', "Y-Axis Parameter")
-
-        # Enable mouse interactions
         self.plot_widget.setMouseEnabled(x=True, y=True)
         self.plot_widget.setMenuEnabled(False)
         self.plot_widget.hideButtons()
-
-        # Configure left-click to drag a bounding box (rubber band zoom)
-        self.plot_widget.getViewBox().setMouseMode(pg.ViewBox.RectMode)
-
-        # Disable scroll wheel zooming to prevent accidental rapid-fire sweeps
-        self.plot_widget.getViewBox().wheelEvent = lambda event: None
-
-        # Hook into the manual range change (fired when the user finishes dragging the box)
-        self.plot_widget.getViewBox().sigRangeChangedManually.connect(self._on_hone_in_dragged)
-
+        vb = self.plot_widget.getViewBox()
+        vb.setMouseMode(pg.ViewBox.RectMode)          # drag a box: sweep that region
+        vb.wheelEvent = lambda event: None            # no scroll zoom (it would start sweeps by accident)
+        vb.sigRangeChangedManually.connect(self._on_hone_in_dragged)
         self.image_item = pg.ImageItem()
         colormap = pg.colormap.get('plasma')
         self.image_item.setColorMap(colormap)
         self.plot_widget.addItem(self.image_item)
-
-        # Thinner, more precise crosshair
-        self.live_crosshair = pg.ScatterPlotItem(
-            symbol='+', size=16, pen=pg.mkPen('#00FFFF', width=1.0)
-        )
+        self.live_crosshair = pg.ScatterPlotItem(symbol='+', size=16, pen=pg.mkPen('#00FFFF', width=1.0))
         self.live_crosshair.hide()
         self.plot_widget.addItem(self.live_crosshair)
-
         self.color_bar = pg.ColorBarItem(interactive=False, colorMap=colormap, width=12)
         self.color_bar.setImageItem(self.image_item)
         self.glw.addItem(self.color_bar)
-
         self.hover_text = pg.TextItem(fill=pg.mkBrush(0, 0, 0, 200), color='w', border=pg.mkPen('gray'))
-        self.hover_text.setZValue(100)  # Guarantee it draws over the image
+        self.hover_text.setZValue(100)
         self.hover_text.hide()
         self.plot_widget.addItem(self.hover_text)
-
         self.plot_widget.scene().sigMouseMoved.connect(self._on_mouse_moved)
         self.plot_widget.scene().sigMouseClicked.connect(self._on_mouse_clicked)
-
         self.main_layout.addWidget(self.glw)
         self.glw.installEventFilter(self)
 
     def eventFilter(self, obj, event):
         if obj == self.glw and event.type() == QEvent.Type.Leave:
-            if hasattr(self, 'hover_text'):
-                self.hover_text.hide()
+            self.hover_text.hide()
         return super().eventFilter(obj, event)
 
     def _open_selector(self, axis: str):
         dialog = OptimizerTagSelectorDialog(self.registry, axis, self)
         if dialog.exec():
-            if axis == "X":
-                self.x_tag = dialog.selected_tag
-                self.x_meta = dialog.selected_meta
-                self._apply_target_constraints(self.x_meta, self.btn_x, self.sp_x_start, self.sp_x_stop, "X")
-                self.plot_widget.setLabel('bottom', self.x_meta.get("default_label", "X-Axis"),
-                                          units=self.x_meta.get("unit", ""))
-            else:
-                self.y_tag = dialog.selected_tag
-                self.y_meta = dialog.selected_meta
-                self._apply_target_constraints(self.y_meta, self.btn_y, self.sp_y_start, self.sp_y_stop, "Y")
-                self.plot_widget.setLabel('left', self.y_meta.get("default_label", "Y-Axis"),
-                                          units=self.y_meta.get("unit", ""))
+            self.set_axis(axis, dialog.selected_tag)
 
-            self._evaluate_start_ready()
-
-    def _apply_target_constraints(self, meta: dict, btn: QPushButton, sp_start: QDoubleSpinBox, sp_stop: QDoubleSpinBox,
-                                  axis_label: str):
-        readable_name = meta.get("default_label", "Unknown")
-        unit = meta.get("unit", "")
-
-        btn.setText(f"{axis_label}: {readable_name} [{unit}]")
-        btn.setStyleSheet("text-align: center; font-weight: bold; padding: 6px;")
-
-        min_v = float(meta["min_val"])
-        max_v = float(meta["max_val"])
-
-        sp_start.setRange(min_v, max_v)
-        sp_start.setValue(min_v)
-        sp_start.setSuffix(f" {unit}")
-
-        sp_stop.setRange(min_v, max_v)
-        sp_stop.setValue(max_v)
-        sp_stop.setSuffix(f" {unit}")
-
-    def _evaluate_start_ready(self):
-        if self.x_tag and self.y_tag:
-            self.btn_start.setEnabled(True)
-            self.btn_start.setToolTip("Click to begin 2D Raster Sweep")
-
-    def _derive_mode_tag(self, target_tag: str) -> str:
-        parts = target_tag.split('.')
-        base = ".".join(parts[:-1])
-        return f"{base}.cmd_ctrl_mode"
-
-    def _derive_rb_tag(self, target_tag: str) -> str:
-        return target_tag.replace("sp_requested_", "rb_").replace("cmd_", "rb_")
-
-    def _on_mouse_moved(self, evt):
-        if self.heatmap_data is None:
-            return
-
-        pos = evt
-        # Use vb.sceneBoundingRect() so hovering over axes doesn't trigger the tooltip
-        if self.plot_widget.vb.sceneBoundingRect().contains(pos):
-            mouse_point = self.plot_widget.vb.mapSceneToView(pos)
-            x_val = mouse_point.x()
-            y_val = mouse_point.y()
-
-            try:
-                shape_x, shape_y = self.heatmap_data.shape
-                x_points = np.linspace(self.sp_x_start.value(), self.sp_x_stop.value(), shape_x)
-                y_points = np.linspace(self.sp_y_start.value(), self.sp_y_stop.value(), shape_y)
-
-                x_idx = (np.abs(x_points - x_val)).argmin()
-                y_idx = (np.abs(y_points - y_val)).argmin()
-
-                z_val = self.heatmap_data[x_idx, y_idx]
-
-                if np.isnan(z_val):
-                    self.hover_text.hide()
-                    return
-
-                x_unit = self.x_meta.get("unit", "") if self.x_meta else ""
-                y_unit = self.y_meta.get("unit", "") if self.y_meta else ""
-
-                z_str = f"{z_val:.2e} A" if (0 < abs(z_val) < 0.01) else f"{z_val:.4f} A"
-                if z_val == 0.0: z_str = "0.0 A"
-
-                html_str = f"""
-                <div style='text-align: left;'>
-                    <b>X:</b> {x_val:.2f} {x_unit}<br>
-                    <b>Y:</b> {y_val:.2f} {y_unit}<br>
-                    <b>I:</b> <span style='color: #4CAF50;'>{z_str}</span><br>
-                    <span style='color: #FF9800; font-size: 8pt;'><i>Double-click to set point</i></span>
-                </div>
-                """
-
-                midpoint_x = (self.sp_x_start.value() + self.sp_x_stop.value()) / 2.0
-                midpoint_y = (self.sp_y_start.value() + self.sp_y_stop.value()) / 2.0
-
-                # Use standard Python tuples to prevent QPointF packing crashes
-                anchor_x = 1.0 if x_val > midpoint_x else 0.0
-                anchor_y = 0.0 if y_val > midpoint_y else 1.0
-
-                self.hover_text.setAnchor((anchor_x, anchor_y))
-                self.hover_text.setHtml(html_str)
-                self.hover_text.setPos(x_val, y_val)
-                self.hover_text.show()
-
-            except Exception as e:
-                log.debug(f"Hover tooltip error: {e}")
-                self.hover_text.hide()
+    def set_axis(self, axis: str, tag: str):
+        meta = self.registry.get(tag, {})
+        if axis == "X":
+            self.x_tag, self.x_meta = tag, meta
+            self._apply_target_constraints(meta, self.btn_x, self.sp_x_start, self.sp_x_stop, "X")
+            self.plot_widget.setLabel('bottom', meta.get("default_label", "X-Axis"), units=meta.get("unit", ""))
         else:
-            self.hover_text.hide()
+            self.y_tag, self.y_meta = tag, meta
+            self._apply_target_constraints(meta, self.btn_y, self.sp_y_start, self.sp_y_stop, "Y")
+            self.plot_widget.setLabel('left', meta.get("default_label", "Y-Axis"), units=meta.get("unit", ""))
 
-    def _on_mouse_clicked(self, evt):
-        if not evt.double() or self.heatmap_data is None:
-            return
+    @staticmethod
+    def _apply_target_constraints(meta, btn, sp_start, sp_stop, axis_label):
+        unit = meta.get("unit", "")
+        btn.setText(f"{axis_label}: {meta.get('default_label', 'Unknown')} [{unit}]")
+        btn.setStyleSheet("text-align: center; font-weight: bold; padding: 6px;")
+        lo, hi = float(meta["min_val"]), float(meta["max_val"])
+        for box, value in ((sp_start, lo), (sp_stop, hi)):
+            box.setRange(lo, hi)
+            box.setValue(value)
+            box.setSuffix(f" {unit}")
 
-        evt.accept()  # <--- ADD THIS LINE HERE
-
-        pos = evt.scenePos()
-        if self.plot_widget.vb.sceneBoundingRect().contains(pos):
-            mouse_point = self.plot_widget.vb.mapSceneToView(pos)
-            x_val = mouse_point.x()
-            y_val = mouse_point.y()
-
-            if self.scan_worker and self.scan_worker.isRunning():
-                self.scan_worker.override_x = x_val
-                self.scan_worker.override_y = y_val
-                self.scan_worker.stop()
-                self.lbl_status.setText(f"Scan aborted. Jumping to X={x_val:.2f}, Y={y_val:.2f}...")
-            else:
-                x_target = self.route_map.get(self.x_meta["source"], "plc")
-                y_target = self.route_map.get(self.y_meta["source"], "plc")
-
-                self.cmd_thread.send_command(x_target, self.x_tag, float(x_val), origin="hmi")
-                self.cmd_thread.send_command(y_target, self.y_tag, float(y_val), origin="hmi")
-                self.lbl_status.setText(f"Manual Jump to X={x_val:.2f}, Y={y_val:.2f}")
-
-    def _on_hone_in_dragged(self, *args):
-        # Prevent triggering if a scan is already running, or if there's no baseline data yet
-        if (self.scan_worker and self.scan_worker.isRunning()) or self.heatmap_data is None:
-            return
-
-        # Grab the newly zoomed-in bounds from the ViewBox
-        view_rect = self.plot_widget.viewRange()
-        new_x_start, new_x_stop = view_rect[0]
-        new_y_start, new_y_stop = view_rect[1]
-
-        # Prevent triggering on tiny/zero-width accidental clicks
-        if abs(new_x_stop - new_x_start) < 1e-6 or abs(new_y_stop - new_y_start) < 1e-6:
-            return
-
-        # Update the UI spinboxes to match this new box
-        self.sp_x_start.setValue(new_x_start)
-        self.sp_x_stop.setValue(new_x_stop)
-        self.sp_y_start.setValue(new_y_start)
-        self.sp_y_stop.setValue(new_y_stop)
-
-        # Kick off the new sweep automatically
-        self.lbl_status.setText("Honing in on selected region...")
-        self._start_optimization()
+    # ================================================================== the sweep (sequencer)
+    def sweep_settings(self) -> dict:
+        return {"x_tag": self.x_tag, "x_start": self.sp_x_start.value(), "x_stop": self.sp_x_stop.value(),
+                "x_steps": int(self.sp_x_steps.value()), "y_tag": self.y_tag, "y_start": self.sp_y_start.value(),
+                "y_stop": self.sp_y_stop.value(), "y_steps": int(self.sp_y_steps.value()),
+                "dwell": self.sp_dwell.value(), "rb_tag": self.rb_metric_tag}
 
     def _start_optimization(self):
         if not self.x_tag or not self.y_tag:
             return
-
-        x_start = self.sp_x_start.value()
-        x_stop = self.sp_x_stop.value()
-        x_steps = int(self.sp_x_steps.value())
-
-        y_start = self.sp_y_start.value()
-        y_stop = self.sp_y_stop.value()
-        y_steps = int(self.sp_y_steps.value())
-
-        if x_start == x_stop or y_start == y_stop:
+        cfg = self.sweep_settings()
+        if cfg["x_start"] == cfg["x_stop"] or cfg["y_start"] == cfg["y_stop"]:
             QMessageBox.warning(self, "Invalid Parameters", "Start and Stop values cannot be identical.")
             return
+        self.btn_start.setEnabled(False)
+        self.lbl_status.setText("Status: asking the sequencer to start the sweep...")
+        self._tickets["start"] = self.slot.send("start", cfg)
 
-        x_mode_tag = self._derive_mode_tag(self.x_tag)
-        y_mode_tag = self._derive_mode_tag(self.y_tag)
+    def _stop_optimization(self):
+        self.btn_stop.setEnabled(False)
+        self._tickets["stop"] = self.slot.send("stop")
 
-        if x_mode_tag not in self.registry or y_mode_tag not in self.registry:
-            QMessageBox.critical(self, "Architecture Error", "Cannot find arbitration tags for selected hardware.")
+    def _check_tickets(self):
+        for verb, ticket in list(self._tickets.items()):
+            if ticket.done():
+                del self._tickets[verb]
+                if not ticket.ok:
+                    self.lbl_status.setText(f"Status: {verb} refused - {ticket.reason}")
+
+    def update_telemetry(self, data: dict):
+        self._data = data
+        self.slot.update(data)
+        self._check_tickets()
+        active = self.slot.active
+        run = self.slot.get("run")
+        if run is not None and run != self._run_shown and (active or self._run_shown is None):
+            self._new_map(run, self.slot.get("config") or {})
+        if self._run_shown is not None and run == self._run_shown:
+            self._follow_points()
+        if self.slot.online and (active or self.slot.state in P.FINAL) and run == self._run_shown:
+            self.lbl_status.setText(f"Status: {self.slot.get('status') or self.slot.state}")
+        if active != self._was_active:
+            self._was_active = active
+            self._lock_ui(active)
+        self._update_crosshair(data, active)
+        if not active:
+            self._update_start_permit(data)
+
+    def _new_map(self, run, cfg):
+        self._run_shown = run
+        self.map_cfg = cfg
+        try:
+            nx, ny = int(cfg["x_steps"]), int(cfg["y_steps"])
+            x0, x1, y0, y1 = (float(cfg[k]) for k in ("x_start", "x_stop", "y_start", "y_stop"))
+        except (KeyError, TypeError, ValueError):
+            self.heatmap_data = None
             return
-
-        x_restore = self.get_telemetry_cb(self._derive_rb_tag(self.x_tag))
-        y_restore = self.get_telemetry_cb(self._derive_rb_tag(self.y_tag))
-        if x_restore is None or y_restore is None:
-            # Previously a missing value read as 0.0, so the scan finished by driving that axis to 0
-            missing = [t for t, v in ((self._derive_rb_tag(self.x_tag), x_restore),
-                                      (self._derive_rb_tag(self.y_tag), y_restore)) if v is None]
-            QMessageBox.warning(self, "No live starting values",
-                                "The optimiser restores both axes to their current values when it finishes, "
-                                "but these have no live reading:\n\n" + "\n".join(missing) +
-                                "\n\nCheck that the services are running, then try again.")
-            return
-
-        self.heatmap_data = np.full((x_steps, y_steps), np.nan)
+        self.heatmap_data = np.full((nx, ny), np.nan)
         self.image_item.setImage(self.heatmap_data, autoLevels=False, levels=(0.0, 1.0))
-
-        x_width = x_stop - x_start
-        y_height = y_stop - y_start
-        self.image_item.setRect(QRectF(x_start, y_start, x_width, y_height))
-
+        self.image_item.setRect(QRectF(x0, y0, x1 - x0, y1 - y0))
         self.plot_widget.setLimits(xMin=None, xMax=None, yMin=None, yMax=None)
-        self.plot_widget.setLimits(xMin=min(x_start, x_stop), xMax=max(x_start, x_stop),
-                                   yMin=min(y_start, y_stop), yMax=max(y_start, y_stop))
+        self.plot_widget.setLimits(xMin=min(x0, x1), xMax=max(x0, x1), yMin=min(y0, y1), yMax=max(y0, y1))
+        self.plot_widget.setXRange(x0, x1, padding=0)
+        self.plot_widget.setYRange(y0, y1, padding=0)
+        for axis, tag in (("X", cfg.get("x_tag")), ("Y", cfg.get("y_tag"))):
+            meta = self.registry.get(tag, {})
+            self.plot_widget.setLabel('bottom' if axis == "X" else 'left', meta.get("default_label", tag or axis),
+                                      units=meta.get("unit", ""))
 
-        self.plot_widget.setXRange(x_start, x_stop, padding=0)
-        self.plot_widget.setYRange(y_start, y_stop, padding=0)
-
-        self._lock_ui(True)
-        self.live_crosshair.hide()
-
-        # --- EVENT LOGGING: START ---
-        start_t = time.time()
-        self.active_scan_start_str = time.strftime('%H:%M:%S',
-                                                   time.localtime(start_t)) + f":{int((start_t % 1) * 1000):03d}"
-
-        x_label = self.x_meta.get("default_label", self.x_tag)
-        y_label = self.y_meta.get("default_label", self.y_tag)
-
-        if self.event_helper:
-            start_msg = f"Scan of {x_label} against {y_label} started at {self.active_scan_start_str}"
-            self.event_helper.log_user_marker(start_t, start_msg, "#00E5FF")  # Logged as Cyan
-        # --- EVENT LOGGING: END ---
-
-        x_target_service = self.route_map.get(self.x_meta["source"], "plc")
-        y_target_service = self.route_map.get(self.y_meta["source"], "plc")
-
-        self.scan_worker = Optimizer2DWorker(
-            cmd_thread=self.cmd_thread, get_telemetry_cb=self.get_telemetry_cb,
-            x_service=x_target_service, x_tag=self.x_tag, x_mode_tag=x_mode_tag,
-            x_start=x_start, x_stop=x_stop, x_steps=x_steps,
-            y_service=y_target_service, y_tag=self.y_tag, y_mode_tag=y_mode_tag,
-            y_start=y_start, y_stop=y_stop, y_steps=y_steps,
-            rb_tag=self.rb_metric_tag, dwell=self.sp_dwell.value(),
-            restore_x=x_restore, restore_y=y_restore
-        )
-
-        self.scan_worker.data_point.connect(self._on_data_point)
-        self.scan_worker.status_msg.connect(self.lbl_status.setText)
-        self.scan_worker.scan_finished.connect(self._on_scan_finished)
-        self.scan_worker.start()
-
-    def _update_image_render(self):
-        if self.heatmap_data is None:
+    def _follow_points(self):
+        changes = self.follower.update(self.slot.get("run"), self.slot.get("pass"), self.slot.get("points"),
+                                       self.slot.get("tail"))
+        if self.heatmap_data is None or not changes:
             return
-
-        display_data = np.copy(self.heatmap_data)
-
-        if self.cb_log_z.isChecked():
-            # Mask values <= 0 to avoid RuntimeWarnings and invalid calculations
-            with np.errstate(divide='ignore', invalid='ignore'):
-                valid_mask = display_data > 0
-                if not np.any(valid_mask):
-                    return  # No positive data to render yet
-
-                log_data = np.full_like(display_data, np.nan)
-                log_data[valid_mask] = np.log10(display_data[valid_mask])
-                display_data = log_data
-
-        # Abort if all values are NaN
-        if np.all(np.isnan(display_data)):
-            return
-
-        z_min = float(np.nanmin(display_data))
-        z_max = float(np.nanmax(display_data))
-
-        if z_min == z_max:
-            z_max = z_min + 1e-12
-
-        self.image_item.setImage(display_data, autoLevels=False, levels=(z_min, z_max))
-        self.color_bar.setLevels((z_min, z_max))
+        for kind, points in changes:
+            if kind in ("new", "replace"):
+                self.heatmap_data[:] = np.nan
+            for i, j, value in points or []:
+                if 0 <= int(i) < self.heatmap_data.shape[0] and 0 <= int(j) < self.heatmap_data.shape[1]:
+                    self.heatmap_data[int(i), int(j)] = value
+        self._update_image_render()
 
     def _on_data_point(self, x_idx: int, y_idx: int, val: float):
         self.heatmap_data[x_idx, y_idx] = val
         self._update_image_render()
 
-        z_min = float(np.nanmin(self.heatmap_data))
-        z_max = float(np.nanmax(self.heatmap_data))
-        if z_min == z_max: z_max = z_min + 1e-12
-
-        self.image_item.setImage(self.heatmap_data, autoLevels=False, levels=(z_min, z_max))
+    def _update_image_render(self):
+        if self.heatmap_data is None:
+            return
+        shown = np.copy(self.heatmap_data)
+        if self.cb_log_z.isChecked():
+            with np.errstate(divide='ignore', invalid='ignore'):
+                positive = shown > 0
+                if not np.any(positive):
+                    return
+                logged = np.full_like(shown, np.nan)
+                logged[positive] = np.log10(shown[positive])
+                shown = logged
+        if np.all(np.isnan(shown)):
+            return
+        z_min, z_max = float(np.nanmin(shown)), float(np.nanmax(shown))
+        if z_min == z_max:
+            z_max = z_min + 1e-12
+        self.image_item.setImage(shown, autoLevels=False, levels=(z_min, z_max))
         self.color_bar.setLevels((z_min, z_max))
 
-    def _stop_optimization(self):
-        if self.scan_worker and self.scan_worker.isRunning():
-            self.scan_worker.stop()
-            self.scan_worker.wait()
-        self._lock_ui(False)
-        self.lbl_status.setText("Status: Aborted by User.")
-
-    def _on_scan_finished(self, status: str):  # Updated to receive terminal status
-        self._lock_ui(False)
-
-        # --- EVENT LOGGING: COMPLETION/STOP ---
-        if self.active_scan_start_str and self.event_helper:
-            end_t = time.time()
-            end_msg = f"Scan from {self.active_scan_start_str} {status}"
-            self.event_helper.log_user_marker(end_t, end_msg, "#00E5FF")
-        self.active_scan_start_str = None
-        # --- EVENT LOGGING: END ---
-
     def _lock_ui(self, is_running: bool):
-        self.btn_x.setEnabled(not is_running)
-        self.btn_y.setEnabled(not is_running)
-        self.sp_x_start.setEnabled(not is_running)
-        self.sp_x_stop.setEnabled(not is_running)
-        self.sp_x_steps.setEnabled(not is_running)
-        self.sp_y_start.setEnabled(not is_running)
-        self.sp_y_stop.setEnabled(not is_running)
-        self.sp_y_steps.setEnabled(not is_running)
-        self.sp_dwell.setEnabled(not is_running)
+        for w in (self.btn_x, self.btn_y, self.sp_x_start, self.sp_x_stop, self.sp_x_steps, self.sp_y_start,
+                  self.sp_y_stop, self.sp_y_steps, self.sp_dwell):
+            w.setEnabled(not is_running)
         self.btn_stop.setEnabled(is_running)
+        self.btn_start.setEnabled(not is_running and self.x_tag is not None and self.y_tag is not None)
 
-        self.btn_start.setEnabled((not is_running) and (self.x_tag is not None) and (self.y_tag is not None))
-
-    def _derive_enable_tag(self, target_tag: str) -> str:
-        parts = target_tag.split('.')
-        base = ".".join(parts[:-1])
-        return f"{base}.stat_enabled"
-
-    def update_telemetry(self, data: dict):
-        master_comms_lost = not bool(data.get("system.connected", False)) or bool(
-            data.get("ion_beam.system.pc_plc_comms_lost", False))
-        relay_active = bool(data.get("ion_beam.facilities.safety_relay_active", False))
-
-        is_sweeping = self.scan_worker is not None and self.scan_worker.isRunning()
-
-        if not is_sweeping and self.x_tag and self.y_tag and self.heatmap_data is not None:
-            live_x = data.get(self._derive_rb_tag(self.x_tag))
-            live_y = data.get(self._derive_rb_tag(self.y_tag))
-
-            if live_x is not None and live_y is not None:
-                self.live_crosshair.setData([live_x], [live_y])
-                self.live_crosshair.show()
-            else:
-                self.live_crosshair.hide()
+    def _update_start_permit(self, data):
+        reason = ""
+        if self.x_tag is None or self.y_tag is None:
+            reason = "Select both X and Y parameters to sweep."
+        elif not self.slot.online:
+            reason = OFFLINE_TEXT
         else:
+            for tag in (self.x_tag, self.y_tag):
+                sub = subsystem_of(tag, data)
+                if sub is None:
+                    reason = f"No live data from the service that drives {tag}."
+                    break
+                if not data.get(f"{sub}.permit"):
+                    reason = f"{sub.split('.')[-1]}: {data.get(f'{sub}.permit_reason') or 'not available'}"
+                    break
+                enabled = data.get(f"{sub}.stat_enabled")
+                if f"{sub}.stat_enabled" in self.registry and not enabled:
+                    reason = "Hardware output for selected target is disabled."
+                    break
+        self.btn_start.setEnabled(not reason and "start" not in self._tickets)
+        self.btn_start.setToolTip(f"Disabled: {reason}" if reason else "Click to begin 2D Raster Sweep")
+
+    def _live_value(self, tag, data):
+        for t in restore_tags(tag):
+            if data.get(t) is not None:
+                return data[t]
+        return None
+
+    def _update_crosshair(self, data, active):
+        if active or not (self.x_tag and self.y_tag) or self.heatmap_data is None:
             self.live_crosshair.hide()
-
-        lock_reason = ""
-        if master_comms_lost:
-            lock_reason = "PLC communications offline."
-        elif not relay_active:
-            lock_reason = "Safety Relay is De-Energized."
+            return
+        x, y = self._live_value(self.x_tag, data), self._live_value(self.y_tag, data)
+        if x is None or y is None:
+            self.live_crosshair.hide()
         else:
-            services_status = data.get("manager.services", {})
-            service_translation = {
-                "service_magnet": "service_magnet_psu",
-                "service_steerer_magnet": "service_steerer_magnet_psu",
-                "service_plc_snap7": "service_plc",
-                "service_faraday_smu": "service_smu",
-                "service_spellman": "service_spellman_mpd",
-                "service_vacuum": "service_vac_gauge_controllers",
-                "service_source_turbo": "service_source_turbo"
-            }
+            self.live_crosshair.setData([x], [y])
+            self.live_crosshair.show()
 
-            for meta in [self.x_meta, self.y_meta]:
-                if meta:
-                    target_service = meta["source"]
-                    heartbeat_name = service_translation.get(target_service, target_service)
-                    if services_status.get(heartbeat_name, "OFFLINE") != "ONLINE":
-                        lock_reason = f"Target service ({heartbeat_name}) is offline."
-                        break
+    # ================================================================== mouse
+    def _grid(self):
+        cfg = self.map_cfg or {}
+        shape = self.heatmap_data.shape
+        return (np.linspace(float(cfg.get("x_start", 0)), float(cfg.get("x_stop", 1)), shape[0]),
+                np.linspace(float(cfg.get("y_start", 0)), float(cfg.get("y_stop", 1)), shape[1]))
 
-            if not lock_reason:
-                for tag in [self.x_tag, self.y_tag]:
-                    if tag:
-                        enable_tag = self._derive_enable_tag(tag)
-                        if enable_tag in self.registry and not bool(data.get(enable_tag, 0.0)):
-                            lock_reason = "Hardware output for selected target is disabled."
-                            break
+    def _on_mouse_moved(self, pos):
+        if self.heatmap_data is None or not self.plot_widget.vb.sceneBoundingRect().contains(pos):
+            self.hover_text.hide()
+            return
+        point = self.plot_widget.vb.mapSceneToView(pos)
+        x_val, y_val = point.x(), point.y()
+        xs, ys = self._grid()
+        z = self.heatmap_data[int(np.abs(xs - x_val).argmin()), int(np.abs(ys - y_val).argmin())]
+        if np.isnan(z):
+            self.hover_text.hide()
+            return
+        cfg = self.map_cfg or {}
+        x_unit = self.registry.get(cfg.get("x_tag"), {}).get("unit", "")
+        y_unit = self.registry.get(cfg.get("y_tag"), {}).get("unit", "")
+        z_str = "0.0 A" if z == 0.0 else (f"{z:.2e} A" if abs(z) < 0.01 else f"{z:.4f} A")
+        self.hover_text.setHtml(f"<div style='text-align: left;'><b>X:</b> {x_val:.2f} {x_unit}<br>"
+                                f"<b>Y:</b> {y_val:.2f} {y_unit}<br><b>I:</b> <span style='color: #4CAF50;'>{z_str}"
+                                f"</span><br><span style='color: #FF9800; font-size: 8pt;'><i>Double-click to set "
+                                f"point</i></span></div>")
+        self.hover_text.setAnchor((1.0 if x_val > (xs[0] + xs[-1]) / 2 else 0.0,
+                                   0.0 if y_val > (ys[0] + ys[-1]) / 2 else 1.0))
+        self.hover_text.setPos(x_val, y_val)
+        self.hover_text.show()
 
-        if is_sweeping and lock_reason:
-            self._stop_optimization()
+    def _on_mouse_clicked(self, evt):
+        if not evt.double() or self.heatmap_data is None:
+            return
+        evt.accept()
+        pos = evt.scenePos()
+        if self.plot_widget.vb.sceneBoundingRect().contains(pos):
+            point = self.plot_widget.vb.mapSceneToView(pos)
+            self.go_to(point.x(), point.y())
 
-        if not is_sweeping:
-            lockout = bool(lock_reason)
-            can_start = (not lockout) and (self.x_tag is not None) and (self.y_tag is not None)
+    def go_to(self, x_val: float, y_val: float):
+        """During a sweep: end it at this point (instead of restoring). Otherwise: set both now."""
+        if self.slot.active:
+            self._tickets["goto"] = self.slot.send("goto", {"x": x_val, "y": y_val})
+            self.lbl_status.setText(f"Ending the sweep at X={x_val:.2f}, Y={y_val:.2f}...")
+            return
+        cfg = self.map_cfg or {}
+        x_tag, y_tag = cfg.get("x_tag") or self.x_tag, cfg.get("y_tag") or self.y_tag
+        if not x_tag or not y_tag:
+            return
+        self.cmd_thread.send_command(route_for_tag(x_tag), x_tag, float(x_val), origin="hmi")
+        self.cmd_thread.send_command(route_for_tag(y_tag), y_tag, float(y_val), origin="hmi")
+        self.lbl_status.setText(f"Manual Jump to X={x_val:.2f}, Y={y_val:.2f}")
 
-            self.btn_start.setEnabled(can_start)
-
-            if self.x_tag is None or self.y_tag is None:
-                self.btn_start.setToolTip("Disabled: Select both X and Y parameters to sweep.")
-            elif lockout:
-                self.btn_start.setToolTip(f"Disabled: {lock_reason}")
-            else:
-                self.btn_start.setToolTip("Click to begin 2D Raster Sweep")
+    def _on_hone_in_dragged(self, *args):
+        if self.slot.active or self.heatmap_data is None:
+            return
+        (x0, x1), (y0, y1) = self.plot_widget.viewRange()
+        if abs(x1 - x0) < 1e-6 or abs(y1 - y0) < 1e-6:     # an accidental click, not a box
+            return
+        for box, value in ((self.sp_x_start, x0), (self.sp_x_stop, x1), (self.sp_y_start, y0), (self.sp_y_stop, y1)):
+            box.setValue(value)
+        self.lbl_status.setText("Honing in on selected region...")
+        self._start_optimization()

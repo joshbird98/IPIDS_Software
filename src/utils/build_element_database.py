@@ -1,4 +1,10 @@
+"""Build the isotope list the Mass Scan panel names peaks with (needs: pip install mendeleev).
+Run from anywhere: python src/utils/build_element_database.py"""
 import json
+import os
+
+OUTPUT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "gui", "control", "widgets", "mass_scan",
+                                      "isotope_db.json"))
 
 
 def build_isotope_db():
@@ -29,7 +35,7 @@ def build_isotope_db():
         except Exception as e:
             print(f"Skipping Z={z}: {e}")
 
-    output_path = "../gui/control/widgets/isotope_db.json"
+    output_path = OUTPUT
     with open(output_path, "w") as f:
         json.dump(db, f, indent=4)
 

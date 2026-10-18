@@ -18,6 +18,13 @@ ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 
+# Recipes the tests write go to a copy of config/recipes, never the real folder
+if not os.environ.get("SINDIE_RECIPES_DIR", "").strip():
+    import shutil  # noqa: E402
+
+    os.environ["SINDIE_RECIPES_DIR"] = os.path.join(_TMP, "recipes")
+    shutil.copytree(os.path.join(ROOT, "config", "recipes"), os.environ["SINDIE_RECIPES_DIR"], dirs_exist_ok=True)
+
 # A tag registry built fresh from the config files in this checkout (not whatever
 # config/system_tags.json happens to be on this machine), so limits match the config.
 if not os.environ.get("SINDIE_REGISTRY", "").strip():
@@ -79,6 +86,9 @@ class FakeEvents:
 
     def log_fault(self, fault_key, active, metadata=None):
         self.events.append({"message": fault_key, "type": "FAULT", "active": active})
+
+    def log_user_marker(self, marker_ts, text, color):
+        self.events.append({"message": text, "severity": "INFO", "type": "USER_MARKER", "metadata": {"color": color}})
 
     def of_type(self, event_type):
         return [e for e in self.events if e["type"] == event_type]

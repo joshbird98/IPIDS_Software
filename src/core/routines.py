@@ -1,9 +1,6 @@
 import logging
 import time
 
-import numpy as np
-from scipy.signal import find_peaks
-
 from src.core.commands import describe, route_for_tag
 from src.core.telemetry_cache import fresh_value
 
@@ -12,9 +9,11 @@ log = logging.getLogger("routines")
 STALE_HOLD_FAIL_S = 30.0   # a routine waiting on a value with no live data fails after this long
 
 
-def send(cmd_thread, target, value):
+def send(cmd_thread, target, value, timeout=None):
     """Route and send one automation command; returns its ticket (None with an old-style cmd_thread)."""
-    return cmd_thread.send_command(route_for_tag(target), target, value, origin="recipe")
+    if timeout is None:
+        return cmd_thread.send_command(route_for_tag(target), target, value, origin="recipe")
+    return cmd_thread.send_command(route_for_tag(target), target, value, origin="recipe", timeout=timeout)
 
 
 def ticket_outcome(ticket):
@@ -50,7 +49,7 @@ class BaseRoutine:
         self._tickets = []
 
     def tick(self, telemetry_cache: dict, cmd_thread) -> str:
-        """Called at 20Hz by the RecipeWorker. Must return RUNNING, DONE, or FAILED."""
+        """Called every recipe tick. Must return RUNNING, DONE, FAILED or WAITING_FOR_USER."""
         raise NotImplementedError()
 
     def add_pause_offset(self, duration: float):
@@ -87,97 +86,107 @@ class BaseRoutine:
 
 
 class MassScanRoutine(BaseRoutine):
-    """
-    This routine sweeps the magnet through a range of values, collecting a mass-scan of beam current.
-    It then analyses the mass-scan for peaks and attempts to then set the magnet on to the desired peak.
-    Currently untested and probably highly unsuitable.
-    """
+    """The precision mass scan (src/sequencer/mass_scan.py - the same code as the HMI's Mass Scan
+    panel) as a recipe step. With goto_peak (the default) the magnet is then set on the most
+    prominent peak of the scan.
+
+    Parameters: start_a, stop_a, step_a (magnet amps) and optionally tolerance, settle_time,
+    samples, sample_interval, nplc, export, export_path, goto_peak."""
+
     def __init__(self, parameters: dict):
         super().__init__(parameters)
-        # Parameters extracted from JSON
-        self.sp_target = self.parameters.get("sp_target", "ion_beam.beamline.magnet.sp_requested_mass")
-        self.rb_target = self.parameters.get("rb_target", "ion_beam.beamline_diagnostics.rb_fc_current")
-        self.start_val = float(self.parameters.get("start_val", 0.0))
-        self.end_val = float(self.parameters.get("end_val", 100.0))
-        self.step_size = float(self.parameters.get("step_size", 1.0))
-        self.dwell_sec = float(self.parameters.get("dwell_sec", 0.5))
+        from src.sequencer.mass_scan import MassScan, ScanConfig
+        settings = {k: v for k, v in parameters.items() if k != "goto_peak"}
+        settings.setdefault("nplc", 1.0)
+        self.goto_peak = bool(parameters.get("goto_peak", True))
+        self.config_error = None
+        self.scan = None
+        try:
+            self.scan = MassScan(ScanConfig.from_value(settings, _magnet_limits()), io=self)
+        except ValueError as e:
+            self.config_error = f"mass scan settings: {e}"
+        self._telemetry = {}
+        self._cmd = None
+        self._gen = None
+        self._paused = 0.0
+        self.peak_a = None
 
-        # Internal state
-        self.current_val = self.start_val
-        self.timer_start = 0.0
-        self.data_x = []
-        self.data_y = []
+    # io for MassScan
+    stopping = False
 
-    def tick(self, telemetry_cache: dict, cmd_thread) -> str:
-        bad = self._command_failure()
-        if bad:
-            return self._fail(bad)
+    def now(self) -> float:
+        return time.time() - self._paused        # pauses don't count against the scan's timeouts
 
-        if self.state == "INIT":
-            self.current_val = self.start_val
-            self._send_cmd(cmd_thread, self.sp_target, self.current_val)
-            self.timer_start = time.time()
-            self.state = "WAIT_SETTLE"
-            return "RUNNING"
+    def send(self, tag, value, timeout=None):
+        return send(self._cmd, tag, value, timeout=timeout)
 
-        elif self.state == "WAIT_SETTLE":
-            if time.time() - self.timer_start >= self.dwell_sec:
-                self.state = "MEASURE"
-            return "RUNNING"
-
-        elif self.state == "MEASURE":
-            # Record current data point (a stale reading would silently corrupt the scan)
-            measurement = self._get(telemetry_cache, self.rb_target)
-            if measurement is None:
-                return self._fail(f"no live value for {self.rb_target} during the scan")
-            measurement = float(measurement)
-            self.data_x.append(self.current_val)
-            self.data_y.append(measurement)
-
-            # Check if scan is complete
-            if self.current_val >= self.end_val:
-                self.state = "ANALYZE"
-            else:
-                self.current_val += self.step_size
-                # Clamp to end_val to prevent overshooting
-                if self.current_val > self.end_val:
-                    self.current_val = self.end_val
-
-                self._send_cmd(cmd_thread, self.sp_target, self.current_val)
-                self.timer_start = time.time()
-                self.state = "WAIT_SETTLE"
-            return "RUNNING"
-
-        elif self.state == "ANALYZE":
-            try:
-                y_array = np.array(self.data_y)
-                x_array = np.array(self.data_x)
-
-                # Find peaks with minimum prominence to ignore noise
-                # Adjust prominence threshold based on your typical FC noise floor
-                peaks, properties = find_peaks(y_array, prominence=0.5)
-
-                if len(peaks) > 0:
-                    # Select the peak with the highest prominence
-                    best_peak_idx = peaks[np.argmax(properties["prominences"])]
-                    optimal_mass = x_array[best_peak_idx]
-
-                    log.info("Mass scan complete. Optimal value found at %s", optimal_mass)
-                    self._send_cmd(cmd_thread, self.sp_target, optimal_mass)
-                else:
-                    log.info("Mass scan complete. No distinct peaks found. Reverting to start value.")
-                    self._send_cmd(cmd_thread, self.sp_target, self.start_val)
-
-                return "DONE"
-            except (ValueError, IndexError) as e:
-                log.exception("Mass scan analysis failed")
-                return self._fail(f"peak analysis failed: {e}")
-
-        return "RUNNING"
+    def fresh_float(self, tag):
+        value = fresh_value(self._telemetry, tag)
+        try:
+            return None if value is None else float(value)
+        except (TypeError, ValueError):
+            return None
 
     def add_pause_offset(self, duration: float):
-        if self.state == "WAIT_SETTLE":
-            self.timer_start += duration
+        self._paused += duration
+
+    def tick(self, telemetry_cache: dict, cmd_thread) -> str:
+        from src.sequencer.jobs import JobFailed
+        if self.config_error:
+            return self._fail(self.config_error)
+        self._telemetry, self._cmd = telemetry_cache, cmd_thread
+        if self._gen is None:
+            self._gen = self._run()
+        try:
+            next(self._gen)
+            return "RUNNING"
+        except StopIteration:
+            return "DONE"
+        except JobFailed as e:
+            return self._fail(str(e))
+
+    def _run(self):
+        from src.sequencer.jobs import JobFailed
+        from src.sequencer.mass_scan import SP_TAG, strongest_peak
+        error = None
+        try:
+            yield from self.scan.run()
+        except JobFailed as e:
+            error = e
+        yield from self.scan.restore()           # SMU back to fast readings either way
+        if error is not None:
+            raise error
+        if not self.goto_peak:
+            return
+        self.peak_a = strongest_peak(self.scan.points)
+        if self.peak_a is None:
+            log.info("Mass scan routine: no distinct peak - magnet left at the end of the scan")
+            return
+        log.info("Mass scan routine: setting the magnet on the peak at %.3f A", self.peak_a)
+        ticket = send(self._cmd, SP_TAG, self.peak_a)
+        while not ticket.done():
+            yield
+        if not ticket.ok:
+            raise JobFailed(f"could not set the magnet on the peak ({self.peak_a:.3f} A): {ticket.reason}")
+
+
+_registry_limits = {}
+
+
+def _magnet_limits():
+    """(min, max) of the magnet current setpoint from the tag registry (read once)."""
+    if "magnet" not in _registry_limits:
+        import json
+        from src.core import paths
+        from src.sequencer.mass_scan import SP_TAG
+        try:
+            with open(paths.REGISTRY_PATH, "r") as f:
+                meta = json.load(f).get(SP_TAG, {})
+            _registry_limits["magnet"] = (meta.get("min_val"), meta.get("max_val"))
+        except (OSError, ValueError) as e:
+            log.error("Tag registry not readable for the mass scan limits: %s", e)
+            return None
+    return _registry_limits["magnet"]
 
 
 class SafetyRelayRoutine(BaseRoutine):
@@ -261,7 +270,7 @@ class SafetyRelayRoutine(BaseRoutine):
 
             if not gv_is_open:
                 self.prompt_text = "Gate Valve is not fully open. Please remedy this and click OK to re-evaluate."
-                self.next_state = "CHECK_GV"
+                self.next_state = "CHECK_GV_STATE"
             else:
                 self.prompt_text = "Safety Permissives Met. Click OK, then immediately press the physical PANEL START button."
                 self.next_state = "START_PHYSICAL_TIMER"

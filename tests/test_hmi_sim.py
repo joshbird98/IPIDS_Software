@@ -5,6 +5,7 @@ import json
 import os
 import time
 
+import numpy as np
 import pytest
 
 from src.core import commands as C
@@ -179,31 +180,51 @@ def test_stopped_service_shows_unknown_not_last_value(hmi, app, stack):
              "einzel back")
 
 
-def _run_recipe(hmi, app, tmp_path, steps, stop_after=None):
-    path = tmp_path / "recipe.json"
-    path.write_text(json.dumps({"recipe_name": "test", "steps": steps}))
-    finished = []
-    hmi.recipe_worker.sig_recipe_finished.connect(lambda ok, msg: finished.append((ok, msg)))
-    hmi.recipe_worker.load_recipe(str(path))
-    hmi.recipe_worker.play()
+RECIPE_DONE = ("complete", "stopped", "failed")
+
+
+def _write_recipe(name, steps):
+    from src.core.recipe_files import RECIPES_DIR     # the tests' copy of config/recipes
+    with open(os.path.join(RECIPES_DIR, name), "w") as f:
+        json.dump({"recipe_name": name[:-5], "steps": steps}, f)
+
+
+def _start_recipe(hmi, app, name, steps):
+    """Pick, load and start a recipe in the Recipe panel; it runs in the sequencer service."""
+    _write_recipe(name, steps)
+    w, view = hmi.recipe_widget, hmi.master_telemetry_cache
+    w.select_recipe(name)
+    w.btn_load.click()
+    wait_for(app, w.btn_start.isEnabled, 15, "recipe START available (sequencer online, idle)")
+    before = view.get("sequencer.recipe.run")
+    w.btn_start.click()
+    wait_for(app, lambda: view.get("sequencer.recipe.run") not in (None, before)
+             and view.get("sequencer.recipe.file") == name, 10, "recipe started in the sequencer")
+
+
+def _recipe_result(hmi, app, timeout=20):
+    view = hmi.master_telemetry_cache
+    wait_for(app, lambda: view.get("sequencer.recipe.state") in RECIPE_DONE, timeout, "recipe to finish")
+    return view["sequencer.recipe.state"] == "complete", view["sequencer.recipe.message"]
+
+
+def _run_recipe(hmi, app, steps, stop_after=None, name="hmi_test.json"):
+    _start_recipe(hmi, app, name, steps)
     if stop_after is not None:
         pump(app, stop_after)
-        hmi.recipe_worker.stop()
-    wait_for(app, lambda: finished, 20, "recipe to finish")
-    hmi.recipe_worker.sig_recipe_finished.disconnect()
-    hmi.recipe_widget._wire_signals()
-    hmi.recipe_worker.wait(3000)
-    return finished[0]
+        hmi.recipe_widget.btn_abort.click()
+    return _recipe_result(hmi, app)
 
 
-def test_recipe_step_fails_with_the_services_reason(hmi, app, tmp_path):
-    ok, msg = _run_recipe(hmi, app, tmp_path, [
+def test_recipe_step_fails_with_the_services_reason(hmi, app):
+    ok, msg = _run_recipe(hmi, app, [
         {"step_id": 1, "type": "ACTION", "target": "ion_beam.source.extraction.sp_requested_voltage", "value": 50.0}])
     assert not ok and "Step 1 failed" in msg and "outside the allowed range" in msg
+    assert "Step 1 failed" in hmi.recipe_widget.lbl_status.text()
 
 
-def test_recipe_waits_only_on_live_values_and_routes_by_registry(hmi, app, tmp_path):
-    ok, msg = _run_recipe(hmi, app, tmp_path, [
+def test_recipe_waits_only_on_live_values_and_routes_by_registry(hmi, app):
+    ok, msg = _run_recipe(hmi, app, [
         # VERIFIED_ACTION on a PLC tag used to be sent to the Spellman service and time out
         {"step_id": 1, "type": "VERIFIED_ACTION", "target": "ion_beam.source.target.sp_requested_voltage",
          "value": 2.0, "pre_target": "ion_beam.facilities.safety_relay_active", "pre_condition": "==",
@@ -214,13 +235,65 @@ def test_recipe_waits_only_on_live_values_and_routes_by_registry(hmi, app, tmp_p
     assert ok, msg
 
 
-def test_recipe_stop_leaves_outputs_alone(hmi, app, tmp_path):
-    ok, msg = _run_recipe(hmi, app, tmp_path, [
+def test_recipe_stop_leaves_outputs_alone(hmi, app):
+    ok, msg = _run_recipe(hmi, app, [
         {"step_id": 1, "type": "ACTION", "target": "ion_beam.source.target.sp_requested_voltage", "value": 3.0},
         {"step_id": 2, "type": "WAIT_TIME", "duration_sec": 30}], stop_after=1.5)
     assert not ok and "Stopped by operator" in msg
     pump(app, 0.5)
     assert hmi.master_telemetry_cache.get("ion_beam.source.target.sp_actual_voltage") == pytest.approx(3.0)
+
+
+def test_recipe_prompt_is_answered_in_the_panel(hmi, app):
+    """The prompt is a banner in the panel (not a blocking dialog); the sequencer checks the
+    step's conditions and the panel shows why an acknowledgement was not accepted."""
+    w, view = hmi.recipe_widget, hmi.master_telemetry_cache
+    _start_recipe(hmi, app, "hmi_prompt.json", [
+        {"step_id": 1, "type": "USER_PROMPT", "prompt_text": "Close the gate valve",
+         "verify_conditions": [{"target": "ion_beam.source.chamber.stat_gv_closed", "condition": "==", "value": 1.0}]},
+        {"step_id": 2, "type": "USER_PROMPT", "prompt_text": "All done?"}])
+    wait_for(app, w.prompt_frame.isVisible, 10, "prompt banner")
+    assert "Close the gate valve" in w.lbl_prompt.text()
+    hmi.recipe_dock.raise_()
+    w.btn_ack.click()
+    wait_for(app, lambda: "stat_gv_closed" in w.lbl_prompt_feedback.text(), 5, "refusal shown")
+    shot(hmi, "5_recipe_prompt_refused")
+    w.btn_prompt_stop.click()                     # leave the gate valve open: stop here instead
+    ok, msg = _recipe_result(hmi, app)
+    assert not ok and "Stopped by operator at step 1" in msg
+    wait_for(app, lambda: not w.prompt_frame.isVisible(), 5, "banner gone")
+
+    _start_recipe(hmi, app, "hmi_prompt2.json", [{"step_id": 1, "type": "USER_PROMPT", "prompt_text": "OK?"}])
+    wait_for(app, w.prompt_frame.isVisible, 10, "second prompt")
+    w.btn_ack.click()
+    assert _recipe_result(hmi, app)[0]
+
+
+def test_operator_takes_control_from_a_recipe(hmi, app, stack):
+    """A running recipe holds what it drives: the operator is refused (the Automation bar says by
+    what), takes control with two clicks, and the recipe pauses until resumed."""
+    view = hmi.master_telemetry_cache
+    _start_recipe(hmi, app, "hmi_hold.json", [
+        {"step_id": 1, "type": "ACTION", "target": "ion_beam.beamline.steerer_magnet.sp_requested_current",
+         "value": 2.0},
+        {"step_id": 2, "type": "WAIT_TIME", "duration_sec": 60}])
+    bar = hmi.automation_bar
+    wait_for(app, lambda: "recipe 'hmi_hold'" in bar.groups, 10, "lease shown in the Automation bar")
+    assert bar.groups["recipe 'hmi_hold'"] == ["ion_beam.beamline.steerer_magnet"]
+    r = stack.cmd("steerer_magnet", "ion_beam.beamline.steerer_magnet.sp_requested_current", 3.0)
+    assert r["status"] == C.REJECTED and "recipe 'hmi_hold'" in r["reason"]
+    wait_for(app, lambda: not hmi.optics_widget.sp_x_steer.isEnabled(), 5, "steerer box locked")
+    assert "recipe 'hmi_hold'" in hmi.optics_widget.sp_x_steer.toolTip()
+    shot(hmi, "6_automation_bar_lease")
+    _label, button = bar.rows["recipe 'hmi_hold'"][1:3]
+    button.click()
+    button.click()                                # arm + confirm
+    wait_for(app, lambda: view.get("sequencer.recipe.state") == "paused", 5, "recipe paused")
+    assert "operator took control" in view["sequencer.recipe.status"]
+    wait_for(app, lambda: not bar.groups, 5, "Automation bar cleared")
+    assert stack.cmd("steerer_magnet", "ion_beam.beamline.steerer_magnet.sp_requested_current", 3.0)["status"] == C.OK
+    hmi.recipe_widget.btn_abort.click()
+    assert not _recipe_result(hmi, app)[0]
 
 
 def test_tolerance_colours_the_readback(hmi, app, stack):
@@ -272,6 +345,54 @@ def test_calculate_and_set_amps_puts_the_mass_on_the_cup(hmi, app, stack):
     wait_for(app, lambda: view["ion_beam.source.thermionic.rb_power"] > 210
              and view["ion_beam.source.cesium.rb_temp"] > 52, 60, "source running (thermionic, cesium)")
     wait_for(app, lambda: view["ion_beam.beamline.faraday.smu.rb_current"] > 100e-9, 20, "Si-28 beam on the cup")
+
+
+def test_mass_scan_runs_in_the_sequencer_and_the_panel_follows_it(hmi, app):
+    """After the calculate-and-set test: beam on the cup. A short scan across Si-28 from the
+    Mass Scan panel runs in the sequencer (holding the magnet and the SMU), the panel plots it,
+    the sequencer saves it, and the SMU is put back to NPLC 1."""
+    w, view = hmi.mass_scan_widget, hmi.master_telemetry_cache
+    for box, value in ((w.sp_start, 19.5), (w.sp_stop, 20.2), (w.sp_step, 0.1), (w.sp_settle, 0.05),
+                       (w.sp_samples, 2), (w.sp_interval, 0.02), (w.sp_nplc, 1.0)):
+        box.setValue(value)
+    w.chk_loop.setChecked(False)
+    w.chk_export.setChecked(True)
+    wait_for(app, w.btn_start.isEnabled, 10, "mass scan START available")
+    w.btn_start.click()
+    wait_for(app, lambda: view.get("sequencer.mass_scan.state") == "running", 10, "scan running")
+    wait_for(app, lambda: set(view.get("sequencer.mass_scan.leases") or []) ==
+             {"ion_beam.beamline.magnet", "ion_beam.beamline.faraday.smu"}, 10, "magnet and SMU held")
+    wait_for(app, lambda: not hmi.optics_widget.sp_mag_current.isEnabled(), 5,
+             "the operator's magnet box locked while the scan holds the magnet")
+    hmi.mass_scan_dock.raise_()
+    wait_for(app, lambda: view.get("sequencer.mass_scan.state") == "complete", 90, "scan complete")
+    wait_for(app, lambda: len(w.last_scan_data) == 8, 10, "the whole pass analysed in the panel")
+    shot(hmi, "7_mass_scan_from_the_sequencer")
+    assert len(w.amps_data) == 8 and max(w.y_data) > 50e-9
+    saved = view.get("sequencer.mass_scan.file")
+    assert saved and os.path.exists(saved)
+    wait_for(app, lambda: view.get("ion_beam.beamline.faraday.smu.rb_nplc") == 1.0, 10, "NPLC restored")
+    wait_for(app, lambda: hmi.optics_widget.sp_mag_current.isEnabled(), 10, "magnet back to the operator")
+
+
+def test_optimiser_sweeps_and_restores(hmi, app, stack):
+    w, view = hmi.optimiser_widget, hmi.master_telemetry_cache
+    assert stack.cmd("steerer_magnet", "ion_beam.beamline.steerer_magnet.cmd_enable", True)["status"] == C.OK
+    before = view["ion_beam.beamline.magnet.sp_actual_current"]
+    w.set_axis("X", "ion_beam.beamline.magnet.sp_requested_current")
+    w.set_axis("Y", "ion_beam.beamline.steerer_magnet.sp_requested_current")
+    for box, value in ((w.sp_x_start, 19.6), (w.sp_x_stop, 20.0), (w.sp_x_steps, 2), (w.sp_y_start, 1.0),
+                       (w.sp_y_stop, 2.0), (w.sp_y_steps, 2), (w.sp_dwell, 0.2)):
+        box.setValue(value)
+    try:
+        wait_for(app, w.btn_start.isEnabled, 10, "optimiser START available")
+    except AssertionError:
+        raise AssertionError(f"optimiser START not available: {w.btn_start.toolTip()}")
+    w.btn_start.click()
+    wait_for(app, lambda: view.get("sequencer.optimiser.state") == "complete", 30, "sweep complete")
+    wait_for(app, lambda: w.heatmap_data is not None and not np.isnan(w.heatmap_data).any(), 5, "map filled")
+    wait_for(app, lambda: abs(view["ion_beam.beamline.magnet.sp_actual_current"] - before) < 0.01, 10,
+             "magnet restored")
 
 
 def test_closing_the_gate_valve_trips_the_relay(hmi, app, stack):

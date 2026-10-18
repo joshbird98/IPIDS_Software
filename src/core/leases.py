@@ -22,6 +22,7 @@ import time
 from dataclasses import dataclass
 
 LEASE_SUFFIX = ".cmd_lease"
+TAKEN = "control was taken by the operator"     # refusal for the holder whose lease was taken
 DEFAULT_TTL = 5.0
 MAX_TTL = 60.0
 OPS = ("claim", "renew", "release", "take")
@@ -60,9 +61,14 @@ class LeaseTable:
 
     def refusal(self, subsystem, holder):
         """Why a command from `holder` (None = no lease, e.g. the operator) may not touch
-        `subsystem` now, or None if it may."""
+        `subsystem` now, or None if it may. A holder whose lease the operator took is refused
+        until it claims again, so a sequence can't carry on in the second before it notices."""
         lease = self.active(subsystem)
-        if lease is None or lease.holder == holder:
+        if lease is None:
+            if holder and self._revoked.get(subsystem) == holder:
+                return TAKEN
+            return None
+        if lease.holder == holder:
             return None
         return (f"{subsystem.split('.')[-1]} is controlled by {lease.purpose or lease.holder} - "
                 f"stop it, or take control, first")
@@ -106,7 +112,7 @@ class LeaseTable:
             lease.expires = self._clock() + ttl
             return True, "renewed", None
         if self._revoked.get(subsystem) == holder:
-            return False, "control was taken by the operator", None
+            return False, TAKEN, None
         if lease is not None:
             return False, f"controlled by {lease.purpose or lease.holder}", None
         # Free again (the lease expired, or this service restarted): carry on holding it

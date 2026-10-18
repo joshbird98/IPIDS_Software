@@ -15,6 +15,7 @@ from src.core.theme import (
     COLOR_BUTTON_STANDARD
 )
 from src.core.tolerance import FLAG_PREFIX
+from src.gui.control.permits import permit_reason
 from src.gui.control.arming import ArmedToggle
 
 log = logging.getLogger("hmi.source")
@@ -239,29 +240,12 @@ class IonSourceWidget(QWidget):
             lbl_badge = ctrl["lbl_badge"]
             is_spellman = "einzel" in base_tag
 
-            ctrl_mode = data.get(f"{base_tag}.ctrl_mode")
-            if ctrl_mode is None:
-                ctrl_mode = data.get(f"{base_tag}.rb_ctrl_mode", 0.0)
-            ctrl_mode = int(ctrl_mode)
-
-            is_auto_locked = (ctrl_mode > 0)
-            if name == "Cesium" and ctrl_mode == 1:
-                is_auto_locked = False
-
-            comp_lock_reason = ""
-            if is_spellman and spellman_comms_lost:
-                comp_lock_reason = "Spellman microservice is offline."
-            elif master_comms_lost:
-                comp_lock_reason = "Safety Relay state is unknown (PLC offline)."
-            elif not relay_active:
-                comp_lock_reason = "Safety Relay is De-Energized."
-            elif remote_lost:
-                comp_lock_reason = "Remote I/O communications lost."
-            elif auto_sdown or active_step > 0:
-                comp_lock_reason = "Automated shutdown sequence in progress."
-            elif is_auto_locked:
-                comp_lock_reason = "Locked by automated sequencer or optimizer."
-
+            # The owning service says whether it would take an operator command now (PLC: comms,
+            # relay, remote I/O, shutdown, PLC control mode, interlock; Spellman: relay, bus,
+            # supply; either: a sequence holding it)
+            comp_lock_reason = permit_reason(data, base_tag, "Spellman" if is_spellman else "PLC")
+            ctrl_mode = int(data.get(f"{base_tag}.ctrl_mode") or 0)      # the PLC's own control mode
+            held_by = data.get(f"{base_tag}.lease_purpose")             # a sequence holding it
             comp_lockout = bool(comp_lock_reason)
 
             # A. Readbacks
@@ -415,6 +399,13 @@ class IonSourceWidget(QWidget):
                                   "the thermionic emission setpoint.")
                 lbl_badge.setText("⚙️ AUTO-EMIS")
                 lbl_badge.setStyleSheet("background-color: #2196F3; color: white; border-radius: 3px;")
+                lbl_badge.show()
+            elif held_by:
+                sp_box.setEnabled(False)
+                sp_box.setToolTip(f"Disabled: {comp_lock_reason}")
+                lbl_badge.setText("🤖 SEQUENCE")
+                lbl_badge.setToolTip(f"Held by {held_by} (stop it, or take control in the Automation bar)")
+                lbl_badge.setStyleSheet("background-color: #9C27B0; color: white; border-radius: 3px;")
                 lbl_badge.show()
             elif ctrl_mode == 1:
                 if name == "Cesium":

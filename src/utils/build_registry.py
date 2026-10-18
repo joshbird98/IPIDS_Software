@@ -49,17 +49,6 @@ def get_vacuum_tags(config_dir):
     except FileNotFoundError:
         vacuum_settings = {}
 
-    # --- 1. Global Arbitration Tags ---
-    tags["ion_beam.facilities.vacuum.rb_ctrl_mode"] = {
-        "source": "service_vacuum", "datatype": "INT", "writable": False,
-        "unit": "", "default_scale": "linear", "multiplier": 1.0,
-        "description": "Active Control Mode", "default_label": "Ctrl Mode", "short_name": "Mode"
-    }
-    tags["ion_beam.facilities.vacuum.cmd_ctrl_mode"] = {
-        "source": "service_vacuum", "datatype": "INT", "writable": True,
-        "unit": "", "default_scale": "linear", "multiplier": 1.0,
-        "description": "Request Control Mode (0=HMI, 1=Auto)", "default_label": "Cmd Mode", "short_name": "Cmd Mode"
-    }
 
     # --- 2. Gauge Readbacks ---
     mapping = {
@@ -163,10 +152,6 @@ def get_turbo_tags():
                                    "label": "Turbo Error"},
         f"{base_tag}.stat_comms_fail": {"dt": "BOOL", "unit": "", "short": "Comms Fail",
                                         "desc": "Service communications offline", "label": "Turbo Comms Fail"},
-        f"{base_tag}.cmd_ctrl_mode": {"dt": "INT", "unit": "", "short": "Cmd Ctrl Mode",
-                                        "desc": "Command Control Mode", "label": "Cmd Ctrl Mode"},
-        f"{base_tag}.rb_ctrl_mode": {"dt": "INT", "unit": "", "short": "Rb Ctrl Mode",
-                                        "desc": "Readback Control Mode", "label": "Rb Ctrl Mode"}
     }
 
     for tag_name, info in turbo_base.items():
@@ -236,21 +221,6 @@ def get_spellman_tags(config_dir):
                 "unit": "µA", "default_scale": "linear", "multiplier": 1.0,
                 "description": f"{nice_name} Hardware Current Setpoint Cache",
                 "default_label": f"{nice_name} Current SP (Act)", "short_name": "I_SP Act"
-            }
-
-            # Control Mode Arbitration
-            tags[f"{base_tag}.rb_ctrl_mode"] = {
-                "source": "service_spellman", "datatype": "INT", "writable": False,
-                "unit": "", "default_scale": "linear", "multiplier": 1.0,
-                "description": f"{nice_name} Active Control Mode", "default_label": f"{nice_name} Ctrl Mode",
-                "short_name": "Mode"
-            }
-            tags[f"{base_tag}.cmd_ctrl_mode"] = {
-                "source": "service_spellman", "datatype": "INT", "writable": True,
-                "unit": "", "default_scale": "linear", "multiplier": 1.0,
-                "description": f"{nice_name} Request Control Mode (0=HMI, 1=Auto)",
-                "default_label": f"{nice_name} Cmd Mode",
-                "short_name": "Cmd Mode"
             }
 
             # Setpoints (auto_controllable)
@@ -332,16 +302,6 @@ def get_magnet_tags(config_dir):
         "short_name": "I_SP Act"
     }
 
-    # Control Mode Arbitration
-    tags[f"{base_tag}.rb_ctrl_mode"] = {
-        "source": source, "datatype": "INT", "writable": False, "unit": "", "default_scale": "linear",
-        "multiplier": 1.0, "description": "Active Control Mode", "default_label": "Ctrl Mode", "short_name": "Mode"
-    }
-    tags[f"{base_tag}.cmd_ctrl_mode"] = {
-        "source": source, "datatype": "INT", "writable": True, "unit": "", "default_scale": "linear",
-        "multiplier": 1.0, "description": "Request Control Mode (0=HMI, 1=Auto)", "default_label": "Cmd Mode",
-        "short_name": "Cmd Mode"
-    }
 
     # Setpoints (auto_controllable)
     tags[f"{base_tag}.sp_requested_current"] = {
@@ -415,16 +375,6 @@ def get_steerer_magnet_tags(config_dir):
         "short_name": "I_SP Act"
     }
 
-    # Control Mode Arbitration
-    tags[f"{base_tag}.rb_ctrl_mode"] = {
-        "source": source, "datatype": "INT", "writable": False, "unit": "", "default_scale": "linear",
-        "multiplier": 1.0, "description": "Active Control Mode", "default_label": "Ctrl Mode", "short_name": "Mode"
-    }
-    tags[f"{base_tag}.cmd_ctrl_mode"] = {
-        "source": source, "datatype": "INT", "writable": True, "unit": "", "default_scale": "linear",
-        "multiplier": 1.0, "description": "Request Control Mode (0=HMI, 1=Auto)", "default_label": "Cmd Mode",
-        "short_name": "Cmd Mode"
-    }
 
     # Setpoints (auto_controllable)
     tags[f"{base_tag}.sp_requested_current"] = {
@@ -487,16 +437,6 @@ def get_smu_tags(config_dir):
         "default_label": "Faraday Bias SP (Act)", "short_name": "V_SP Act"
     }
 
-    # Control Mode Arbitration
-    tags[f"{base_tag}.rb_ctrl_mode"] = {
-        "source": source, "datatype": "INT", "writable": False, "unit": "", "default_scale": "linear",
-        "multiplier": 1.0, "description": "Active Control Mode", "default_label": "Ctrl Mode", "short_name": "Mode"
-    }
-    tags[f"{base_tag}.cmd_ctrl_mode"] = {
-        "source": source, "datatype": "INT", "writable": True, "unit": "", "default_scale": "linear",
-        "multiplier": 1.0, "description": "Request Control Mode (0=HMI, 1=Auto)", "default_label": "Cmd Mode",
-        "short_name": "Cmd Mode"
-    }
 
     # Setpoints (auto_controllable)
     tags[f"{base_tag}.sp_requested_voltage"] = {

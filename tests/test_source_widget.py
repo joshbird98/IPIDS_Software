@@ -23,7 +23,9 @@ def panel():
 
 
 LIVE = {"system.connected": True, "ion_beam.facilities.safety_relay_active": 1.0,
-        "manager.services": {"service_spellman_mpd": "ONLINE"}}
+        "manager.services": {"service_spellman_mpd": "ONLINE"},
+        **{f"ion_beam.source.{s}.permit": 1.0 for s in ("einzel", "extraction", "target", "filament", "thermionic",
+                                                         "cesium")}}
 
 
 def test_setpoint_boxes_use_the_registry_limits(panel):
@@ -49,3 +51,21 @@ def test_filament_setpoint_locked_during_auto_emission(panel):
     assert fil["btn_enable"].isEnabled()                       # switching it off stays possible
     panel.update_telemetry(dict(LIVE, **{"ion_beam.source.thermionic.stat_auto_emission": 0.0}))
     assert fil["sp_box"].isEnabled()
+
+
+def test_locks_come_from_the_services_permits(panel):
+    fil = panel.psu_controls["Filament"]
+    panel.update_telemetry(dict(LIVE, **{"ion_beam.source.filament.permit": 0.0,
+                                         "ion_beam.source.filament.permit_reason": "remote I/O to the source deck lost"}))
+    assert not fil["sp_box"].isEnabled() and "remote I/O" in fil["sp_box"].toolTip()
+    held = dict(LIVE, **{"ion_beam.source.target.permit": 0.0,
+                         "ion_beam.source.target.permit_reason": "target is controlled by recipe 'Ramp' - stop it, "
+                                                                 "or take control, first",
+                         "ion_beam.source.target.lease_purpose": "recipe 'Ramp'"})
+    panel.update_telemetry(held)
+    tgt = panel.psu_controls["Target"]
+    assert not tgt["sp_box"].isEnabled() and "SEQUENCE" in tgt["lbl_badge"].text()
+    assert "recipe 'Ramp'" in tgt["lbl_badge"].toolTip()
+    no_data = {k: v for k, v in LIVE.items() if not k.startswith("ion_beam.source.cesium")}
+    panel.update_telemetry(no_data)
+    assert "no live data from the PLC service" in panel.psu_controls["Cesium"]["sp_box"].toolTip()

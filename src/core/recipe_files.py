@@ -14,7 +14,7 @@ import shutil
 
 from src.core import paths
 
-RECIPES_DIR = paths.config_path("recipes")
+RECIPES_DIR = paths.RECIPES_DIR          # config/recipes (SINDIE_RECIPES_DIR in the tests)
 LEGACY_RECIPES_DIR = os.path.join(paths.PROJECT_ROOT, "src", "config", "recipes")
 
 log = logging.getLogger("recipes")

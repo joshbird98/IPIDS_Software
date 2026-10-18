@@ -1,11 +1,15 @@
 """Recipes saved in the old (untracked) src/config/recipes folder are copied into config/recipes
 once, never overwriting anything."""
+import os
+
 from src.core.recipe_files import RECIPES_DIR, migrate_legacy_recipes
 from src.core import paths
 
 
 def test_recipes_live_in_config():
-    assert RECIPES_DIR == paths.config_path("recipes")
+    assert RECIPES_DIR == paths.RECIPES_DIR             # the tests' copy (SINDIE_RECIPES_DIR)
+    assert paths.recipes_dir({}) == paths.config_path("recipes")
+    assert paths.recipes_dir({"SINDIE_RECIPES_DIR": "/x/r"}) == os.path.abspath("/x/r")
 
 
 def test_migration_copies_without_overwriting(tmp_path):

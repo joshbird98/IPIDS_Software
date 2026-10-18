@@ -1,4 +1,3 @@
-import time
 import math
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, QLabel,
@@ -7,6 +6,7 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtCore import Qt, QRectF, QPointF
 from PyQt6.QtGui import QPainter, QPen, QColor, QFont
 
+from src.gui.control.permits import permit_reason
 from src.core.theme import (
     COLOR_OK, COLOR_FAULT, COLOR_INACTIVE, COLOR_WARNING, COLOR_BUTTON_STANDARD
 )
@@ -249,12 +249,9 @@ class FaradaySMUWidget(QWidget):
             data.get("ion_beam.system.pc_plc_comms_lost", False))
         relay_active = bool(data.get("ion_beam.facilities.safety_relay_active", False))
 
-        # --- Arbitration Flags ---
-        smu_ctrl_mode = float(data.get("ion_beam.beamline.faraday.smu.rb_ctrl_mode", 0.0))
-        smu_auto_locked = (smu_ctrl_mode > 0.0)
-
-        fc_ctrl_mode = float(data.get("ion_beam.beamline.diagnostics.rb_ctrl_mode", 0.0))
-        fc_auto_locked = (fc_ctrl_mode > 0.0)
+        # --- Control: what the owning services say (a sequence may hold the SMU or the cup) ---
+        smu_reason = permit_reason(data, "ion_beam.beamline.faraday.smu", "SMU")
+        fc_reason = permit_reason(data, "ion_beam.beamline.diagnostics", "PLC")
 
         # --- 1. Actuator Update ---
         fc_in = data.get("ion_beam.beamline.diagnostics.stat_fc_inserted")
@@ -295,9 +292,9 @@ class FaradaySMUWidget(QWidget):
         elif fc_lock:
             self.btn_fc.setEnabled(False)
             self.btn_fc.setToolTip(f"Disabled: Faraday Cup is locked {fc_state_string} by an active PLC sequence.")
-        elif fc_auto_locked:
+        elif fc_reason:
             self.btn_fc.setEnabled(False)
-            self.btn_fc.setToolTip(f"Disabled: Locked by automated sequencer.")
+            self.btn_fc.setToolTip(f"Disabled: {fc_reason}")
         else:
             self.btn_fc.setEnabled(True)
             self.btn_fc.setToolTip("Click to physically insert or retract the Faraday Cup into the beam path.")
@@ -356,12 +353,12 @@ class FaradaySMUWidget(QWidget):
             self.sp_bias.setToolTip("Disabled: Bias requires Safety Relay to be closed.")
             return
 
-        # SCENARIO C: Online and Safe (Evaluate Arbitration Lockout)
-        if smu_auto_locked:
+        # SCENARIO C: Online and Safe (a sequence such as a mass scan may hold the SMU)
+        if smu_reason:
             self.btn_enable_bias.setEnabled(False)
-            self.btn_enable_bias.setToolTip("Disabled: Locked by automated sequencer.")
+            self.btn_enable_bias.setToolTip(f"Disabled: {smu_reason}")
             self.sp_bias.setEnabled(False)
-            self.sp_bias.setToolTip("Disabled: Locked by automated sequencer.")
+            self.sp_bias.setToolTip(f"Disabled: {smu_reason}")
         else:
             self.btn_enable_bias.setEnabled(True)
             self.btn_enable_bias.setToolTip("Click to enable or disable the SMU bias voltage output.")
