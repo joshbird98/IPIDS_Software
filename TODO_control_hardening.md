@@ -85,8 +85,9 @@ simulator; none of it has been tried on the real hardware yet (see "Lab PC valid
     reason, an extra tick for any number changing by more than x3; refuses if the file changed on disk
     since it was opened; only changed values rewritten; backups with History; atomic writes; registry
     rebuild with roll-back; git commit; CONFIG_CHANGE event. Keys can no longer be renamed (renaming a
-    Spellman supply cut it off from its service, and the PLC then saw it as healthy). Restarts only running
-    services; network_config.json restarts nothing (the manager and HMI read it too - restart by hand).
+    Spellman supply cut it off from its service, and the PLC then saw it as healthy). Services stopped on
+    purpose are left stopped; network_config.json restarts nothing (the manager and HMI read it too -
+    restart by hand).
   - Big files split (data viewer 1958 -> 760 lines + mixins; recipe builder; mass scan widget package); bugs
     found on the way fixed (recipe builder: verify-condition buttons crashed; step numbers could repeat and
     a drag then duplicated one step and lost another). Viewer workspace profiles moved to config/.
@@ -99,8 +100,12 @@ simulator; none of it has been tried on the real hardware yet (see "Lab PC valid
   - `print` replaced by logging in the services, HMI, viewer and core (the viewer now writes
     SystemLogs/viewer.log); command-line tools in src/utils/ still print.
   - Found by the review: if a magnet PSU (analyser magnet or X steerer - same driver) didn't answer the
-    nominal-ratings read on connect, the driver carried on with 1 V / 1 A ratings, so any current request of 1 A or more was sent as full
-    scale. It now refuses to use the PSU until it has its ratings (and checks they are positive numbers).
+    nominal-ratings read on connect, the driver carried on with 1 V / 1 A ratings, so any current request
+    of 1 A or more was sent as full scale. Until it has valid ratings it now accepts only zero / output
+    off (so the steerer can still be forced off - its only interlock; 0 A now also sets 0 V, not the
+    1 V minimum), shows the readbacks as unknown, logs a WARNING event, and re-reads the ratings every
+    5 s (only on reconnect if the PSU didn't answer the read at all). A degauss cut short by missing
+    ratings ends at 0 A.
   - Found on the way: the mouse wheel changed any HMI setpoint box it passed over (and focused it), and
     the box sends its value when focus leaves it - so scrolling a panel could change e.g. the extraction
     voltage by a step and the next click elsewhere sent it. The wheel now does nothing over value boxes
@@ -152,6 +157,9 @@ simulator; none of it has been tried on the real hardware yet (see "Lab PC valid
      relay set point of 0.9 mbar there would let the valve open at rough vacuum; it is only range-checked
      (1e-10..1000 mbar) and needs the x3 tick. Hard caps wanted for some fields (VG1/VG2 relays, each
      Spellman's max_value for its model, magnet max_current)? Give me the numbers.
+   - (seen while reviewing, unchanged) a magnet PSU that keeps its TCP link but stops answering holds its
+     service ~2 s per request (pymodbus: 4 tries x 0.5 s) - the manager's hung timeout for the magnet
+     services is also 2 s, so it restarts them. Harmless but noisy; raise that timeout to ~5 s?
 7. Future: a one-page interlock overview (every permissive and what is holding it), as discussed.
 
 ## Notes

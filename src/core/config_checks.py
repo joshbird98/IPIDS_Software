@@ -398,6 +398,7 @@ def _alarm_fields(c: _Checker, o, w):
 
 def _check_alarms(c: _Checker, d):
     from src.alarms.rules import RULE_KINDS
+    c.num(d, "shelve_max_minutes", ge=1, le=1440, optional=True)     # a shelved alarm doesn't sound
     rules = d.get("rules", [])
     if not isinstance(rules, list):
         c.bad("rules: must be a list")

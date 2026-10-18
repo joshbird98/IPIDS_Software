@@ -118,8 +118,9 @@ and refuses if the file was changed on disk since it was opened. It rewrites onl
 values, keeps the previous version in `config/backups/` (not in git; "History..." puts one back),
 commits the file to git (so the lab PC gets local commits - pull with `git pull --rebase`),
 records a CONFIG_CHANGE event, rebuilds the tag registry where needed (and puts the old file back
-if that fails), and restarts what reads the file - only services that are running; after a change
-to `network_config.json` it restarts nothing and asks for the manager and the HMI to be restarted.
+if that fails), and restarts what reads the file - a service stopped on purpose is left stopped;
+after a change to `network_config.json` it restarts nothing and asks for the manager and the HMI to
+be restarted.
 Names (keys) can't be changed there: the services look supplies, gauges and ports up by name.
 
 - `config/system_tags.json` (the tag registry, not in git) is **generated** from the other config

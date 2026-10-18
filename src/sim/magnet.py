@@ -5,10 +5,13 @@ inductive load (current follows the setpoint with a ~1 s time constant),
 voltage = I x R, and constant-voltage limiting when the voltage setpoint is
 too low for the requested current.
 
-Injected faults (SINDIE_SIM_FAULTS): magnet_disconnect, steerer_disconnect.
+Injected faults (SINDIE_SIM_FAULTS): magnet_disconnect, steerer_disconnect. Setting
+ratings_ok False makes it behave like the real driver when the PSU's nominal ratings are unknown:
+only zero and output off are accepted, and the V/I readbacks are None.
 """
 import threading
 
+from src.drivers.magnet_modbus import RatingsUnknown
 from src.sim import Clock, first_order, injected_faults, noisy
 
 _STATE = {}
@@ -41,6 +44,8 @@ class FakeMagnetModbus:
         self.port = port
         self.name = name
         self.connected = False
+        self.ratings_ok = True          # the real driver's flags: nominal ratings known, and if not
+        self.ratings_retrying = True    # whether they are asked for again without a reconnect
         self.nom_v = nom_v
         self.nom_i = nom_i
         self.nom_p = nom_v * nom_i
@@ -70,8 +75,14 @@ class FakeMagnetModbus:
         if not self.connected:
             raise ConnectionError("not connected")
 
+    def _require_ratings(self, what: str):
+        if not self.ratings_ok:
+            raise RatingsUnknown(f"{what} refused: the PSU's nominal ratings are unknown (simulated)")
+
     def set_voltage(self, v_set: float) -> bool:
         self._check()
+        if v_set:
+            self._require_ratings(f"voltage {v_set:g} V")
         with _LOCK:
             self.psu.update()
             self.psu.v_set = max(0.0, min(self.nom_v, float(v_set)))
@@ -79,6 +90,8 @@ class FakeMagnetModbus:
 
     def set_current(self, i_set: float) -> bool:
         self._check()
+        if i_set:
+            self._require_ratings(f"current {i_set:g} A")
         with _LOCK:
             self.psu.update()
             self.psu.i_set = max(0.0, min(self.nom_i, float(i_set)))
@@ -86,6 +99,8 @@ class FakeMagnetModbus:
 
     def set_output(self, state: bool) -> bool:
         self._check()
+        if state:
+            self._require_ratings("output on")
         with _LOCK:
             self.psu.update()
             self.psu.output = bool(state)
@@ -106,4 +121,6 @@ class FakeMagnetModbus:
             i = max(0.0, noisy(self.psu.i_out, 0.0005, 0.001))
             v = max(0.0, noisy(self.psu.i_out * self.psu.resistance, 0.001, 0.002))
             alarms = {"OVP": False, "OCP": False, "OPP": False, "OT": False, "PF": False}
+            if not self.ratings_ok:
+                return None, None, self.psu.output, alarms
             return v, i, self.psu.output, alarms

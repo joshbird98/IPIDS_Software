@@ -278,37 +278,50 @@ class ConfigEditorDialog(QDialog):
         return config_store.apply_edits(self.original, leaves)
 
     # ------------------------------------------------------------------ applying
-    def _running_services(self):
-        """The services the manager runs and hasn't been told to keep stopped ([] if it isn't reporting)."""
-        states = {}
-        if callable(self.services):
-            try:
-                reported = self.services()
-                states = dict(reported) if isinstance(reported, dict) else {n: "" for n in reported}
-            except (TypeError, ValueError, AttributeError) as e:
-                log.warning("Service list not available: %s", e)
-        return [n for n, state in states.items() if isinstance(n, str) and str(state).upper() != "STOPPED"]
+    def _service_states(self):
+        """{service: state} as the service manager reports it ({} if it isn't reporting)."""
+        if not callable(self.services):
+            return {}
+        try:
+            reported = self.services()
+            states = dict(reported) if isinstance(reported, dict) else {n: "" for n in reported}
+        except (TypeError, ValueError, AttributeError) as e:
+            log.warning("Service list not available: %s", e)
+            return {}
+        return {n: str(state).upper() for n, state in states.items() if isinstance(n, str)}
 
     def _restart(self, filename, target):
-        """Send the restarts; returns what to tell the operator."""
+        """Send the restarts; returns what to tell the operator. A service stopped on purpose is
+        left stopped (the manager's restart would start it again)."""
         if target == WHOLE_SYSTEM:
             return ("Nothing was restarted: every program, the service manager and this HMI included, reads "
                     "this file when it starts. Restart the service manager and the HMI at a safe moment; until "
                     "then everything keeps running with the old settings.")
         if target == HMI:
             return "Restart the operator HMI for the change to take effect."
+        states = self._service_states()
+        hmi = " Restart the operator HMI too (it reads this file at start-up)." if filename in HMI_TOO else ""
+        stopped = []
         if target == ALL_SERVICES:
-            names = self._running_services()
-            if not names:
+            if not states:
                 return ("Nothing was restarted: the service manager isn't reporting which services run. "
                         "Restart them from the services panel (or restart the manager).")
+            names = [n for n, state in states.items() if state != "STOPPED"]
+            stopped = [n for n, state in states.items() if state == "STOPPED"]
+            if not names:
+                return ("Nothing was restarted: every service is stopped. They read the new settings when they "
+                        "are started again from the services panel." + hmi)
+        elif states.get(target) == "STOPPED":
+            return (f"{target} was not restarted: it is stopped (on purpose?). It reads the new settings when "
+                    "it is started again from the services panel." + hmi)
         else:
             names = [target]
         for svc in names:
             self.cmd_thread.send_command("manager", "manager_cmd", {"command": "restart", "service": svc})
         told = f"Restart requested for {', '.join(names)}."
-        return told + (" Restart the operator HMI too (it reads this file at start-up)." if filename in HMI_TOO
-                       else "")
+        if stopped:
+            told += f" Left stopped: {', '.join(stopped)} (they read the new settings when started)."
+        return told + hmi
 
     def _record(self, filename, changes, reason, result, what="changed"):
         log.warning("Config %s %s: %s (reason: %s; backup %s; git %s)", filename, what, "; ".join(changes),

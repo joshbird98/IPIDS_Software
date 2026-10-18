@@ -217,6 +217,18 @@ def test_all_services_means_the_running_ones(env):
     widget_at(dlg, udt, "bits", bit, "description").setText("reworded")
     dlg._save_and_restart()
     assert restarted(env) == ["service_plc", "service_smu"]          # not the one stopped on purpose
+    assert "Left stopped: service_monitor" in env.boxes[-1][1]
+    assert "Restart the operator HMI too" in env.boxes[-1][1]
+
+
+def test_all_services_with_every_service_stopped(env):
+    env.state["services"] = {"service_plc": "STOPPED", "service_smu": "STOPPED"}
+    dlg = open_file(env.make(), "fault_config.json")
+    udt = next(iter(dlg.original))
+    bit = next(iter(dlg.original[udt]["bits"]))
+    widget_at(dlg, udt, "bits", bit, "description").setText("reworded")
+    dlg._save_and_restart()
+    assert env.cmds.sent == [] and "every service is stopped" in env.boxes[-1][1]
     assert "Restart the operator HMI too" in env.boxes[-1][1]
 
 
@@ -288,3 +300,12 @@ def test_history_rescues_an_unreadable_file(env, monkeypatch):
     assert dlg.original is not None and dlg.btn_save.isEnabled()
     broken = [p for p in cs.backups("smu_config.json", str(env.cfg)) if open(p).read() == "{broken"]
     assert broken                                                      # the broken file was kept too
+
+
+def test_a_service_stopped_on_purpose_stays_stopped(env):
+    env.state["services"]["service_magnet_psu"] = "STOPPED"            # stopped for work on the PSU
+    dlg = open_file(env.make(), "magnet_config.json")
+    widget_at(dlg, "max_current").setText("90")
+    dlg._save_and_restart()
+    assert cs.read("magnet_config.json", str(env.cfg))["max_current"] == 90.0
+    assert env.cmds.sent == [] and "was not restarted: it is stopped" in env.boxes[-1][1]

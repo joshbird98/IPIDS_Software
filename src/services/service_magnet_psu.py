@@ -11,7 +11,7 @@ import time
 from dataclasses import dataclass, field
 
 from src.core.device_service import DeviceService
-from src.drivers.magnet_modbus import IO_ERRORS
+from src.drivers.magnet_modbus import IO_ERRORS, RatingsUnknown
 from src.core.log_setup import Throttle, setup_logging
 from src.core.os_helper import harden_windows_process
 from src.core.paths import simulation_enabled
@@ -102,6 +102,7 @@ class MagnetPsuService(DeviceService):
         self.degauss_step_idx = 0
         self.degauss_last_step_ts = 0.0
         self._last_force_safe = 0.0
+        self._ratings_seen = None       # the ratings state last reported in an event (_report_ratings)
 
     # ------------------------------------------------------------------ connection
     def connect_device(self) -> bool:
@@ -158,10 +159,13 @@ class MagnetPsuService(DeviceService):
 
     # ------------------------------------------------------------------ setpoints
     def apply_smart_setpoint(self, target_current: float):
-        """Voltage limit from the current (I x R x overhead, at least 1 V, at most max_voltage),
-        raised before the current when going up and lowered after it when going down."""
-        target_voltage = max(1.0, target_current * self.limits["nominal_resistance"] * self.kind.voltage_overhead)
-        target_voltage = min(target_voltage, self.limits["max_voltage"])
+        """Voltage limit from the current (I x R x overhead, at least 1 V, at most max_voltage; 0 V
+        for 0 A), raised before the current when going up and lowered after it when going down."""
+        if target_current == 0:
+            target_voltage = 0.0        # as force_safe_outputs; zero is also all the PSU takes without its ratings
+        else:
+            target_voltage = max(1.0, target_current * self.limits["nominal_resistance"] * self.kind.voltage_overhead)
+            target_voltage = min(target_voltage, self.limits["max_voltage"])
         if target_current >= self.sp_cache.get(f"{self.base}.sp_actual_current", 0.0):
             self.hw.set_voltage(target_voltage)
             self.hw.set_current(target_current)
@@ -186,6 +190,15 @@ class MagnetPsuService(DeviceService):
         self.log.info("Degauss step %d/%d: %.1f A", self.degauss_step_idx + 1, len(steps), amps)
         try:
             self.apply_smart_setpoint(amps)
+        except RatingsUnknown as e:   # reconnected without the PSU's ratings: end at 0 A, as the full sequence does
+            self.degauss_active = False
+            try:
+                self.apply_smart_setpoint(0.0)
+                left = "current set to 0 A"
+            except IO_ERRORS as e2:
+                left = f"0 A could not be set either: {e2}"
+            self.events.log_general(f"Degauss aborted - {e}; {left}", severity="ERROR")
+            return
         except Exception as e:   # whatever stopped it, the sequence ends here and is reported
             if not isinstance(e, IO_ERRORS):
                 self.log.exception("Unexpected error during degauss")
@@ -208,6 +221,10 @@ class MagnetPsuService(DeviceService):
                 cmd.ok("already off: safety interlock holds the output off")
             else:
                 cmd.reject("safety relay de-energised (or no PLC telemetry) - output held off")
+            return
+        if not self.hw.ratings_ok and value and leaf in ("sp_requested_current", "cmd_enable", "cmd_degauss"):
+            cmd.reject(f"{self.kind.label} PSU didn't report its nominal ratings - only 0 A / output off are "
+                       "accepted until it does (setpoints would be scaled wrongly)")
             return
         try:
             if leaf == "sp_requested_voltage":
@@ -234,6 +251,8 @@ class MagnetPsuService(DeviceService):
                     cmd.ok("nothing to do")
             else:
                 cmd.reject(f"unsupported command '{leaf}'")
+        except RatingsUnknown as e:     # the driver refused it (no ratings): nothing wrong with the link
+            cmd.reject(str(e))
         except IO_ERRORS as e:   # PSU write failed part-way (anything else: DeviceService answers 'internal error')
             cmd.fail(f"PSU write failed: {e}")
             self.log.warning("Command %s failed: %s", cmd, e)
@@ -255,10 +274,11 @@ class MagnetPsuService(DeviceService):
         if telemetry is None:
             self.publish_unknown()
             return
-        v_rb, i_rb, output_on, alarms = telemetry
+        v_rb, i_rb, output_on, alarms = telemetry      # v/i None: the PSU's ratings aren't known yet
+        self._report_ratings()
         self.state[f"{b}.stat_comms_fail"] = 0.0
-        self.state[f"{b}.rb_voltage"] = round(v_rb, 3)
-        self.state[f"{b}.rb_current"] = round(i_rb, 3)
+        self.state[f"{b}.rb_voltage"] = None if v_rb is None else round(v_rb, 3)
+        self.state[f"{b}.rb_current"] = None if i_rb is None else round(i_rb, 3)
         self.state[f"{b}.stat_enabled"] = 1.0 if output_on else 0.0
         self.state[f"{b}.stat_degaussing"] = 1.0 if self.degauss_active else 0.0
         for key in ("sp_actual_voltage", "sp_actual_current"):
@@ -279,6 +299,10 @@ class MagnetPsuService(DeviceService):
             except IO_ERRORS as e:   # best effort; the alarm stays visible in the flags above
                 self.log.warning("Alarm clear failed: %s", e)
 
+        if v_rb is None or i_rb is None:        # nothing to judge the coil by
+            for key in ("rb_resistance", "stat_short_circuit", "stat_open_circuit", "stat_unexpected_res"):
+                self.state[f"{b}.{key}"] = None
+            return
         short = opened = unexpected = False
         settled = time.time() - self.last_setpoint_ts > SETTLE_S
         if output_on and i_rb > self.limits["min_current_for_calc"] and settled:
@@ -295,6 +319,28 @@ class MagnetPsuService(DeviceService):
         self.state[f"{b}.stat_short_circuit"] = 1.0 if short else 0.0
         self.state[f"{b}.stat_open_circuit"] = 1.0 if opened else 0.0
         self.state[f"{b}.stat_unexpected_res"] = 1.0 if unexpected else 0.0
+
+    def _report_ratings(self):
+        """An event when the PSU's nominal ratings go missing, and when they arrive again: without
+        them the driver takes only 0 A / output off (the commands say why, but this says it once)."""
+        if self.hw.ratings_ok:
+            state = "ok"
+        else:
+            state = "retrying" if self.hw.ratings_retrying else "waiting"
+        if state == self._ratings_seen:
+            return
+        before, self._ratings_seen = self._ratings_seen, state
+        if state == "ok":
+            if before is not None:
+                self.events.log_general(f"{self.kind.label} PSU nominal ratings read ({self.hw.nom_v:g} V, "
+                                        f"{self.hw.nom_i:g} A): setpoints accepted again")
+            return
+        again = ("they are asked for again every few seconds" if state == "retrying" else
+                 "it didn't answer when asked, so they are only asked for again when the service reconnects - "
+                 "restart the service to ask now")
+        self.events.log_general(f"{self.kind.label} PSU didn't report its nominal ratings: until it does, only "
+                                f"0 A and output off are accepted and its V/I readbacks are unknown ({again})",
+                                severity="WARNING")
 
     def run(self):
         self.events.log_general(f"[{self.kind.label} Service] starting"

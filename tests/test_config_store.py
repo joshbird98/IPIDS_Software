@@ -106,12 +106,16 @@ def test_physical_and_sanity_bounds(name, change, words):
 
 
 def test_large_changes_need_a_second_look():
-    old = {"max_current": 95.0, "steps": [50.0, 0.0], "min": 0, "bias": -10.0, "same": 1.0}
-    new = {"max_current": 950.0, "steps": [52.0, 5.0], "min": 0, "bias": 10.0, "same": 1.0}
-    assert cs.large_changes(old, new) == ["max_current: 95 -> 950 (x10)", "steps[1]: 0 -> 5",
-                                          "bias: -10 -> 10 (sign change)"]
+    old = {"max_current": 95.0, "steps": [50.0, 0.0], "min": 0, "bias": -10.0, "same": 1.0, "priority": 1,
+           "relay": 5e-6}
+    new = {"max_current": 950.0, "steps": [52.0, 5.0], "min": 2, "bias": 10.0, "same": 1.0, "priority": 4,
+           "relay": 5e-5}
+    assert cs.large_changes(old, new) == ["max_current: 95 -> 950 (x10)", "bias: -10 -> 10 (sign change)",
+                                          "relay: 5e-06 -> 5e-05 (x10)"]
+    # not flagged: to/from zero (no ratio), small whole numbers (priorities, counts)
     assert cs.large_changes({"a": 9.0}, {"a": 2.0}) == ["a: 9 -> 2 (/4.5)"]
     assert cs.large_changes({"a": 9.0}, {"a": 4.0}) == []
+    assert cs.large_changes({"n": 20}, {"n": 200}) == ["n: 20 -> 200 (x10)"]
 
 
 def test_diff_lists_changed_values():
@@ -256,6 +260,41 @@ def test_restore_puts_the_backup_back_byte_for_byte(cfg):
     result = cs.save(name, dict(data, max_v=150), data, config_dir=str(cfg), commit=False)
     assert cs.restore(name, result.backup, config_dir=str(cfg), commit=False).saved
     assert (cfg / name).read_bytes() == before
+
+
+def test_restore_is_byte_for_byte_across_encodings(cfg):
+    """A cp1252 backup put back over a UTF-8 file (or the other way round) comes back exactly."""
+    ansi = '{\n  "note": "50 \u00b5A",\n  "max_v": 200\n}\n'.encode("cp1252")
+    (cfg / "x.json").write_bytes(ansi)
+    data = cs.read("x.json", str(cfg))
+    r = cs.save("x.json", dict(data, max_v=150), data, config_dir=str(cfg), commit=False)
+    (cfg / "x.json").write_bytes('{"note": "\u03a9", "max_v": 150}'.encode("utf-8"))   # now UTF-8, with an Omega
+    assert cs.restore("x.json", r.backup, config_dir=str(cfg), commit=False).saved
+    assert (cfg / "x.json").read_bytes() == ansi
+
+
+def test_byte_order_mark_and_crlf(cfg):
+    (cfg / "x.json").write_bytes(b'\xef\xbb\xbf{\r\n  "a": 1,\r\n  "b": 2\r\n}\r\n')
+    data = cs.read("x.json", str(cfg))                                  # the BOM used to make it unreadable
+    assert cs.save("x.json", dict(data, a=5), data, config_dir=str(cfg), commit=False).saved
+    assert (cfg / "x.json").read_bytes() == b'{\r\n  "a": 5,\r\n  "b": 2\r\n}\r\n'   # no BOM, CRLF kept
+    full = cs._full_text({"a": 1, "b": [2]}, '{\r\n    "a": 0\r\n}\r\n')       # a whole rewrite keeps CRLF too
+    assert full.count("\r\n") == full.count("\n") and '\r\n    "a": 1' in full
+
+
+def test_a_type_only_change_on_disk_counts_as_a_change(cfg):
+    data = cs.read("smu_config.json", str(cfg))
+    (cfg / "smu_config.json").write_text(json.dumps(dict(data, max_v=200.0)))      # 200 -> 200.0
+    result = cs.save("smu_config.json", dict(data, min_v=-150), data, expected=data, config_dir=str(cfg),
+                     commit=False)
+    assert not result.saved and "changed on disk" in result.problems[0]
+    assert cs.same_json({"a": 1, "b": [True]}, {"b": [True], "a": 1})            # key order doesn't matter
+    assert not cs.same_json({"a": 1}, {"a": 1.0}) and not cs.same_json([1], [True])
+
+
+def test_alarm_shelving_is_bounded():
+    _, new = edited("alarm_config.json", lambda d: d.update(shelve_max_minutes=1e6))
+    assert any("shelve_max_minutes: must be at most 1440" in p for p in cs.check("alarm_config.json", new))
 
 
 # --------------------------------------------------------------------------- git

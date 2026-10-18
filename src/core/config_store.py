@@ -77,9 +77,12 @@ def config_files(config_dir: str = None) -> list:
 
 
 def read_text(path: str) -> tuple:
-    """(text, encoding): UTF-8, else the Windows code page (raises OSError)."""
+    """(text, encoding): UTF-8 (a byte-order mark is dropped - the services' JSON readers choke on
+    it), else the Windows code page (raises OSError)."""
     with open(path, "rb") as f:
         raw = f.read()
+    if raw.startswith(b"\xef\xbb\xbf"):
+        raw = raw[3:]
     for encoding in ("utf-8", FALLBACK_ENCODING, "latin-1"):     # latin-1 decodes any bytes
         try:
             return raw.decode(encoding), encoding
@@ -110,22 +113,35 @@ def load(name: str, config_dir: str = None):
     return data, check(name, data)
 
 
-def _write_atomic(path: str, text: str, encoding: str = "utf-8"):
+def _write_atomic(path: str, raw: bytes):
     tmp = path + ".tmp"
-    with open(tmp, "w", encoding=encoding, newline="") as f:
-        f.write(text)
+    with open(tmp, "wb") as f:
+        f.write(raw)
         f.flush()
         os.fsync(f.fileno())
     os.replace(tmp, path)
 
 
 def _full_text(data, old_text: str) -> str:
-    """The whole file, indented like the old one. ASCII only (other characters as \\u escapes):
-    the services on the Windows lab PC open these files in the default code page."""
+    """The whole file, indented like the old one and with its line endings. ASCII only (other
+    characters as \\u escapes): the services on the Windows lab PC open these files in the
+    default code page."""
     lines = old_text.splitlines()
     second = lines[1] if len(lines) > 1 else ""
     indent = len(second) - len(second.lstrip(" "))
-    return json.dumps(data, indent=indent if indent in (2, 4) else 2, ensure_ascii=True) + "\n"
+    text = json.dumps(data, indent=indent if indent in (2, 4) else 2, ensure_ascii=True) + "\n"
+    return text.replace("\n", "\r\n") if "\r\n" in old_text else text
+
+
+def same_json(a, b) -> bool:
+    """Equal with the same JSON types (1 and 1.0, or 1 and true, are different here)."""
+    if type(a) is not type(b):
+        return False
+    if isinstance(a, dict):
+        return a.keys() == b.keys() and all(same_json(a[k], b[k]) for k in a)
+    if isinstance(a, list):
+        return len(a) == len(b) and all(same_json(x, y) for x, y in zip(a, b))
+    return a == b
 
 
 # ---------------------------------------------------------------- minimal-diff writing
@@ -303,12 +319,12 @@ def git_commit(path: str, message: str, run=subprocess.run) -> tuple:
 # ============================================================================ save
 def save(name: str, data, original=None, reason: str = "", config_dir: str = None,
          after_write: Callable[[], Optional[str]] = None, commit: bool = True, run=subprocess.run,
-         clock=time.time, expected=None, text: str = None) -> SaveResult:
+         clock=time.time, expected=None, raw: bytes = None) -> SaveResult:
     """Check, back up, write, run after_write (returns an error text or None), commit. See module doc.
 
     original: the structure `data` must keep (None: only the file's own rules are checked).
     expected: what the file on disk must still contain (None: not checked).
-    text: write exactly this (it must parse to `data`) - used to put a backup back as it was."""
+    raw: write exactly these bytes (they must hold `data`) - used to put a backup back as it was."""
     config_dir = config_dir or paths.CONFIG_DIR
     path = os.path.join(config_dir, name)
     result = SaveResult(path=path)
@@ -325,24 +341,23 @@ def save(name: str, data, original=None, reason: str = "", config_dir: str = Non
             on_disk = json.loads(old_text)
         except ValueError:
             on_disk = None
-        if on_disk != expected:
+        if not same_json(on_disk, expected):
             result.problems = [f"{name} was changed on disk since it was opened here (edited by hand, or a git "
                                "pull) - open it again and make the change again, so that change isn't undone"]
             return result
-    if text is not None:
-        try:
-            if json.loads(text) != data:
-                raise ValueError("the text doesn't match the data")
-        except ValueError as e:
-            result.error = f"not written: {e}"
-            return result
-        new_text = text
-    else:
-        new_text = (patched_text(old_text, data) if old_text else None) or _full_text(data, old_text)
+    try:
+        if raw is not None:
+            new_raw = raw
+        else:
+            new_text = (patched_text(old_text, data) if old_text else None) or _full_text(data, old_text)
+            new_raw = new_text.encode(encoding)
+    except UnicodeEncodeError as e:
+        result.error = f"could not write {name}: {e}"
+        return result
     try:
         result.backup = make_backup(name, config_dir, clock)
-        _write_atomic(path, new_text, encoding)
-    except (OSError, UnicodeEncodeError) as e:
+        _write_atomic(path, new_raw)
+    except OSError as e:
         result.error = f"could not write {name}: {e}"
         return result
     if after_write is not None:
@@ -371,15 +386,17 @@ def save(name: str, data, original=None, reason: str = "", config_dir: str = Non
 
 
 def restore(name: str, backup_path: str, **kw) -> SaveResult:
-    """Make a backup the current file again, exactly as it was (checked, and the current file
-    backed up, like any save)."""
+    """Make a backup the current file again, byte for byte (checked, and the current file backed
+    up, like any save)."""
     try:
+        with open(backup_path, "rb") as f:
+            raw = f.read()
         text, _ = read_text(backup_path)
         data = json.loads(text)
     except (OSError, ValueError) as e:
         return SaveResult(error=f"could not read {backup_path}: {e}")
     kw.setdefault("reason", f"put back the version from before {backup_time(backup_path)}")
-    return save(name, data, text=text, **kw)
+    return save(name, data, raw=raw, **kw)
 
 
 def rebuild_registry(timeout_s: float = 120.0, run=subprocess.run) -> Optional[str]:
@@ -422,8 +439,9 @@ def _number(v) -> bool:
 
 
 def large_changes(old, new, where: str = "", factor: float = LARGE_CHANGE_FACTOR) -> list:
-    """Numbers that change by more than `factor` (or change sign, or leave/reach zero): the
-    slips a range check can't catch, like 95.0 typed as 950. E.g. ['max_current: 95 -> 950 (x10)']."""
+    """Numbers that change by more than `factor`, or change sign: the slips a range check can't
+    catch, like 95.0 typed as 950. E.g. ['max_current: 95 -> 950 (x10)']. Not flagged: changes to
+    or from zero (no ratio to judge) and small whole numbers (counts, priorities, ranks 0..10)."""
     out = []
     if isinstance(old, dict) and isinstance(new, dict):
         for k in old:
@@ -432,10 +450,12 @@ def large_changes(old, new, where: str = "", factor: float = LARGE_CHANGE_FACTOR
     elif isinstance(old, list) and isinstance(new, list):
         for i, (a, b) in enumerate(zip(old, new)):
             out += large_changes(a, b, f"{where}[{i}]", factor)
-    elif _number(old) and _number(new) and old != new:
+    elif _number(old) and _number(new) and old != new and old != 0 and new != 0:
+        if all(isinstance(v, int) and abs(v) <= 10 for v in (old, new)):
+            return out
         label = f"{where}: {old:g} -> {new:g}"
-        if old == 0 or new == 0 or (old > 0) != (new > 0):
-            out.append(label + (" (sign change)" if old and new else ""))
+        if (old > 0) != (new > 0):
+            out.append(label + " (sign change)")
         else:
             ratio = abs(new / old)
             if ratio > factor or ratio < 1 / factor:
