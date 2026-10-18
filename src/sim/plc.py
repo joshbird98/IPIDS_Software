@@ -2,17 +2,32 @@
 (layout taken from config/system_tags.json) plus a small model of the PLC
 program, so the PLC service's own read/parse/write code runs unchanged.
 
-Modelled behaviour
+Modelled behaviour (from Josh's description of the machine, Oct 2026)
   * cycle counter, PC->PLC watchdog (relay drops + PC_Watchdog_Timeout fault if
     the PC stops writing ion_beam.system.plc_watchdog for 3 s)
-  * safety relay follows cmd_enable_safety (0.5 s "panel start" delay)
-  * extraction / target / filament / thermionic supplies, steering, cesium
-    oven, gate valve (only opens with the vacuum permissive), Faraday cup
+  * safety relay: cmd_enable_safety requests it, the panel-start button is assumed pressed
+    0.5 s later. It needs the gate valve open (and PC comms, no shutdown). Once in, it holds
+    until the operator drops it or a permissive goes - closing the gate valve trips it. A
+    trip is latched like the real contactor loop: the PLC clears the request (and the
+    supplies' enables and the cesium heater, so nothing comes back on by itself) and sets
+    Safety_Relay_Tripped until fault reset; the relay has to be enabled again.
+  * thermionic: when enabled its voltage goes to 2500 V; the emission current is set by the
+    filament temperature (~3 mA at 25 A filament, ~150 mA at 29 A, exponential in between,
+    Richardson-Dushman style). Auto-emission: the PLC drives the filament current to hold the
+    thermionic current setpoint (the filament setpoint is ignored meanwhile; on leaving auto
+    the filament setpoint takes over the last auto value, bumplessly).
+  * cesium oven: heater on -> towards its setpoint; forced cooling -> towards 20 degC;
+    otherwise slowly back to ambient.
+  * extraction / target: 50 MOhm bleed resistors (current proportional to voltage) plus,
+    SNICS-style, a target (sputter) current once thermionic > 200 W, target > 4 kV and
+    cesium > 50 degC: ~0.1 mA there, ~1 mA at 250 W / 8 kV / 100 degC. The extracted beam is
+    ~10 % of it and shows in the extraction current (the simulated Faraday cup scales with it).
+  * steering, gate valve (only opens with the vacuum permissive), Faraday cup
   * comms-fail flags and the source einzel's status/arc flags written by the PC are
-    mirrored into the fault words (the real PLC program's reaction to a fault - e.g.
-    dropping the relay - is not modelled)
+    mirrored into the fault words
 """
 import json
+import math
 import threading
 
 from snap7.util import get_bool, get_dword, get_int, get_real, set_bool, set_dint, set_dword, set_int, set_real
@@ -23,13 +38,34 @@ from src.sim import Clock, first_order, injected_faults, noisy
 _SIZES = {"BOOL": 1, "BYTE": 1, "INT": 2, "UINT": 2, "WORD": 2, "DINT": 4, "UDINT": 4, "DWORD": 4, "REAL": 4,
           "TIME": 4}
 
-# supply base tag -> (primary quantity, secondary quantity, time constant s, secondary per primary)
-_SUPPLIES = {
-    "ion_beam.source.extraction": ("voltage", "current", 0.4, 0.04),    # kV -> mA leakage + beam
-    "ion_beam.source.target": ("voltage", "current", 0.4, 0.02),
-    "ion_beam.source.filament": ("current", "voltage", 0.8, 0.35),      # A -> V across ~0.35 ohm
-    "ion_beam.source.thermionic": ("current", "voltage", 0.3, 0.6),     # mA -> V
-}
+SRC = "ion_beam.source"
+HV_SUPPLIES = (f"{SRC}.extraction", f"{SRC}.target", f"{SRC}.filament", f"{SRC}.thermionic")
+BLEED_MA_PER_KV = 1.0 / 50.0       # 50 MOhm bleed resistor: kV / MOhm = mA
+THERMIONIC_V = 2500.0
+FILAMENT_OHMS = 0.35
+FILAMENT_SLEW_A_S = 1.0            # the filament supply ramps rather than jumps
+FILAMENT_HEAT_TAU = 2.0            # the filament's temperature lags its current
+FILAMENT_AUTO_MAX_A = 31.0
+EMISSION_MAX_MA = 200.0            # the thermionic supply's own current limit
+CS_AMBIENT, CS_FORCED = 22.0, 20.0
+
+
+def emission_ma(filament_a: float) -> float:
+    """Thermionic emission for a filament current: 3 mA at 25 A, 150 mA at 29 A."""
+    if filament_a < 18.0:
+        return 0.0
+    return 3.0 * 50.0 ** ((filament_a - 25.0) / 4.0)
+
+
+def target_beam_ma(thermionic_w: float, target_kv: float, cesium_c: float) -> float:
+    """Sputter (target) current: none until 200 W / 4 kV / 50 degC, 0.1 mA there, 1 mA at
+    250 W / 8 kV / 100 degC (geometric in between, a little beyond)."""
+    if thermionic_w <= 200.0 or target_kv <= 4.0 or cesium_c <= 50.0:
+        return 0.0
+    a = min((thermionic_w - 200.0) / 50.0, 1.5)
+    b = min((target_kv - 4.0) / 4.0, 1.5)
+    c = min((cesium_c - 50.0) / 50.0, 1.5)
+    return 0.1 * 10.0 ** ((a + b + c) / 3.0)
 
 
 class SimulatedPLC:
@@ -51,6 +87,12 @@ class SimulatedPLC:
         self._wd_last_value = None
         self._wd_last_change = None
         self._relay_request_t = None
+        self._relay_tripped = False      # latched until fault reset
+        self._relay_refused = False
+        self._fil_heat = 0.0             # filament temperature, as the current it corresponds to
+        self._auto_fil = None            # filament current the auto-emission loop is driving
+        self._sputter = 0.0              # target (sputter) current, mA
+        self._kv = {}                    # extraction / target output without readback noise
         self._gv_cmd_t = None
         self._last_fault_flags = {}
         with open(paths.config_path("fault_config.json"), "r") as f:
@@ -119,26 +161,16 @@ class SimulatedPLC:
             comms_lost = self._wd_last_change is not None and now - self._wd_last_change > 3.0
             self.set("ion_beam.system.pc_plc_comms_lost", comms_lost)
 
-            # Safety relay (the physical panel-start button is assumed pressed 0.5 s later)
-            want = bool(self.get("ion_beam.system.cmd_enable_safety"))
-            shutdown = bool(self.get("ion_beam.system.cmd_source_shutdown"))
-            relay = bool(self.get("ion_beam.facilities.safety_relay_active"))
-            if want and not relay and self._relay_request_t is None:
-                self._relay_request_t = now
-            if not want:
-                self._relay_request_t = None
-            if want and self._relay_request_t is not None and now - self._relay_request_t > 0.5:
-                relay = True
-            if not want or comms_lost or shutdown or "plc_relay_trip" in injected_faults():
-                relay = False
-            self.set("ion_beam.facilities.safety_relay_active", relay)
+            if self.get("ion_beam.system.cmd_fault_reset"):
+                self._relay_tripped = self._relay_refused = False
+                self.set("ion_beam.system.cmd_fault_reset", 0)      # a pulse: the PLC clears it
+
+            self._gate_valve(now)
+            relay = self._safety_relay(now, comms_lost)
             self.set("ion_beam.system.machine_state", 2 if relay else 1)
 
-            for base, (pri, sec, tau, k) in _SUPPLIES.items():
-                self._supply(base, pri, sec, tau, k, relay, dt)
-            self._cesium(relay, dt)
+            self._source(relay, dt)
             self._steering(relay)
-            self._gate_valve(now)
             fc = bool(self.get("ion_beam.beamline.diagnostics.cmd_insert_fc"))
             self.set("ion_beam.beamline.diagnostics.stat_fc_inserted", fc)
             self.set("ion_beam.beamline.diagnostics.stat_fc_retracted", not fc)
@@ -146,48 +178,154 @@ class SimulatedPLC:
                 self.set(f"{base}.ctrl_mode", self.get(f"{base}.cmd_ctrl_mode", 0.0))
             self.set("ion_beam.source.chamber.rb_body_temp",
                      noisy(24.0 + 0.002 * self.get("ion_beam.source.filament.rb_current", 0.0) ** 2, 0.001))
-            self._fault_words(comms_lost, relay, want)
+            self._fault_words(comms_lost)
 
-    def _supply(self, base, pri, sec, tau, k, relay, dt):
+    def _safety_relay(self, now, comms_lost):
+        """Pulls in on request + panel start (assumed 0.5 s later) with the gate valve open,
+        then holds itself until dropped or a permissive goes (a latched trip)."""
+        want = bool(self.get("ion_beam.system.cmd_enable_safety"))
+        relay = bool(self.get("ion_beam.facilities.safety_relay_active"))
+        permissive = (bool(self.get("ion_beam.source.chamber.stat_gv_open")) and not comms_lost
+                      and not self.get("ion_beam.system.cmd_source_shutdown")
+                      and "plc_relay_trip" not in injected_faults())
+        if relay:
+            if not want:
+                relay = False                                   # the operator dropped it
+            elif not permissive:
+                relay = False
+                self._relay_tripped = True
+                self.set("ion_beam.system.cmd_enable_safety", 0)
+            if not relay:
+                self._drop_outputs()
+        elif want:
+            if not permissive:
+                self._relay_refused = True                      # e.g. gate valve not open
+                self._relay_request_t = None
+                self.set("ion_beam.system.cmd_enable_safety", 0)
+            else:
+                if self._relay_request_t is None:
+                    self._relay_request_t = now
+                if now - self._relay_request_t > 0.5:
+                    relay = True
+                    self._relay_request_t = None
+        else:
+            self._relay_request_t = None
+        waiting = self._relay_request_t is not None
+        self.set("ion_beam.system.safety_timer_total_ms", 5000)
+        self.set("ion_beam.system.safety_timer_elapsed_ms",
+                 int((now - self._relay_request_t) * 1000) if waiting else 0)
+        self.set("ion_beam.facilities.safety_relay_active", relay)
+        return relay
+
+    def _drop_outputs(self):
+        """Relay gone: the PLC clears the enables, so nothing comes back on with the relay."""
+        for base in HV_SUPPLIES + ("ion_beam.beamline.steering",):
+            self.set(f"{base}.cmd_enable", 0)
+        self.set(f"{SRC}.thermionic.cmd_auto_emission", 0)
+        self.set(f"{SRC}.cesium.cmd_ctrl_mode", 0)
+
+    # ------------------------------------------------------------------ ion source
+    def _setpoint(self, base, quantity):
+        sp = self.get(f"{base}.sp_requested_{quantity}", 0.0)
+        lim = self.tags.get(f"{base}.sp_requested_{quantity}", {})
+        if lim.get("max_val") is not None:
+            sp = min(sp, lim["max_val"])
+        return max(0.0, sp)
+
+    def _enabled(self, base, relay):
         enabled = bool(self.get(f"{base}.cmd_enable")) and relay
         self.set(f"{base}.stat_enabled", enabled)
         self.set(f"{base}.ctrl_mode", self.get(f"{base}.cmd_ctrl_mode", 0.0))
-        sp = self.get(f"{base}.sp_requested_{pri}", 0.0)
-        lim = self.tags.get(f"{base}.sp_requested_{pri}", {})
-        if lim.get("max_val") is not None:
-            sp = min(sp, lim["max_val"])
-        self.set(f"{base}.sp_actual_{pri}", sp)
-        rb = self.get(f"{base}.rb_{pri}", 0.0)
-        rb = first_order(rb, sp if enabled else 0.0, dt, tau)
-        rb_noisy = max(0.0, noisy(rb, 0.001))
-        self.set(f"{base}.rb_{pri}", rb_noisy)
-        sec_val = max(0.0, noisy(rb * k, 0.01))
-        self.set(f"{base}.rb_{sec}", sec_val)
-        power = rb_noisy * sec_val
-        if base.endswith("thermionic"):
-            power /= 1000.0  # mA * V
-        self.set(f"{base}.rb_power", power)
-        if base.endswith("filament"):
-            self.set(f"{base}.resistance", 0.35 if rb > 0.1 else 0.0)
-            self.set(f"{base}.out_cv_current", rb)
-        if base.endswith("thermionic"):
-            self.set(f"{base}.stat_auto_emission", self.get(f"{base}.cmd_auto_emission", 0.0))
+        return enabled
+
+    def _source(self, relay, dt):
+        fil, th = f"{SRC}.filament", f"{SRC}.thermionic"
+        fil_on, th_on = self._enabled(fil, relay), self._enabled(th, relay)
+
+        # thermionic: fixed 2500 V; its current is whatever the filament emits
+        th_v = first_order(self.get(f"{th}.rb_voltage", 0.0), THERMIONIC_V if th_on else 0.0, dt, 0.3)
+        fil_rb = self.get(f"{fil}.rb_current", 0.0)
+        self._fil_heat = first_order(self._fil_heat, fil_rb, dt, FILAMENT_HEAT_TAU)
+        th_i = emission_ma(self._fil_heat) * min(1.0, th_v / THERMIONIC_V) ** 1.5
+        th_i = max(0.0, noisy(min(EMISSION_MAX_MA, th_i), 0.01))
+        th_sp = self._setpoint(th, "current")
+        self.set(f"{th}.sp_actual_current", th_sp)
+        self.set(f"{th}.rb_voltage", max(0.0, noisy(th_v, 0.0005)))
+        self.set(f"{th}.rb_current", th_i)
+        th_w = th_v * th_i / 1000.0
+        self.set(f"{th}.rb_power", th_w)
+
+        # filament: the operator's setpoint, or the auto-emission loop's
+        auto = bool(self.get(f"{th}.cmd_auto_emission"))
+        self.set(f"{th}.stat_auto_emission", auto)
+        if auto:
+            if self._auto_fil is None:
+                self._auto_fil = self.get(f"{fil}.sp_actual_current", 0.0)
+            if fil_on and th_on:
+                err = math.log(max(th_sp, 0.01) / max(th_i, 0.01))
+                self._auto_fil += max(-0.5, min(0.3, 0.12 * err)) * dt
+                self._auto_fil = max(0.0, min(FILAMENT_AUTO_MAX_A, self._auto_fil))
+            fil_sp = self._auto_fil
+        else:
+            if self._auto_fil is not None:            # leaving auto: carry on from where it got to
+                self.set(f"{fil}.sp_requested_current", self._auto_fil)
+                self._auto_fil = None
+            fil_sp = self._setpoint(fil, "current")
+        self.set(f"{fil}.sp_actual_current", fil_sp)
+        aim = fil_sp if fil_on else 0.0
+        ramp = FILAMENT_SLEW_A_S * dt
+        fil_rb = fil_rb + max(-2.0 * ramp, min(ramp, aim - fil_rb)) if relay else 0.0   # contactor open
+        self.set(f"{fil}.stat_disarming", relay and not fil_on and fil_rb > 0.05)        # ramping down
+        fil_v = max(0.0, noisy(fil_rb * FILAMENT_OHMS, 0.002))
+        self.set(f"{fil}.rb_current", fil_rb)
+        self.set(f"{fil}.rb_voltage", fil_v)
+        self.set(f"{fil}.rb_power", fil_rb * fil_v)
+        self.set(f"{fil}.resistance", FILAMENT_OHMS if fil_rb > 0.1 else 0.0)
+        self.set(f"{fil}.out_cv_current", fil_rb)
+
+        cesium_c = self._cesium(relay, dt)
+
+        # extraction and target: bleed + (SNICS) target current; extracted beam ~10 % of it
+        kv = {}
+        for name in ("extraction", "target"):
+            base = f"{SRC}.{name}"
+            on = self._enabled(base, relay)
+            sp = self._setpoint(base, "voltage")
+            self.set(f"{base}.sp_actual_voltage", sp)
+            kv[name] = first_order(self._kv.get(name, 0.0), sp if on else 0.0, dt, 0.4)
+        self._kv = kv
+        want = target_beam_ma(th_w, kv["target"], cesium_c)
+        self._sputter = first_order(self._sputter, want, dt, 3.0 if want > self._sputter else 0.3)
+        extracted = 0.1 * self._sputter * min(1.0, kv["extraction"] / 5.0)
+        for name, beam in (("extraction", extracted), ("target", self._sputter)):
+            base = f"{SRC}.{name}"
+            v = max(0.0, noisy(kv[name], 0.001))
+            i = max(0.0, noisy(kv[name] * BLEED_MA_PER_KV, 0.002) + noisy(beam, 0.05))
+            self.set(f"{base}.rb_voltage", v)
+            self.set(f"{base}.rb_current", i)
+            self.set(f"{base}.rb_power", v * i)
 
     def _cesium(self, relay, dt):
-        base = "ion_beam.source.cesium"
+        base = f"{SRC}.cesium"
         heating = int(self.get(f"{base}.cmd_ctrl_mode", 0.0)) == 1 and relay
+        cooling = bool(self.get(f"{base}.cmd_force_cooling"))
         self.set(f"{base}.ctrl_mode", self.get(f"{base}.cmd_ctrl_mode", 0.0))
         self.set(f"{base}.stat_enabled", heating)
         sp = self.get(f"{base}.sp_requested_temp", 0.0)
         self.set(f"{base}.sp_actual_temp", sp)
-        temp = self.get(f"{base}.rb_temp", 22.0)
-        target = sp if heating else 22.0
-        cooling = bool(self.get(f"{base}.cmd_force_cooling"))
-        temp = first_order(temp, target, dt, 25.0 if cooling else 60.0)
+        temp = self.get(f"{base}.estimated_temp", CS_AMBIENT)
+        if heating:
+            target, tau = sp, 60.0
+        elif cooling:
+            target, tau = CS_FORCED, 40.0
+        else:
+            target, tau = CS_AMBIENT, 300.0
+        temp = first_order(temp, target, dt, tau)
         self.set(f"{base}.rb_temp", noisy(temp, 0.0005))
         self.set(f"{base}.estimated_temp", temp)
-        self.set(f"{base}.out_cv_heating", max(0.0, min(100.0, (target - temp) * 5.0)) if heating else 0.0)
+        self.set(f"{base}.out_cv_heating", max(0.0, min(100.0, (sp - temp) * 5.0)) if heating else 0.0)
         self.set(f"{base}.stat_cooling_active", cooling)
+        return temp
 
     def _steering(self, relay):
         base = "ion_beam.beamline.steering"
@@ -216,10 +354,11 @@ class SimulatedPLC:
         self.set(f"{base}.stat_gv_open", is_open)
         self.set(f"{base}.stat_gv_closed", not is_open and not (want_open and self._gv_cmd_t is not None))
 
-    def _fault_words(self, comms_lost, relay, want):
+    def _fault_words(self, comms_lost):
         active = {
             "PC_Watchdog_Timeout": comms_lost,
-            "Safety_Relay_Tripped": want and not relay and comms_lost,
+            "Safety_Relay_Refused": self._relay_refused,
+            "Safety_Relay_Tripped": self._relay_tripped,
             "Src_Turbo_Comms_Fail": bool(self.get("ion_beam.source.turbo_pump.stat_comms_fail")),
             "Graphix_1_Comms_Fail": bool(self.get("ion_beam.facilities.graphix1.stat_comms_fail")),
             "Graphix_2_Comms_Fail": bool(self.get("ion_beam.facilities.graphix2.stat_comms_fail")),

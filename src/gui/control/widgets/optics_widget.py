@@ -586,7 +586,7 @@ class BeamlineOpticsWidget(QWidget):
                           what=name.upper())
 
         sp_box = QDoubleSpinBox()
-        sp_box.setRange(min_v, max_v)
+        sp_box.setRange(*self._limited_tags.get(f"{base_tag}.sp_requested_voltage", (min_v, max_v)))
         sp_box.setSuffix(f" {pri_unit}")
         sp_box.setDecimals(3)
         sp_box.setSingleStep(0.001)

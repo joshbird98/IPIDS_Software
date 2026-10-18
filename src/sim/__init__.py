@@ -33,7 +33,7 @@ from src.core.paths import simulation_enabled  # noqa: F401  (re-exported for th
 FAULTS_FILE = os.path.join(paths.DATA_DIR, "sim_faults.txt")
 FAULT_DESCRIPTIONS = {
     "plc_disconnect": "PLC unreachable",
-    "plc_relay_trip": "safety relay drops",
+    "plc_relay_trip": "safety relay trips (latched: fault reset, then enable it again)",
     "spellman_no_reply": "Spellman supply silent (timeouts)",
     "spellman_refuse": "Spellman supply rejects settings",
     "spellman_arc": "einzel output collapses into its current limit (arc)",

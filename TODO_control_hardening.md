@@ -45,6 +45,21 @@ simulator; none of it has been tried on the real hardware yet (see "Lab PC valid
   - "Calculate & set amps" uses the Mass Scan panel's calibration (AMU = k (I + I_off)^2 / E, from the peaks you
     mark and "Calculate Fit") and the live beam energy (target + extraction), and records which calibration it
     used. (It had always been amps = amu: the placeholder polynomial it meant to use was never found.)
+- After Josh's first simulator session (Oct 2026):
+  - Simulator source model per his description: thermionic at 2500 V with emission from the filament
+    (3 mA at 25 A -> 150 mA at 29 A), auto-emission drives the filament; cesium heater -> setpoint, forced
+    cooling -> 20 degC; 50 MOhm bleeds on extraction/target plus SNICS target current (0.1 mA at
+    200 W / 4 kV / 50 degC -> 1 mA at 250 W / 8 kV / 100 degC), ~10 % extracted; the Faraday-cup peaks scale
+    with the extracted beam; einzel load < 1 uA and noisy.
+  - Simulated relay needs the gate valve open; closing it trips the relay, latched (request, supply enables
+    and cesium heater cleared; Safety_Relay_Tripped until fault reset). **Assumption about the real PLC
+    program - check it matches**, especially whether the PLC clears the supplies' enables on a trip.
+  - HMI: filament setpoint locked (badge AUTO-EMIS) while auto-emission is on; every source/optics setpoint
+    box limited to the registry range, so values the service would refuse can't be typed (the einzel box
+    allowed 30 kV against a 22 kV limit, cesium 200 against 150, thermionic 1000 mA against 150).
+  - Mass Scan: the log view is a symmetric log (negative currents in red on their own log scale below
+    zero, labelled -1 pA, -10 pA, ...); Y refits to the visible data when switching scale, clearing or
+    loading a trace (it used to keep a stale range - data squashed at the top).
 - Found on the way and fixed: the manager's start-up purge killed every IPIDS service process on the PC (so a
   simulator or test run would have killed the live system's services) - now only its own; the HMI config editor
   never rebuilt the registry (wrong script path); the recipe builder's tag picker and fault list looked in
@@ -61,7 +76,10 @@ simulator; none of it has been tried on the real hardware yet (see "Lab PC valid
      failed), **no false arc trips** during normal use (ramps, optimiser, enable/disable) - the main thing to
      watch with the new 10 % arc test;
    - unplug a device: service stays ONLINE with comms-fail (no restart loop); SMU reconnect behaviour as above;
-   - turbo start/stop; logger journal file appears in data/parquet_logs; tolerance rules sensible.
+   - turbo start/stop; logger journal file appears in data/parquet_logs; tolerance rules sensible;
+   - closing the gate valve with the relay on: relay drops, supplies show off, Safety_Relay_Tripped shows,
+     and the relay can be re-enabled after fault reset (compare with the simulator's assumptions above);
+   - auto-emission: filament box locked, shows the PLC's filament current, unlocks when switched off.
 2. Take the example parquet data out of git - on the lab PC (the files stay on disk; back up data/ first anyway):
    ```
    git rm -r --cached data/daily_logs data/parquet_logs

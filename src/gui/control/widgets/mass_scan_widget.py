@@ -94,30 +94,73 @@ class PeriodicTableDialog(QDialog):
         layout.addWidget(bbox)
 
 
+# --- Symmetric log scale for the beam current ---
+# The log view uses sign(I) * log10(1 + |I| / LINTHRESH): logarithmic for |I| well above
+# LINTHRESH, linear through zero, so negative currents (the cup charging the other way,
+# offsets) get their own logarithmic region below zero instead of being mirrored.
+SYMLOG_LINTHRESH = 1e-12   # 1 pA, about the SMU's floor
+
+
+def symlog(y):
+    y = np.asarray(y, dtype=float)
+    return np.sign(y) * np.log10(1.0 + np.abs(y) / SYMLOG_LINTHRESH)
+
+
+def symlog_inv(t):
+    t = np.asarray(t, dtype=float)
+    return np.sign(t) * (10.0 ** np.abs(t) - 1.0) * SYMLOG_LINTHRESH
+
+
+def format_current(val: float) -> str:
+    abs_val = abs(val)
+    if abs_val == 0:
+        return "0 A"
+    if abs_val >= 1:
+        return f"{val:.2f} A"
+    if abs_val >= 1e-3:
+        return f"{val * 1e3:.3g} mA"
+    if abs_val >= 1e-6:
+        return f"{val * 1e6:.3g} µA"
+    if abs_val >= 1e-9:
+        return f"{val * 1e9:.3g} nA"
+    return f"{val * 1e12:.3g} pA"
+
+
 # --- Custom Axis for Smart Current Formatting ---
 class SmartCurrentAxis(pg.AxisItem):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.enableAutoSIPrefix(False)
+        self.symlog = False   # values are symlog(current) - see symlog()
+
+    def tickValues(self, minVal, maxVal, size):
+        if not self.symlog:
+            return super().tickValues(minVal, maxVal, size)
+        # Decades of current (1 pA, 10 pA, ...) both sides of zero, and zero
+        lo, hi = min(minVal, maxVal), max(minVal, maxVal)
+        decades = [(float(symlog(sign * 10.0 ** e)), e) for e in range(-12, 1) for sign in (1.0, -1.0)]
+        decades = [(t, e) for t, e in decades if lo <= t <= hi]
+        step = 2 if len(decades) > 12 else 1          # very zoomed out: every other decade
+        major = [t for t, e in decades if e % step == 0] + ([0.0] if lo <= 0.0 <= hi else [])
+        minor = []
+        if len(decades) <= 4:                         # zoomed into a decade or two: 2x .. 9x as well
+            for e in range(-12, 1):
+                for m in range(2, 10):
+                    for sign in (1.0, -1.0):
+                        t = float(symlog(sign * m * 10.0 ** e))
+                        if lo <= t <= hi:
+                            minor.append(t)
+        return [(1.0, sorted(major)), (0.1, sorted(minor))]
 
     def tickStrings(self, values, scale, spacing):
         strings = []
         for v in values:
             try:
-                val = 10 ** float(v) if self.logMode else float(v)
-                abs_val = abs(val)
-                if abs_val == 0:
-                    strings.append("0 A")
-                elif abs_val >= 1:
-                    strings.append(f"{val:.2f} A")
-                elif abs_val >= 1e-3:
-                    strings.append(f"{val * 1e3:.1f} mA")
-                elif abs_val >= 1e-6:
-                    strings.append(f"{val * 1e6:.1f} µA")
-                elif abs_val >= 1e-9:
-                    strings.append(f"{val * 1e9:.1f} nA")
-                else:
-                    strings.append(f"{val * 1e12:.1f} pA")
+                val = float(symlog_inv(v)) if self.symlog else float(v)
+                if self.symlog and spacing < 1.0:
+                    strings.append("")            # minor ticks unlabelled
+                    continue
+                strings.append(format_current(val))
             except (OverflowError, ValueError):
                 strings.append("")
         return strings
@@ -698,7 +741,10 @@ class PrecisionMassScannerWidget(QWidget):
         pg.setConfigOption('foreground', 'w')
 
         smart_axis = SmartCurrentAxis(orientation='left')
+        self.current_axis = smart_axis
         self.plot_widget = pg.PlotWidget(axisItems={'left': smart_axis})
+        # Y follows the data in the visible mass range (also after zooming in x)
+        self.plot_widget.getViewBox().setAutoVisible(y=True)
         self.plot_widget.setLabel('bottom', "Mass (AMU)")
         self.plot_widget.setLabel('left', "Beam Current")
         self.plot_widget.showGrid(x=True, y=True, alpha=0.5)
@@ -886,31 +932,20 @@ class PrecisionMassScannerWidget(QWidget):
         self.main_layout.addWidget(splitter)
         self._lock_ui(False)
 
-    def _refresh_curves(self):
-        is_log = self.chk_log_y.isChecked()
+    def _ty(self, y):
+        """Beam current -> plot y (symmetric log in the log view, see symlog())."""
+        return symlog(y) if self.chk_log_y.isChecked() else np.asarray(y, dtype=float)
 
+    def _refresh_curves(self):
         def split_data(x_arr, y_arr):
+            """The whole trace, and its negative stretches on their own (drawn red on top)."""
             if not x_arr or not y_arr:
                 return [], [], [], []
-
             x = np.array(x_arr, dtype=float)
-            y = np.array(y_arr, dtype=float)
-
-            if is_log:
-                y_pos = np.copy(y)
-                y_neg = np.copy(y)
-
-                # Positive curve gets valid positive data, else NaN (breaks the line)
-                y_pos[y <= 0] = np.nan
-
-                # Negative curve gets magnitude of negative data, else NaN
-                y_neg[y >= 0] = np.nan
-                y_neg = np.abs(y_neg)
-
-                return x, y_pos, x, y_neg
-            else:
-                # Linear mode: plot the raw signal entirely on the positive curve
+            y = self._ty(np.array(y_arr, dtype=float))
+            if not np.any(y < 0):
                 return x, y, [], []
+            return x, y, x, np.where(y < 0, y, np.nan)
 
         x_live, y_live_pos, x_live_neg, y_live_neg = split_data(self.amu_data, self.y_data)
         self.curve_live_pos.setData(x_live, y_live_pos)
@@ -1052,8 +1087,6 @@ class PrecisionMassScannerWidget(QWidget):
             else:
                 fwhm_amu = np.zeros(len(selected_peaks_x_sorted))
 
-            is_log = self.chk_log_y.isChecked()
-
             self.peak_table.setRowCount(len(selected_peaks_x_sorted))
 
             MIN_SPACING = 0.6
@@ -1090,7 +1123,7 @@ class PrecisionMassScannerWidget(QWidget):
                     placed_label_x.append(center_amu)
                     html_content = f"<div style='text-align: center; color: {lbl_color}; font-size: 10pt; font-weight: bold;'>{match_html}<br>({center_amu:.1f})</div>"
                     txt = pg.TextItem(html=html_content, anchor=(0.5, 1.2))
-                    y_anchor = math.log10(max(y_clean[p_idx], 1e-15)) if is_log else y_clean[p_idx]
+                    y_anchor = float(self._ty(y_clean[p_idx]))
                     txt.setPos(center_amu, y_anchor)
                     self.plot_widget.addItem(txt)
                     self.peak_labels.append(txt)
@@ -1156,13 +1189,8 @@ class PrecisionMassScannerWidget(QWidget):
             self.lbl_res.setText(
                 f"<b>Avg Mass Resolution (M/ΔM):</b> <span style='color: #4CAF50;'>{avg_res:.1f}</span>")
 
-            safe_peak_y = np.clip(y_arr[selected_peaks_x_sorted], 1e-15, None)
-            if is_log:
-                self.peak_markers.setData(x_arr[selected_peaks_x_sorted], np.log10(safe_peak_y))
-                self.tail_markers.setData(tail_x_list, np.log10(np.clip(tail_y_list, 1e-15, None)))
-            else:
-                self.peak_markers.setData(x_arr[selected_peaks_x_sorted], safe_peak_y)
-                self.tail_markers.setData(tail_x_list, tail_y_list)
+            self.peak_markers.setData(x_arr[selected_peaks_x_sorted], self._ty(y_arr[selected_peaks_x_sorted]))
+            self.tail_markers.setData(tail_x_list, self._ty(tail_y_list) if tail_y_list else [])
 
         except ImportError:
             self.btn_detect.setChecked(False)
@@ -1246,6 +1274,7 @@ class PrecisionMassScannerWidget(QWidget):
             self._update_energy_display()
             self._conditional_peak_update()
             self._update_plot_limits()
+            self._fit_y()
 
             if not has_energy_data:
                 QMessageBox.warning(self, "Missing Data", "CSV missing voltage columns; peak mass analysis may use defaults.")
@@ -1429,49 +1458,20 @@ class PrecisionMassScannerWidget(QWidget):
         self._clear_peaks()
         self._update_energy_display()
         self._update_plot_limits()
+        self._fit_y()
         if not self.worker or not self.worker.isRunning():
             self.lbl_data_source.setText("<b>Data Source:</b> None")
 
     def _toggle_log_y(self, state):
-        is_log = (state == Qt.CheckState.Checked.value)
-
-        view_box = self.plot_widget.getViewBox()
-        view_rect = view_box.viewRect()
-        x_min, x_max = view_rect.left(), view_rect.right()
-        y_min, y_max = view_rect.bottom(), view_rect.top()
-
-        SMU_LIMIT = 1e-11
-
-        if is_log:
-            # Check the absolute magnitude so negative spikes inform our limits
-            visible_y = [abs(y) for x, y in zip(self.amu_data, self.y_data) if x_min <= x <= x_max and abs(y) > 0]
-            if visible_y:
-                data_min = min(visible_y)
-                floor_y = max(SMU_LIMIT, data_min * 0.8)
-            else:
-                floor_y = SMU_LIMIT
-
-            top_y = max(y_max, SMU_LIMIT * 10)
-            new_ymin = math.log10(floor_y)
-            new_ymax = math.log10(top_y)
-
-            view_box.setLimits(yMin=math.log10(1e-15), yMax=new_ymax + 5.0)
-            self.plot_widget.setLogMode(x=False, y=True)
-
-        else:
-            safe_y_max = min(y_max, 50.0)
-            new_ymax = max(1e-12, 10 ** safe_y_max)
-            new_ymin = - (new_ymax * 0.05)
-
-            self.plot_widget.setLogMode(x=False, y=False)
-            view_box.setLimits(yMin=None, yMax=new_ymax * 10.0)
-
-        view_box.setXRange(x_min, x_max, padding=0)
-        view_box.setYRange(new_ymin, new_ymax, padding=0)
-
+        # The plot's own log mode can't show negative currents; the symlog transform is
+        # applied to the data instead (see symlog()), and the axis labels it back in amps.
+        self.current_axis.symlog = (state == Qt.CheckState.Checked.value)
+        self.current_axis.picture = None
+        self.current_axis.update()
         self._refresh_curves()
         self._update_plot_limits()
         self._conditional_peak_update()
+        self._fit_y()
 
         # Add this at the very end of the method:
         if hasattr(self, 'calib_points'):
@@ -1481,9 +1481,11 @@ class PrecisionMassScannerWidget(QWidget):
                 pt['amu_plot_x'] = k * ((pt['amps'] + i_off) ** 2) / pt['energy_ev']
             self._update_calib_table()
 
-    def _update_plot_limits(self):
-        is_log = self.chk_log_y.isChecked()
+    def _fit_y(self):
+        """Y range back to the data in the visible mass range (after a scale change, new data...)."""
+        self.plot_widget.getViewBox().enableAutoRange(axis=pg.ViewBox.YAxis, enable=True)
 
+    def _update_plot_limits(self):
         all_x = self.amu_data + self.ghost_amu
         all_y = self.y_data + self.ghost_y
 
@@ -1494,30 +1496,18 @@ class PrecisionMassScannerWidget(QWidget):
             data_x_min = 0.0
             data_x_max = 100.0
 
-        x_limit_min = max(0.0, data_x_min - 2.0)
-        x_limit_max = data_x_max + 2.0
-
+        # Pan/zoom limits: a margin around the data, in whichever y scale is shown
         if all_y:
-            if is_log:
-                abs_y = [abs(y) for y in all_y if abs(y) > 0]
-                max_y = max(max(abs_y), 1e-12) if abs_y else 1e-6
-            else:
-                max_y = max(max(all_y), 1e-12)
+            t = self._ty(np.array(all_y, dtype=float))
+            lo, hi = min(float(np.nanmin(t)), 0.0), max(float(np.nanmax(t)), 0.0)
         else:
-            max_y = 1e-6
-
-        if is_log:
-            y_limit_max = math.log10(max_y * 10.0)
-            y_limit_min = math.log10(1e-15)
-        else:
-            y_limit_max = max_y * 10.0
-            y_limit_min = None
-
+            lo, hi = 0.0, float(self._ty(1e-6))
+        span = (hi - lo) or 1.0
         self.plot_widget.getViewBox().setLimits(
-            xMin=x_limit_min,
-            xMax=x_limit_max,
-            yMax=y_limit_max,
-            yMin=y_limit_min
+            xMin=max(0.0, data_x_min - 2.0),
+            xMax=data_x_max + 2.0,
+            yMin=lo - span,
+            yMax=hi + span,
         )
 
     def _manual_save_csv(self):
@@ -1620,14 +1610,13 @@ class PrecisionMassScannerWidget(QWidget):
     def _update_calib_table(self):
         self.table_calib.setRowCount(len(self.calib_points))
         x_pts, y_pts = [], []
-        is_log = self.chk_log_y.isChecked()
 
         for i, pt in enumerate(self.calib_points):
             self.table_calib.setItem(i, 0, QTableWidgetItem(f"{pt['amps']:.3f}"))
             self.table_calib.setItem(i, 1, QTableWidgetItem(f"{pt['true_amu']:.2f}"))
 
             x_pts.append(pt['amu_plot_x'])
-            y_pts.append(math.log10(max(1e-15, pt['peak_y'])) if is_log else pt['peak_y'])
+            y_pts.append(float(self._ty(pt['peak_y'])))
 
         if x_pts:
             self.calib_scatter.setData(x=np.array(x_pts, dtype=float), y=np.array(y_pts, dtype=float))

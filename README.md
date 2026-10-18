@@ -40,6 +40,15 @@ system without touching it. The window it runs in has a menu for injecting fault
 safety relay trip, Spellman arc, magnet 10 % low, ...). As on the real machine, open the gate
 valve and energise the safety relay before the supplies accept commands.
 
+The simulated source behaves roughly like the real SNICS source (details in `src/sim/plc.py`):
+closing the gate valve trips the safety relay (latched: supplies off, fault reset and enable the
+relay again); the thermionic supply sits at 2500 V and its current comes from the filament
+(~3 mA at 25 A, ~150 mA at 29 A), with auto-emission driving the filament; the cesium oven heats
+to its setpoint, forced cooling takes it towards 20 °C; extraction and target draw 0.02 mA/kV
+through their bleed resistors, and beam (target current, ~10 % of it extracted, and peaks on the
+Faraday cup) appears once thermionic > 200 W, target > 4 kV and cesium > 50 °C. The einzel draws
+under 1 µA, noisily.
+
 Each program also takes `--sim` on its own, e.g. `python src/hmi.py --sim`.
 
 ## Tests

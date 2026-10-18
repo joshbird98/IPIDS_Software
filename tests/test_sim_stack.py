@@ -31,6 +31,9 @@ def stack(tmp_path_factory):
 
 
 def test_relay_then_spellman_einzel(stack):
+    # the relay needs the gate valve open (closing it trips the relay)
+    assert stack.cmd("plc", "ion_beam.source.chamber.cmd_open_gv", True)["status"] == C.OK
+    stack.wait(lambda l: l["PLC_DATA"]["ion_beam.source.chamber.stat_gv_open"] == 1.0, 15, "gate valve open")
     r = stack.cmd("plc", "ion_beam.system.cmd_enable_safety", True)
     assert r["status"] == C.OK, r
     stack.wait(lambda l: l["PLC_DATA"]["ion_beam.facilities.safety_relay_active"] == 1.0, 10, "safety relay")

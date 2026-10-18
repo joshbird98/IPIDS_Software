@@ -5,6 +5,8 @@ service's ranging, NPLC and telemetry code runs for real. The beam current is a
 small mass spectrum: it listens to the magnet and PLC telemetry and puts
 Gaussian peaks where the HMI mass-scan calibration (k = 1391.9, offset 0.223 A)
 expects them, so a mass scan in the simulator finds O, Si-28/29/30 and friends.
+The peaks scale with the source's extracted beam (the extraction current above its
+50 MOhm bleed), so nothing arrives until the source is running (see src/sim/plc.py).
 
 Injected faults (IPIDS_SIM_FAULTS): smu_disconnect.
 """
@@ -21,8 +23,11 @@ from src.sim import injected_faults
 K_FACTOR = 1391.9
 I_OFFSET = 0.223
 PEAK_SIGMA_A = 0.06
-# amu -> peak height in amps (negative-ion sputter source on a silicon target, roughly)
+# amu -> peak height in amps at REFERENCE_EXTRACTED_UA of extracted beam
+# (negative-ion sputter source on a silicon target, roughly)
 SPECIES = {12: 4e-9, 16: 30e-9, 17: 8e-9, 24: 3e-9, 28: 120e-9, 29: 6.5e-9, 30: 4.5e-9, 56: 2e-9}
+REFERENCE_EXTRACTED_UA = 20.0
+BLEED_MA_PER_KV = 1.0 / 50.0
 
 
 class _BeamModel:
@@ -32,6 +37,7 @@ class _BeamModel:
         from src.core.network_map import ZMQ_PORT_MAGNET_PUB, ZMQ_PORT_PLC_PUB
         self.mag_a = 0.0
         self.energy_kev = 0.0
+        self.extracted_ua = 0.0
         self._t = threading.Thread(target=self._run, args=(ZMQ_PORT_MAGNET_PUB, ZMQ_PORT_PLC_PUB),
                                    name="sim-beam", daemon=True)
         self._t.start()
@@ -55,15 +61,18 @@ class _BeamModel:
                 ext = d.get("ion_beam.source.extraction.rb_voltage") or 0.0
                 tgt = d.get("ion_beam.source.target.rb_voltage") or 0.0
                 self.energy_kev = ext + tgt
+                ext_ma = d.get("ion_beam.source.extraction.rb_current") or 0.0
+                self.extracted_ua = max(0.0, (ext_ma - ext * BLEED_MA_PER_KV) * 1000.0)
 
     def beam_current(self):
         e_ev = self.energy_kev * 1000.0
         if e_ev < 1000.0:   # no extraction -> no beam
             return 0.0
+        scale = self.extracted_ua / REFERENCE_EXTRACTED_UA
         total = 0.0
         for amu, height in SPECIES.items():
             centre = math.sqrt(amu * e_ev / K_FACTOR) - I_OFFSET
-            total += height * math.exp(-((self.mag_a - centre) ** 2) / (2 * PEAK_SIGMA_A ** 2))
+            total += scale * height * math.exp(-((self.mag_a - centre) ** 2) / (2 * PEAK_SIGMA_A ** 2))
         return total
 
 

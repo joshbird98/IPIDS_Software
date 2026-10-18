@@ -244,12 +244,18 @@ def test_tolerance_colours_the_readback(hmi, app, stack):
 
 def test_calculate_and_set_amps_puts_the_mass_on_the_cup(hmi, app, stack):
     """Optics 'Calculate & set amps' with the Mass Scan panel's calibration lands on the Si-28
-    peak (the simulated beam uses the same model: k = 1391.9, I_off = 0.223, E = target + extraction)."""
+    peak (the simulated beam uses the same model: k = 1391.9, I_off = 0.223, E = target + extraction).
+    The simulated source only makes beam with > 200 W thermionic, > 4 kV target and > 50 degC cesium."""
     from src.core.mass_calibration import current_for_mass
     for tag, value in (("ion_beam.source.extraction.sp_requested_voltage", 15.0),
                        ("ion_beam.source.target.sp_requested_voltage", 5.0),
                        ("ion_beam.source.extraction.cmd_enable", True),
-                       ("ion_beam.source.target.cmd_enable", True)):
+                       ("ion_beam.source.target.cmd_enable", True),
+                       ("ion_beam.source.cesium.sp_requested_temp", 150.0),
+                       ("ion_beam.source.cesium.cmd_ctrl_mode", 1),
+                       ("ion_beam.source.filament.sp_requested_current", 28.8),
+                       ("ion_beam.source.filament.cmd_enable", True),
+                       ("ion_beam.source.thermionic.cmd_enable", True)):
         assert stack.cmd("plc", tag, value)["status"] == C.OK, tag
     assert stack.cmd("magnet", "ion_beam.beamline.magnet.cmd_enable", True)["status"] == C.OK
     view = hmi.master_telemetry_cache
@@ -263,4 +269,24 @@ def test_calculate_and_set_amps_puts_the_mass_on_the_cup(hmi, app, stack):
     expected = current_for_mass(28.0, 20000.0, cal["k"], cal["i_off"])
     wait_for(app, lambda: abs(view["ion_beam.beamline.magnet.rb_current"] - expected) < 0.05, 15,
              f"magnet at {expected:.2f} A")
-    wait_for(app, lambda: view["ion_beam.beamline.faraday.smu.rb_current"] > 100e-9, 15, "Si-28 beam on the cup")
+    wait_for(app, lambda: view["ion_beam.source.thermionic.rb_power"] > 210
+             and view["ion_beam.source.cesium.rb_temp"] > 52, 60, "source running (thermionic, cesium)")
+    wait_for(app, lambda: view["ion_beam.beamline.faraday.smu.rb_current"] > 100e-9, 20, "Si-28 beam on the cup")
+
+
+def test_closing_the_gate_valve_trips_the_relay(hmi, app, stack):
+    """Last in this module: it drops the relay. The PLC trips the relay on the gate-valve
+    readback; the supplies go off and stay off (latched) until the relay is enabled again."""
+    view = hmi.master_telemetry_cache
+    assert view["ion_beam.facilities.safety_relay_active"] == 1.0
+    assert view["ion_beam.source.target.stat_enabled"] == 1.0
+    hmi.vac_widget.btn_gv_close.click()
+    wait_for(app, lambda: view.get("ion_beam.facilities.safety_relay_active") == 0.0, 10, "relay tripped")
+    wait_for(app, lambda: view.get("ion_beam.source.target.stat_enabled") == 0.0
+             and view.get("ion_beam.source.einzel.stat_enabled") == 0.0, 10, "supplies off")
+    assert "Safety_Relay_Tripped" in {f["name"] for f in hmi.fault_engine.get_active_faults(
+        "UDT_Fault_Word_0_System", int(view["ion_beam.faults.word_0_system"]))}
+    hmi.vac_widget.btn_gv_open.click()
+    wait_for(app, lambda: view.get("ion_beam.source.chamber.stat_gv_open") == 1.0, 15, "gate valve open again")
+    pump(app, 2)
+    assert view["ion_beam.facilities.safety_relay_active"] == 0.0              # not back by itself

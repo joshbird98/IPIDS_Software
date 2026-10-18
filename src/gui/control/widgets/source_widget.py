@@ -28,15 +28,17 @@ def tolerance_flagged(data: dict, tags) -> bool:
     return any(data.get(FLAG_PREFIX + t) == 1.0 for t in tags)
 
 
-def setpoint_limits():
-    """Tags that have both min_val and max_val in the registry (the services refuse the others)."""
+def setpoint_limits() -> dict:
+    """tag -> (min, max) for tags with both limits in the registry (the services refuse
+    setpoints for the others, and anything outside them)."""
     try:
         with open(paths.config_path("system_tags.json"), "r") as f:
             reg = json.load(f)
     except (OSError, ValueError) as e:
         log.warning("Registry not readable for setpoint limits: %s", e)
-        return set()
-    return {t for t, m in reg.items() if m.get("min_val") is not None and m.get("max_val") is not None}
+        return {}
+    return {t: (float(m["min_val"]), float(m["max_val"])) for t, m in reg.items()
+            if m.get("min_val") is not None and m.get("max_val") is not None}
 
 
 # --- Ion Source Subsystem Component ---
@@ -54,6 +56,12 @@ class IonSourceWidget(QWidget):
     def _dispatch_command(self, tag: str, value):
         target = "spellman" if "einzel" in tag else "plc"
         self.cmd_thread.send_command(target, tag, value)
+
+    def _apply_limits(self, sp_box, tag):
+        """The setpoint box only offers what the service will accept (registry limits)."""
+        if tag in self._limited_tags:
+            lo, hi = self._limited_tags[tag]
+            sp_box.setRange(lo, hi)
 
     def _dispatch_spellman_setpoints(self, base_tag: str, voltage: float):
         """Dispatches voltage and autonomously sets a safe 50uA current limit to unclamp the CC loop."""
@@ -118,6 +126,7 @@ class IonSourceWidget(QWidget):
             sp_box.setSingleStep(0.1)
 
         sp_box.setKeyboardTracking(False)
+        self._apply_limits(sp_box, f"{base_tag}.sp_requested_{'voltage' if is_voltage else 'current'}")
 
         if "einzel" in base_tag:
             sp_box.editingFinished.connect(
@@ -173,6 +182,7 @@ class IonSourceWidget(QWidget):
 
         sp_box = QDoubleSpinBox()
         sp_box.setRange(0.0, 200.0)
+        self._apply_limits(sp_box, "ion_beam.source.cesium.sp_requested_temp")
         sp_box.setSuffix(" °C")
         sp_box.editingFinished.connect(
             lambda: self._dispatch_command("ion_beam.source.cesium.sp_requested_temp", sp_box.value()))
@@ -219,6 +229,8 @@ class IonSourceWidget(QWidget):
 
     def _update_power_supplies(self, data: dict, relay_active: bool, remote_lost: bool, auto_sdown: bool,
                                active_step: int, master_comms_lost: bool, spellman_comms_lost: bool):
+        # Auto-emission: the PLC drives the filament current to hold the thermionic setpoint
+        auto_emission = data.get("ion_beam.source.thermionic.stat_auto_emission") == 1.0
         for name, ctrl in self.psu_controls.items():
             base_tag = ctrl["base_tag"]
             pri_unit = ctrl.get("pri_unit", "")
@@ -396,6 +408,13 @@ class IonSourceWidget(QWidget):
                 sp_box.setToolTip("Disabled: Hardware interlock or fault is active.")
                 lbl_badge.setText("🔒 LOCKED")
                 lbl_badge.setStyleSheet(COLOR_FAULT)
+                lbl_badge.show()
+            elif name == "Filament" and auto_emission:
+                sp_box.setEnabled(False)
+                sp_box.setToolTip("Disabled: auto-emission is on - the PLC sets the filament current to hold "
+                                  "the thermionic emission setpoint.")
+                lbl_badge.setText("⚙️ AUTO-EMIS")
+                lbl_badge.setStyleSheet("background-color: #2196F3; color: white; border-radius: 3px;")
                 lbl_badge.show()
             elif ctrl_mode == 1:
                 if name == "Cesium":

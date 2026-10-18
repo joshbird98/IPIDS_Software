@@ -15,13 +15,14 @@ Injected faults (IPIDS_SIM_FAULTS):
     spellman_arc        a discharge path appears: the output runs into its current
                         limit and the voltage collapses (what the arc detection looks for)
 """
+import random
 import threading
 import time
 
 from src.sim import Clock, first_order, injected_faults, noisy
 
 SOCKET_TIMEOUT = 1.0
-LOAD_OHMS = 1e9    # normal load: ~1 uA per kV (divider + leakage)
+LOAD_OHMS = 50e9   # normal load: under 1 uA even at full voltage (an einzel lens draws ~nothing)
 ARC_OHMS = 2e5     # 'spellman_arc': pulls a 50 uA-limited output down to ~10 V
 
 
@@ -106,8 +107,9 @@ class FakeMPDProtocol:
             if operator == "?":
                 if cmd == "M0":
                     return f"{head}={max(0.0, noisy(dev.v_out, 0.0005)):.1f}"
-                if cmd == "M1":
-                    return f"{head}={max(0.0, noisy(dev.i_out, 0.002)):.1f}"
+                if cmd == "M1":   # the real reading is noisy at this level, the odd spike included
+                    spike = random.uniform(0.2, 0.8) if dev.v_out > 100 and random.random() < 0.02 else 0.0
+                    return f"{head}={max(0.0, noisy(dev.i_out, 0.05, 0.08) + spike):.2f}"
                 if cmd == "SR":
                     return f"{head}={dev.status_word():02X}"
                 if cmd == "V1":
