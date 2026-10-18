@@ -36,3 +36,5 @@ SystemLogsBin/
 # Simulator data (run_simulation / --sim) and test caches
 data_sim/
 .pytest_cache/
+config/backups/
+config/*.tmp

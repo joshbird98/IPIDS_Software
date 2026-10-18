@@ -1,3 +1,4 @@
+import logging
 import os
 import time
 import numpy as np
@@ -13,6 +14,9 @@ from src.core.network_map import (
     ZMQ_PORT_STEERER_MAGNET_PUB
 )
 from src.core.perf_utils import PerfTracker
+
+log = logging.getLogger("viewer.cache")
+HEALTH_LOG_EVERY = 6        # health ticks are 10 s apart: one INFO summary a minute, details at DEBUG
 
 
 class StatelessQueryWorker(QThread):
@@ -51,9 +55,8 @@ class StatelessQueryWorker(QThread):
                     _, vals_dict[k] = self.engine.downsample_minmax(original_ts, v, target_points=target)
 
             self.data_fetched.emit(self.req_start, self.req_end, ts, vals_dict, self.req_id)
-        except Exception as e:
-            import traceback
-            print(f"[Worker] Error during fetch:\n{traceback.format_exc()}")
+        except Exception:   # the request is answered (empty) either way, so the plot never waits forever
+            log.exception("Historical fetch %.0f-%.0f failed", self.req_start, self.req_end)
             self.data_fetched.emit(self.req_start, self.req_end, np.array([]), {}, self.req_id)
 
 class DualPipelineCache(QObject):
@@ -91,20 +94,21 @@ class DualPipelineCache(QObject):
         self.health_timer = QTimer()
         self.health_timer.timeout.connect(self._print_health_stats)
         self.health_timer.start(10000)
+        self._health_ticks = 0
 
     def _print_health_stats(self):
         mem_mb = self.process.memory_info().rss / (1024 * 1024)
-        perf = PerfTracker.get_stats()
-        print(
-            f"[UI] Time {time.time()} | CPU: {self.process.cpu_percent():>4.1f}% | RAM: {mem_mb:>6.1f} MB | {perf}")
         rows = self.live.stats()
-        if rows:
-            print("[LIVE] source             msg/s  tags  buffered   MB")
+        perf = PerfTracker.get_stats()          # every tick: it also resets the timing lists
+        cpu = self.process.cpu_percent()
+        self._health_ticks += 1
+        level = logging.INFO if self._health_ticks % HEALTH_LOG_EVERY == 1 else logging.DEBUG
+        log.log(level, "Viewer CPU %.1f%% | RAM %.1f MB | live: %d sources, %.1f msg/s | %s",
+                cpu, mem_mb, len(rows), sum(r[1] for r in rows), perf)
+        if log.isEnabledFor(logging.DEBUG):
             for name, rate, ntags, span, mb in rows:
-                print(f"[LIVE] {name:<18} {rate:6.1f} {ntags:5d} {span / 60:7.1f} min {mb:5.1f}")
-        else:
-            print("[LIVE] no live data received")
-        self._debug_memory_footprint()
+                log.debug("live %-18s %6.1f msg/s %5d tags %7.1f min %5.1f MB", name, rate, ntags, span / 60, mb)
+            self._debug_memory_footprint()
 
     def _debug_memory_footprint(self):
         """Calculates the strict physical byte size of loaded data structures."""
@@ -119,7 +123,7 @@ class DualPipelineCache(QObject):
             # "dictionary changed size during iteration" inside this Qt timer slot,
             # which aborts the app under PyQt6.
             chunk_mart_mb = sum(df.estimated_size("mb") for df in list(self.engine.chunk_mart.values()))
-        except Exception:
+        except (RuntimeError, AttributeError):    # changed while being summed: next time
             chunk_mart_mb = 0.0
 
         try:
@@ -129,13 +133,9 @@ class DualPipelineCache(QObject):
             mart_1m_mb = 0.0
             mart_20m_mb = 0.0
 
-        print(f"\n[MEM DEBUG] --- RAW DATA FOOTPRINT ---")
-        print(f"[MEM DEBUG] Live Ring Buffer : {live_total_mb:.1f} MB")
-        print(f"[MEM DEBUG] Active Chunks RAM: {chunk_mart_mb:.1f} MB")
-        print(f"[MEM DEBUG] 1m Macro Mart RAM: {mart_1m_mb:.1f} MB")
-        print(f"[MEM DEBUG] 20m Macro Mart RAM: {mart_20m_mb:.1f} MB")
-        print(f"[MEM DEBUG] Total Raw Data   : {live_total_mb + chunk_mart_mb + mart_1m_mb + mart_20m_mb:.1f} MB")
-        print(f"[MEM DEBUG] --------------------------\n")
+        log.debug("Data in RAM: live ring buffer %.1f MB, chunks %.1f MB, 1m mart %.1f MB, 20m mart %.1f MB, "
+                  "total %.1f MB", live_total_mb, chunk_mart_mb, mart_1m_mb, mart_20m_mb,
+                  live_total_mb + chunk_mart_mb + mart_1m_mb + mart_20m_mb)
 
     def register_client_tags(self, client_id: int, tags: list):
         self.client_tags[client_id] = set(tags)

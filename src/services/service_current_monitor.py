@@ -13,6 +13,7 @@ if os.name == 'nt':
     ctypes.windll.winmm.timeBeginPeriod(1)
 
 from pymodbus.client import ModbusTcpClient
+from pymodbus.exceptions import ModbusException
 
 from src.core.commands import CommandServer
 from src.core.event_helper import EventHelper
@@ -219,7 +220,7 @@ class AdamMicroservice:
                     self.state[f"{base_tag}.rb_range_idx"] = RANGE_ORDER.index(active_range)
                     self.state[f"{base_tag}.rb_op_mode"] = self.op_modes[bnc_idx]
 
-        except Exception as e:  # pymodbus connection errors
+        except (OSError, ModbusException, IndexError) as e:  # link errors, or fewer registers than asked for
             if not self.comms_fail:
                 log.warning("ADAM read failed: %s", e)
             self.comms_fail = True

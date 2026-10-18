@@ -5,6 +5,7 @@ from PyQt6.QtWidgets import (
 )
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QBrush, QColor
+import logging
 import zlib
 
 
@@ -142,8 +143,9 @@ class ChannelSelectorDialog(QDialog):
         try:
             with open(registry_path, "r", encoding="utf-8") as f:
                 registry = json.load(f)
-        except FileNotFoundError:
-            print("[Viewer] Error: system_tags.json not found.")
+        except (OSError, ValueError) as e:
+            logging.getLogger("viewer.channels").error("Channel list not available - %s not readable: %s",
+                                                       registry_path, e)
             return
 
         self.tree.clear()
@@ -163,17 +165,7 @@ class ChannelSelectorDialog(QDialog):
         all_root.setText(0, "📁 All Channels")
 
         for full_tag, metadata in registry.items():
-            default_label = metadata.get("default_label", full_tag)
-            description = metadata.get("description", "")
-            default_mult = metadata.get("multiplier", 1.0)
-            default_scale = metadata.get("default_scale", "linear")
-
-            user_config = self.config.get(full_tag, {})
-            display_label = user_config.get("label", default_label)
-            is_selected = user_config.get("selected", False)
-            user_mult = user_config.get("multiplier", default_mult)
-            user_scale = user_config.get("scale", default_scale)
-            is_fav = user_config.get("favorite", False)
+            is_fav = self.config.get(full_tag, {}).get("favorite", False)
 
             # 2. Find/Create Folder Path under all_root
             parts = full_tag.split('.')
@@ -459,7 +451,6 @@ class ChannelSelectorDialog(QDialog):
 
     def _deselect_all_favourites(self):
         self.tree.blockSignals(True)
-        print(self.fav_root.childCount())
         for i in range(self.fav_root.childCount()):
             item = self.fav_root.child(i)
             tag = item.data(0, Qt.ItemDataRole.UserRole)

@@ -247,7 +247,7 @@ def test_recipe_stop_leaves_outputs_alone(hmi, app):
 def test_recipe_prompt_is_answered_in_the_panel(hmi, app):
     """The prompt is a banner in the panel (not a blocking dialog); the sequencer checks the
     step's conditions and the panel shows why an acknowledgement was not accepted."""
-    w, view = hmi.recipe_widget, hmi.master_telemetry_cache
+    w = hmi.recipe_widget
     _start_recipe(hmi, app, "hmi_prompt.json", [
         {"step_id": 1, "type": "USER_PROMPT", "prompt_text": "Close the gate valve",
          "verify_conditions": [{"target": "ion_beam.source.chamber.stat_gv_closed", "condition": "==", "value": 1.0}]},

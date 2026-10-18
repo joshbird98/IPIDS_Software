@@ -25,7 +25,6 @@ from datetime import datetime, timedelta
 
 import numpy as np
 import pyqtgraph as pg
-import zmq
 from PyQt6.QtCore import QDateTime, Qt, QTimer
 from PyQt6.QtWidgets import (QApplication, QCheckBox, QComboBox, QDateTimeEdit, QFormLayout, QHBoxLayout, QLabel,
                              QLineEdit, QMainWindow, QPushButton, QScrollArea, QVBoxLayout, QWidget)
@@ -33,7 +32,6 @@ from PyQt6.QtWidgets import (QApplication, QCheckBox, QComboBox, QDateTimeEdit, 
 from src.core import paths
 from src.core.data_cache import DualPipelineCache
 from src.core.event_helper import EventHelper
-from src.core.network_map import ZMQ_PORT_LOGGER_CMD
 from src.core.os_helper import harden_windows_process
 from src.core.perf_utils import PerfTracker
 from src.gui.data_viewer.channel_selector import ChannelSelectorDialog
@@ -379,7 +377,7 @@ class DataViewerApp(LanesMixin, InspectorMixin, MarkersMixin, ExportMixin, Profi
 
     def _trigger_daily_sync(self):
         """Fires at 02:30 AM, triggers the load, and establishes the 24h rolling timer."""
-        print("[UI] Executing 02:30 AM Data Mart Refresh...")
+        log.info("02:30 data mart refresh")
         threading.Thread(target=self.cache.engine.populate_macro_marts, daemon=True).start()
 
         # 4. Now that we are aligned to 2:30 AM, start a standard 24-hour repeating loop
@@ -489,7 +487,6 @@ class DataViewerApp(LanesMixin, InspectorMixin, MarkersMixin, ExportMixin, Profi
             self._settling = False
 
     def _refresh_plot_historical(self, ts_array, vals_dict, req_id=None):
-        #print(f"[DEBUG-UI] Received history for ID {req_id}. Expected ID: {self.pending_hist_id}. Points: {len(ts_array)}") # ADD THIS
         # Show any result newer than what is on screen. Previously only the exact
         # latest request id was accepted, so while zooming/panning every completed
         # query was discarded and the plot stayed coarse/stale until you stopped.
@@ -501,16 +498,10 @@ class DataViewerApp(LanesMixin, InspectorMixin, MarkersMixin, ExportMixin, Profi
                 return
             self._hist_shown_id = req_id
             self._my_hist_ids = {i for i in mine if i > req_id}
-        # if not self.is_historical_mode: return  ### not used right now?
-        #t_start = time.perf_counter()
         self.historical_x = ts_array - self.t0
         self.historical_y = vals_dict
-        #t_prep = time.perf_counter()
         self._render_curves(self.hist_curves, self.historical_x, self.historical_y, is_historical=True)
         self._settle_viewboxes()
-
-        #t_end = time.perf_counter()
-        #print(f"[UI] Historical Render Complete: {(t_end - t_prep) * 1000:.1f} ms (Total UI block: {(t_end - t_start) * 1000:.1f} ms)")
 
     RENDER_LIMIT = 10000     # points per curve handed to pyqtgraph (min/max downsampled)
     LIVE_GAP_SECONDS = 2.0   # live samples further apart than this break the line
@@ -678,84 +669,57 @@ class DataViewerApp(LanesMixin, InspectorMixin, MarkersMixin, ExportMixin, Profi
         super().closeEvent(event)
 
 
-def _install_crash_logger(project_root):
+def _install_crash_logger():
     """PyQt6 calls qFatal() (abort, exit code 134 / 0xC0000409 on Windows) on ANY
     unhandled Python exception raised inside a Qt slot or timer callback, so a
     single bad frame kills the whole viewer. Log the traceback instead and keep
     running. Repeated identical errors (e.g. every 100 ms render frame) are only
-    printed on the 1st, 10th, 100th... occurrence."""
+    logged on the 1st, 10th, 100th... occurrence. (Installed after setup_logging,
+    whose own hook logs every occurrence.)"""
     import traceback
-    log_dir = os.path.join(project_root, "SystemLogs")
-    os.makedirs(log_dir, exist_ok=True)
-    log_path = os.path.join(log_dir, "viewer_errors.log")
     seen = {}
 
     def hook(exc_type, exc, tb):
+        if issubclass(exc_type, KeyboardInterrupt):
+            sys.__excepthook__(exc_type, exc, tb)
+            return
         text = "".join(traceback.format_exception(exc_type, exc, tb))
         n = seen.get(text, 0) + 1
         seen[text] = n
         if n in (1, 10, 100, 1000) or n % 10000 == 0:
-            stamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            msg = f"[{stamp}] Unhandled exception in viewer (occurrence #{n}):\n{text}\n"
-            sys.stderr.write(msg)
-            try:
-                with open(log_path, "a") as f:
-                    f.write(msg)
-            except OSError:
-                pass
+            log.error("Unhandled exception in the viewer (occurrence #%d)", n, exc_info=(exc_type, exc, tb))
 
     sys.excepthook = hook
 
 
 if __name__ == "__main__":
+    from src.core.export_data import request_logger_flush
+    from src.core.log_setup import setup_logging
 
-    _install_crash_logger(os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), "../../..")))
+    setup_logging("viewer")         # SystemLogs/viewer.log, like every service
+    _install_crash_logger()
 
     # The viewer needs well over 200 MB resident (live ring buffer ~270 MB alone),
     # so don't apply the services' 200 MB working-set ceiling here.
     harden_windows_process(limit_working_set=False)
     app = QApplication(sys.argv)
 
-    # 1. Initialize the Single Master Cache
-    current_dir = os.path.dirname(os.path.abspath(__file__))
-    project_root = os.path.abspath(os.path.join(current_dir, "../../.."))
-    log_dir = paths.DATA_DIR
-    print(log_dir)
-
-    print("[Launcher] Spinning up Master Data Cache...")
-    master_cache = DualPipelineCache(log_dir)
+    # 1. One data cache, shared by every window
+    log.info("Data folder: %s", paths.DATA_DIR)
+    master_cache = DualPipelineCache(paths.DATA_DIR)
     master_cache.start()
 
-    print("[Launcher] Forcing logger RAM flush to bridge historical gap...")
-    try:
-        cmd_req = zmq.Context.instance().socket(zmq.REQ)
-        cmd_req.setsockopt(zmq.RCVTIMEO, 2000)  # 2-second timeout prevents infinite hang
-        cmd_req.connect(ZMQ_PORT_LOGGER_CMD)
+    # Ask the logger to write its in-RAM rows first, so the history meets the live data with no gap
+    if request_logger_flush(timeout_s=2.0):
+        log.info("Logger flushed its in-RAM rows")
+    else:
+        log.warning("Logger flush not confirmed - the last minutes of history may be missing until its next flush")
 
-        # Send the command
-        cmd_req.send_string("FORCE_FLUSH")
-
-        # This blocks execution until the logger replies, eliminating the race condition
-        reply = cmd_req.recv_string()
-        print(f"[Launcher] Logger confirmed: {reply}")
-
-    except zmq.error.Again:
-        print("[Launcher] WARNING: Logger flush timed out. Historical gap may be present.")
-    except Exception as e:
-        print(f"[Launcher] WARNING: Flush failed - {e}")
-
-    # 2. Launch Multiple Thin-Client Windows
-    # The windows will automatically fetch their required data the moment they render
+    # 2. The window(s): each fetches the data it needs as it renders
     window_1 = DataViewerApp(master_cache, window_title="SINDIE Data Viewer - Window 1")
-    #window_2 = DataViewerApp(master_cache, window_title="SINDIE Data Viewer - Window 2")
-
     window_1.show()
-    #window_2.show()
 
-    # 3. Execute Application Loop
     exit_code = app.exec()
-
-    # 4. Graceful Teardown
-    print("[Launcher] All windows closed. Terminating background threads...")
+    log.info("All windows closed: stopping the background threads")
     master_cache.stop()
     sys.exit(exit_code)

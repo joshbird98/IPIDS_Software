@@ -12,10 +12,9 @@ Every export goes to its own folder:
         make_figure.py               standalone script that regenerates the figure
         screen.svg                   optional snapshot of the viewer as shown
 """
+import logging
 import os
 import shutil
-import time
-import traceback
 from datetime import datetime
 
 from PyQt6.QtCore import QDateTime, QThread, pyqtSignal
@@ -289,6 +288,6 @@ class ExportWorker(QThread):
                                      font=o["font"], time_axis=o["time_axis"])
                 shutil.copy(thesis_figure.__file__, os.path.join(folder, "make_figure.py"))
             self.done.emit(folder)
-        except Exception as e:
-            print(f"[Export] failed:\n{traceback.format_exc()}")
+        except Exception as e:   # the dialog must hear about any failure, or it waits forever
+            logging.getLogger("viewer.export").exception("Export failed")
             self.failed.emit(f"{type(e).__name__}: {e}")

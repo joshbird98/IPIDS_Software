@@ -1,4 +1,5 @@
 import json
+import logging
 import os
 
 from src.core import paths
@@ -9,16 +10,18 @@ from src.core.paths import REGISTRY_PATH as REGISTRY_FILE
 CONFIG_FILE = paths.config_path("plot_settings.json")
 _OLD_CONFIG_FILE = os.path.join(paths.PROJECT_ROOT, "src", "config", "plot_settings.json")
 
+log = logging.getLogger("viewer.config")
+
 def load_registry():
     """Loads the read-only master hardware registry."""
     if not os.path.exists(REGISTRY_FILE):
-        print(f"Warning: {REGISTRY_FILE} not found. UI will use fallback defaults.")
+        log.warning("%s not found - the viewer shows raw tag names and no limits", REGISTRY_FILE)
         return {}
     try:
         with open(REGISTRY_FILE, 'r') as f:
             return json.load(f)
     except (OSError, ValueError) as e:
-        print(f"Error loading registry: {e}")
+        log.error("Registry %s not readable: %s", REGISTRY_FILE, e)
         return {}
 
 def load_config():
@@ -28,16 +31,18 @@ def load_config():
         with open(path, 'r') as f:
             return json.load(f)
     except (OSError, ValueError) as e:
-        print(f"Error loading config: {e}")
+        log.error("Plot settings %s not readable (defaults used): %s", path, e)
         return {}
 
 def save_config(config_dict):
+    tmp = CONFIG_FILE + ".tmp"
     try:
-        with open(CONFIG_FILE, 'w') as f:
+        with open(tmp, 'w') as f:
             json.dump(config_dict, f, indent=4)
-        print(f"Plot settings saved to: {CONFIG_FILE}")
+        os.replace(tmp, CONFIG_FILE)
+        log.info("Plot settings saved to %s", CONFIG_FILE)
     except (OSError, TypeError, ValueError) as e:
-        print(f"Error saving config: {e}")
+        log.error("Plot settings not saved: %s", e)
 
 def delete_config():
     deleted = False
@@ -45,9 +50,9 @@ def delete_config():
         if os.path.exists(path):
             try:
                 os.remove(path)
-                print(f"Config file deleted: {path}")
+                log.info("Plot settings %s deleted", path)
                 deleted = True
             except OSError as e:
-                print(f"Could not delete {path}: {e}")
+                log.error("Could not delete %s: %s", path, e)
                 return False
     return deleted

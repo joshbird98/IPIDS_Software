@@ -85,7 +85,7 @@ class OneDriveArchiver:
                     shutil.copy2(local_file, cloud_file)
                     sync_count += 1
 
-            except Exception as e:
+            except OSError as e:     # (shutil.Error is an OSError) - the next night tries again
                 log.error(f"Failed to sync {relative_path}: {e}")
                 success = False
 
@@ -132,7 +132,7 @@ class OneDriveArchiver:
             log.info("Database snapshot backed up.")
             return True
 
-        except Exception as e:
+        except (OSError, sqlite3.Error) as e:
             log.error(f"Failed to sync database {db_file.name}: {e}")
             return False
 
@@ -221,7 +221,7 @@ class DataCompactor:
                         log.warning(f"Could not delete compacted fragment {f}: {e} (it will be merged again, harmlessly)")
                 log.info(f"Finished {d_str}.")
 
-            except Exception as e:
+            except Exception as e:   # one bad day must not stop the others (its fragments stay for next night)
                 log.exception(f"Error on date {d_str}: {e}")
 
     def generate_macro_rollups(self, df: pl.DataFrame, base_filename: str, output_dir: str):
@@ -266,7 +266,7 @@ class DataCompactor:
     def _nightly_job(self):
         try:
             self.compact_all_past_dates()
-        except Exception:
+        except Exception:   # the nightly job must not take the service down; the backup still runs
             log.exception("Compaction failed")
 
         if paths.simulation_enabled():
@@ -287,7 +287,7 @@ class DataCompactor:
             exports_archiver = OneDriveArchiver(local_dir=EXPORTS_DIR, onedrive_dir=exports_onedrive_path)
             exports_archiver.sync_files(file_pattern="*", recursive=True)
 
-        except Exception as e:
+        except Exception as e:   # as above: logged, tried again tomorrow
             log.exception(f"Backup sequence failed: {e}")
 
     def run(self):

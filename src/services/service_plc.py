@@ -13,6 +13,7 @@ never be leased.
 import json
 import logging
 import os
+import struct
 import threading
 import time
 from typing import Any, Dict
@@ -26,6 +27,7 @@ from src.core.device_service import DeviceService
 from src.core.log_setup import Throttle, setup_logging
 from src.core.os_helper import harden_windows_process
 from src.core.paths import REGISTRY_PATH, simulation_enabled
+from src.core.paths import config_path as config_file
 from src.core.network_map import (
     ZMQ_PORT_PLC_PUB, ZMQ_PORT_PLC_CMD, TOPIC_PLC_DATA, PLC_IP, PLC_RACK, PLC_SLOT, DB_INTERFACE_NUM,
     ZMQ_PORT_VACUUM_PUB, ZMQ_PORT_SPELLMAN_PUB, ZMQ_PORT_MAGNET_PUB, ZMQ_PORT_SRC_TURBO_PUB)
@@ -126,6 +128,7 @@ class PlcMicroservice(DeviceService):
         self._connect_thread = None
         self._connect_result = None
         self._refused_batched = set()
+        self._unparsable = set()        # tags whose bytes can't be decoded (reported once each)
 
         self.db_interface_size = self._calculate_db_size(DB_INTERFACE_NUM)
         self.fault_map = self._load_fault_map()
@@ -183,20 +186,34 @@ class PlcMicroservice(DeviceService):
                     self.events.log_fault(fault_name, active=is_active)
                     self.fault_latches[fault_name] = is_active
 
-    def _load_fault_map(self) -> dict:
-        config_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '../../config/fault_config.json'))
+    def _load_fault_map(self, config_path: str = None) -> dict:
+        config_path = config_path or config_file("fault_config.json")
         try:
             with open(config_path, "r") as f:
                 raw_json = json.load(f)
 
             dynamic_map = {}
             for udt_name, data in raw_json.items():
-                target_tag = data.get("registry_tag")
-                if target_tag:
-                    dynamic_map[target_tag] = data.get("bits", {})
+                target_tag = data.get("registry_tag") if isinstance(data, dict) else None
+                if not target_tag:
+                    continue
+                bits = {}
+                for bit_str, meta in (data.get("bits") or {}).items():
+                    try:
+                        byte_idx, bit_idx = (int(p) for p in bit_str.split("."))
+                        ok = 0 <= byte_idx <= 3 and 0 <= bit_idx <= 7 and bool(meta.get("name"))
+                    except (ValueError, AttributeError):
+                        ok = False
+                    if ok:
+                        bits[bit_str] = meta
+                    else:   # would fail to decode on every read; leave it out and say so
+                        self.events.log_general(f"fault_config.json: {udt_name} bit {bit_str!r} ignored "
+                                                f"(bit must be 'byte.bit', byte 0-3, bit 0-7, with a name)",
+                                                severity="ERROR")
+                dynamic_map[target_tag] = bits
             log.info("Mapped %d dynamic fault structures.", len(dynamic_map))
             return dynamic_map
-        except (OSError, ValueError) as e:
+        except (OSError, ValueError, AttributeError) as e:
             self.events.log_general(f"Failed to load fault map: {e}", severity="ERROR")
             return {}
 
@@ -330,37 +347,40 @@ class PlcMicroservice(DeviceService):
     def _read_and_parse_dbs(self):
         try:
             raw_interface = self.client.db_read(DB_INTERFACE_NUM, 0, self.db_interface_size)
+        except Exception as e:  # snap7 raises RuntimeError / S7Error / OSError subclasses
+            self._mark_disconnected(f"read failed: {e}")
+            return
 
-            for tag, meta in self.tags.items():
-                if meta.get("db_number") != DB_INTERFACE_NUM:
-                    continue
-                if "From_PC" in tag:
-                    continue
-
-                byte_offset = meta.get("byte_offset", 0)
-
+        # Decoding is ours, not the link's: a tag whose bytes can't be decoded (registry offset
+        # beyond the DB, bad fault map entry) shows '---' and is reported once. It used to drop
+        # the whole PLC connection and reconnect in a loop, which looked like a comms fault.
+        for tag, meta in self.tags.items():
+            if meta.get("db_number") != DB_INTERFACE_NUM or "From_PC" in tag:
+                continue
+            byte_offset = meta.get("byte_offset", 0)
+            try:
                 if tag in self.fault_map:
                     self._parse_fault_struct(raw_interface, byte_offset, tag)
                 else:
-                    val = self._parse_bytearray(
-                        raw_interface,
-                        byte_offset,
-                        meta.get("bit_offset", 0),
-                        meta.get("datatype", "UNKNOWN")
-                    )
-                    self.state[tag] = val
+                    self.state[tag] = self._parse_bytearray(raw_interface, byte_offset, meta.get("bit_offset", 0),
+                                                            meta.get("datatype", "UNKNOWN"))
+            except (IndexError, KeyError, TypeError, ValueError, struct.error) as e:
+                self.state[tag] = None
+                for meta_bit in self.fault_map.get(tag, {}).values():      # its faults: unknown, not stale
+                    self.state[f"faults.{meta_bit.get('name')}"] = None
+                if tag not in self._unparsable:
+                    self._unparsable.add(tag)
+                    log.error("Cannot decode %s from DB%d (byte %s, %s): %s - check the registry against "
+                              "the PLC interface", tag, DB_INTERFACE_NUM, byte_offset, meta.get("datatype"), e)
 
-            if self.state.get("ion_beam.facilities.safety_relay_active") == 0.0:
-                for tag in self.deck_readbacks:     # source deck unpowered: nothing to read back
-                    self.state[tag] = None
+        if self.state.get("ion_beam.facilities.safety_relay_active") == 0.0:
+            for tag in self.deck_readbacks:     # source deck unpowered: nothing to read back
+                self.state[tag] = None
 
-            current_count = self.state.get("ion_beam.system.plc_cycle_count")
-            if current_count is not None:
-                self.state["system.cpu_state"] = "RUN" if current_count != self.plc_cycle_count else "STOP"
-                self.plc_cycle_count = current_count
-
-        except Exception as e:  # snap7 raises RuntimeError / S7Error / OSError subclasses
-            self._mark_disconnected(f"read failed: {e}")
+        current_count = self.state.get("ion_beam.system.plc_cycle_count")
+        if current_count is not None:
+            self.state["system.cpu_state"] = "RUN" if current_count != self.plc_cycle_count else "STOP"
+            self.plc_cycle_count = current_count
 
     def _write_tag(self, tag: str, new_value: Any):
         """Write one tag. Returns (ok, reason)."""
@@ -399,7 +419,7 @@ class PlcMicroservice(DeviceService):
             return True, ""
         except (TypeError, ValueError) as e:
             return False, f"bad value for {dtype}: {e}"
-        except Exception as e:
+        except Exception as e:  # snap7 raises assorted types: treat the link as lost (dropped and re-made)
             self._mark_disconnected(f"write of {tag} failed: {e}")
             return False, f"PLC write failed: {e}"
 
@@ -461,7 +481,7 @@ class PlcMicroservice(DeviceService):
 
                 for tag, _, value in tag_list:
                     self.mailbox_cache[tag] = value
-            except Exception as e:
+            except Exception as e:  # snap7 raises assorted types: treat the link as lost (dropped and re-made)
                 self._mark_disconnected(f"batched write on DB {db_num} failed: {e}")
                 return
 

@@ -1,4 +1,5 @@
 """Exporting data and publication figures for a time range."""
+import logging
 import os
 import numpy as np
 import pyqtgraph as pg
@@ -7,6 +8,8 @@ from PyQt6.QtWidgets import QFileDialog
 from PyQt6.QtCore import QTimer
 from src.core import export_data as export_data
 from src.gui.data_viewer.export_dialog import ExportDialog, ExportWorker
+
+log = logging.getLogger("viewer.export")
 
 
 class ExportMixin:
@@ -137,7 +140,7 @@ class ExportMixin:
         self.export_worker.start()
 
     def _on_export_finished(self, folder):
-        print(f"[Export] Complete - {folder}")
+        log.info("Export complete: %s", folder)
         self.last_export_folder = folder
         self.btn_export.setEnabled(True)
         self.btn_export.setText("✅ Exported")
@@ -156,7 +159,7 @@ class ExportMixin:
         box.show()
 
     def _on_export_error(self, err):
-        print(f"[Export] Error: {err}")
+        log.error("Export failed: %s", err)
         self.btn_export.setEnabled(True)
         self.btn_export.setText("❌ Export failed")
         QTimer.singleShot(3000, lambda: self.btn_export.setText("📸 Export Snapshot"))

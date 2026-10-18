@@ -156,7 +156,7 @@ class RecipeAIAssistant:
                     )
                 )
                 return json.loads(response.text)
-            except Exception as e:
+            except Exception as e:   # google-genai / network / JSON errors alike: the builder shows the message
                 if "503" in str(e) or "UNAVAILABLE" in str(e):
                     if attempt < max_retries - 1:
                         time.sleep(backoff_time)
@@ -165,5 +165,6 @@ class RecipeAIAssistant:
                     else:
                         return {"status": "error", "message": "Service overloaded after retries."}
                 else:
+                    logging.getLogger("hmi.ai_assistant").warning("AI request failed: %s: %s", type(e).__name__, e)
                     return {"status": "error", "message": str(e)}
-        return None
+        return {"status": "error", "message": "No answer from the AI service."}

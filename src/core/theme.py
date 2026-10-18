@@ -1,4 +1,5 @@
 import json
+import logging
 import os
 
 _config_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '../../config/theme_config.json'))
@@ -7,8 +8,8 @@ _data = {}
 try:
     with open(_config_path, 'r') as f:
         _data = json.load(f)
-except Exception as e:
-    print(f"[Theme] Failed to load theme_config.json. Using fallbacks. Error: {e}")
+except (OSError, ValueError) as e:     # (logged before logging is set up: goes to the console)
+    logging.getLogger("theme").warning("theme_config.json not readable - default colours used: %s", e)
 
 theme_mode = _data.get("theme_mode", "dark").lower()
 is_dark_mode = (theme_mode == "dark")

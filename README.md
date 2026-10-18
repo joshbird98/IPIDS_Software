@@ -9,10 +9,15 @@ the HMI and viewer pick up their saved layouts and export settings from the old 
 
 ```
 src/services/       one process per device (PLC, Spellman, magnet, steerer, SMU, turbo, gauges)
-                    plus logger, compactor, events database, readback monitor and the service manager
+                    plus logger, compactor, events database, readback monitor, sequencer, alarms
+                    and the service manager
+src/drivers/        the device wire protocols (Modbus, SCPI, USS, RS485) used by the services
+src/sequencer/      recipes, mass scans and the optimiser (run by service_sequencer)
+src/alarms/         alarm states and the rules that raise them (run by service_alarms)
 src/gui/control/    operator HMI (python src/hmi.py)
 src/gui/data_viewer data viewer (python src/gui/data_viewer/viewer_main.py)
-src/core/           shared code: commands, telemetry cache, paths, logging, recipes
+src/core/           shared code: device service base, commands, leases, telemetry cache, paths,
+                    logging, recipe steps, config checking
 src/sim/            simulated devices (see below)
 config/             configuration files (JSON)
 plc/                PLC interface definition (PLC_PC_Interface.scl)
@@ -38,6 +43,35 @@ choice back there.
 
 The manager restarts a crashed service with increasing delays (2 s ... 5 min) and shows
 BACKOFF / STOPPED in the HMI's services panel, where services can also be stopped and started.
+
+### Sequences and control leases
+
+Recipes, mass scans and the optimiser run in `service_sequencer`, not in the HMI: closing or
+restarting the HMI doesn't stop them, and the HMI panels only start, pause, stop and display them.
+A sequence claims a **control lease** on each subsystem it drives (the analyser magnet, the
+einzel, ...); while it holds one, that subsystem's service takes commands for it only from the
+sequence. The Automation bar at the top of the HMI shows which sequence holds what, and the
+source panel marks a leased supply "🤖 SEQUENCE". Leases are renewed every second and lapse after
+5 s, so a sequencer that dies gives control back by itself. The operator can always take control
+(the Automation bar's Take control button, clicked twice): a recipe then pauses (Resume repeats
+the step it was on), a scan or optimiser run stops.
+Safety-relay, shutdown, fault-reset and gate-valve controls can never be leased.
+
+Every service also publishes, per subsystem, whether an operator command would be accepted now
+(`<subsystem>.permit`) and why not (`permit_reason`: relay off, PLC in control, cesium hot,
+leased, ...); the HMI greys out those controls with the reason as their tooltip.
+
+### Alarms
+
+`service_alarms` turns PLC fault bits, comms losses, stale services, vacuum set points, arcs
+and failed sequences into alarms (rules and per-alarm overrides in `config/alarm_config.json`).
+They follow ISA-18.2: an alarm is unacknowledged until the operator acknowledges it, even if it
+has cleared (it then flashes until acknowledged); shelving one needs a reason and expires; the
+first PLC trip after a reset is marked first-out (⭐); gauge comms alarms are suppressed while
+their controller's own comms alarm is active. Acknowledgements and shelves survive a restart
+(`data/alarm_state.json`). In the HMI's Alarms dock the horn sounds the most urgent
+unacknowledged alarm (priority 1-3; 4 is listed only) until it is acknowledged or silenced; a new
+alarm sounds again. If the alarm service itself isn't running the HMI raises its own alarm.
 
 ## Simulator (no hardware needed)
 
@@ -76,6 +110,14 @@ GitHub runs them on every push (`.github/workflows/tests.yml`).
 
 ## Configuration
 
+The HMI's config editor (Config in the menu bar, engineering password) checks a file when it
+opens it and again before applying a change (types, ranges, limits the right way round,
+duplicate ports, gauge set points the controller can store, ...), lists the changes for
+confirmation with a reason, keeps the previous version in `config/backups/` (not in git;
+"History..." puts one back), commits the file to git (so the lab PC gets local commits - pull
+with `git pull --rebase`), records a CONFIG_CHANGE event, rebuilds the tag registry where needed
+(and puts the old file back if that fails) and restarts the service that reads it.
+
 - `config/system_tags.json` (the tag registry, not in git) is **generated** from the other config
   files and `plc/generated/PLC_PC_Interface.scl` by `python src/utils/build_registry.py`. Re-run it
   after changing limits in `mpd_config.json`, `magnet_config.json`, `steerer_magnet_config.json`,
@@ -92,12 +134,18 @@ GitHub runs them on every push (`.github/workflows/tests.yml`).
 - `readback_tolerance.json`: readback-vs-setpoint tolerances. Out of tolerance is information,
   not a fault: an amber outline on the readback in the HMI and a TOLERANCE event. Edits are
   picked up while running.
+- `alarm_config.json`: alarm rules and overrides (priority, delays, disabling one alarm or a
+  pattern such as `plc.*_Comms_Fail`).
+- `workspace_profiles.json`, `plot_settings.json`: the data viewer's saved layouts and settings
+  (per machine, not in git).
 
 ## Logs and records
 
-- `SystemLogs/<process>.log`: one rotating log per process (warnings, errors, anything unhandled).
+- `SystemLogs/<process>.log`: one rotating log per process, the HMI and the viewer included
+  (warnings, errors, anything unhandled; programs log rather than print).
 - `data/events.db` (SQLite), table `events`, by `event_type`:
-  `GENERAL`, `FAULT`, `PHASE_CHANGE`, `USER_MARKER`, `WATCHDOG_TRIP/CLEAR`,
+  `GENERAL`, `FAULT`, `ALARM` (raised / cleared / acknowledged / shelved), `CONFIG_CHANGE`,
+  `PHASE_CHANGE`, `USER_MARKER`, `WATCHDOG_TRIP/CLEAR`,
   `TOLERANCE` (readback out of / back in tolerance) and `COMMAND` - the audit trail: every
   command sent by the HMI, recipes, optimiser or scans, with what the service answered
   (ok / rejected + reason / failed). There are a lot of COMMAND rows; filter them out with

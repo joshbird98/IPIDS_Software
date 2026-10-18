@@ -735,8 +735,8 @@ def build_system_registry(registry_path=None):
             with open(registry_path, "r") as f:
                 existing_registry = json.load(f)
             print(f"Loaded existing registry with {len(existing_registry)} tags for safe merge.")
-        except Exception as e:
-            print(f"Could not load existing registry: {e}")
+        except (OSError, ValueError) as e:
+            print(f"Could not load existing registry (hand-edited display fields will be lost): {e}")
 
     new_registry = {}
 
@@ -762,9 +762,13 @@ def build_system_registry(registry_path=None):
 
     new_registry = apply_existing_overrides(new_registry, existing_registry)
 
-    with open(registry_path, "w") as f:
-        sorted_registry = {k: new_registry[k] for k in sorted(new_registry.keys())}
+    # Written whole and swapped in: a crash half way used to leave a truncated registry that no
+    # service could start with
+    sorted_registry = {k: new_registry[k] for k in sorted(new_registry.keys())}
+    tmp = registry_path + ".tmp"
+    with open(tmp, "w") as f:
         json.dump(sorted_registry, f, indent=4)
+    os.replace(tmp, registry_path)
 
     print(f"Registry successfully built with {len(sorted_registry)} tags.")
 

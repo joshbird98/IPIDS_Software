@@ -4,9 +4,15 @@ Branch `claude/control-hardening` (from `claude/viewer-stability`). Everything h
 simulator; none of it has been tried on the real hardware yet (see "Lab PC validation").
 
 ## After pulling this branch on the lab PC
-1. `python src/utils/build_registry.py` - rebuilds config/system_tags.json (picks up the new Spellman
-   current limits). Without it nothing breaks, the HMI just keeps not sending the 50 uA current limit.
-2. Restart the services and the HMI.
+1. `python src/utils/build_registry.py` - rebuilds config/system_tags.json (picks up the Spellman current
+   limits, and drops the software services' old cmd_ctrl_mode tags - leases replaced them; the PLC's own
+   ctrl_mode tags stay).
+2. Restart the service manager and the HMI. The manager now also starts `service_sequencer` (recipes, mass
+   scans, optimiser) and `service_alarms`.
+3. Check that the HMI's alarm horn is audible on the lab PC's speakers (Alarms dock; sounds in
+   src/gui/control/assets/sounds/, made by src/utils/make_alarm_sounds.py).
+4. The viewer copies workspace profiles from the old src/gui/config/ to config/workspace_profiles.json once
+   (its log says which); check them, then delete src/gui/config/.
 
 ## Done
 - Acknowledged commands (ROUTER/DEALER) for every service and the manager: ok / accepted / rejected+reason /
@@ -60,6 +66,36 @@ simulator; none of it has been tried on the real hardware yet (see "Lab PC valid
   - Mass Scan: the log view is a symmetric log (negative currents in red on their own log scale below
     zero, labelled -1 pA, -10 pA, ...); Y refits to the visible data when switching scale, clearing or
     loading a trace (it used to keep a stale range - data squashed at the top).
+- Second round (Oct 2026, from Josh's answers to the review list):
+  - `DeviceService` base class (`src/core/device_service.py`, own tests) for every hardware service; drivers
+    in `src/drivers/`; one magnet module for the analyser magnet and the X steerer.
+  - Control leases (`src/core/leases.py`) instead of the software ctrl_mode / origin bypasses; every service
+    publishes per-subsystem permits with the reason; the HMI greys controls out with that reason.
+  - Source deck: with the relay off its readbacks are unknown ('---'), the PLC's cesium estimate stays;
+    while the PLC says the cesium is hot, switching off target/filament/thermionic (and target voltage below
+    its minimum) is refused with the reason. The simulator's threshold (CS_HOT_C = 50 degC) and what exactly
+    the PLC holds are **assumptions - check against the PLC program**.
+  - `service_sequencer`: recipes, the precision mass scan (the older optics-panel mass scan was removed) and
+    the optimiser run there under leases; the HMI only drives and displays them. Operator take-over pauses
+    a recipe / stops a scan.
+  - `service_alarms` + HMI Alarms dock with a horn (ISA-18.2 states, shelving with reason, first-out,
+    suppression, persistence; the HMI alarms by itself if the alarm service is down).
+  - Config editor: values keep type and precision (it used to round floats to 6 digits, turn null into
+    "None" and empty lists into null), checks on load and on apply, change list + reason, backups with
+    History, atomic writes, registry rebuild with roll-back, git commit, CONFIG_CHANGE event.
+  - Big files split (data viewer 1958 -> 760 lines + mixins; recipe builder; mass scan widget package); bugs
+    found on the way fixed (recipe builder: verify-condition buttons crashed; step numbers could repeat and
+    a drag then duplicated one step and lost another). Viewer workspace profiles moved to config/.
+  - Broad `except Exception` blocks reviewed: narrowed to the errors expected where those are known (files,
+    JSON, polars, Modbus, git, ZeroMQ); the rest are deliberate boundaries (one command / widget / job / day
+    must not stop the rest) and log the traceback. The PLC service no longer drops the link when one tag
+    can't be decoded, and ignores (with an event) fault-map bits outside the 32-bit word.
+  - `print` replaced by logging in the services, HMI, viewer and core (the viewer now writes
+    SystemLogs/viewer.log); command-line tools in src/utils/ still print.
+  - Found on the way: the mouse wheel changed any HMI setpoint box it passed over (and focused it), and
+    the box sends its value when focus leaves it - so scrolling a panel could change e.g. the extraction
+    voltage by a step and the next click elsewhere sent it. The wheel now does nothing over value boxes
+    and drop-downs in the HMI (`src/gui/control/wheel_guard.py`); values are typed or stepped.
 - Found on the way and fixed: the manager's start-up purge killed every SINDIE service process on the PC (so a
   simulator or test run would have killed the live system's services) - now only its own; the HMI config editor
   never rebuilt the registry (wrong script path); the recipe builder's tag picker and fault list looked in
@@ -92,6 +128,16 @@ simulator; none of it has been tried on the real hardware yet (see "Lab PC valid
    (the HMI log says which), commit them, then delete src/config/.
 4. Possible later: approach the magnet current from below in "Calculate & set amps" (hysteresis - the scan
    calibrates on the way up), if the landing isn't repeatable enough.
+5. Lab PC validation of the second round: a recipe and a mass scan under leases on the real supplies; Take
+   control mid-run; alarm rules on real data (nuisance alarms? priorities right?); horn audible.
+6. Decisions wanted (how these should behave when something fails):
+   - vacuum gauge start-up set-point enforcement failing part-way: carry on (now) or withhold the vacuum OK?
+   - a refused PLC write drops and re-makes the whole PLC link (now) - or treat refusals separately?
+   - the logger keeps up to 8 unwritable chunks (~2 h) in RAM, then drops the oldest (CRITICAL event) -
+     right ceiling?
+   - config editor "restart ALL SERVICES" also restarts service_plc, pausing the PC watchdog for a few
+     seconds - does the PLC's watchdog timeout cover that?
+7. Future: a one-page interlock overview (every permissive and what is holding it), as discussed.
 
 ## Notes
 - If the ADAM module is repaired: its manager key must be `service_adam_monitor` (matches its heartbeat name).

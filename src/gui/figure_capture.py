@@ -27,6 +27,7 @@ Use: press F12 with the mouse over the part you want (works in any viewer or
 HMI window), choose what to capture and the width on the page, Capture.
 Files go to data/exports/figures/<name>_<timestamp>.pdf/.svg/.png.
 """
+import logging
 import os
 from datetime import datetime
 
@@ -417,7 +418,7 @@ def capture(window, opts, notify=True):
             window.resize(size)
             if was_max0 and not window.isMaximized():
                 window.showMaximized()
-    print("[Figure capture] " + ", ".join(files))
+    logging.getLogger("figure_capture").info("Figure saved: %s", ", ".join(files))
     if notify and files:
         from PyQt6.QtWidgets import QMessageBox
         box = QMessageBox(QMessageBox.Icon.Information, "GUI figure saved", "\n".join(files), parent=window)

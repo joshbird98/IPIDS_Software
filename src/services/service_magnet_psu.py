@@ -11,6 +11,7 @@ import time
 from dataclasses import dataclass, field
 
 from src.core.device_service import DeviceService
+from src.drivers.magnet_modbus import IO_ERRORS
 from src.core.log_setup import Throttle, setup_logging
 from src.core.os_helper import harden_windows_process
 from src.core.paths import simulation_enabled
@@ -147,7 +148,9 @@ class MagnetPsuService(DeviceService):
             self.sp_cache[f"{self.base}.sp_actual_voltage"] = 0.0
             self.sp_cache[f"{self.base}.sp_actual_current"] = 0.0
             self._last_force_safe = time.time()
-        except Exception as e:   # driver write failed (any pymodbus/socket error): reconnect and retry
+        except Exception as e:   # whatever stopped it, treat the link as lost: reconnect and force again
+            if not isinstance(e, IO_ERRORS):
+                self.log.exception("Unexpected error forcing the outputs off")
             if (n := self.throttle.ready("force-safe")) is not None:
                 self.events.log_general(f"Could not force {self.kind.label.lower()} outputs off: {e}"
                                         f"{Throttle.suffix(n)}", severity="ERROR")
@@ -183,7 +186,9 @@ class MagnetPsuService(DeviceService):
         self.log.info("Degauss step %d/%d: %.1f A", self.degauss_step_idx + 1, len(steps), amps)
         try:
             self.apply_smart_setpoint(amps)
-        except Exception as e:   # PSU write failed: stop the sequence, report it
+        except Exception as e:   # whatever stopped it, the sequence ends here and is reported
+            if not isinstance(e, IO_ERRORS):
+                self.log.exception("Unexpected error during degauss")
             self.degauss_active = False
             self.events.log_general(f"Degauss aborted - PSU write failed: {e}", severity="ERROR")
             return
@@ -229,7 +234,7 @@ class MagnetPsuService(DeviceService):
                     cmd.ok("nothing to do")
             else:
                 cmd.reject(f"unsupported command '{leaf}'")
-        except Exception as e:   # PSU write failed part-way (connection lost / Modbus exception)
+        except IO_ERRORS as e:   # PSU write failed part-way (anything else: DeviceService answers 'internal error')
             cmd.fail(f"PSU write failed: {e}")
             self.log.warning("Command %s failed: %s", cmd, e)
             self.hw.connected = False
@@ -271,7 +276,7 @@ class MagnetPsuService(DeviceService):
                                         severity="WARNING")
             try:
                 self.hw.clear_alarms()
-            except Exception as e:   # best effort; the alarm stays visible in the flags above
+            except IO_ERRORS as e:   # best effort; the alarm stays visible in the flags above
                 self.log.warning("Alarm clear failed: %s", e)
 
         short = opened = unexpected = False

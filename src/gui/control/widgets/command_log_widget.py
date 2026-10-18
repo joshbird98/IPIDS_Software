@@ -7,7 +7,6 @@ events.db (event type COMMAND) and each service's log file.
 """
 import time
 
-from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QColor
 from PyQt6.QtWidgets import (QCheckBox, QHBoxLayout, QHeaderView, QLabel, QPushButton, QTableWidget,
                              QTableWidgetItem, QVBoxLayout, QWidget)

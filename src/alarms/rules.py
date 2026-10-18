@@ -130,6 +130,9 @@ def load_fault_config(path: str = None) -> dict:
         return {}
 
 
+RULE_KINDS = frozenset({"plc_faults", "flag", "stale", "services", "sequencer"})
+
+
 class AlarmRules:
     def __init__(self, config: dict, fault_config: dict, started: float):
         self.config = config

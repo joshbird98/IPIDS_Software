@@ -1,6 +1,5 @@
 import logging
 import queue
-import time
 
 import orjson
 import zmq

@@ -1,8 +1,11 @@
+import logging
 import time
 
 import orjson
 import zmq
 from PyQt6.QtCore import QThread, pyqtSignal
+
+log = logging.getLogger("viewer.live")
 
 
 class ZMQLiveEngine(QThread):
@@ -25,11 +28,14 @@ class ZMQLiveEngine(QThread):
         self._error_counts = {}
 
     def _report(self, exc):
+        """Rate-limited: the 1st, 10th, 100th... occurrence. A bad payload (ValueError) or a network
+        error is one line; anything else is a bug, so its traceback is logged."""
         key = f"{type(exc).__name__}: {exc}"
         n = self._error_counts.get(key, 0) + 1
         self._error_counts[key] = n
         if n in (1, 10, 100, 1000) or n % 10000 == 0:
-            print(f"[Live Engine] message error (x{n}): {key}")
+            expected = isinstance(exc, (ValueError, zmq.ZMQError))
+            log.error("Live data message error (x%d): %s", n, key, exc_info=None if expected else exc)
 
     def run(self):
         """The background loop that listens to the network."""
@@ -46,7 +52,7 @@ class ZMQLiveEngine(QThread):
         poller = zmq.Poller()
         poller.register(sub_socket, zmq.POLLIN)
 
-        print(f"[Live Engine] Network Thread Started. Listening on {len(self.ports)} ports.")
+        log.info("Live data thread listening on %d ports", len(self.ports))
 
         while self.running:
             try:
@@ -73,15 +79,13 @@ class ZMQLiveEngine(QThread):
                             self.sink(topic.decode("utf-8", "replace"), ts, data)
                         else:
                             self.data_ready.emit(data)
-                    except Exception as e:
-                        # Bad payloads used to be swallowed silently; report (rate-limited).
+                    except Exception as e:   # one bad message must not stop live data (reported, rate-limited)
                         self._report(e)
-            except Exception as e:
-                # Ignore random network dropouts to prevent thread crashes
+            except Exception as e:   # nor a network hiccup: the thread keeps listening
                 self._report(e)
 
         sub_socket.close()
-        print("[Live Engine] Thread Stopped.")
+        log.info("Live data thread stopped")
 
     def stop(self):
         self.running = False

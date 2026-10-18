@@ -1,7 +1,7 @@
 import logging
 import os
 import time
-from PyQt6.QtWidgets import QMainWindow, QDockWidget, QMessageBox, QInputDialog, QLineEdit
+from PyQt6.QtWidgets import QApplication, QMainWindow, QDockWidget, QMessageBox, QInputDialog, QLineEdit
 from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtGui import QAction
 
@@ -35,6 +35,7 @@ from src.gui.control.widgets.optics_widget import BeamlineOpticsWidget
 from src.gui.control.widgets.system_health_widget import SystemHealthWidget
 from src.gui.control.widgets.services_widget import ServicesWidget
 from src.gui.control.dialogs.config_editor_dialog import ConfigEditorDialog
+from src.gui.control import wheel_guard
 from src.gui.control.widgets.faraday_smu_widget import FaradaySMUWidget
 from src.gui.control.widgets.optimiser_widget import ParameterOptimizerWidget
 from src.gui.control.widgets.current_monitor_widget import AdamMonitorWidget
@@ -59,6 +60,8 @@ class ControlMainWindow(QMainWindow):
         self.setDockOptions(QMainWindow.DockOption.AllowNestedDocks | QMainWindow.DockOption.AllowTabbedDocks)
 
         self.settings = gui_settings("SurreyIonBeam", "SINDIE_HMI")
+        # The mouse wheel must not change setpoint boxes (they send on focus-out): wheel_guard.py
+        wheel_guard.install(QApplication.instance())
 
         current_dir = os.path.dirname(os.path.abspath(__file__))
         fault_map_path = os.path.abspath(os.path.join(current_dir, "../../../config/fault_config.json"))
@@ -168,7 +171,9 @@ class ControlMainWindow(QMainWindow):
         pwd, ok = QInputDialog.getText(self, "Authentication Required", "Enter Engineering Password:",
                                        QLineEdit.EchoMode.Password)
         if ok and pwd == "admin":
-            editor = ConfigEditorDialog(self.cmd_thread, self)
+            editor = ConfigEditorDialog(
+                self.cmd_thread, self, events=self.event_helper,
+                services=lambda: list((self.master_telemetry_cache.get("manager.services") or {}).keys()))
             editor.exec()
         elif ok:
             QMessageBox.warning(self, "Access Denied", "Incorrect password.")

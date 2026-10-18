@@ -6,9 +6,13 @@ import struct
 from typing import Optional, Tuple
 
 from pymodbus.client import ModbusTcpClient
+from pymodbus.exceptions import ModbusException
 from pymodbus.framer import FramerType
 
 FULL_SCALE = 52428.0
+# What talking to the PSU can raise: pymodbus' own errors, sockets, and this driver's IOError /
+# ConnectionError (both OSError)
+IO_ERRORS = (OSError, ModbusException)
 
 
 class MagnetModbusProtocol:
@@ -26,7 +30,7 @@ class MagnetModbusProtocol:
         if self.client:
             try:
                 self.client.close()
-            except Exception as e:  # pymodbus raises assorted types closing a dead socket
+            except IO_ERRORS as e:
                 self.log.debug("close before reconnect: %s", e)
         self.client = ModbusTcpClient(self.ip, port=self.port, framer=FramerType.RTU, timeout=0.5)
         try:
@@ -45,7 +49,7 @@ class MagnetModbusProtocol:
             self.client.write_coil(402, True)
             self.client.write_coil(411, True)
             return True
-        except Exception as e:  # pymodbus ConnectionException / ModbusIOException / OSError
+        except IO_ERRORS + (IndexError, struct.error) as e:    # also a short answer to the ratings read
             self.log.debug("connect failed: %s", e)
             self.connected = False
             return False
@@ -55,7 +59,7 @@ class MagnetModbusProtocol:
             try:
                 self.client.write_coil(405, False)
                 self.client.write_coil(402, False)
-            except Exception as e:  # same: whatever pymodbus raises, still close the socket
+            except IO_ERRORS as e:   # still close the socket
                 self.log.warning("Could not switch output off while disconnecting: %s", e)
             self.client.close()
             self.connected = False
@@ -116,7 +120,7 @@ class MagnetModbusProtocol:
             }
             return (self._from_counts(regs[2], self.nom_v), self._from_counts(regs[3], self.nom_i),
                     bool(status_word & 0x00000080), alarms)
-        except Exception as e:  # pymodbus I/O errors: treat as a lost link
+        except IO_ERRORS + (IndexError, struct.error) as e:    # I/O error or a short answer: link lost
             self.log.warning("Telemetry read failed: %s", e)
             self.connected = False
             return None

@@ -39,15 +39,16 @@ def logger_tick_seconds(project_root):
     try:
         with open(os.path.join(project_root, "config", "logger_config.json")) as f:
             return float(json.load(f).get("tick_rate_seconds", 0.05))
-    except Exception:
+    except (OSError, ValueError, TypeError, AttributeError):   # missing / unreadable: the shipped rate
         return 0.05
 
 
 def request_logger_flush(timeout_s=3.0):
-    """Ask the logger service to write its in-RAM rows to disk. True if confirmed."""
+    """Ask the logger service to write its in-RAM rows to disk. True if confirmed (False if the
+    logger isn't running or didn't answer in time)."""
+    import zmq
+    from src.core.network_map import ZMQ_PORT_LOGGER_CMD
     try:
-        import zmq
-        from src.core.network_map import ZMQ_PORT_LOGGER_CMD
         ctx = zmq.Context.instance()
         s = ctx.socket(zmq.REQ)
         s.setsockopt(zmq.RCVTIMEO, int(timeout_s * 1000))
@@ -59,7 +60,7 @@ def request_logger_flush(timeout_s=3.0):
             return "COMPLETE" in reply.upper() or "OK" in reply.upper()
         finally:
             s.close()
-    except Exception:
+    except zmq.ZMQError:        # includes zmq.Again: no answer within the timeout
         return False
 
 
@@ -73,7 +74,7 @@ def git_version(project_root):
         dirty = subprocess.run(["git", "-C", project_root, "status", "--porcelain", "--untracked-files=no"],
                                capture_output=True, text=True, timeout=5).stdout.strip()
         return rev + ("-modified" if dirty else "")
-    except Exception:
+    except (OSError, subprocess.SubprocessError):     # no git, or it hung
         return None
 
 
@@ -389,7 +390,7 @@ def caption_text(meta):
     s = "; ".join(parts) + f", recorded {when} (local time). "
     if meta["mode"] == "exact":
         tick = meta.get("logger_tick_seconds")
-        s += f"Data are all logged samples" + (f" ({1 / tick:g} Hz)" if tick else "") + "."
+        s += "Data are all logged samples" + (f" ({1 / tick:g} Hz)" if tick else "") + "."
     elif meta["mode"] == "mean":
         s += f"Lines show {meta['bin_seconds']:g} s means" + \
              ("; shaded bands show the minimum-maximum range within each bin." if meta.get("spread_columns") else ".")

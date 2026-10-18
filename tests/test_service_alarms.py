@@ -1,7 +1,6 @@
 """The alarm service over real sockets: a PLC fault becomes an unacknowledged alarm that sounds,
 the operator acknowledges it, it clears; shelving needs a reason; acknowledgements survive a
 restart."""
-import json
 import threading
 import time
 

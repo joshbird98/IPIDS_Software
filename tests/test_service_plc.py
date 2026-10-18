@@ -233,3 +233,54 @@ def test_hot_cesium_refusals_carry_the_reason(plc_service):
     assert r["status"] == C.REJECTED and "at or above" in r["reason"]
     assert c.request("plc", "ion_beam.source.target.sp_requested_voltage", 6.0)["status"] == C.OK
     assert c.request("plc", "ion_beam.source.extraction.cmd_enable", False)["status"] == C.OK   # not held
+
+
+def test_undecodable_tag_does_not_drop_the_connection(monkeypatch, caplog):
+    """A registry tag whose bytes can't be decoded shows '---' and is reported once; it used to
+    drop the whole PLC link and reconnect in a loop, which looked like a comms fault."""
+    monkeypatch.setenv("SINDIE_SIMULATE", "1")
+    from src.services import service_plc as sp
+    from src.sim import plc as simplc
+    simplc._PLC = None
+    svc = sp.PlcMicroservice()
+    try:
+        svc.client = sp._new_client()
+        svc.client.connect("sim", 0, 1)
+        svc.connected = True
+        svc.tags["ion_beam.test.bogus"] = {"db_number": sp.DB_INTERFACE_NUM, "datatype": "REAL",
+                                           "byte_offset": svc.db_interface_size + 100}
+        word = next(iter(svc.fault_map))                       # a fault word the PLC can't be read for
+        svc.tags[word] = dict(svc.tags[word], byte_offset=svc.db_interface_size + 200)
+        fault_names = [m["name"] for m in svc.fault_map[word].values()]
+        svc._read_and_parse_dbs()
+        assert svc.connected and svc.state["ion_beam.test.bogus"] is None
+        assert svc.state[word] is None and all(svc.state[f"faults.{n}"] is None for n in fault_names)
+        assert svc.state.get("ion_beam.system.plc_cycle_count") is not None      # the rest decoded
+        assert "Cannot decode ion_beam.test.bogus" in caplog.text
+        caplog.clear()
+        svc._read_and_parse_dbs()
+        assert "Cannot decode" not in caplog.text                                 # reported once
+
+        def unreachable(*a):
+            raise RuntimeError("TCP : Unreachable peer")
+        svc.client.db_read = unreachable
+        svc._read_and_parse_dbs()                                                 # the link itself failing
+        assert not svc.connected and svc.state["system.connected"] == 0.0
+    finally:
+        svc.shutdown()
+
+
+def test_bad_fault_map_entries_are_left_out(monkeypatch, tmp_path):
+    monkeypatch.setenv("SINDIE_SIMULATE", "1")
+    from src.services import service_plc as sp
+    svc = sp.PlcMicroservice()
+    try:
+        assert all(0 <= int(b.split(".")[0]) <= 3 for bits in svc.fault_map.values() for b in bits)
+        import json
+        bad = {"W": {"registry_tag": "ion_beam.faults.w", "bits": {"0.1": {"name": "Good"}, "4.0": {"name": "Bad"},
+                                                                    "x": {"name": "Worse"}, "1.1": {}}}}
+        cfg = tmp_path / "fault_config.json"
+        cfg.write_text(json.dumps(bad))
+        assert svc._load_fault_map(str(cfg)) == {"ion_beam.faults.w": {"0.1": {"name": "Good"}}}
+    finally:
+        svc.shutdown()

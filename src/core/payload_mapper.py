@@ -41,8 +41,8 @@ class DynamicPayloadMapper:
                     pass
             else:
                 # Upgraded Warning with Topic and Value Type
-                if key not in self.unknown_keys:
-                    #print(f"\n[Mapper WARNING] Topic: {topic} | Dropped Key: '{key}' | Val Type: {type(val).__name__}")
+                if key not in self.unknown_keys:     # not in the registry: not logged (said once, at DEBUG)
+                    log.debug("Not logged (not in the registry): %s/%s (%s)", topic, key, type(val).__name__)
                     self.unknown_keys.add(key)
 
         return parsed_data

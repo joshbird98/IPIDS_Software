@@ -1,3 +1,5 @@
+import logging
+
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, QLabel, QPushButton, QFrame, QGroupBox,
 )
@@ -117,8 +119,8 @@ class VacuumControlWidget(QWidget):
             self._update_gauges(data, vac_connected)
             self._update_turbo(data, turbo_connected)
             self._update_gate_valve(data, master_comms_lost)
-        except Exception as e:
-            print(f"[UI Parser Error] Vacuum Runtime exception: {e}")
+        except Exception:   # never let one bad value freeze the whole panel; the cause goes to the log
+            logging.getLogger("hmi.vacuum").exception("Vacuum panel update failed")
 
     def _update_gauges(self, data: dict, vac_connected: bool):
         gauge_locations = {
@@ -186,7 +188,7 @@ class VacuumControlWidget(QWidget):
             self.btn_turbo_start.setEnabled(False)
             self.btn_turbo_start.setText("-")
             self.btn_turbo_start.setToolTip("Disabled: Source Turbo telemetry stream is dead.")
-            self.lbl_turbo_speed.setText(f"-")
+            self.lbl_turbo_speed.setText("-")
             self.lbl_turbo_status.setText("OFFLINE")
         else:
             t_speed = data.get("ion_beam.source.turbo_pump.rb_speed_hz")

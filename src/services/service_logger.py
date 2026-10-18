@@ -129,7 +129,7 @@ def latest_chunk_end(directory: str) -> float:
             v = pl.scan_parquet(os.path.join(directory, name)).select(pl.col("timestamp").max()).collect().item()
             if v is not None:
                 best = max(best, float(v))
-        except Exception as e:  # unreadable chunk: the compactor will report it
+        except (OSError, pl.exceptions.PolarsError) as e:  # unreadable chunk: the compactor will report it
             log.warning("Could not read %s while checking the journal: %s", name, e)
     return best
 
@@ -254,7 +254,7 @@ class TelemetryLoggerService:
             if recovered:
                 self.events.log_general(f"Recovered {recovered} logged rows from the crash journal",
                                         severity="WARNING")
-        except Exception:
+        except Exception:   # recovering old rows must never stop new ones being logged
             log.exception("Crash-journal recovery failed")
         self.journal = CrashJournal(self.log_directory, self.keys)
         try:
@@ -539,7 +539,7 @@ class TelemetryLoggerService:
 
             except KeyboardInterrupt:
                 break
-            except Exception:
+            except Exception:   # the logger keeps logging; the cause goes to the log (rate-limited)
                 if (n := self._throttle.ready("loop")) is not None:
                     log.exception("Main loop error%s", Throttle.suffix(n))
 

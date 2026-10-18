@@ -156,8 +156,8 @@ class TimeSeriesEngine:
                     lfs.append(df.lazy().select([c for c in fetch_cols if c in df.columns]))
                 else:
                     lfs.append(self.get_safe_scan(f, fetch_cols))
-            except Exception:
-                pass
+            except (OSError, pl.exceptions.PolarsError) as e:     # its rows are missing from the plot
+                self._unreadable(f, e)
         if not lfs:
             return empty
         lf = pl.concat(lfs, how="diagonal_relaxed") \
@@ -218,9 +218,15 @@ class TimeSeriesEngine:
             .filter((pl.col("timestamp_min") >= start_ts) & (pl.col("timestamp_min") <= end_ts)) \
             .sort("timestamp_min").collect()
 
+    def _unreadable(self, f, e):
+        """A data file left out of a query: said once per file (queries run many times a second)."""
+        if f not in self._unreadable_chunks:
+            self._unreadable_chunks.add(f)
+            log.warning("%s not readable - its data is missing from the plots: %s", f, e)
+
     def populate_macro_marts(self):
         """Silently loads macro rollups into RAM for instantaneous slicing."""
-        print("[Engine] Hoisting In-Memory Data Marts...")
+        log.info("Loading the in-memory data marts...")
 
         # Glob searches the root recursively, finding macros inside daily_logs
         files_1m = glob.glob(os.path.join(self.data_root_dir, "**/*macro_1m.parquet"), recursive=True)
@@ -232,7 +238,7 @@ class TimeSeriesEngine:
                 # glob() order is filesystem order, not time order: sort, or the
                 # plotted x goes backwards (breaks clipToView / downsampling).
                 self.mart_20m = pl.concat(lfs_20m, how="diagonal").sort("timestamp_min").collect()
-                print(f"[Engine] 20m Mart online. Rows: {self.mart_20m.height}")
+                log.info("20m mart online: %d rows", self.mart_20m.height)
 
             # The 1m tier is now read lazily from disk per query (_scan_macro_1m), so it
             # is no longer preloaded (saves up to ~230 MB for 30 days of 336 tags).
@@ -243,9 +249,9 @@ class TimeSeriesEngine:
                     .filter(pl.col("timestamp_min") >= cutoff_ts) \
                     .sort("timestamp_min") \
                     .collect()
-                print(f"[Engine] 1m Mart online (30-day window). Rows: {self.mart_1m.height}")
-        except Exception as e:
-            print(f"[Engine] Data Mart population failed: {e}")
+                log.info("1m mart online (30-day window): %d rows", self.mart_1m.height)
+        except Exception:   # the marts only speed up long views; the viewer works without them
+            log.exception("Data mart population failed - long time spans will load more slowly")
 
     @staticmethod
     def _prune_files(all_chunks, all_days, start_ts, end_ts):
@@ -295,20 +301,26 @@ class TimeSeriesEngine:
                 lf = self.get_safe_scan(f, cols)
                 df = lf.filter((pl.col("timestamp") >= start_ts) & (pl.col("timestamp") <= end_ts)) \
                        .sort("timestamp").collect()
-            except Exception as e:
-                print(f"[Engine] export: skipped {os.path.basename(f)}: {e}")
+            except (OSError, pl.exceptions.PolarsError) as e:
+                log.warning("Export: skipped %s (not readable): %s", os.path.basename(f), e)
                 continue
             if df.height:
                 yield df.with_columns([pl.col(c).cast(pl.Float64) for c in df.columns])
 
     def query_stateless(self, start_ts: float, end_ts: float, selected_tags: list):
-        # 1. GUARANTEED FALLBACKS
+        """(timestamps, {tag: values}) for the window; empty arrays if there is nothing (or it failed)."""
+        if not selected_tags:
+            return np.array([], dtype=np.float64), {}
+        t0 = time.perf_counter()
+        route, result = self._query_routed(start_ts, end_ts, selected_tags)
+        if log.isEnabledFor(logging.DEBUG):         # the per-query timing line (run with DEBUG logging)
+            self._log_perf(route, end_ts - start_ts, result[0], t0)
+        return result
+
+    def _query_routed(self, start_ts: float, end_ts: float, selected_tags: list):
+        """(route taken, (timestamps, {tag: values}))."""
         safe_empty_ts = np.array([], dtype=np.float64)
         safe_empty_vals = {}
-        if not selected_tags:
-            return safe_empty_ts, safe_empty_vals
-
-        t0 = time.perf_counter()
         span = end_ts - start_ts
         route_taken = ""
 
@@ -331,7 +343,8 @@ class TimeSeriesEngine:
             have_20m = self.mart_20m is not None
             if span <= self.RAW_MAX_SPAN or not (have_1m or have_20m):
                 route_taken = "RAW_DISK"
-                return self._query_raw(start_ts, end_ts, selected_tags, pruned_chunks, pruned_days, raws)
+                return route_taken, self._query_raw(start_ts, end_ts, selected_tags, pruned_chunks, pruned_days,
+                                                    raws)
 
             # --- 3. MACRO ROUTING WITH GAP STITCHING (> 24 Hours) ---
             else:
@@ -346,9 +359,10 @@ class TimeSeriesEngine:
                 if (df_macro is None or df_macro.height == 0) and span <= self.RAW_FALLBACK_SPAN:
                     # No rollups for this window yet (e.g. not compacted): use raw rows.
                     route_taken = "RAW_FALLBACK"
-                    return self._query_raw(start_ts, end_ts, selected_tags, pruned_chunks, pruned_days, raws)
+                    return route_taken, self._query_raw(start_ts, end_ts, selected_tags, pruned_chunks,
+                                                        pruned_days, raws)
                 if df_macro is None:
-                    return safe_empty_ts, safe_empty_vals
+                    return route_taken, (safe_empty_ts, safe_empty_vals)
 
                 ts_arr = safe_empty_ts
                 vals_dict = {tag: np.array([], dtype=np.float64) for tag in selected_tags}
@@ -402,8 +416,8 @@ class TimeSeriesEngine:
                                         else:
                                             # schema-aware projection (cached), as in _query_raw
                                             lfs.append(self.get_safe_scan(f, stitch_cols))
-                                    except Exception:
-                                        pass
+                                    except (OSError, pl.exceptions.PolarsError) as e:
+                                        self._unreadable(f, e)
 
                                 df_chunks_lazy = pl.concat(lfs, how="diagonal_relaxed") \
                                     .filter((pl.col("timestamp") >= start_ts - 3600) & (pl.col("timestamp") <= end_ts + 3600))
@@ -486,14 +500,14 @@ class TimeSeriesEngine:
                                         vals_dict = self._stitch_parts(vals_dict, chunk_parts, selected_tags,
                                                                        n_macro, ts_chunks.size)
 
-                            except Exception as stitch_err:
-                                print(f"[Engine] Stitching skipped: {stitch_err}")
+                            except Exception:   # the rollup view is still shown, just without the newest raw rows
+                                log.exception("Stitching the newest raw rows onto the rollups failed")
 
-                return self._sort_by_time(ts_arr, vals_dict)
+                return route_taken, self._sort_by_time(ts_arr, vals_dict)
 
-        except Exception as e:
-            print(f"[Engine] Fatal Query Error: {e}")
-            return safe_empty_ts, safe_empty_vals
+        except Exception:   # the plot shows nothing for this request rather than the viewer stopping
+            log.exception("Query %.0f-%.0f failed", start_ts, end_ts)
+            return route_taken + " FAILED", (safe_empty_ts, safe_empty_vals)
 
     @staticmethod
     def _stitch_parts(macro_vals, chunk_parts, tags, n_macro, n_chunk):
@@ -555,8 +569,8 @@ class TimeSeriesEngine:
         # 2. Calculate Visual Density (Assuming a ~1500px wide ViewBox)
         density = pts / 1500.0
 
-        print(
-            f"[Engine] {route:<18} | Span: {span_hrs:>5.1f}h | Pts: {pts:>7} | \u0394t: {dt_sec:>5.1f}s | Density: {density:>5.1f} pts/px | Time: {elapsed:>5.1f}ms")
+        log.debug("%-18s | span %5.1f h | %7d pts | dt %5.1f s | %5.1f pts/px | %5.1f ms",
+                  route, span_hrs, pts, dt_sec, density, elapsed)
 
     @staticmethod
     def downsample_minmax(times, values, target_points=2000):

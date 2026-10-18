@@ -107,6 +107,7 @@ class DeviceService:
         self.events = EventHelper(self.NAME)
         self.throttle = Throttle(60.0)
         self.backoff = ReconnectBackoff(self.RECONNECT_DELAYS)
+        self._connect_error_types = set()
         self.state = {"timestamp": 0.0, "system.cycle_time_ms": 0.0}
         self.running = True
         self._last_hb = 0.0
@@ -246,6 +247,9 @@ class DeviceService:
             ok = bool(self.connect_device())
         except Exception as e:   # drivers raise socket / Modbus / SCPI errors alike: a failed attempt
             ok, error = False, e
+            if not isinstance(e, OSError) and type(e) not in self._connect_error_types:
+                self._connect_error_types.add(type(e))      # the traceback once per kind (a bug shows here)
+                self.log.warning("connect_device raised %s", type(e).__name__, exc_info=True)
         if ok:
             previous = self.backoff.succeeded()
             self.throttle.reset("connect")

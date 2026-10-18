@@ -2,7 +2,6 @@
 sequencer and the HMI (src/sequencer/points.py)."""
 import pytest
 
-from src.core import commands as C
 from src.sequencer.optimiser import OptimiserConfig, OptimiserJob, restore_tags, starting_value
 from src.sequencer.points import TAIL, PointFollower, PointLog
 from src.sequencer.protocol import COMPLETE, FAILED, STOPPED, key

@@ -1,4 +1,5 @@
 """Event markers: shown from events.db, added by double-click, deleted by right-click."""
+import logging
 import os
 import sqlite3
 import json
@@ -175,7 +176,7 @@ class MarkersMixin:
                     "type": e_type
                 }
         except sqlite3.Error as e:
-            print(f"[DB Error] Failed to read markers: {e}")
+            logging.getLogger("viewer.markers").error("Event markers not readable from events.db: %s", e)
             self._ev_conn = None  # reconnect next time
 
         return markers
