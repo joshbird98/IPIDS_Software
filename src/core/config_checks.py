@@ -279,6 +279,8 @@ def _check_vacuum(c: _Checker, d):
                 devices[dev] = w
         for relay, r in (node_cfg.get("relays") or {}).items():
             w = f"{node}.relays.{relay}"
+            if relay not in {"1", "2", "3", "4", "5", "6"}:     # GRAPHIX: six relays (else silently ignored)
+                c.bad(f"{w}: relays are numbered 1-6")
             ch = c.num(r, "channel", w, ge=1, integer=True)
             if ch is not None and str(ch) not in channels:
                 c.bad(f"{w}.channel: controller {node} has no channel {ch}")

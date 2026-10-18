@@ -47,6 +47,7 @@ def test_shipped_configs_have_no_problems():
     ("vac_gauges_config.json", lambda d: d["10"]["relays"]["1"].update(on_val=9e-6), "must be below"),
     ("vac_gauges_config.json", lambda d: d["10"]["relays"]["2"].update(on_val=5.55e-6), "2 significant digits"),
     ("vac_gauges_config.json", lambda d: d["20"]["relays"]["1"].update(channel=7), "has no channel 7"),
+    ("vac_gauges_config.json", lambda d: d["20"]["relays"].update({"7": d["20"]["relays"]["1"]}), "numbered 1-6"),
     ("network_config.json", lambda d: d["zmq_ports"].update(smu_cmd=5550), "5550 is also plc_pub"),
     ("network_config.json", lambda d: d["plc"].update(ip="192.168.1.300"), "is not an IP address"),
     ("mpd_config.json", lambda d: d["arc_detection"].update(collapse_fraction=1.5), "collapse_fraction"),

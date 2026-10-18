@@ -205,3 +205,20 @@ def test_scrolling_past_a_number_does_not_change_it(env):
                      Qt.KeyboardModifier.NoModifier, Qt.ScrollPhase.NoScrollPhase, False)
     QApplication.sendEvent(box, ev)
     assert box.value() == 200 and not ev.isAccepted()      # passed on to the tree (which scrolls)
+
+
+def test_history_rescues_an_unreadable_file(env, monkeypatch):
+    from src.gui.control.dialogs import config_editor_dialog as ced
+    dlg = open_file(env.make(), "smu_config.json")
+    widget_at(dlg, "max_v").setValue(150)
+    dlg._save_and_restart()                                           # keeps a backup of the good file
+    (env.cfg / "smu_config.json").write_text("{broken")                 # then someone breaks it by hand
+    dlg = env.make()
+    dlg.cb_files.setCurrentText("smu_config.json")
+    assert dlg.original is None and not dlg.btn_save.isEnabled()
+    monkeypatch.setattr(ced.QInputDialog, "getItem", staticmethod(lambda *a, **k: (a[3][0], True)))
+    dlg._show_history()
+    assert cs.read("smu_config.json", str(env.cfg))["max_v"] == 200      # the version before the 150 save
+    assert dlg.original is not None and dlg.btn_save.isEnabled()
+    broken = [p for p in cs.backups("smu_config.json", str(env.cfg)) if open(p).read() == "{broken"]
+    assert broken                                                      # the broken file was kept too

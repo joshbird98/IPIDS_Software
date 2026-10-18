@@ -368,7 +368,10 @@ class ConfigEditorDialog(QDialog):
             QMessageBox.information(self, "History", f"No earlier versions of {filename} have been kept yet "
                                                      "(one is kept every time it is applied here).")
             return
-        labels = [config_store.backup_time(p) for p in found]
+        labels = []
+        for p in found:                     # two saves within a second: tell them apart
+            label = config_store.backup_time(p)
+            labels.append(label if label not in labels else f"{label} ({sum(x.startswith(label) for x in labels) + 1})")
         choice, ok = QInputDialog.getItem(self, "Put Back a Previous Version",
                                           f"{filename} as it was before the change saved at:", labels, 0, False)
         if not ok:

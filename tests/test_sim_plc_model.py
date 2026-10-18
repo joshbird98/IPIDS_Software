@@ -1,5 +1,7 @@
 """The simulated PLC's machine model (src/sim/plc.py), run on a fake clock: the behaviour
 Josh described for the real source (Oct 2026)."""
+import random
+
 import pytest
 
 from src.sim.plc import SimulatedPLC, emission_ma, target_beam_ma
@@ -19,6 +21,7 @@ class FakeClock:
 
 @pytest.fixture
 def plc():
+    random.seed(20261018)       # the model adds measurement noise: the same noise every run
     p = SimulatedPLC()
     p.clock = FakeClock()
     return p
@@ -162,10 +165,14 @@ def test_bleed_and_snics_currents(plc):
         plc.set(S + tag, 1)
     plc.set(S + "filament.sp_requested_current", 27.0)
     run(plc, 120)
-    beam = plc.get(S + "target.rb_current") - 8.0 / 50.0
+    beams, extracted = [], []
+    for _ in range(50):                  # averaged over 5 s: one reading carries 5 % noise
+        run(plc, 0.1)
+        beams.append(plc.get(S + "target.rb_current") - 8.0 / 50.0)
+        extracted.append(plc.get(S + "extraction.rb_current") - 15.0 / 50.0)
+    beam = sum(beams) / len(beams)
     assert beam == pytest.approx(1.0, rel=0.15)
-    extracted = plc.get(S + "extraction.rb_current") - 15.0 / 50.0
-    assert extracted == pytest.approx(0.1 * beam, rel=0.25)
+    assert sum(extracted) / len(extracted) == pytest.approx(0.1 * beam, rel=0.25)
 
 
 def test_source_deck_has_no_readback_without_the_relay(plc):
