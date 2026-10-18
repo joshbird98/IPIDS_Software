@@ -36,6 +36,10 @@ RECONNECT_DELAYS = (1.0, 2.0, 5.0, 10.0)  # seconds between PLC connection attem
 # PC->PLC area (stat_* permissives such as stat_vac_ok_for_gv, the watchdog)
 # is computed by this service and must not be settable from outside.
 COMMANDABLE_PREFIXES = ("cmd_", "sp_requested_", "testing_cmd_")
+# ctrl_mode values that are NOT an automatic lockout: the cesium oven's mode 1 is just
+# "heater on" (the HMI lets the operator adjust the setpoint then; this service used to
+# refuse it as "automatic control mode 1").
+NON_LOCKING_MODES = {"ion_beam.source.cesium": {1}}
 
 log = logging.getLogger("service_plc")
 
@@ -596,8 +600,12 @@ class PlcMicroservice:
                 rb_mode_tag = f"{subsystem_base}.ctrl_mode"
 
                 # Check if the subsystem has an active mode, and ensure we aren't trying to change the mode itself
-                if rb_mode_tag in self.tags and not tag.endswith("cmd_ctrl_mode"):
+                # Switching something OFF is never locked out (an operator must always be able to)
+                switching_off = tag.endswith(".cmd_enable") and not value
+                if rb_mode_tag in self.tags and not tag.endswith("cmd_ctrl_mode") and not switching_off:
                     active_mode = self.state.get(rb_mode_tag) or 0.0
+                    if int(active_mode) in NON_LOCKING_MODES.get(subsystem_base, ()):
+                        active_mode = 0.0
                     if active_mode > 0 and origin != "optimizer":
                         cmd.reject(f"locked out: {subsystem_base} is in automatic control mode {int(active_mode)}")
                         continue

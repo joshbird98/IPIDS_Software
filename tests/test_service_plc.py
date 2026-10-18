@@ -147,3 +147,23 @@ def test_simulated_supply_follows_setpoint(plc_service, monkeypatch):
     assert plc_service.state.get("ion_beam.facilities.safety_relay_active") == 1.0
     assert plc_service.state.get("ion_beam.source.target.stat_enabled") == 1.0
     assert plc_service.state.get("ion_beam.source.target.rb_voltage") == pytest.approx(4.0, abs=0.1)
+
+
+def test_mode_lockout_rules(plc_service):
+    """A subsystem in an automatic mode refuses setpoints, but switching it off is always allowed,
+    and the cesium oven's mode 1 (heater on) is not a lockout - its setpoint stays adjustable."""
+    from src.sim.plc import shared_plc
+    c = _client()
+    plc = shared_plc()
+    with plc.lock:
+        plc.set("ion_beam.source.extraction.cmd_ctrl_mode", 2)          # e.g. held by a recipe
+        plc.set("ion_beam.source.cesium.cmd_ctrl_mode", 1)              # heater on
+    deadline = time.time() + 3
+    while time.time() < deadline and plc_service.state.get("ion_beam.source.extraction.ctrl_mode") != 2.0:
+        time.sleep(0.05)
+    r = c.request("plc", "ion_beam.source.extraction.sp_requested_voltage", 5.0)
+    assert r["status"] == C.REJECTED and "automatic control mode 2" in r["reason"]
+    assert c.request("plc", "ion_beam.source.extraction.cmd_enable", False)["status"] == C.OK
+    assert c.request("plc", "ion_beam.source.extraction.cmd_enable", True)["status"] == C.REJECTED
+    assert c.request("plc", "ion_beam.source.cesium.sp_requested_temp", 90.0)["status"] == C.OK
+    assert c.request("plc", "ion_beam.source.cesium.cmd_force_cooling", True)["status"] == C.OK
