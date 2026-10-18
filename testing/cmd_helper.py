@@ -1,4 +1,4 @@
-"""Send commands to the IPIDS services from a script and see what each service said.
+"""Send commands to the SINDIE services from a script and see what each service said.
 
 Commands are acknowledged now (see src/core/commands.py): every one comes back
 ok / accepted / rejected (with the reason) / failed, or timeout / unreachable.

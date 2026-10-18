@@ -1,4 +1,4 @@
-"""Run IPIDS without the implanter: every service against simulated hardware, plus the
+"""Run SINDIE without the implanter: every service against simulated hardware, plus the
 operator HMI and the data viewer.
 
     python run_simulation.py               services + HMI + data viewer
@@ -113,8 +113,8 @@ def main():
     args = ap.parse_args()
 
     # Before anything from src is imported: they read these at import time
-    os.environ["IPIDS_SIMULATE"] = "1"
-    os.environ["IPIDS_PORT_OFFSET"] = str(args.port_offset)
+    os.environ["SINDIE_SIMULATE"] = "1"
+    os.environ["SINDIE_PORT_OFFSET"] = str(args.port_offset)
     sys.path.insert(0, ROOT)
     env = dict(os.environ, PYTHONPATH=ROOT + (os.pathsep + os.environ["PYTHONPATH"]
                                                if os.environ.get("PYTHONPATH") else ""))
@@ -134,7 +134,7 @@ def main():
 
     os.makedirs(paths.LOG_DIR, exist_ok=True)
     sim.set_faults(set())
-    print(f"IPIDS simulation - data and logs in {paths.DATA_DIR}, ports offset by {args.port_offset}")
+    print(f"SINDIE simulation - data and logs in {paths.DATA_DIR}, ports offset by {args.port_offset}")
     print("Starting the services (simulated devices)...")
     procs = {"manager": _launch([sys.executable, os.path.join("src", "services", "service_manager.py"), "--sim"],
                                 os.path.join(paths.LOG_DIR, "simulation_manager_console.log"), env, new_group=True)}
