@@ -24,6 +24,8 @@ data/alarm_state.json.tmp
 data/telemetry/
 # Data viewer's saved plot settings (per machine)
 config/plot_settings.json
+config/workspace_profiles.json
+config/workspace_profiles.json.tmp
 data/exports/
 data/scans/
 FaultLogs/

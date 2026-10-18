@@ -7,6 +7,7 @@ the sequencer service (src/sequencer/recipe_job.py), which gives them a snapshot
 telemetry and its command port (commands carry the recipe's control lease).
 """
 import json
+import os
 import logging
 import time
 
@@ -285,6 +286,12 @@ class Recipe:
         self.fault_policy = data.get("fault_policy", {})
         # Unknown step types used to be skipped silently, so a recipe could run with steps missing
         self.steps = [create_step(step_data) for step_data in data.get("steps", [])]
+        # The HMI follows a run by step number and a prompt is told apart from the next by it
+        ids = [step.step_id for step in self.steps]
+        repeated = sorted({str(i) for i in ids if ids.count(i) > 1})
+        if repeated:
+            raise RecipeError(f"{os.path.basename(self.filepath)}: step number(s) {', '.join(repeated)} used more "
+                              "than once - open the recipe in the Recipe Builder and save it to renumber the steps")
 
 class RoutineCallStep(RecipeStep):
     def __init__(self, step_data: dict):

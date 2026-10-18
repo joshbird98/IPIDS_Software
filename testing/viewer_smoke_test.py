@@ -207,7 +207,8 @@ def main():
                 expect = {f"{r[0]:.3f}" for r in conn.execute(
                     "SELECT timestamp FROM events WHERE event_type='USER_MARKER' AND timestamp BETWEEN ? AND ?",
                     (v0 + win.t0, v1 + win.t0))}
-            shown = {k for k in win.marker_items if v0 <= float(k) - win.t0 <= v1}
+            shown = {k for it in win.event_overlay.items.values() for _x, k, ev in it["members"]
+                     if ev.get("type", "USER_MARKER") == "USER_MARKER" and v0 <= float(k) - win.t0 <= v1}
             check("user markers in view are drawn", expect == shown, f"{len(shown)}/{len(expect)}")
         legend_items = sum(len(l.items) for l in win.lane_legends.values())
         check("legend present without live data", legend_items == len(win.plot_config), f"{legend_items} entries")
