@@ -203,19 +203,24 @@ class VacuumMicroservice(DeviceService):
         self.events.log_general(f"-> Node {node} Relay {relay}: Mismatch found! Overwriting...")
         ok_ch = self.write_retry(node, "4", p["ch"], target_ch)
         time.sleep(0.2)
-        ok_first = False
+        ok_first = ok_second = False
         if ok_ch:
             # Keep on < off at every step: write whichever end moves away from the other first
-            current_off = float(curr_off) if curr_off else 1000.0
+            try:
+                current_off = float(curr_off) if curr_off else 1000.0
+            except ValueError:          # unreadable answer: assume the widest (write 'on' first)
+                current_off = 1000.0
             first, second = ((p["on"], target_on), (p["off"], target_off)) if float(on_val) < current_off \
                 else ((p["off"], target_off), (p["on"], target_on))
             ok_first = self.write_retry(node, "4", first[0], first[1])
             time.sleep(0.2)
             if ok_first:
-                self.write_retry(node, "4", second[0], second[1])
+                ok_second = self.write_retry(node, "4", second[0], second[1])
             time.sleep(0.2)
-        if not (ok_ch and ok_first):
-            self.events.log_general("Aborted Relay Config due to NACK on writes.")
+        if not (ok_ch and ok_first and ok_second):
+            self.events.log_general(f"Node {node} relay {relay}: set points NOT fully applied (the controller "
+                                    f"refused a write) - check channel {target_ch}, on {target_on}, off "
+                                    f"{target_off} on the controller", severity="ERROR")
 
     # ------------------------------------------------------------------ commands
     def handle_command(self, cmd, subsystem: str, leaf: str):

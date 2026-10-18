@@ -173,7 +173,7 @@ class ControlMainWindow(QMainWindow):
         if ok and pwd == "admin":
             editor = ConfigEditorDialog(
                 self.cmd_thread, self, events=self.event_helper,
-                services=lambda: list((self.master_telemetry_cache.get("manager.services") or {}).keys()))
+                services=lambda: dict(self.master_telemetry_cache.get("manager.services") or {}))
             editor.exec()
         elif ok:
             QMessageBox.warning(self, "Access Denied", "Incorrect password.")

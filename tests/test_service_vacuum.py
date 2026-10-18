@@ -63,3 +63,33 @@ def test_relay_set_point_command(stack):
     assert shared_graphix().relays[(10, 1)]["on"] == pytest.approx(4e-6)
     r = client.request("vacuum", "ion_beam.vacuum.controller_10.relay_9_on", 1e-6)
     assert r["status"] == C.REJECTED
+
+
+def test_refused_relay_writes_are_reported(monkeypatch, fake_events):
+    """A set point the controller refuses is an ERROR event naming the relay and the values; an
+    unreadable 'off' value no longer aborts the whole start-up check."""
+    monkeypatch.setenv("SINDIE_SIMULATE", "1")
+    import src.services.service_vac_gauge_controllers as vac
+
+    class Stub:
+        events = fake_events
+
+        def __init__(self, refuse):
+            self.refuse, self.written = refuse, []
+
+        def read_retry(self, node, group, param, tries):
+            return {"1": "2", "2": "9.9E-06", "3": "garbage"}.get(param)
+
+        def write_retry(self, node, group, param, value):
+            self.written.append((param, value))
+            return param not in self.refuse
+
+    monkeypatch.setattr(vac.time, "sleep", lambda s: None)
+    ok = Stub(refuse=())
+    vac.VacuumMicroservice.enforce_relay(ok, 10, 1, {"channel": 1, "on_val": 5.5e-6, "off_val": 8e-6})
+    assert ok.written == [("1", "1"), ("2", "5.5E-06"), ("3", "8.0E-06")]
+    assert not [e for e in fake_events.events if e["severity"] == "ERROR"]
+    bad = Stub(refuse=("3",))                                    # the second write ('off') refused
+    vac.VacuumMicroservice.enforce_relay(bad, 10, 1, {"channel": 1, "on_val": 5.5e-6, "off_val": 8e-6})
+    errors = [e for e in fake_events.events if e["severity"] == "ERROR"]
+    assert len(errors) == 1 and "relay 1" in errors[0]["message"] and "8.0E-06" in errors[0]["message"]

@@ -118,6 +118,9 @@ def test_parallel_sub_steps(builder):
     assert [s["type"] for s in subs] == [kinds.itemText(i) for i in range(kinds.count())]
     assert [s["step_id"] for s in subs] == [201, 202, 203, 204, 205]
     assert "SUB_RECIPE" not in [kinds.itemText(i) for i in range(kinds.count())]   # not allowed in PARALLEL
+    select(builder, 0)
+    builder._remove_selected_step()                            # the PARALLEL step becomes step 1 ...
+    assert [s["step_id"] for s in builder.current_steps[0]["steps"]] == [101, 102, 103, 104, 105]   # ... and its subs
 
 
 def test_numbering_survives_delete_add_and_drag(builder):

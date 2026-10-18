@@ -1,33 +1,45 @@
-"""Engineering config editor: edit a config/*.json file as a tree, then apply it and restart the
-service that reads it.
+"""Engineering config editor: edit a config/*.json file as a tree, then apply it and restart what
+reads it.
 
 Safeguards (the checking, backups and git commit are in src/core/config_store.py):
   * on load, the file is checked and any problem is shown above the tree,
-  * on apply, the edits are checked (types, ranges, limits the right way round...) and the
-    changes are listed for confirmation with an optional reason,
-  * the previous file is kept in config/backups/ ('History...' puts one back), the new one is
-    written whole, and files that feed system_tags.json are rolled back if the rebuild fails,
+  * on apply, the edits are checked (types, ranges, limits the right way round...), the changes
+    are listed for confirmation with an optional reason, and a number that changes by more than
+    a factor of 3 needs a tick to confirm it was meant (95.0 typed as 950),
+  * nothing is written if the file changed on disk since it was opened (a hand edit or git pull
+    would otherwise be silently undone),
+  * the previous file is kept in config/backups/ ('History...' puts one back), only the changed
+    values are rewritten, and files that feed system_tags.json are rolled back if the rebuild fails,
   * the change is committed to git and recorded in the event log.
-Values keep their types and nothing the tree can't show (null, empty lists) is lost on save.
+Keys can't be renamed or added here (the services look things up by name). Numbers keep full
+precision; nulls and empty lists are kept.
 """
+import html
 import json
 import logging
+import math
 
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QColor
 from PyQt6.QtWidgets import (QCheckBox, QComboBox, QDialog, QDialogButtonBox, QHBoxLayout, QInputDialog, QLabel,
-                             QLineEdit, QListWidget, QMessageBox, QPushButton, QSpinBox, QTreeWidget,
-                             QTreeWidgetItem, QVBoxLayout)
+                             QLineEdit, QListWidget, QMessageBox, QPushButton, QTreeWidget, QTreeWidgetItem,
+                             QVBoxLayout)
 
 from src.core import config_store, paths
 from src.core.config_store import REGISTRY_INPUTS, ConfigError
 
 log = logging.getLogger("hmi.config_editor")
 
+WHOLE_SYSTEM = "WHOLE SYSTEM (by hand)"
+ALL_SERVICES = "ALL SERVICES"
+HMI = "HMI_GUI"
 CONFIG_TO_SERVICE = {
     "alarm_config.json": "service_alarms",
-    "fault_config.json": "ALL SERVICES",
-    "network_config.json": "ALL SERVICES",
+    # read by the PLC and alarm services, and by the HMI's fault list
+    "fault_config.json": ALL_SERVICES,
+    # every program - the manager and the HMI too - reads its ports when it starts: restarting
+    # the services alone would leave them talking past the manager (which then restarts them...)
+    "network_config.json": WHOLE_SYSTEM,
     "logger_config.json": "service_logger",
     "magnet_config.json": "service_magnet_psu",
     "steerer_magnet_config.json": "service_steerer_magnet_psu",
@@ -36,28 +48,12 @@ CONFIG_TO_SERVICE = {
     "mpd_config.json": "service_spellman_mpd",
     "vac_gauges_config.json": "service_vac_gauge_controllers",
     "plc_config.json": "service_plc",
-    "theme_config.json": "HMI_GUI",
+    "theme_config.json": HMI,
 }
-# Used for 'ALL SERVICES' when the service manager isn't reporting its list
-KNOWN_SERVICES = ["service_events", "service_logger", "service_data_compactor", "service_plc", "service_monitor",
-                  "service_alarms", "service_vac_gauge_controllers", "service_source_turbo", "service_magnet_psu",
-                  "service_steerer_magnet_psu", "service_spellman_mpd", "service_smu", "service_sequencer"]
-INT_MIN, INT_MAX = -2147483648, 2147483647
-
-
-class SpinBox(QSpinBox):
-    """Ignores the mouse wheel unless it has focus: scrolling down the tree must not change ports
-    or counts it happens to pass over."""
-
-    def __init__(self):
-        super().__init__()
-        self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
-
-    def wheelEvent(self, event):
-        if self.hasFocus():
-            super().wheelEvent(event)
-        else:
-            event.ignore()
+HMI_TOO = {"fault_config.json"}          # the HMI reads these at start-up as well
+SERVICE_CHOICES = ["service_events", "service_logger", "service_data_compactor", "service_plc", "service_monitor",
+                   "service_alarms", "service_vac_gauge_controllers", "service_source_turbo", "service_magnet_psu",
+                   "service_steerer_magnet_psu", "service_spellman_mpd", "service_smu", "service_sequencer"]
 
 
 def format_float(value: float) -> str:
@@ -66,16 +62,37 @@ def format_float(value: float) -> str:
     return repr(float(value))
 
 
+def parse_number(text: str):
+    """'5' -> 5, '5.5' / '2e-4' -> float; ValueError otherwise (also for nan / inf)."""
+    try:
+        return int(text)
+    except ValueError:
+        value = float(text)
+    if not math.isfinite(value):
+        raise ValueError("not a finite number")
+    return value
+
+
 class ConfirmChangesDialog(QDialog):
-    def __init__(self, title: str, intro: str, changes: list, parent=None):
+    def __init__(self, title: str, intro: str, changes: list, parent=None, large: list = ()):
         super().__init__(parent)
         self.setWindowTitle(title)
-        self.resize(640, 380)
+        self.resize(660, 420)
         layout = QVBoxLayout(self)
         layout.addWidget(QLabel(intro))
         self.list = QListWidget()
         self.list.addItems(changes)
         layout.addWidget(self.list)
+        self.large = None
+        if large:
+            warn = QLabel("<b>Large changes - check these are meant:</b><br>"
+                          + "<br>".join(html.escape(x) for x in large))
+            warn.setStyleSheet("background-color: #FFF3E0; color: #BF360C; border: 1px solid #FFB74D; "
+                               "border-radius: 4px; padding: 6px;")
+            warn.setWordWrap(True)
+            layout.addWidget(warn)
+            self.large = QCheckBox("I have checked the large changes")
+            layout.addWidget(self.large)
         layout.addWidget(QLabel("Reason (kept in the change history):"))
         self.reason = QLineEdit()
         self.reason.setPlaceholderText("e.g. new PSU fitted, limits from the datasheet")
@@ -84,13 +101,17 @@ class ConfirmChangesDialog(QDialog):
         self.buttons.accepted.connect(self.accept)
         self.buttons.rejected.connect(self.reject)
         layout.addWidget(self.buttons)
+        if self.large is not None:
+            ok = self.buttons.button(QDialogButtonBox.StandardButton.Ok)
+            ok.setEnabled(False)
+            self.large.toggled.connect(ok.setEnabled)
 
 
 class ConfigEditorDialog(QDialog):
     def __init__(self, cmd_thread, parent=None, config_dir=None, services=None, events=None, rebuild=None,
                  commit=True):
-        """services: callable -> names of the services the manager runs (for 'ALL SERVICES');
-        events: EventHelper for the change record; rebuild: callable -> error text or None."""
+        """services: callable -> {service name: state} as the manager reports them (for 'ALL
+        SERVICES'); events: EventHelper for the change record; rebuild: callable -> error text or None."""
         super().__init__(parent)
         self.setWindowTitle("System Configuration Editor")
         self.resize(760, 760)
@@ -102,7 +123,6 @@ class ConfigEditorDialog(QDialog):
         self.commit = commit
         self.original = None            # the file as loaded (None: nothing loaded / unreadable)
         self._leaves = []               # (tree item, path tuple, original value)
-        self._renamable = []            # (tree item, path of its dict, original key)
 
         layout = QVBoxLayout(self)
         top = QHBoxLayout()
@@ -111,9 +131,9 @@ class ConfigEditorDialog(QDialog):
         self.cb_files.addItems(config_store.config_files(self.config_dir))
         self.cb_files.currentTextChanged.connect(self._load_file)
         top.addWidget(self.cb_files)
-        top.addWidget(QLabel("<b>Target Service:</b>"))
+        top.addWidget(QLabel("<b>Restart:</b>"))
         self.cb_service = QComboBox()
-        self.cb_service.addItems(["ALL SERVICES"] + KNOWN_SERVICES)
+        self.cb_service.addItems([ALL_SERVICES] + SERVICE_CHOICES)
         self.cb_service.currentTextChanged.connect(self._update_button_text)
         top.addWidget(self.cb_service)
         layout.addLayout(top)
@@ -150,10 +170,10 @@ class ConfigEditorDialog(QDialog):
     # ------------------------------------------------------------------ loading
     def _update_button_text(self, svc_name=None):
         svc_name = svc_name or self.cb_service.currentText()
-        if svc_name == "ALL SERVICES":
-            self.btn_save.setText("💾 APPLY CHANGES && RESTART ALL SERVICES")
-        elif svc_name == "HMI_GUI":
-            self.btn_save.setText("💾 APPLY CHANGES (RESTART THE HMI AFTERWARDS)")
+        if svc_name == ALL_SERVICES:
+            self.btn_save.setText("💾 APPLY CHANGES && RESTART THE RUNNING SERVICES")
+        elif svc_name in (HMI, WHOLE_SYSTEM):
+            self.btn_save.setText("💾 APPLY CHANGES (THEN RESTART BY HAND)")
         else:
             self.btn_save.setText(f"💾 APPLY CHANGES && RESTART {svc_name.upper()}")
 
@@ -169,14 +189,14 @@ class ConfigEditorDialog(QDialog):
     def _load_file(self, filename):
         if not filename:
             return
-        target_svc = CONFIG_TO_SERVICE.get(filename, "ALL SERVICES")
+        target_svc = CONFIG_TO_SERVICE.get(filename, ALL_SERVICES)
         if self.cb_service.findText(target_svc) == -1:
             self.cb_service.addItem(target_svc)
         self.cb_service.setCurrentText(target_svc)
         self._update_button_text(target_svc)
 
         self.tree.clear()
-        self.original, self._leaves, self._renamable = None, [], []
+        self.original, self._leaves = None, []
         try:
             data, problems = config_store.load(filename, self.config_dir)
         except ConfigError as e:
@@ -192,42 +212,26 @@ class ConfigEditorDialog(QDialog):
                                       "here, or put back a working version with History...):")
 
     def _populate_tree(self, parent_node, data, path):
-        if isinstance(data, dict):
-            renamable = bool(path) and path[-1] == "devices"
-            for key, value in data.items():
-                item = QTreeWidgetItem(parent_node)
-                item.setText(0, str(key))
-                if renamable:
-                    item.setFlags(item.flags() | Qt.ItemFlag.ItemIsEditable)
-                    item.setBackground(0, QColor("#E3F2FD"))
-                    item.setToolTip(0, "Double click to rename this device key.")
-                    self._renamable.append((item, path, key))
-                self._populate_child(item, key, value, path + (key,))
-        elif isinstance(data, list):
-            for i, value in enumerate(data):
-                item = QTreeWidgetItem(parent_node)
-                item.setText(0, f"[{i}]")
-                self._populate_child(item, f"[{i}]", value, path + (i,))
-
-    def _populate_child(self, item, key, value, path):
-        if isinstance(value, (dict, list)) and value:
-            self._populate_tree(item, value, path)
-        elif isinstance(value, (dict, list)):
-            item.setText(1, "(empty)")
-            item.setForeground(1, QColor("#9E9E9E"))
-        else:
-            self._add_edit_widget(item, key, value, path)
+        items = data.items() if isinstance(data, dict) else enumerate(data)
+        for key, value in items:
+            item = QTreeWidgetItem(parent_node)
+            item.setText(0, str(key) if isinstance(data, dict) else f"[{key}]")
+            if isinstance(value, (dict, list)) and value:
+                self._populate_tree(item, value, path + (key,))
+            elif isinstance(value, (dict, list)):
+                item.setText(1, "(empty)")
+                item.setForeground(1, QColor("#9E9E9E"))
+            else:
+                self._add_edit_widget(item, key, value, path + (key,))
 
     def _add_edit_widget(self, item, key, value, path):
         if isinstance(value, bool):
             w = QCheckBox()
             w.setChecked(value)
-        elif isinstance(value, int) and INT_MIN <= value <= INT_MAX:
-            w = SpinBox()
-            w.setRange(INT_MIN, INT_MAX)
-            w.setValue(value)
         elif isinstance(value, float):
             w = QLineEdit(format_float(value))
+        elif isinstance(value, int):
+            w = QLineEdit(str(value))
         elif value is None:
             w = QLineEdit("null")
             w.setToolTip("null in the file: leave as null, or type a number or text")
@@ -247,24 +251,17 @@ class ConfigEditorDialog(QDialog):
     def _value_of(self, widget, original, path):
         if isinstance(widget, QCheckBox):
             return widget.isChecked()
-        if isinstance(widget, QSpinBox):
-            return widget.value()
         text = widget.text().strip() if isinstance(widget, QLineEdit) else ""
         if isinstance(original, bool):
             return original
-        if isinstance(original, int):
+        if isinstance(original, (int, float)):
             try:
-                return int(text)
-            except ValueError:
-                raise ValueError(f"{self._label(path)}: '{text}' is not a whole number") from None
-        if isinstance(original, float):
-            try:
-                value = float(text)
+                value = parse_number(text)
             except ValueError:
                 raise ValueError(f"{self._label(path)}: '{text}' is not a number") from None
-            if value != value or value in (float("inf"), float("-inf")):
-                raise ValueError(f"{self._label(path)}: must be a finite number")
-            return value
+            if isinstance(original, float):
+                return float(value)
+            return int(value) if isinstance(value, float) and value.is_integer() else value   # '5.0' -> 5
         if original is None:
             if text in ("", "null"):
                 return None
@@ -278,32 +275,40 @@ class ConfigEditorDialog(QDialog):
         """The file as edited (raises ValueError with the field and the problem)."""
         leaves = {path: self._value_of(self.tree.itemWidget(item, 1), orig, path)
                   for item, path, orig in self._leaves}
-        renames = {}
-        for item, dict_path, old_key in self._renamable:
-            new_key = item.text(0).strip()
-            if not new_key:
-                raise ValueError(f"{self._label(dict_path)}: a device name is empty")
-            if new_key != old_key:
-                renames.setdefault(dict_path, {})[old_key] = new_key
-        return config_store.apply_edits(self.original, leaves, renames)
+        return config_store.apply_edits(self.original, leaves)
 
     # ------------------------------------------------------------------ applying
-    def _service_list(self):
-        names = []
+    def _running_services(self):
+        """The services the manager runs and hasn't been told to keep stopped ([] if it isn't reporting)."""
+        states = {}
         if callable(self.services):
             try:
-                names = [n for n in self.services() if isinstance(n, str)]
+                reported = self.services()
+                states = dict(reported) if isinstance(reported, dict) else {n: "" for n in reported}
             except (TypeError, ValueError, AttributeError) as e:
                 log.warning("Service list not available: %s", e)
-        return names or list(KNOWN_SERVICES)
+        return [n for n, state in states.items() if isinstance(n, str) and str(state).upper() != "STOPPED"]
 
-    def _restart(self, target):
-        if target == "HMI_GUI":
+    def _restart(self, filename, target):
+        """Send the restarts; returns what to tell the operator."""
+        if target == WHOLE_SYSTEM:
+            return ("Nothing was restarted: every program, the service manager and this HMI included, reads "
+                    "this file when it starts. Restart the service manager and the HMI at a safe moment; until "
+                    "then everything keeps running with the old settings.")
+        if target == HMI:
             return "Restart the operator HMI for the change to take effect."
-        names = self._service_list() if target == "ALL SERVICES" else [target]
+        if target == ALL_SERVICES:
+            names = self._running_services()
+            if not names:
+                return ("Nothing was restarted: the service manager isn't reporting which services run. "
+                        "Restart them from the services panel (or restart the manager).")
+        else:
+            names = [target]
         for svc in names:
             self.cmd_thread.send_command("manager", "manager_cmd", {"command": "restart", "service": svc})
-        return f"Restart requested for {'all services' if target == 'ALL SERVICES' else target}."
+        told = f"Restart requested for {', '.join(names)}."
+        return told + (" Restart the operator HMI too (it reads this file at start-up)." if filename in HMI_TOO
+                       else "")
 
     def _record(self, filename, changes, reason, result, what="changed"):
         log.warning("Config %s %s: %s (reason: %s; backup %s; git %s)", filename, what, "; ".join(changes),
@@ -315,16 +320,15 @@ class ConfigEditorDialog(QDialog):
                                     metadata={"file": filename, "changes": changes, "reason": reason,
                                               "backup": result.backup, "git": result.git})
 
-    def _apply(self, filename, data, original, changes, title, intro, what):
-        """Confirm, save (or restore), record, restart. True if it was applied."""
+    def _apply(self, filename, changes, title, intro, what, write, large=()):
+        """Confirm, then write(reason, after_write) -> SaveResult; record and restart. True if applied."""
         target = self.cb_service.currentText()
-        dlg = ConfirmChangesDialog(title, intro, changes, self)
+        dlg = ConfirmChangesDialog(title, intro, changes, self, large=large)
         if not dlg.exec():
             return False
         reason = dlg.reason.text().strip()
         after = self.rebuild if filename in REGISTRY_INPUTS else None
-        result = config_store.save(filename, data, original=original, reason=reason, config_dir=self.config_dir,
-                                   after_write=after, commit=self.commit)
+        result = write(reason, after)
         if not result.saved:
             detail = "\n".join(result.problems) if result.problems else result.error
             QMessageBox.critical(self, "Not Applied", f"{filename} was not changed:\n\n{detail}")
@@ -333,7 +337,7 @@ class ConfigEditorDialog(QDialog):
         lines = [f"Saved {filename}" + (" and rebuilt system_tags.json." if after else "."),
                  f"Previous version kept: {result.backup}" if result.backup else "",
                  f"Committed to git: {result.git}" if result.committed else f"Not committed to git: {result.git}",
-                 self._restart(target)]
+                 self._restart(filename, target)]
         QMessageBox.information(self, "Applied", "\n".join(line for line in lines if line))
         return True
 
@@ -351,12 +355,17 @@ class ConfigEditorDialog(QDialog):
             QMessageBox.warning(self, "Not Applied", f"{filename} would have problems the services trip over:"
                                                      "\n\n• " + "\n• ".join(problems))
             return
-        changes = config_store.renamed_diff(self.original, data)
+        changes = config_store.diff(self.original, data)
         if not changes:
             QMessageBox.information(self, "Nothing To Apply", "No values were changed.")
             return
-        if self._apply(filename, data, self.original, changes, "Apply Changes",
-                       f"<b>{filename}</b>: {len(changes)} change(s). Apply them?", "changed"):
+        original = self.original
+
+        def write(reason, after):
+            return config_store.save(filename, data, original=original, expected=original, reason=reason,
+                                     config_dir=self.config_dir, after_write=after, commit=self.commit)
+        if self._apply(filename, changes, "Apply Changes", f"<b>{filename}</b>: {len(changes)} change(s). Apply them?",
+                       "changed", write, large=config_store.large_changes(original, data)):
             self.accept()
 
     def _show_history(self):
@@ -378,9 +387,8 @@ class ConfigEditorDialog(QDialog):
             return
         path = found[labels.index(choice)]
         try:
-            with open(path, "r", encoding="utf-8") as f:
-                data = json.load(f)
-        except (OSError, ValueError) as e:
+            data = config_store.read_path(path)
+        except ConfigError as e:
             QMessageBox.critical(self, "History", f"Could not read {path}:\n{e}")
             return
         problems = config_store.check(filename, data)
@@ -388,8 +396,15 @@ class ConfigEditorDialog(QDialog):
             QMessageBox.warning(self, "History", "That version has problems the services would trip over:\n\n• "
                                 + "\n• ".join(problems))
             return
-        current = self.original if self.original is not None else {}
-        changes = config_store.renamed_diff(current, data) or ["(identical to the current file)"]
-        if self._apply(filename, data, None, changes, "Put Back a Previous Version",
-                       f"<b>{filename}</b>: put back the version from before {choice}?", "restored"):
+        current = self.original
+
+        def write(reason, after):
+            return config_store.restore(filename, path, expected=current,
+                                        reason=reason or f"put back the version from before {choice}",
+                                        config_dir=self.config_dir, after_write=after, commit=self.commit)
+        changes = config_store.diff(current if current is not None else {}, data) or ["(identical to the current file)"]
+        large = config_store.large_changes(current, data) if current is not None else []
+        if self._apply(filename, changes, "Put Back a Previous Version",
+                       f"<b>{filename}</b>: put back the version from before {choice}?", "restored", write,
+                       large=large):
             self._load_file(filename)

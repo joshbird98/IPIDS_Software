@@ -360,6 +360,9 @@ class RecipeBuilderDialog(StepFormMixin, QDialog):
         matched list rows to steps by id, then duplicated one step and dropped the other."""
         for i, step in enumerate(self.current_steps):
             step["step_id"] = i + 1
+            if step.get("type") == "PARALLEL":            # its sub-steps are numbered <step>01, <step>02...
+                for j, sub in enumerate(s for s in step.get("steps", []) if isinstance(s, dict)):
+                    sub["step_id"] = (i + 1) * 100 + j + 1
 
     def _sync_list_order(self):
         """After a drag: each row carries the index its step had, so steps are matched exactly."""

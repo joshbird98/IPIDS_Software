@@ -284,11 +284,12 @@ class TimeSeriesEngine:
                 pruned_days.append(f)
         return sorted(pruned_chunks), sorted(pruned_days)
 
-    def iter_exact_frames(self, start_ts, end_ts, selected_tags, refresh_listing=False):
+    def iter_exact_frames(self, start_ts, end_ts, selected_tags, refresh_listing=False, skipped=None):
         """Yield every logged row in [start, end] as polars DataFrames, one per
         source file (bounded memory for long exports): columns 'timestamp' plus
         each selected tag present in that file (Float64), sorted by time.
-        Uses raw day/chunk files only - never the min/max rollups."""
+        Uses raw day/chunk files only - never the min/max rollups. A file that can't
+        be read is left out, logged, and named in `skipped` (a list) if given."""
         if refresh_listing:
             self.last_glob_time = 0
         files = self._get_files()
@@ -303,6 +304,8 @@ class TimeSeriesEngine:
                        .sort("timestamp").collect()
             except (OSError, pl.exceptions.PolarsError) as e:
                 log.warning("Export: skipped %s (not readable): %s", os.path.basename(f), e)
+                if skipped is not None:
+                    skipped.append(f"{os.path.basename(f)}: {e}")
                 continue
             if df.height:
                 yield df.with_columns([pl.col(c).cast(pl.Float64) for c in df.columns])

@@ -111,12 +111,16 @@ GitHub runs them on every push (`.github/workflows/tests.yml`).
 ## Configuration
 
 The HMI's config editor (Config in the menu bar, engineering password) checks a file when it
-opens it and again before applying a change (types, ranges, limits the right way round,
+opens it and again before applying a change (types, physical ranges, limits the right way round,
 duplicate ports, gauge set points the controller can store, ...), lists the changes for
-confirmation with a reason, keeps the previous version in `config/backups/` (not in git;
-"History..." puts one back), commits the file to git (so the lab PC gets local commits - pull
-with `git pull --rebase`), records a CONFIG_CHANGE event, rebuilds the tag registry where needed
-(and puts the old file back if that fails) and restarts the service that reads it.
+confirmation with a reason - a number that changes by more than a factor of 3 needs an extra tick -
+and refuses if the file was changed on disk since it was opened. It rewrites only the changed
+values, keeps the previous version in `config/backups/` (not in git; "History..." puts one back),
+commits the file to git (so the lab PC gets local commits - pull with `git pull --rebase`),
+records a CONFIG_CHANGE event, rebuilds the tag registry where needed (and puts the old file back
+if that fails), and restarts what reads the file - only services that are running; after a change
+to `network_config.json` it restarts nothing and asks for the manager and the HMI to be restarted.
+Names (keys) can't be changed there: the services look supplies, gauges and ports up by name.
 
 - `config/system_tags.json` (the tag registry, not in git) is **generated** from the other config
   files and `plc/generated/PLC_PC_Interface.scl` by `python src/utils/build_registry.py`. Re-run it

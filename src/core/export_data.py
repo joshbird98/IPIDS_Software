@@ -139,13 +139,13 @@ def live_tail_frame(live_store, t_from, t_to, tags):
 def collect_exact(engine, live_store, t0, t1, tags, flush=True, progress=None):
     """All rows in [t0, t1] for tags -> (polars DataFrame, info)."""
     say = progress or (lambda m: None)
-    info = {"log_rows": 0, "live_rows": 0, "live_from_unix": None, "logger_flushed": None}
+    info = {"log_rows": 0, "live_rows": 0, "live_from_unix": None, "logger_flushed": None, "unreadable_files": []}
     if flush and t1 > time.time() - 20 * 60:
         say("Asking logger to flush recent data...")
         info["logger_flushed"] = request_logger_flush()
     say("Reading log files...")
     frames = []
-    for df in engine.iter_exact_frames(t0, t1, tags, refresh_listing=True):
+    for df in engine.iter_exact_frames(t0, t1, tags, refresh_listing=True, skipped=info["unreadable_files"]):
         frames.append(df)
     disk = None
     if frames:
@@ -185,7 +185,7 @@ def collect_mean(engine, live_store, t0, t1, tags, bin_s, spread=False, flush=Tr
     Each file is aggregated separately, then partial bins are combined, so a
     multi-day export never holds all raw rows in memory."""
     say = progress or (lambda m: None)
-    info = {"log_rows": 0, "live_rows": 0, "live_from_unix": None, "logger_flushed": None}
+    info = {"log_rows": 0, "live_rows": 0, "live_from_unix": None, "logger_flushed": None, "unreadable_files": []}
     if flush and t1 > time.time() - 20 * 60:
         say("Asking logger to flush recent data...")
         info["logger_flushed"] = request_logger_flush()
@@ -199,7 +199,8 @@ def collect_mean(engine, live_store, t0, t1, tags, bin_s, spread=False, flush=Tr
 
     partials = []
     last_ts = t0
-    for i, df in enumerate(engine.iter_exact_frames(t0, t1, tags, refresh_listing=True)):
+    for i, df in enumerate(engine.iter_exact_frames(t0, t1, tags, refresh_listing=True,
+                                                    skipped=info["unreadable_files"])):
         say(f"Averaging log files... ({i + 1})")
         info["log_rows"] += df.height
         last_ts = max(last_ts, float(df["timestamp"].max()))
@@ -327,6 +328,9 @@ def make_metadata(t0, t1, mode, channels, info, markers, project_root, bin_s=Non
     else:
         notes.append("Displayed mode: the data drawn on screen. Zoomed-out historical views are min/max "
                      "envelopes (pairs of rows per bin), not raw samples.")
+    if info.get("unreadable_files"):
+        notes.append("INCOMPLETE: these log files could not be read, so their rows are missing: "
+                     + "; ".join(info["unreadable_files"]))
     if any(ch.get("multiplier", 1.0) not in (None, 1, 1.0) for ch in channels):
         notes.append("Channels with a display multiplier have an extra '<label> (xM)' column with the "
                      "multiplied values; the main column is unmultiplied.")

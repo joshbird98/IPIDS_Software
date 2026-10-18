@@ -1,19 +1,23 @@
 """Config file checks for the HMI's config editor (used by src/core/config_store.py).
 
 check(name, data, original) lists what a service would trip over in `data` as the new contents of
-config/<name>: with `original`, the structure must not change (same keys - device keys may be
-renamed - and value types); then the file's own rules in CHECKS: limits the right way round,
-values in range, duplicate ports / addresses / names, gauge relay set points the controllers can
-store, and so on.
+config/<name>: with `original`, the structure must not change (same keys, value types - a whole
+number may become a fraction, the file's rules say where it may not); then the file's own rules in
+CHECKS: limits the right way round and within physical ranges, duplicate ports / addresses /
+names, gauge relay set points the controllers can store, and so on.
+
+The rules can't know every safe value (a magnet's current limit is a decision, not a fact), so the
+editor also asks for a second look at any number that changes by more than a factor of 3
+(config_store.large_changes).
 """
 import ipaddress
 import json
 import math
 import re
 
+from src.core.spellman_locations import LOCATIONS as SPELLMAN_LOCATIONS
 
-def is_devices(where: str) -> bool:
-    return where == "devices" or where.endswith(".devices")
+GAUGE_RANGE_MBAR = (1e-10, 1000.0)     # what the gauges can read (as the registry's command limits)
 
 
 def join_path(where, key):
@@ -65,14 +69,6 @@ def _shape(old, new, where) -> list:
     if isinstance(old, dict):
         if not isinstance(new, dict):
             return [f"{here}: must stay {_kind(old)}"]
-        if is_devices(where):
-            if len(old) != len(new):
-                return [f"{here}: devices can be renamed here, not added or removed"]
-            bad = [k for k in new if not str(k).strip()]
-            out = [f"{here}: a device name is empty"] if bad else []
-            for (_, a), (k, b) in zip(old.items(), new.items()):
-                out += _shape(a, b, join_path(where, k))
-            return out
         out = []
         missing, extra = [k for k in old if k not in new], [k for k in new if k not in old]
         if missing:
@@ -96,9 +92,7 @@ def _shape(old, new, where) -> list:
         return []
     if isinstance(old, bool):
         return [] if isinstance(new, bool) else [f"{here}: must be true or false"]
-    if isinstance(old, int):
-        return [] if isinstance(new, int) and not isinstance(new, bool) else [f"{here}: must be a whole number"]
-    if isinstance(old, float):
+    if isinstance(old, (int, float)):       # a whole number may become a fraction (rules say where not)
         if isinstance(new, bool) or not isinstance(new, (int, float)):
             return [f"{here}: must be a number"]
         return [] if math.isfinite(new) else [f"{here}: must be a finite number"]
@@ -154,7 +148,7 @@ class _Checker:
 
 
 def _check_magnet(c: _Checker, d):
-    c.num(d, "max_voltage", gt=0)
+    max_v = c.num(d, "max_voltage", gt=0)
     max_i = c.num(d, "max_current", gt=0)
     c.num(d, "max_power", gt=0)
     min_i = c.num(d, "min_current_for_calc", ge=0)
@@ -165,6 +159,9 @@ def _check_magnet(c: _Checker, d):
     c.num(d, "resistance_tolerance", gt=0)
     c.order(short, nominal, "short_circuit_threshold", "nominal_resistance")
     c.order(nominal, opened, "nominal_resistance", "open_circuit_threshold")
+    if None not in (max_i, nominal, max_v) and max_i * nominal > max_v:
+        c.bad(f"max_current x nominal_resistance ({max_i * nominal:g} V) is above max_voltage ({max_v:g} V): "
+              "the supply could never reach that current")
     steps = d.get("degauss_steps_amps")
     if not isinstance(steps, list) or not all(_is_num(s) for s in steps):
         c.bad("degauss_steps_amps: must be a list of numbers")
@@ -202,10 +199,10 @@ def _check_plc(c: _Checker, d):
 
 def _check_arc(c: _Checker, arc, where):
     c.num(arc, "collapse_fraction", where, gt=0, lt=1)
-    c.num(arc, "min_setpoint_kv", where, ge=0)
-    c.num(arc, "settle_s", where, ge=0)
+    c.num(arc, "min_setpoint_kv", where, ge=0, le=30)
+    c.num(arc, "settle_s", where, ge=0, le=60)
     c.num(arc, "overcurrent_ua", where, gt=0)
-    c.num(arc, "confirm_polls", where, ge=1, integer=True)
+    c.num(arc, "confirm_polls", where, ge=1, le=10, integer=True)     # more and an arc goes unseen
 
 
 def _check_mpd(c: _Checker, d):
@@ -229,6 +226,8 @@ def _check_mpd(c: _Checker, d):
             if dev in names:
                 c.bad(f"{dw}: device name used twice")
             names.add(dev)
+            if dev not in SPELLMAN_LOCATIONS:      # the service routes by these names
+                c.bad(f"{dw}: unknown supply - the names are fixed ({', '.join(SPELLMAN_LOCATIONS)})")
             if not isinstance(cfg, dict):
                 c.bad(f"{dw}: must be an object")
                 continue
@@ -240,6 +239,7 @@ def _check_mpd(c: _Checker, d):
                     c.bad(f"{dw}.address: {addr} is also used by {addresses[addr.upper()]} on this bus")
                 else:
                     addresses[addr.upper()] = dev
+            c.num(cfg, "plc_unit", dw, ge=0, integer=True, optional=True)
             lo = c.num(cfg, "min_value", dw, ge=0)
             hi = c.num(cfg, "max_value", dw, gt=0)
             c.order(lo, hi, f"{dw}.min_value", f"{dw}.max_value")
@@ -256,7 +256,7 @@ def _two_digits(v: float) -> bool:
 
 
 def _check_vacuum(c: _Checker, d):
-    c.num(d.get("system_interlocks", {}), "rapid_rise_thresh_mb_s", "system_interlocks", gt=0)
+    c.num(d.get("system_interlocks", {}), "rapid_rise_thresh_mb_s", "system_interlocks", gt=0, le=1000)
     devices = {}
     for node, node_cfg in d.items():
         if node.startswith("_") or node == "system_interlocks":
@@ -284,7 +284,8 @@ def _check_vacuum(c: _Checker, d):
             ch = c.num(r, "channel", w, ge=1, integer=True)
             if ch is not None and str(ch) not in channels:
                 c.bad(f"{w}.channel: controller {node} has no channel {ch}")
-            on, off = c.num(r, "on_val", w, gt=0), c.num(r, "off_val", w, gt=0)
+            lo, hi = GAUGE_RANGE_MBAR
+            on, off = c.num(r, "on_val", w, ge=lo, le=hi), c.num(r, "off_val", w, ge=lo, le=hi)
             c.order(on, off, f"{w}.on_val", f"{w}.off_val")
             for key, v in (("on_val", on), ("off_val", off)):
                 if v is not None and not _two_digits(v):
@@ -331,11 +332,13 @@ def _check_network(c: _Checker, d):
 
 
 def _check_logger(c: _Checker, d):
-    tick = c.num(d, "tick_rate_seconds", gt=0, le=10)
-    flush = c.num(d, "flush_interval_seconds", gt=0)
-    c.order(tick, flush, "tick_rate_seconds", "flush_interval_seconds")
-    c.num(d, "journal_interval_seconds", gt=0, optional=True)
-    c.num(d, "buffer_overhead_multiplier", ge=1, optional=True)
+    tick = c.num(d, "tick_rate_seconds", ge=0.01, le=1)
+    flush = c.num(d, "flush_interval_seconds", ge=60, le=3600)
+    if tick and flush and flush / tick > 100_000:      # the logger holds that many rows of every tag in RAM
+        c.bad(f"flush_interval_seconds / tick_rate_seconds = {flush / tick:,.0f} rows held in memory - "
+              "at most 100,000")
+    c.num(d, "journal_interval_seconds", ge=1, le=60, optional=True)
+    c.num(d, "buffer_overhead_multiplier", ge=1, le=3, optional=True)
 
 
 def _check_theme(c: _Checker, d):
@@ -385,22 +388,32 @@ def _check_faults(c: _Checker, d):
             c.num(info, "severity", w, ge=1, le=4, integer=True, optional=True)
 
 
+def _alarm_fields(c: _Checker, o, w):
+    c.num(o, "priority", w, ge=1, le=4, integer=True, optional=True)    # 1-3 sound, 4 is listed only
+    c.num(o, "delay_on", w, ge=0, le=3600, optional=True)
+    c.num(o, "delay_off", w, ge=0, le=3600, optional=True)
+    if "enabled" in o and not isinstance(o["enabled"], bool):
+        c.bad(f"{w}.enabled: must be true or false")
+
+
 def _check_alarms(c: _Checker, d):
     from src.alarms.rules import RULE_KINDS
-    for i, rule in enumerate(d.get("rules", [])):
+    rules = d.get("rules", [])
+    if not isinstance(rules, list):
+        c.bad("rules: must be a list")
+        rules = []
+    for i, rule in enumerate(rules):
         kind = rule.get("kind") if isinstance(rule, dict) else None
         if kind not in RULE_KINDS:
             c.bad(f"rules[{i}].kind: {kind!r} is not one of {', '.join(sorted(RULE_KINDS))}")
+        else:
+            _alarm_fields(c, rule, f"rules[{i}]")
     for alarm_id, o in (d.get("overrides") or {}).items():
         w = f"overrides.{alarm_id}"
         if not isinstance(o, dict):
             c.bad(f"{w}: must be an object")
             continue
-        c.num(o, "priority", w, ge=1, le=4, integer=True, optional=True)
-        c.num(o, "delay_on", w, ge=0, optional=True)
-        c.num(o, "delay_off", w, ge=0, optional=True)
-        if "enabled" in o and not isinstance(o["enabled"], bool):
-            c.bad(f"{w}.enabled: must be true or false")
+        _alarm_fields(c, o, w)
 
 
 CHECKS = {

@@ -1,6 +1,12 @@
 import json
 import os
 import re
+import sys
+
+if __package__ in (None, ""):
+    # Run as a script (python src/utils/build_registry.py): make 'src' importable
+    sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")))
+from src.core.spellman_locations import LOCATIONS  # noqa: E402
 
 # --- Configuration & Constants ---
 UNIT_SUFFIXES = {
@@ -167,12 +173,7 @@ def get_spellman_tags(config_dir):
     tags = {}
     config_path = os.path.join(config_dir, "mpd_config.json")
 
-    location_routing = {
-        "source_einzel": "ion_beam.source.einzel",
-        "beamline_einzel": "ion_beam.beamline.einzel",
-        "neutral_trap_pos": "ion_beam.beamline.neutral_trap_pos",
-        "neutral_trap_neg": "ion_beam.beamline.neutral_trap_neg"
-    }
+    location_routing = LOCATIONS
 
     try:
         with open(config_path, "r") as f:

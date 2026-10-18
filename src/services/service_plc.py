@@ -12,7 +12,6 @@ never be leased.
 """
 import json
 import logging
-import os
 import struct
 import threading
 import time
@@ -129,6 +128,7 @@ class PlcMicroservice(DeviceService):
         self._connect_result = None
         self._refused_batched = set()
         self._unparsable = set()        # tags whose bytes can't be decoded (reported once each)
+        self.fault_latches = {}         # fault name -> last state seen (edges go to the event log)
 
         self.db_interface_size = self._calculate_db_size(DB_INTERFACE_NUM)
         self.fault_map = self._load_fault_map()
@@ -142,49 +142,24 @@ class PlcMicroservice(DeviceService):
         self.SERVICE_TIMEOUT_SEC = 2.0
 
     def _evaluate_word_faults(self):
-        """Unpacks Siemens 32-bit DWORDs and logs edge transitions via EventHelper."""
-        word_keys = {
-            "ion_beam.faults.word_0_system": "UDT_Fault_Word_0_System",
-            "ion_beam.faults.word_1_pumps": "UDT_Fault_Word_1_Pumps",
-            "ion_beam.faults.word_2_source": "UDT_Fault_Word_2_Source",
-            "ion_beam.faults.word_3_spellman": "UDT_Fault_Word_3_Spellman",
-            "ion_beam.faults.word_4_magnet": "UDT_Fault_Word_4_Magnet",
-            "ion_beam.faults.word_5_gauges": "UDT_Fault_Word_5_Gauges"
-        }
+        """Log each PLC fault bit's edges (from the 32-bit fault words) to the event log.
 
-        if not hasattr(self, "raw_fault_map"):
-            config_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '../../config/fault_config.json'))
-            try:
-                with open(config_path, "r") as f:
-                    self.raw_fault_map = json.load(f)
-            except (OSError, ValueError) as e:
-                log.error("Cannot load %s - PLC fault edges will not be logged: %s", config_path, e)
-                self.raw_fault_map = {}
-
-        if not hasattr(self, "fault_latches"):
-            self.fault_latches = {}
-
-        for tag, udt_name in word_keys.items():
+        Uses self.fault_map, whose bits _load_fault_map has checked: this used to re-read
+        fault_config.json unchecked, so a bit like "4.0" (negative shift) or one without a name
+        raised on every poll and crash-looped the service while the PLC was connected."""
+        for tag, bits in self.fault_map.items():
             word_val = self.state.get(tag)
             if word_val is None:
                 continue
-
             word_int = int(word_val)
-            bits_dict = self.raw_fault_map.get(udt_name, {}).get("bits", {})
-
-            for offset_str, meta in bits_dict.items():
-                byte_idx, bit_idx = map(int, offset_str.split('.'))
-                shift_amount = (3 - byte_idx) * 8 + bit_idx
-                is_active = bool((word_int >> shift_amount) & 1)
-
-                fault_name = meta["name"]
-                if fault_name not in self.fault_latches:
-                    self.fault_latches[fault_name] = is_active
-                    continue
-
-                if is_active != self.fault_latches[fault_name]:
-                    self.events.log_fault(fault_name, active=is_active)
-                    self.fault_latches[fault_name] = is_active
+            for offset_str, meta in bits.items():
+                byte_idx, bit_idx = (int(p) for p in offset_str.split("."))
+                is_active = bool((word_int >> ((3 - byte_idx) * 8 + bit_idx)) & 1)
+                name = meta["name"]
+                previous = self.fault_latches.get(name)
+                self.fault_latches[name] = is_active
+                if previous is not None and previous != is_active:     # first sight: no event
+                    self.events.log_fault(name, active=is_active)
 
     def _load_fault_map(self, config_path: str = None) -> dict:
         config_path = config_path or config_file("fault_config.json")

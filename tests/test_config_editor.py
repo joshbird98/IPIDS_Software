@@ -1,6 +1,7 @@
 """The HMI config editor (src/gui/control/dialogs/config_editor_dialog.py): edits come back with
 their types and full precision, problems are shown on load and block a save, changes are
-confirmed and recorded, the previous file can be put back, and services are restarted."""
+confirmed (large ones twice) and recorded, a file changed on disk meanwhile isn't overwritten,
+the previous file can be put back, and the right things are restarted."""
 import json
 import os
 import shutil
@@ -35,10 +36,14 @@ def env(app, tmp_path, monkeypatch, fake_events):
     boxes = []
     for kind in ("information", "warning", "critical"):
         monkeypatch.setattr(ced.QMessageBox, kind, staticmethod(lambda *a, k=kind: boxes.append((k, a[2]))))
-    confirm = {"accept": True, "reason": "test change", "shown": []}
+    confirm = {"accept": True, "reason": "test change", "shown": [], "large": [], "tick": True}
 
     def fake_exec(dlg):
         confirm["shown"].append([dlg.list.item(i).text() for i in range(dlg.list.count())])
+        if dlg.large is not None:
+            confirm["large"].append(" | ".join(w.text() for w in dlg.findChildren(ced.QLabel)))
+            if not confirm["tick"]:
+                return 0                       # OK stays disabled until the box is ticked
         dlg.reason.setText(confirm["reason"])
         return 1 if confirm["accept"] else 0
     monkeypatch.setattr(ced.ConfirmChangesDialog, "exec", fake_exec)
@@ -47,12 +52,13 @@ def env(app, tmp_path, monkeypatch, fake_events):
     def rebuild():
         rebuilds.append(1)
         return env_state["rebuild_error"]
-    env_state = {"rebuild_error": None}
+    env_state = {"rebuild_error": None,
+                 "services": {"service_plc": "ONLINE", "service_smu": "BACKOFF", "service_monitor": "STOPPED"}}
     cmds = FakeCommands()
 
     def make(**kw):
         return ced.ConfigEditorDialog(cmds, config_dir=str(cfg), events=fake_events, rebuild=rebuild, commit=False,
-                                      services=lambda: ["service_plc", "service_smu"], **kw)
+                                      services=lambda: env_state["services"], **kw)
     yield type("Env", (), dict(cfg=cfg, boxes=boxes, confirm=confirm, rebuilds=rebuilds, state=env_state,
                                cmds=cmds, events=fake_events, make=staticmethod(make)))
 
@@ -70,15 +76,18 @@ def widget_at(dlg, *path):
     raise KeyError(path)
 
 
+def restarted(env):
+    return [v["service"] for _, _, v in env.cmds.sent]
+
+
 def test_untouched_file_comes_back_identical(env):
     dlg = env.make()
     for name in cs.config_files(str(env.cfg)):
         open_file(dlg, name)
         assert dlg.edited_data() == cs.read(name, str(env.cfg)), name
-        assert type(dlg.edited_data()) is dict
 
 
-def test_full_precision_nulls_and_empty_lists_survive(env):
+def test_full_precision_nulls_empty_lists_and_number_types(env):
     (env.cfg / "x.json").write_text(json.dumps({"a": 0.123456789012, "b": None, "c": [], "d": {}, "e": 7,
                                                 "f": [1.5, 2.5]}))
     dlg = env.make()
@@ -87,8 +96,11 @@ def test_full_precision_nulls_and_empty_lists_survive(env):
     assert dlg.edited_data() == {"a": 0.123456789012, "b": None, "c": [], "d": {}, "e": 7, "f": [1.5, 2.5]}
     widget_at(dlg, "f", 1).setText("3")
     widget_at(dlg, "b").setText("12.5")
+    widget_at(dlg, "e").setText("7.5")                                # a whole number may become a fraction
     data = dlg.edited_data()
-    assert data["f"] == [1.5, 3.0] and isinstance(data["f"][1], float) and data["b"] == 12.5
+    assert data["f"] == [1.5, 3.0] and isinstance(data["f"][1], float) and data["b"] == 12.5 and data["e"] == 7.5
+    widget_at(dlg, "e").setText("8")
+    assert dlg.edited_data()["e"] == 8 and isinstance(dlg.edited_data()["e"], int)
 
 
 def test_bad_input_names_the_field(env):
@@ -104,7 +116,7 @@ def test_apply_checks_confirms_records_and_restarts(env):
     dlg = open_file(env.make(), "magnet_config.json")
     widget_at(dlg, "max_current").setText("90")
     dlg._save_and_restart()
-    assert env.confirm["shown"][-1] == ["max_current: 95.0 -> 90.0"]
+    assert env.confirm["shown"][-1] == ["max_current: 95.0 -> 90.0"] and env.confirm["large"] == []
     saved = cs.read("magnet_config.json", str(env.cfg))
     assert saved["max_current"] == 90.0 and isinstance(saved["max_current"], float)
     assert env.rebuilds == [1]                                        # it feeds system_tags.json
@@ -117,6 +129,30 @@ def test_apply_checks_confirms_records_and_restarts(env):
     assert len(cs.backups("magnet_config.json", str(env.cfg))) == 1
 
 
+def test_large_changes_need_a_tick(env):
+    dlg = open_file(env.make(), "magnet_config.json")
+    widget_at(dlg, "short_circuit_threshold").setText("0.005")       # /10: allowed, but is it meant?
+    env.confirm["tick"] = False
+    dlg._save_and_restart()
+    assert "short_circuit_threshold: 0.05 -&gt; 0.005 (/10)" in env.confirm["large"][-1]
+    assert cs.read("magnet_config.json", str(env.cfg))["short_circuit_threshold"] == 0.05      # not applied
+    env.confirm["tick"] = True
+    dlg._save_and_restart()
+    assert cs.read("magnet_config.json", str(env.cfg))["short_circuit_threshold"] == 0.005
+
+
+def test_the_tick_box_gates_ok(app):
+    from PyQt6.QtWidgets import QDialogButtonBox
+    from src.gui.control.dialogs.config_editor_dialog import ConfirmChangesDialog
+    d = ConfirmChangesDialog("t", "i", ["a: 1 -> 10"], large=["a: 1 -> 10 (x10)"])
+    ok = d.buttons.button(QDialogButtonBox.StandardButton.Ok)
+    assert not ok.isEnabled()
+    d.large.setChecked(True)
+    assert ok.isEnabled()
+    plain = ConfirmChangesDialog("t", "i", ["a: 1 -> 2"])
+    assert plain.large is None and plain.buttons.button(QDialogButtonBox.StandardButton.Ok).isEnabled()
+
+
 def test_problems_block_the_save(env):
     dlg = open_file(env.make(), "vac_gauges_config.json")
     widget_at(dlg, "10", "relays", "1", "on_val").setText("9e-06")     # above off_val 8e-06
@@ -126,11 +162,22 @@ def test_problems_block_the_save(env):
     assert (env.cfg / "vac_gauges_config.json").read_text() == before and env.cmds.sent == []
 
 
+def test_a_file_changed_on_disk_meanwhile_is_not_overwritten(env):
+    dlg = open_file(env.make(), "smu_config.json")
+    data = cs.read("smu_config.json", str(env.cfg))
+    (env.cfg / "smu_config.json").write_text(json.dumps(dict(data, max_v=180)))    # a hand edit / git pull
+    widget_at(dlg, "min_v").setText("-150")
+    dlg._save_and_restart()
+    kind, text = env.boxes[-1]
+    assert kind == "critical" and "changed on disk" in text
+    assert cs.read("smu_config.json", str(env.cfg)) == dict(data, max_v=180) and env.cmds.sent == []
+
+
 def test_cancel_and_no_change(env):
     dlg = open_file(env.make(), "smu_config.json")
     dlg._save_and_restart()
     assert env.boxes[-1] == ("information", "No values were changed.")
-    widget_at(dlg, "max_v").setValue(150)
+    widget_at(dlg, "max_v").setText("150")
     env.confirm["accept"] = False
     dlg._save_and_restart()
     assert cs.read("smu_config.json", str(env.cfg))["max_v"] == 200 and env.cmds.sent == []
@@ -138,30 +185,60 @@ def test_cancel_and_no_change(env):
 
 def test_failed_rebuild_rolls_back(env):
     env.state["rebuild_error"] = "rebuilding system_tags.json failed (exit 1): KeyError"
+    before = (env.cfg / "smu_config.json").read_bytes()
     dlg = open_file(env.make(), "smu_config.json")
-    widget_at(dlg, "max_v").setValue(150)
+    widget_at(dlg, "max_v").setText("150")
     dlg._save_and_restart()
     kind, text = env.boxes[-1]
     assert kind == "critical" and "KeyError" in text and "put back" in text
-    assert cs.read("smu_config.json", str(env.cfg))["max_v"] == 200 and env.cmds.sent == []
+    assert (env.cfg / "smu_config.json").read_bytes() == before and env.cmds.sent == []
 
 
-def test_device_rename(env):
+def test_keys_are_not_editable(env):
+    """The services look supplies, gauges and ports up by name: a renamed Spellman supply lost its
+    telemetry and commands, and the PLC saw it as healthy for ever."""
+    from PyQt6.QtCore import Qt
     dlg = open_file(env.make(), "mpd_config.json")
-    item = next(i for i, _, key in dlg._renamable if key == "source_einzel")
-    item.setText(0, "einzel_1")
-    dlg._save_and_restart()
-    assert list(cs.read("mpd_config.json", str(env.cfg))["buses"][0]["devices"]) == ["einzel_1"]
-    assert "renamed to 'einzel_1'" in env.confirm["shown"][-1][0]
+    items = [dlg.tree.topLevelItem(i) for i in range(dlg.tree.topLevelItemCount())]
+    seen = 0
+    while items:
+        item = items.pop()
+        seen += 1
+        assert not item.flags() & Qt.ItemFlag.ItemIsEditable, item.text(0)
+        items += [item.child(i) for i in range(item.childCount())]
+    assert seen > 10
 
 
-def test_all_services_uses_the_managers_list(env):
-    dlg = open_file(env.make(), "network_config.json")
+def test_all_services_means_the_running_ones(env):
+    dlg = open_file(env.make(), "fault_config.json")
     assert dlg.cb_service.currentText() == "ALL SERVICES"
-    widget_at(dlg, "smu", "port").setValue(5026)
+    udt = next(iter(dlg.original))
+    bit = next(iter(dlg.original[udt]["bits"]))
+    widget_at(dlg, udt, "bits", bit, "description").setText("reworded")
     dlg._save_and_restart()
-    assert [v["service"] for _, _, v in env.cmds.sent] == ["service_plc", "service_smu"]
+    assert restarted(env) == ["service_plc", "service_smu"]          # not the one stopped on purpose
+    assert "Restart the operator HMI too" in env.boxes[-1][1]
+
+
+def test_network_changes_restart_nothing_automatically(env):
+    """Every program - the manager and the HMI too - reads the ports at start-up: restarting only the
+    services left them heartbeating to a port the manager wasn't listening on."""
+    dlg = open_file(env.make(), "network_config.json")
+    widget_at(dlg, "smu", "port").setText("5026")
+    dlg._save_and_restart()
+    assert cs.read("network_config.json", str(env.cfg))["smu"]["port"] == 5026
+    assert env.cmds.sent == [] and "Restart the service manager and the HMI" in env.boxes[-1][1]
     assert env.rebuilds == []                                         # not a registry input
+
+
+def test_no_service_list_no_blind_restarts(env):
+    env.state["services"] = {}
+    dlg = open_file(env.make(), "fault_config.json")
+    udt = next(iter(dlg.original))
+    bit = next(iter(dlg.original[udt]["bits"]))
+    widget_at(dlg, udt, "bits", bit, "description").setText("reworded")
+    dlg._save_and_restart()
+    assert env.cmds.sent == [] and "Nothing was restarted" in env.boxes[-1][1]
 
 
 def test_unreadable_file_offers_history_only(env):
@@ -182,35 +259,24 @@ def test_problems_in_the_current_file_are_shown(env):
 
 def test_history_puts_a_previous_version_back(env, monkeypatch):
     from src.gui.control.dialogs import config_editor_dialog as ced
+    before = (env.cfg / "smu_config.json").read_bytes()
     dlg = open_file(env.make(), "smu_config.json")
-    widget_at(dlg, "max_v").setValue(150)
+    widget_at(dlg, "max_v").setText("150")
     dlg._save_and_restart()
     dlg = open_file(env.make(), "smu_config.json")
-    assert widget_at(dlg, "max_v").value() == 150
+    assert widget_at(dlg, "max_v").text() == "150"
     monkeypatch.setattr(ced.QInputDialog, "getItem", staticmethod(lambda *a, **k: (a[3][0], True)))
     dlg._show_history()
-    assert cs.read("smu_config.json", str(env.cfg))["max_v"] == 200
-    assert widget_at(dlg, "max_v").value() == 200                      # reloaded
+    assert (env.cfg / "smu_config.json").read_bytes() == before        # exactly as it was
+    assert widget_at(dlg, "max_v").text() == "200"                      # reloaded
     assert env.confirm["shown"][-1] == ["max_v: 150 -> 200"]
     assert len(cs.backups("smu_config.json", str(env.cfg))) == 2       # the 150 version is kept too
-
-
-def test_scrolling_past_a_number_does_not_change_it(env):
-    from PyQt6.QtCore import QPoint, QPointF, Qt
-    from PyQt6.QtGui import QWheelEvent
-    from PyQt6.QtWidgets import QApplication
-    dlg = open_file(env.make(), "smu_config.json")
-    box = widget_at(dlg, "max_v")
-    ev = QWheelEvent(QPointF(5, 5), QPointF(5, 5), QPoint(0, 0), QPoint(0, 120), Qt.MouseButton.NoButton,
-                     Qt.KeyboardModifier.NoModifier, Qt.ScrollPhase.NoScrollPhase, False)
-    QApplication.sendEvent(box, ev)
-    assert box.value() == 200 and not ev.isAccepted()      # passed on to the tree (which scrolls)
 
 
 def test_history_rescues_an_unreadable_file(env, monkeypatch):
     from src.gui.control.dialogs import config_editor_dialog as ced
     dlg = open_file(env.make(), "smu_config.json")
-    widget_at(dlg, "max_v").setValue(150)
+    widget_at(dlg, "max_v").setText("150")
     dlg._save_and_restart()                                           # keeps a backup of the good file
     (env.cfg / "smu_config.json").write_text("{broken")                 # then someone breaks it by hand
     dlg = env.make()

@@ -52,7 +52,7 @@ def test_shipped_configs_have_no_problems():
     ("network_config.json", lambda d: d["plc"].update(ip="192.168.1.300"), "is not an IP address"),
     ("mpd_config.json", lambda d: d["arc_detection"].update(collapse_fraction=1.5), "collapse_fraction"),
     ("mpd_config.json", lambda d: d["buses"][0]["devices"]["source_einzel"].update(max_value=-5.0), "max_value"),
-    ("logger_config.json", lambda d: d.update(tick_rate_seconds=0), "tick_rate_seconds: must be above 0"),
+    ("logger_config.json", lambda d: d.update(tick_rate_seconds=0), "tick_rate_seconds: must be at least 0.01"),
     ("theme_config.json", lambda d: d.update(theme_mode="purple"), "theme_mode"),
     ("theme_config.json", lambda d: d["dark_palette"].update(accent="blue"), "must be a colour"),
     ("fault_config.json", lambda d: next(iter(d.values()))["bits"].update({"4.0": {"name": "X"}}), "byte 0-3"),
@@ -71,25 +71,47 @@ def test_structure_must_not_change():
     problems = cs.check("magnet_config.json", new, original)
     assert "max_current: must be a number" in problems
     assert "(file): missing max_power" in problems and "(file): unexpected spare" in problems
-    original, new = edited("smu_config.json", lambda d: d.update(min_v=-150.5))     # was a whole number
-    assert cs.check("smu_config.json", new, original) == ["min_v: must be a whole number"]
+    original, new = edited("smu_config.json", lambda d: d.update(min_v=-150.5))     # was a whole number:
+    assert cs.check("smu_config.json", new, original) == []                         # a fraction is fine...
+    original, new = edited("network_config.json", lambda d: d["plc"].update(rack=0.5))
+    assert cs.check("network_config.json", new, original) == ["plc.rack: must be a whole number (is 0.5)"]  # ...here not
 
 
-def test_devices_can_be_renamed_not_added():
+def test_device_names_are_fixed():
+    """The Spellman service routes by device name: a renamed supply would lose its telemetry and
+    commands and the PLC would see it as healthy for ever. So names can't change."""
     original = cs.read("mpd_config.json")
-    renamed = cs.apply_edits(original, {}, {("buses", 0, "devices"): {"source_einzel": "einzel_1"}})
-    assert list(renamed["buses"][0]["devices"]) == ["einzel_1"]
-    assert cs.check("mpd_config.json", renamed, original) == []
-    assert cs.renamed_diff(original, renamed) == ["buses[0].devices.source_einzel: renamed to 'einzel_1'"]
-    more = json.loads(json.dumps(original))
-    more["buses"][0]["devices"]["extra"] = dict(more["buses"][0]["devices"]["source_einzel"], address="02")
-    assert any("not added or removed" in p for p in cs.check("mpd_config.json", more, original))
+    renamed = json.loads(json.dumps(original))
+    devices = renamed["buses"][0]["devices"]
+    devices["einzel_1"] = devices.pop("source_einzel")
+    problems = cs.check("mpd_config.json", renamed, original)
+    assert "buses[0].devices: missing source_einzel" in problems
+    assert any("unknown supply" in p and "source_einzel" in p for p in cs.check("mpd_config.json", renamed))
 
 
-def test_rename_clash_is_refused():
-    data = {"devices": {"a": 1, "b": 2}}
-    with pytest.raises(ValueError, match="both be called b"):
-        cs.apply_edits(data, {}, {("devices",): {"a": "b"}})
+@pytest.mark.parametrize("name, change, words", [
+    ("vac_gauges_config.json", lambda d: d["10"]["relays"]["1"].update(on_val=5e4, off_val=6e4), "at most 1000"),
+    ("vac_gauges_config.json", lambda d: d["system_interlocks"].update(rapid_rise_thresh_mb_s=1e9), "at most 1000"),
+    ("magnet_config.json", lambda d: d.update(max_current=950.0), "above max_voltage"),     # 95.0 mistyped
+    ("mpd_config.json", lambda d: d["arc_detection"].update(confirm_polls=1000000), "at most 10"),
+    ("logger_config.json", lambda d: d.update(tick_rate_seconds=0.0005), "at least 0.01"),
+    ("logger_config.json", lambda d: d.update(flush_interval_seconds=900000.0), "at most 3600"),
+    ("logger_config.json", lambda d: d.update(tick_rate_seconds=0.01, flush_interval_seconds=3600.0), "100,000"),
+    ("alarm_config.json", lambda d: d["rules"][1].update(priority=7), "rules[1].priority: must be at most 4"),
+])
+def test_physical_and_sanity_bounds(name, change, words):
+    _, new = edited(name, change)
+    problems = cs.check(name, new)
+    assert any(words in p for p in problems), problems
+
+
+def test_large_changes_need_a_second_look():
+    old = {"max_current": 95.0, "steps": [50.0, 0.0], "min": 0, "bias": -10.0, "same": 1.0}
+    new = {"max_current": 950.0, "steps": [52.0, 5.0], "min": 0, "bias": 10.0, "same": 1.0}
+    assert cs.large_changes(old, new) == ["max_current: 95 -> 950 (x10)", "steps[1]: 0 -> 5",
+                                          "bias: -10 -> 10 (sign change)"]
+    assert cs.large_changes({"a": 9.0}, {"a": 2.0}) == ["a: 9 -> 2 (/4.5)"]
+    assert cs.large_changes({"a": 9.0}, {"a": 4.0}) == []
 
 
 def test_diff_lists_changed_values():
@@ -170,6 +192,70 @@ def test_unreadable_file_is_a_config_error(cfg):
     (cfg / "smu_config.json").write_text("{\"min_v\": -200,,}")
     with pytest.raises(cs.ConfigError, match="not valid JSON"):
         cs.load("smu_config.json", str(cfg))
+
+
+def test_only_changed_values_are_rewritten(cfg):
+    """The file keeps its layout and the rest of its text: one change is one line in git
+    (writing the whole file used to turn fault_config.json's 141 lines into 562)."""
+    text = (cfg / "fault_config.json").read_text()
+    data, new = json.loads(text), json.loads(text)
+    udt = next(iter(new))
+    new[udt]["bits"][next(iter(new[udt]["bits"]))]["description"] = "changed"
+    assert cs.save("fault_config.json", new, data, config_dir=str(cfg), commit=False).saved
+    after = (cfg / "fault_config.json").read_text()
+    assert len(after.splitlines()) == len(text.splitlines())
+    assert len([1 for a, b in zip(text.splitlines(), after.splitlines()) if a != b]) == 1
+    d = cs.read("smu_config.json", str(cfg))
+    assert cs.save("smu_config.json", dict(d, max_v=150), d, config_dir=str(cfg), commit=False).saved
+    assert "200e-6" in (cfg / "smu_config.json").read_text()            # untouched values stay as typed
+
+
+def test_value_spans_cover_every_scalar():
+    text = '{"a": [1, 2.5e-3, "x"], "b": {"c": null, "d": true, "e": []}, "f": "q\\"uote"}'
+    spans = cs.value_spans(text)
+    assert {k: text[a:b] for k, (a, b) in spans.items()} == {
+        ("a", 0): "1", ("a", 1): "2.5e-3", ("a", 2): '"x"', ("b", "c"): "null", ("b", "d"): "true",
+        ("f",): '"q\\"uote"'}
+    for bad in ('{"a": 1,}', '{"a": 1} x', '{"a": tru}', '[1, 2'):
+        with pytest.raises(ValueError):
+            cs.value_spans(bad)
+
+
+def test_a_file_changed_on_disk_is_not_overwritten(cfg):
+    data = cs.read("smu_config.json", str(cfg))
+    (cfg / "smu_config.json").write_text(json.dumps(dict(data, max_v=180)))        # someone else's change
+    result = cs.save("smu_config.json", dict(data, min_v=-150), data, expected=data, config_dir=str(cfg),
+                     commit=False)
+    assert not result.saved and "changed on disk" in result.problems[0]
+    assert cs.read("smu_config.json", str(cfg))["max_v"] == 180
+
+
+def test_windows_ansi_files_are_read_and_kept(cfg):
+    raw = '{\n  "note": "50 µA at 20 °C",\n  "max_v": 200\n}\n'.encode("cp1252")
+    (cfg / "x.json").write_bytes(raw)
+    data, _ = cs.load("x.json", str(cfg))
+    assert data["note"] == "50 µA at 20 °C"
+    assert cs.save("x.json", dict(data, max_v=150), data, config_dir=str(cfg), commit=False).saved
+    assert (cfg / "x.json").read_bytes() == raw.replace(b"200", b"150")    # same encoding, one value changed
+
+
+def test_backups_list_newest_first_within_a_second(cfg):
+    name = "smu_config.json"
+    data = cs.read(name, str(cfg))
+    cs.save(name, dict(data, max_v=150), data, config_dir=str(cfg), commit=False, clock=lambda: 1e9)
+    cs.save(name, dict(data, max_v=160), dict(data, max_v=150), config_dir=str(cfg), commit=False, clock=lambda: 1e9)
+    newest, older = cs.backups(name, str(cfg))
+    assert newest.endswith("-1.json") and cs.read_path(newest)["max_v"] == 150
+    assert cs.read_path(older)["max_v"] == 200
+
+
+def test_restore_puts_the_backup_back_byte_for_byte(cfg):
+    name = "smu_config.json"
+    before = (cfg / name).read_bytes()
+    data = cs.read(name, str(cfg))
+    result = cs.save(name, dict(data, max_v=150), data, config_dir=str(cfg), commit=False)
+    assert cs.restore(name, result.backup, config_dir=str(cfg), commit=False).saved
+    assert (cfg / name).read_bytes() == before
 
 
 # --------------------------------------------------------------------------- git

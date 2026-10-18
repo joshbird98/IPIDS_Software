@@ -81,17 +81,26 @@ simulator; none of it has been tried on the real hardware yet (see "Lab PC valid
   - `service_alarms` + HMI Alarms dock with a horn (ISA-18.2 states, shelving with reason, first-out,
     suppression, persistence; the HMI alarms by itself if the alarm service is down).
   - Config editor: values keep type and precision (it used to round floats to 6 digits, turn null into
-    "None" and empty lists into null), checks on load and on apply, change list + reason, backups with
-    History, atomic writes, registry rebuild with roll-back, git commit, CONFIG_CHANGE event.
+    "None" and empty lists into null); checks on load and on apply (incl. physical ranges); change list +
+    reason, an extra tick for any number changing by more than x3; refuses if the file changed on disk
+    since it was opened; only changed values rewritten; backups with History; atomic writes; registry
+    rebuild with roll-back; git commit; CONFIG_CHANGE event. Keys can no longer be renamed (renaming a
+    Spellman supply cut it off from its service, and the PLC then saw it as healthy). Restarts only running
+    services; network_config.json restarts nothing (the manager and HMI read it too - restart by hand).
   - Big files split (data viewer 1958 -> 760 lines + mixins; recipe builder; mass scan widget package); bugs
     found on the way fixed (recipe builder: verify-condition buttons crashed; step numbers could repeat and
     a drag then duplicated one step and lost another). Viewer workspace profiles moved to config/.
   - Broad `except Exception` blocks reviewed: narrowed to the errors expected where those are known (files,
     JSON, polars, Modbus, git, ZeroMQ); the rest are deliberate boundaries (one command / widget / job / day
     must not stop the rest) and log the traceback. The PLC service no longer drops the link when one tag
-    can't be decoded, and ignores (with an event) fault-map bits outside the 32-bit word.
+    can't be decoded, and ignores (with an event) fault-map bits outside the 32-bit word. A data export
+    with a log file it can't read now says so in its metadata ("INCOMPLETE: ...") instead of only a
+    console line.
   - `print` replaced by logging in the services, HMI, viewer and core (the viewer now writes
     SystemLogs/viewer.log); command-line tools in src/utils/ still print.
+  - Found by the review: if a magnet PSU (analyser magnet or X steerer - same driver) didn't answer the
+    nominal-ratings read on connect, the driver carried on with 1 V / 1 A ratings, so any current request of 1 A or more was sent as full
+    scale. It now refuses to use the PSU until it has its ratings (and checks they are positive numbers).
   - Found on the way: the mouse wheel changed any HMI setpoint box it passed over (and focused it), and
     the box sends its value when focus leaves it - so scrolling a panel could change e.g. the extraction
     voltage by a step and the next click elsewhere sent it. The wheel now does nothing over value boxes
@@ -131,12 +140,18 @@ simulator; none of it has been tried on the real hardware yet (see "Lab PC valid
 5. Lab PC validation of the second round: a recipe and a mass scan under leases on the real supplies; Take
    control mid-run; alarm rules on real data (nuisance alarms? priorities right?); horn audible.
 6. Decisions wanted (how these should behave when something fails):
-   - vacuum gauge start-up set-point enforcement failing part-way: carry on (now) or withhold the vacuum OK?
+   - vacuum gauge relay set points the controller refuses at start-up: now an ERROR event naming the relay
+     (it used to be an INFO line, and a refused second write wasn't noticed); the service carries on -
+     or should it withhold the vacuum OK until the set points match the config?
    - a refused PLC write drops and re-makes the whole PLC link (now) - or treat refusals separately?
    - the logger keeps up to 8 unwritable chunks (~2 h) in RAM, then drops the oldest (CRITICAL event) -
      right ceiling?
-   - config editor "restart ALL SERVICES" also restarts service_plc, pausing the PC watchdog for a few
-     seconds - does the PLC's watchdog timeout cover that?
+   - config editor "restart ALL SERVICES" (fault_config.json) also restarts service_plc, pausing the PC
+     watchdog for a few seconds - does the PLC's watchdog timeout cover that?
+   - the config checks can't know every safe value: VG1's relays feed the gate-valve permissive, so a
+     relay set point of 0.9 mbar there would let the valve open at rough vacuum; it is only range-checked
+     (1e-10..1000 mbar) and needs the x3 tick. Hard caps wanted for some fields (VG1/VG2 relays, each
+     Spellman's max_value for its model, magnet max_current)? Give me the numbers.
 7. Future: a one-page interlock overview (every permissive and what is holding it), as discussed.
 
 ## Notes

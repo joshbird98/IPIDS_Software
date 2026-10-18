@@ -2,6 +2,7 @@
 the same PSU model. Setpoints are scaled to 0..52428 counts of the supply's nominal ratings,
 read from holding registers 121..126 on connect."""
 import logging
+import math
 import struct
 from typing import Optional, Tuple
 
@@ -36,16 +37,21 @@ class MagnetModbusProtocol:
         try:
             if not self.client.connect():
                 return False
-            self.connected = True
-            self.log.info("Modbus TCP connected to %s:%s", self.ip, self.port)
+            # Setpoints are sent as a fraction of the supply's nominal ratings, so without them
+            # the PSU is not used at all. (It used to carry on with 1.0 V / 1.0 A, which turned any
+            # request of 1 A or more into a full-scale current.)
             res = self.client.read_holding_registers(address=121, count=6)
-            if not res.isError():
-                regs = res.registers
-                self.nom_v = struct.unpack('>f', struct.pack('>HH', regs[0], regs[1]))[0]
-                self.nom_i = struct.unpack('>f', struct.pack('>HH', regs[2], regs[3]))[0]
-                self.nom_p = struct.unpack('>f', struct.pack('>HH', regs[4], regs[5]))[0]
-            else:
-                self.log.warning("Could not read nominal ratings (%s); setpoint scaling may be wrong", res)
+            ratings = None if res.isError() else self._ratings(res.registers)
+            if ratings is None:
+                self.log.warning("Nominal ratings not readable from %s:%s (%s) - not using the PSU, its setpoints "
+                                 "would be scaled wrongly", self.ip, self.port, res)
+                self.client.close()
+                self.connected = False
+                return False
+            self.nom_v, self.nom_i, self.nom_p = ratings
+            self.connected = True
+            self.log.info("Modbus TCP connected to %s:%s (%.1f V, %.1f A, %.0f W nominal)", self.ip, self.port,
+                          *ratings)
             self.client.write_coil(402, True)
             self.client.write_coil(411, True)
             return True
@@ -63,6 +69,15 @@ class MagnetModbusProtocol:
                 self.log.warning("Could not switch output off while disconnecting: %s", e)
             self.client.close()
             self.connected = False
+
+    @staticmethod
+    def _ratings(regs):
+        """(nominal V, A, W) from holding registers 121..126, or None unless all three are positive
+        finite numbers."""
+        if regs is None or len(regs) < 6:
+            return None
+        vals = tuple(struct.unpack('>f', struct.pack('>HH', regs[i], regs[i + 1]))[0] for i in (0, 2, 4))
+        return vals if all(math.isfinite(v) and v > 0 for v in vals) else None
 
     @staticmethod
     def _to_counts(value: float, nominal: float) -> int:

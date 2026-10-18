@@ -12,6 +12,17 @@ from src.gui.data_viewer.export_dialog import ExportDialog, ExportWorker
 log = logging.getLogger("viewer.export")
 
 
+def export_incomplete_note(folder: str) -> str:
+    """The metadata's 'INCOMPLETE: ...' note (log files that couldn't be read), or ''."""
+    import json
+    try:
+        with open(os.path.join(folder, "metadata.json"), "r") as f:
+            notes = json.load(f).get("notes", [])
+    except (OSError, ValueError, AttributeError):
+        return ""
+    return next((n for n in notes if isinstance(n, str) and n.startswith("INCOMPLETE")), "")
+
+
 class ExportMixin:
     """Exporting data and publication figures for a time range. Mixed into DataViewerApp (viewer_main.py)."""
 
@@ -150,8 +161,13 @@ class ExportMixin:
         from PyQt6.QtWidgets import QMessageBox
         from PyQt6.QtGui import QDesktopServices
         from PyQt6.QtCore import QUrl
-        box = QMessageBox(QMessageBox.Icon.Information, "Export complete", f"Saved to:\n{folder}",
-                          parent=self)
+        incomplete = export_incomplete_note(folder)
+        if incomplete:
+            box = QMessageBox(QMessageBox.Icon.Warning, "Export incomplete",
+                              f"Saved to:\n{folder}\n\n{incomplete}", parent=self)
+        else:
+            box = QMessageBox(QMessageBox.Icon.Information, "Export complete", f"Saved to:\n{folder}",
+                              parent=self)
         open_btn = box.addButton("Open folder", QMessageBox.ButtonRole.ActionRole)
         box.addButton(QMessageBox.StandardButton.Close)
         box.setModal(False)

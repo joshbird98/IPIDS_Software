@@ -14,19 +14,12 @@ from src.core.device_service import DeviceService, ReconnectBackoff
 from src.core.log_setup import Throttle, setup_logging
 from src.core.os_helper import harden_windows_process
 from src.core.paths import simulation_enabled
+from src.core.spellman_locations import LOCATIONS     # where each supply sits in the tag tree
 from src.core.network_map import ZMQ_PORT_SPELLMAN_PUB, ZMQ_PORT_SPELLMAN_CMD, TOPIC_SPELLMAN_DATA
 from src.drivers.spellman_mpd import (CMD_HV_ENABLE, CMD_REQ_KV, CMD_REQ_MA, CMD_REQ_STATUS, CMD_SET_KV,
                                       CMD_SET_MA, SpellmanMPDProtocol)
 
 PLC_TELEMETRY_TIMEOUT = 2.0   # relay state counts as unknown (= off) if the PLC goes quiet this long
-
-# Physical location of each configured supply
-LOCATIONS = {
-    "source_einzel": "ion_beam.source.einzel",
-    "beamline_einzel": "ion_beam.beamline.einzel",
-    "neutral_trap_pos": "ion_beam.beamline.neutral_trap_pos",
-    "neutral_trap_neg": "ion_beam.beamline.neutral_trap_neg",
-}
 
 
 def _protocol_class():

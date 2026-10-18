@@ -282,5 +282,13 @@ def test_bad_fault_map_entries_are_left_out(monkeypatch, tmp_path):
         cfg = tmp_path / "fault_config.json"
         cfg.write_text(json.dumps(bad))
         assert svc._load_fault_map(str(cfg)) == {"ion_beam.faults.w": {"0.1": {"name": "Good"}}}
+        # fault edges come from the checked map: the bad bits can't crash the poll loop any more
+        svc.fault_map = svc._load_fault_map(str(cfg))
+        edges = []
+        svc.events.log_fault = lambda name, active, metadata=None: edges.append((name, active))
+        for word in (0.0, float(1 << 25), float(1 << 25), 0.0):    # byte 0 bit 1 = bit 25 of the DWORD
+            svc.state["ion_beam.faults.w"] = word
+            svc._evaluate_word_faults()
+        assert edges == [("Good", True), ("Good", False)]
     finally:
         svc.shutdown()
