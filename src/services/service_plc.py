@@ -40,6 +40,14 @@ COMMANDABLE_PREFIXES = ("cmd_", "sp_requested_", "testing_cmd_")
 # "heater on" (the HMI lets the operator adjust the setpoint then; this service used to
 # refuse it as "automatic control mode 1").
 NON_LOCKING_MODES = {"ion_beam.source.cesium": {1}}
+# The source deck (cesium oven, filament, thermionic/ioniser) is powered through the safety relay:
+# with the relay off the PLC has no readback from it (it tracks the cesium temperature with its
+# thermal model instead, estimated_temp), so those readbacks are published as unknown.
+SOURCE_DECK = ("ion_beam.source.cesium", "ion_beam.source.filament", "ion_beam.source.thermionic")
+# While the cesium is hot (internal.cs_is_hot) the PLC keeps these on so cesium vapour stays
+# ionised and directed rather than coating the source's isolator ceramics. Switching them off
+# is refused here too (with that reason), and so is a target voltage below target_min_voltage.
+HELD_WHILE_CS_HOT = ("ion_beam.source.target", "ion_beam.source.thermionic", "ion_beam.source.filament")
 
 log = logging.getLogger("service_plc")
 
@@ -97,6 +105,8 @@ class PlcMicroservice:
         self.registry_limits = self._load_registry_limits()
         self.db_interface_size = self._calculate_db_size(DB_INTERFACE_NUM)
         self.fault_map = self._load_fault_map()
+        self.deck_readbacks = [t for t in self.tags if t.rpartition(".")[0] in SOURCE_DECK
+                               and (t.rpartition(".")[2].startswith("rb_") or t.endswith(".resistance"))]
 
         # --- Strict 1D Flat Payload ---
         self.state: Dict[str, Any] = {
@@ -352,6 +362,10 @@ class PlcMicroservice:
                         meta.get("datatype", "UNKNOWN")
                     )
                     self.state[tag] = val
+
+            if self.state.get("ion_beam.facilities.safety_relay_active") == 0.0:
+                for tag in self.deck_readbacks:     # source deck unpowered: nothing to read back
+                    self.state[tag] = None
 
             current_count = self.state.get("ion_beam.system.plc_cycle_count")
             if current_count is not None:
@@ -611,6 +625,11 @@ class PlcMicroservice:
                         cmd.reject(f"locked out: {subsystem_base} is in automatic control mode {int(active_mode)}")
                         continue
 
+            refusal = self._cesium_hold_refusal(tag, value)
+            if refusal:
+                cmd.reject(refusal)
+                continue
+
             # --- 2. FAIL-SAFE LIMITS: Software Gatekeeper ---
             # Check PC-side limits to prevent Snap7 network flooding, even though the PLC hardware provides ultimate protection.
             meta = self.registry_limits.get(tag)
@@ -638,6 +657,28 @@ class PlcMicroservice:
                 cmd.ok("written to PLC")
             else:
                 cmd.fail(reason)
+
+    def _cesium_hold_refusal(self, tag, value):
+        """Why the PLC would not do this while the cesium is hot (None if it would)."""
+        if self.state.get("ion_beam.internal.cs_is_hot") != 1.0:
+            return None
+        base, _, leaf = tag.rpartition(".")
+        if base not in HELD_WHILE_CS_HOT:
+            return None
+        est = self.state.get("ion_beam.source.cesium.estimated_temp")
+        hot = "the cesium is hot" + (f" ({est:.0f} degC estimated)" if est is not None else "")
+        if leaf == "cmd_enable" and not value:
+            return (f"{hot}: the PLC keeps the target and the ioniser on until it has cooled, so cesium "
+                    f"vapour can't coat the source's ceramics - use forced cooling or a source shutdown")
+        if base == "ion_beam.source.target" and leaf == "sp_requested_voltage":
+            vmin = self.state.get("ion_beam.internal.target_min_voltage")
+            try:
+                below = vmin is not None and float(value) < vmin
+            except (TypeError, ValueError):
+                return None
+            if below:
+                return f"{hot}: the target must stay at or above {vmin:g} kV until it has cooled"
+        return None
 
     def _publish(self, current_time_unix):
         self.state["timestamp"] = current_time_unix

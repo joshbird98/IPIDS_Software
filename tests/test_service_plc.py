@@ -168,3 +168,37 @@ def test_mode_lockout_rules(plc_service):
     assert c.request("plc", "ion_beam.source.extraction.cmd_enable", True)["status"] == C.REJECTED
     assert c.request("plc", "ion_beam.source.cesium.sp_requested_temp", 90.0)["status"] == C.OK
     assert c.request("plc", "ion_beam.source.cesium.cmd_force_cooling", True)["status"] == C.OK
+
+
+def _wait_state(plc_service, tag, value, timeout=5.0):
+    deadline = time.time() + timeout
+    while time.time() < deadline and plc_service.state.get(tag) != value:
+        time.sleep(0.05)
+    return plc_service.state.get(tag)
+
+
+def test_source_deck_readbacks_unknown_while_relay_off(plc_service):
+    """The deck (cesium oven, filament, ioniser) is powered through the relay: without it the PLC
+    has no readback from it, so those are published as unknown; the estimated temperature stays."""
+    assert _wait_state(plc_service, "ion_beam.facilities.safety_relay_active", 0.0) == 0.0
+    time.sleep(0.3)
+    for tag in ("ion_beam.source.cesium.rb_temp", "ion_beam.source.thermionic.rb_current",
+                "ion_beam.source.filament.rb_voltage"):
+        assert plc_service.state.get(tag, "missing") is None, tag
+    assert plc_service.state.get("ion_beam.source.cesium.estimated_temp") is not None
+    assert plc_service.state.get("ion_beam.source.extraction.rb_voltage") is not None   # not on the deck
+
+
+def test_hot_cesium_refusals_carry_the_reason(plc_service):
+    from src.sim.plc import shared_plc
+    plc = shared_plc()
+    with plc.lock:
+        plc.set("ion_beam.source.cesium.estimated_temp", 90.0)
+    assert _wait_state(plc_service, "ion_beam.internal.cs_is_hot", 1.0) == 1.0
+    c = _client()
+    r = c.request("plc", "ion_beam.source.target.cmd_enable", False)
+    assert r["status"] == C.REJECTED and "cesium is hot" in r["reason"] and "ceramics" in r["reason"]
+    r = c.request("plc", "ion_beam.source.target.sp_requested_voltage", 0.1)
+    assert r["status"] == C.REJECTED and "at or above" in r["reason"]
+    assert c.request("plc", "ion_beam.source.target.sp_requested_voltage", 6.0)["status"] == C.OK
+    assert c.request("plc", "ion_beam.source.extraction.cmd_enable", False)["status"] == C.OK   # not held

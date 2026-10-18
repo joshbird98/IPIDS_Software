@@ -166,3 +166,46 @@ def test_bleed_and_snics_currents(plc):
     assert beam == pytest.approx(1.0, rel=0.15)
     extracted = plc.get(S + "extraction.rb_current") - 15.0 / 50.0
     assert extracted == pytest.approx(0.1 * beam, rel=0.25)
+
+
+def test_source_deck_has_no_readback_without_the_relay(plc):
+    energise(plc)
+    plc.set(S + "cesium.sp_requested_temp", 60.0)
+    plc.set(S + "cesium.cmd_ctrl_mode", 1)
+    plc.set(S + "thermionic.cmd_enable", 1)
+    run(plc, 60)
+    assert plc.get(S + "cesium.rb_temp") > 40.0
+    assert plc.get(S + "thermionic.rb_voltage") > 2000.0
+    plc.set("ion_beam.system.cmd_enable_safety", 0)            # relay off: deck unpowered
+    run(plc, 1)
+    assert plc.get(S + "cesium.rb_temp") == 0.0 and plc.get(S + "thermionic.rb_voltage") == 0.0
+    est = plc.get(S + "cesium.estimated_temp")
+    assert est > 40.0                                          # the PLC's model carries on ...
+    run(plc, 60)
+    assert plc.get(S + "cesium.estimated_temp") < est          # ... cooling towards ambient
+
+
+def test_hot_cesium_keeps_target_and_ioniser_on(plc):
+    from src.sim.plc import CS_HOT_C
+    energise(plc)
+    for tag, v in (("target.sp_requested_voltage", 6.0), ("target.cmd_enable", 1),
+                   ("thermionic.cmd_enable", 1), ("filament.sp_requested_current", 20.0),
+                   ("filament.cmd_enable", 1)):
+        plc.set(S + tag, v)
+    run(plc, 3)
+    plc.set(S + "cesium.estimated_temp", CS_HOT_C + 30.0)     # hot cesium
+    run(plc, 0.5)
+    assert plc.get("ion_beam.internal.cs_is_hot") == 1.0
+    for name in ("target", "thermionic", "filament"):
+        plc.set(S + f"{name}.cmd_enable", 0)                   # switch-off requests are held back
+    plc.set(S + "target.sp_requested_voltage", 0.1)            # and the target kept >= its minimum
+    run(plc, 3)
+    for name in ("target", "thermionic", "filament"):
+        assert plc.get(S + f"{name}.stat_enabled") == 1.0, name
+    assert plc.get(S + "target.rb_voltage") == pytest.approx(
+        plc.get("ion_beam.internal.target_min_voltage"), abs=0.05)
+    plc.set(S + "cesium.cmd_force_cooling", 1)                 # once it has cooled they follow
+    run(plc, 240)
+    assert plc.get("ion_beam.internal.cs_is_hot") == 0.0
+    for name in ("target", "thermionic", "filament"):
+        assert plc.get(S + f"{name}.stat_enabled") == 0.0, name

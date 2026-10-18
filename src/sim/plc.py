@@ -17,7 +17,17 @@ Modelled behaviour (from Josh's description of the machine, Oct 2026)
     thermionic current setpoint (the filament setpoint is ignored meanwhile; on leaving auto
     the filament setpoint takes over the last auto value, bumplessly).
   * cesium oven: heater on -> towards its setpoint; forced cooling -> towards 20 degC;
-    otherwise slowly back to ambient.
+    otherwise slowly back to ambient. The PLC's thermal model (estimated_temp) always runs;
+    the thermocouple readback (rb_temp) needs the source deck powered.
+  * source deck (cesium oven, filament, thermionic/ioniser): powered through the safety relay,
+    so with the relay off there is no readback from it (reported as 0 here; the PLC service
+    publishes them as unknown).
+  * while the cesium is hot (internal.cs_is_hot, from the estimated temperature) the PLC keeps
+    the target and the ioniser (filament + thermionic) on - a request to switch them off is
+    held back until it has cooled - and the target voltage at least internal.target_min_voltage,
+    so cesium vapour stays ionised and directed instead of coating the isolator ceramics.
+    ASSUMED from Josh's description (Oct 2026): the threshold (CS_HOT_C) and exactly what the
+    real PLC holds are guesses - check against the PLC program.
   * extraction / target: 50 MOhm bleed resistors (current proportional to voltage) plus,
     SNICS-style, a target (sputter) current once thermionic > 200 W, target > 4 kV and
     cesium > 50 degC: ~0.1 mA there, ~1 mA at 250 W / 8 kV / 100 degC. The extracted beam is
@@ -48,6 +58,7 @@ FILAMENT_HEAT_TAU = 2.0            # the filament's temperature lags its current
 FILAMENT_AUTO_MAX_A = 31.0
 EMISSION_MAX_MA = 200.0            # the thermionic supply's own current limit
 CS_AMBIENT, CS_FORCED = 22.0, 20.0
+CS_HOT_C = 50.0                    # assumed: estimated cesium temperature the PLC treats as "hot"
 
 
 def emission_ma(filament_a: float) -> float:
@@ -93,6 +104,7 @@ class SimulatedPLC:
         self._auto_fil = None            # filament current the auto-emission loop is driving
         self._sputter = 0.0              # target (sputter) current, mA
         self._kv = {}                    # extraction / target output without readback noise
+        self._held = set()               # supplies the PLC keeps on while the cesium is hot
         self._gv_cmd_t = None
         self._last_fault_flags = {}
         with open(paths.config_path("fault_config.json"), "r") as f:
@@ -233,13 +245,20 @@ class SimulatedPLC:
         return max(0.0, sp)
 
     def _enabled(self, base, relay):
-        enabled = bool(self.get(f"{base}.cmd_enable")) and relay
+        enabled = (bool(self.get(f"{base}.cmd_enable")) or base in self._held) and relay
         self.set(f"{base}.stat_enabled", enabled)
         self.set(f"{base}.ctrl_mode", self.get(f"{base}.cmd_ctrl_mode", 0.0))
         return enabled
 
     def _source(self, relay, dt):
-        fil, th = f"{SRC}.filament", f"{SRC}.thermionic"
+        fil, th, tgt = f"{SRC}.filament", f"{SRC}.thermionic", f"{SRC}.target"
+        cs_hot = self.get(f"{SRC}.cesium.estimated_temp", CS_AMBIENT) >= CS_HOT_C
+        self.set("ion_beam.internal.cs_is_hot", cs_hot)
+        for base in (tgt, th, fil):          # cesium hot: what is on stays on
+            if cs_hot and relay and self.get(f"{base}.stat_enabled"):
+                self._held.add(base)
+            elif not cs_hot or not relay:
+                self._held.discard(base)
         fil_on, th_on = self._enabled(fil, relay), self._enabled(th, relay)
 
         # thermionic: fixed 2500 V; its current is whatever the filament emits
@@ -250,10 +269,10 @@ class SimulatedPLC:
         th_i = max(0.0, noisy(min(EMISSION_MAX_MA, th_i), 0.01))
         th_sp = self._setpoint(th, "current")
         self.set(f"{th}.sp_actual_current", th_sp)
-        self.set(f"{th}.rb_voltage", max(0.0, noisy(th_v, 0.0005)))
-        self.set(f"{th}.rb_current", th_i)
         th_w = th_v * th_i / 1000.0
-        self.set(f"{th}.rb_power", th_w)
+        self.set(f"{th}.rb_voltage", max(0.0, noisy(th_v, 0.0005)) if relay else 0.0)   # deck unpowered:
+        self.set(f"{th}.rb_current", th_i if relay else 0.0)                              # no readback
+        self.set(f"{th}.rb_power", th_w if relay else 0.0)
 
         # filament: the operator's setpoint, or the auto-emission loop's
         auto = bool(self.get(f"{th}.cmd_auto_emission"))
@@ -291,6 +310,8 @@ class SimulatedPLC:
             base = f"{SRC}.{name}"
             on = self._enabled(base, relay)
             sp = self._setpoint(base, "voltage")
+            if name == "target" and cs_hot and on:
+                sp = max(sp, self.get("ion_beam.internal.target_min_voltage", 0.0))
             self.set(f"{base}.sp_actual_voltage", sp)
             kv[name] = first_order(self._kv.get(name, 0.0), sp if on else 0.0, dt, 0.4)
         self._kv = kv
@@ -321,7 +342,9 @@ class SimulatedPLC:
         else:
             target, tau = CS_AMBIENT, 300.0
         temp = first_order(temp, target, dt, tau)
-        self.set(f"{base}.rb_temp", noisy(temp, 0.0005))
+        # The thermocouple is read on the source deck: no readback without the relay. The PLC's
+        # thermal model (estimated_temp) keeps tracking it either way.
+        self.set(f"{base}.rb_temp", noisy(temp, 0.0005) if relay else 0.0)
         self.set(f"{base}.estimated_temp", temp)
         self.set(f"{base}.out_cv_heating", max(0.0, min(100.0, (sp - temp) * 5.0)) if heating else 0.0)
         self.set(f"{base}.stat_cooling_active", cooling)
