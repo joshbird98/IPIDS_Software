@@ -600,9 +600,10 @@ class PlcMicroservice:
                 rb_mode_tag = f"{subsystem_base}.ctrl_mode"
 
                 # Check if the subsystem has an active mode, and ensure we aren't trying to change the mode itself
-                # Switching something OFF is never locked out (an operator must always be able to)
-                switching_off = tag.endswith(".cmd_enable") and not value
-                if rb_mode_tag in self.tags and not tag.endswith("cmd_ctrl_mode") and not switching_off:
+                # Switching OFF is locked out too: the PLC deliberately holds e.g. the target voltage
+                # and the ioniser on while the cesium is hot (vapour must stay ionised and directed,
+                # or it coats the source's isolator ceramics). Only the PLC decides when that's safe.
+                if rb_mode_tag in self.tags and not tag.endswith("cmd_ctrl_mode"):
                     active_mode = self.state.get(rb_mode_tag) or 0.0
                     if int(active_mode) in NON_LOCKING_MODES.get(subsystem_base, ()):
                         active_mode = 0.0
