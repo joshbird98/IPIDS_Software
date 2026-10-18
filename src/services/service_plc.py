@@ -1,3 +1,15 @@
+"""PLC service: the S7-1200 interface data block (DB_PC_Interface) read every 100 ms with
+Snap7 and published as flat tags; commands written back; the PC->PLC watchdog; the other
+services' status flags (comms fail, gauge set points, Spellman faults ...) copied into the
+PLC's From_PC area; PLC fault-word edges logged as FAULT events.
+
+Commands: only cmd_* / sp_requested_* tags, within the registry limits; refused while the
+subsystem is under PLC control (ctrl_mode > 0, except the cesium oven's "heater on"), while
+the safety relay is off (enables of relay-powered supplies), and - mirroring the PLC - switching
+off the target or ioniser while the cesium is hot. Control leases as for every device service
+(src/core/leases.py); the system controls (relay, shutdown, fault reset) and the gate valve can
+never be leased.
+"""
 import json
 import logging
 import os
@@ -10,25 +22,16 @@ import snap7
 import zmq
 from snap7.util import get_bool, get_dint, get_dword, get_int, get_real, set_bool, set_dint, set_int, set_real
 
-from src.core.commands import CommandServer
-from src.core.event_helper import EventHelper
+from src.core.device_service import DeviceService
 from src.core.log_setup import Throttle, setup_logging
 from src.core.os_helper import harden_windows_process
 from src.core.paths import REGISTRY_PATH, simulation_enabled
-
-# Force Windows high-resolution timers (1ms precision) for OS sleep accuracy
-if os.name == 'nt':
-    import ctypes
-
-    ctypes.windll.winmm.timeBeginPeriod(1)
-
 from src.core.network_map import (
     ZMQ_PORT_PLC_PUB, ZMQ_PORT_PLC_CMD, TOPIC_PLC_DATA, PLC_IP, PLC_RACK, PLC_SLOT, DB_INTERFACE_NUM,
-    ZMQ_PORT_VACUUM_PUB, ZMQ_PORT_SPELLMAN_PUB, ZMQ_PORT_MAGNET_PUB, ZMQ_PORT_SRC_TURBO_PUB,
-    ZMQ_PORT_HEARTBEAT)
+    ZMQ_PORT_VACUUM_PUB, ZMQ_PORT_SPELLMAN_PUB, ZMQ_PORT_MAGNET_PUB, ZMQ_PORT_SRC_TURBO_PUB)
 
 POLL_INTERVAL = 0.1  # 100ms cycle (10Hz)
-HEARTBEAT_INTERVAL = 0.5  # 2Hz Watchdog
+HEARTBEAT_INTERVAL = 0.5  # PC->PLC watchdog increment
 MAX_CMD_AGE = 0.5  # TTL: Reject incoming commands older than 500ms
 RECONNECT_DELAYS = (1.0, 2.0, 5.0, 10.0)  # seconds between PLC connection attempts (backs off, then stays at 10 s)
 
@@ -40,6 +43,7 @@ COMMANDABLE_PREFIXES = ("cmd_", "sp_requested_", "testing_cmd_")
 # "heater on" (the HMI lets the operator adjust the setpoint then; this service used to
 # refuse it as "automatic control mode 1").
 NON_LOCKING_MODES = {"ion_beam.source.cesium": {1}}
+MODE_NAMES = {1: "PLC Auto", 2: "Recipe", 3: "Cascaded (PID slave)", 4: "Arc quench"}
 # The source deck (cesium oven, filament, thermionic/ioniser) is powered through the safety relay:
 # with the relay off the PLC has no readback from it (it tracks the cesium temperature with its
 # thermal model instead, estimated_temp), so those readbacks are published as unknown.
@@ -48,6 +52,14 @@ SOURCE_DECK = ("ion_beam.source.cesium", "ion_beam.source.filament", "ion_beam.s
 # ionised and directed rather than coating the source's isolator ceramics. Switching them off
 # is refused here too (with that reason), and so is a target voltage below target_min_voltage.
 HELD_WHILE_CS_HOT = ("ion_beam.source.target", "ion_beam.source.thermionic", "ion_beam.source.filament")
+# Powered through the safety relay: can't be switched on without it
+RELAY_SUBSYSTEMS = ("ion_beam.source.extraction", "ion_beam.source.target", "ion_beam.source.filament",
+                    "ion_beam.source.thermionic", "ion_beam.source.cesium", "ion_beam.beamline.steering")
+# Taken over by the PLC's source shutdown sequence
+SHUTDOWN_SUBSYSTEMS = ("ion_beam.source.extraction", "ion_beam.source.target", "ion_beam.source.filament",
+                       "ion_beam.source.thermionic", "ion_beam.source.cesium")
+# Operator controls that must always stay available: never leased
+UNLEASABLE = ("ion_beam.system", "ion_beam.source.chamber")
 
 log = logging.getLogger("service_plc")
 
@@ -59,79 +71,72 @@ def _new_client():
     return snap7.client.Client()
 
 
-class PlcMicroservice:
+def load_plc_tags():
+    """(PLC tags from the registry, error or None)."""
+    try:
+        with open(REGISTRY_PATH, "r") as f:
+            all_tags = json.load(f)
+    except (OSError, ValueError) as e:
+        return {}, e
+    return {t: m for t, m in all_tags.items() if m.get("source") == "service_plc_snap7"}, None
+
+
+def subsystems_of(tags) -> tuple:
+    """Every prefix that has a command or setpoint tag under it."""
+    subs = {t.rpartition(".")[0] for t in tags if t.rpartition(".")[2].startswith(COMMANDABLE_PREFIXES)}
+    return tuple(sorted(subs))
+
+
+class PlcMicroservice(DeviceService):
+    NAME = "service_plc"
+    DEVICE_LABEL = "PLC"
+    PUB_ENDPOINT, CMD_ENDPOINT, TOPIC = ZMQ_PORT_PLC_PUB, ZMQ_PORT_PLC_CMD, TOPIC_PLC_DATA
+    POLL_INTERVAL = POLL_INTERVAL
+    MAX_CMD_AGE = MAX_CMD_AGE
+    RECONNECT_DELAYS = RECONNECT_DELAYS
+    UNLEASABLE = UNLEASABLE
+    RETIRE_CTRL_MODE = False         # PLC control modes are real (the PLC program's)
+    REGISTRY_SOURCE = "service_plc_snap7"
+
     def __init__(self):
-        self.context = zmq.Context()
-        self.events = EventHelper("service_plc")
+        self.tags, registry_error = load_plc_tags()
+        self.SUBSYSTEMS = subsystems_of(self.tags)
+        super().__init__()
+        self.address = f"{PLC_IP} (rack {PLC_RACK}, slot {PLC_SLOT})"
+        if registry_error is not None:
+            self.events.log_general(f"WARNING: {REGISTRY_PATH} not loaded ({registry_error}). Operating blind.",
+                                    severity="ERROR")
+        else:
+            log.info("Loaded %d tags for Snap7 monitoring.", len(self.tags))
 
-        # --- ZMQ Setup (Defense in Depth: Transport Layer) ---
-        self.pub_socket = self.context.socket(zmq.PUB)
-        self.pub_socket.setsockopt(zmq.SNDHWM, 5)
-        self.pub_socket.bind(ZMQ_PORT_PLC_PUB)
-
-        # Commands arrive on a ROUTER socket and every one gets an ok/rejected/failed reply
-        self.commands = CommandServer(ZMQ_PORT_PLC_CMD, "service_plc", context=self.context,
-                                      events=self.events, max_age=MAX_CMD_AGE)
-
-        # --- ZMQ Telemetry Subscriber (Listening to other Python services) ---
+        # Telemetry of the other services, whose status flags go to the PLC
         self.telem_socket = self.context.socket(zmq.SUB)
         self.telem_socket.setsockopt(zmq.RCVHWM, 10)
+        self.telem_socket.setsockopt(zmq.LINGER, 0)
         self.telem_socket.setsockopt_string(zmq.SUBSCRIBE, "")
+        for endpoint in (ZMQ_PORT_VACUUM_PUB, ZMQ_PORT_SPELLMAN_PUB, ZMQ_PORT_MAGNET_PUB, ZMQ_PORT_SRC_TURBO_PUB):
+            self.telem_socket.connect(endpoint)
 
-        self.telem_socket.connect(ZMQ_PORT_VACUUM_PUB)
-        self.telem_socket.connect(ZMQ_PORT_SPELLMAN_PUB)
-        self.telem_socket.connect(ZMQ_PORT_MAGNET_PUB)
-        self.telem_socket.connect(ZMQ_PORT_SRC_TURBO_PUB)
-
-        # --- Mailbox Cache (Prevents Snap7 write-flooding) ---
-        self.mailbox_cache: Dict[str, Any] = {}
-
-        # --- Snap7 Setup ---
+        self.mailbox_cache: Dict[str, Any] = {}     # last batched values written (no Snap7 write floods)
         self.client = None
         self.connected = False
-        self.watchdog_state = False
         self.last_heartbeat = time.time()
         self.plc_cycle_count = 0
         self.heartbeat_count = 0
         self._connect_thread = None
         self._connect_result = None
-        self._next_connect_at = 0.0
-        self._connect_failures = 0
-        self._throttle = Throttle(60.0)
         self._refused_batched = set()
 
-        # --- Tag Registry & Configuration ---
-        self.tags = self._load_tag_registry()
-        self.registry_limits = self._load_registry_limits()
         self.db_interface_size = self._calculate_db_size(DB_INTERFACE_NUM)
         self.fault_map = self._load_fault_map()
         self.deck_readbacks = [t for t in self.tags if t.rpartition(".")[0] in SOURCE_DECK
                                and (t.rpartition(".")[2].startswith("rb_") or t.endswith(".resistance"))]
-
-        # --- Strict 1D Flat Payload ---
-        self.state: Dict[str, Any] = {
-            "timestamp": 0.0,
-            "system.connected": 0.0,
-            "system.cpu_state": "UNKNOWN",
-            "system.cycle_time_ms": POLL_INTERVAL * 1000
-        }
-
-        # --- Internal IT Watchdogs ---
-        self.last_seen = {
-            "VACUUM": time.time(),
-            "TURBO": time.time(),
-            "SPELLMAN": time.time(),
-            "MAGNET": time.time()
-        }
+        self.state.update({"system.connected": 0.0, "system.cpu_state": "UNKNOWN",
+                           "system.cycle_time_ms": POLL_INTERVAL * 1000})
+        # Other services' last telemetry (their flags fall back to 'fault' if they go quiet)
+        self.last_seen = {"VACUUM": time.time(), "TURBO": time.time(), "SPELLMAN": time.time(),
+                          "MAGNET": time.time()}
         self.SERVICE_TIMEOUT_SEC = 2.0
-
-        self.hb_socket = self.context.socket(zmq.PUB)
-        self.hb_socket.connect(ZMQ_PORT_HEARTBEAT)
-        self.last_hb_time = 0.0
-        self.running = True
-
-    def stop(self):
-        self.running = False
 
     def _evaluate_word_faults(self):
         """Unpacks Siemens 32-bit DWORDs and logs edge transitions via EventHelper."""
@@ -195,35 +200,6 @@ class PlcMicroservice:
             self.events.log_general(f"Failed to load fault map: {e}", severity="ERROR")
             return {}
 
-    def _load_tag_registry(self) -> dict:
-        registry_path = REGISTRY_PATH
-        try:
-            with open(registry_path, "r") as f:
-                all_tags = json.load(f)
-
-            plc_tags = {tag: meta for tag, meta in all_tags.items() if meta.get("source") == "service_plc_snap7"}
-            log.info("Loaded %d tags for Snap7 monitoring.", len(plc_tags))
-            return plc_tags
-        except FileNotFoundError:
-            self.events.log_general(f"WARNING: {registry_path} not found. Operating blind.", severity="ERROR")
-            return {}
-
-    def _load_registry_limits(self) -> dict:
-        registry_path = REGISTRY_PATH
-        limits = {}
-        try:
-            with open(registry_path, "r") as f:
-                all_tags = json.load(f)
-                for tag, meta in all_tags.items():
-                    if meta.get("source") == "service_plc_snap7" and meta.get("auto_controllable"):
-                        limits[tag] = {
-                            "min_val": meta.get("min_val"),
-                            "max_val": meta.get("max_val")
-                        }
-        except (OSError, ValueError) as e:
-            self.events.log_general(f"WARNING: Failed to load registry limits: {e}", severity="ERROR")
-        return limits
-
     def _calculate_db_size(self, db_num: int) -> int:
         max_byte = 0
         type_sizes = {"BOOL": 1, "INT": 2, "UINT": 2, "DINT": 4, "UDINT": 4, "REAL": 4, "DWORD": 4, "TIME": 4}
@@ -241,11 +217,16 @@ class PlcMicroservice:
         return max_byte
 
     # ------------------------------------------------------------------ connection
-    def _poll_connection(self):
-        """Non-blocking connection management. A connection attempt to an unreachable
-        PLC can block for several seconds, so it runs in a helper thread while this
-        loop keeps publishing 'disconnected' and sending heartbeats - otherwise the
-        service manager sees a hang and restarts the service over and over."""
+    def is_connected(self) -> bool:
+        return self.connected
+
+    def connect_device(self) -> bool:     # not used: _try_connect below connects in a helper thread
+        return False
+
+    def _try_connect(self):
+        """Non-blocking connection management. A connection attempt to an unreachable PLC can block
+        for several seconds, so it runs in a helper thread while this loop keeps publishing
+        'disconnected' and heartbeating - otherwise the manager sees a hang and restarts us."""
         if self._connect_thread is not None:
             if self._connect_thread.is_alive():
                 return
@@ -254,36 +235,42 @@ class PlcMicroservice:
             if client is not None:
                 self.client = client
                 self.connected = True
-                self._connect_failures = 0
-                self._throttle.reset("connect")
+                self.backoff.succeeded()
+                self.throttle.reset("connect")
                 self.state["system.connected"] = 1.0
                 self.events.log_general(f"Connected to S7-1200 at {PLC_IP}")
             else:
-                self._connect_failures += 1
-                delay = RECONNECT_DELAYS[min(self._connect_failures - 1, len(RECONNECT_DELAYS) - 1)]
-                self._next_connect_at = time.time() + delay
-                n = self._throttle.ready("connect")
-                if n is not None:
+                self.backoff.failed(time.time())
+                if (n := self.throttle.ready("connect")) is not None:
                     self.events.log_general(f"PLC connection to {PLC_IP} failed: {err}{Throttle.suffix(n)}",
                                             severity="WARNING")
             return
+        if not self.backoff.due(time.time()):
+            return
 
-        if time.time() >= self._next_connect_at:
-            def attempt():
-                client = _new_client()
+        def attempt():
+            client = _new_client()
+            try:
+                client.connect(PLC_IP, PLC_RACK, PLC_SLOT)
+                self._connect_result = (client, None)
+            except Exception as e:  # snap7 raises several unrelated exception types
                 try:
-                    client.connect(PLC_IP, PLC_RACK, PLC_SLOT)
-                    self._connect_result = (client, None)
-                except Exception as e:  # snap7 raises several exception types
-                    try:
-                        client.disconnect()
-                    except Exception:
-                        pass
-                    self._connect_result = (None, e)
+                    client.disconnect()
+                except Exception:   # the client is being thrown away either way
+                    pass
+                self._connect_result = (None, e)
 
-            self._connect_result = None
-            self._connect_thread = threading.Thread(target=attempt, name="plc-connect", daemon=True)
-            self._connect_thread.start()
+        self._connect_result = None
+        self._connect_thread = threading.Thread(target=attempt, name="plc-connect", daemon=True)
+        self._connect_thread.start()
+
+    def close_device(self):
+        if self.client is not None:
+            try:
+                self.client.disconnect()
+            except Exception as e:  # snap7 on a dead link: nothing more to do
+                log.debug("disconnect on shutdown: %s", e)
+        self.telem_socket.close(0)
 
     def _mark_disconnected(self, reason: str):
         if self.connected:
@@ -293,10 +280,10 @@ class PlcMicroservice:
         if self.client is not None:
             try:
                 self.client.disconnect()
-            except Exception as e:
+            except Exception as e:  # snap7 may raise anything on a dead link; we are dropping it anyway
                 log.debug("disconnect after error: %s", e)
         self.client = None
-        self._next_connect_at = time.time() + RECONNECT_DELAYS[0]
+        self.backoff.next_at = time.time() + self.RECONNECT_DELAYS[0]
         self.state["system.connected"] = 0.0
         self.state["system.cpu_state"] = "DISCONNECTED"
         # Nothing read from the PLC is known any more: publish 'unknown' (null) rather
@@ -586,77 +573,109 @@ class PlcMicroservice:
         if fallback_updates:
             self._write_tags_batched(fallback_updates)
 
-    def _process_commands(self):
-        for cmd in self.commands.poll():
-            tag, value, origin = cmd.tag, cmd.value, cmd.origin
+    # ------------------------------------------------------------------ loop hooks
+    def cycle(self):
+        # Read first, so the commands of this cycle are judged on this cycle's PLC state
+        if self.connected:
+            self._read_and_parse_dbs()
 
-            if tag not in self.tags:
-                cmd.reject("unknown PLC tag (not in system_tags.json)")
-                continue
-            if value is None:
-                cmd.reject("no value given")
-                continue
-            if not tag.split('.')[-1].startswith(COMMANDABLE_PREFIXES):
-                cmd.reject("not a command or setpoint tag - status/permissive tags are set by the PC services only")
-                continue
-            if not self.tags[tag].get("writable", True):
-                cmd.reject("tag is read-only")
-                continue
-            if not self.connected:
-                cmd.reject("PLC not connected")
-                continue
+    def poll_device(self):
+        self._process_external_telemetry()
+        self._enforce_it_watchdogs()
+        self._evaluate_word_faults()
+        now = time.time()
+        if self.connected and now - self.last_heartbeat >= HEARTBEAT_INTERVAL:
+            self._increment_watchdog()
+            self.last_heartbeat = now
 
-            # --- 1. ARBITRATION: Software Gatekeeper ---
-            # Infer the subsystem. e.g., ion_beam.source.extraction.sp_requested_voltage -> ion_beam.source.extraction
-            parts = tag.split('.')
-            if len(parts) >= 3:
-                subsystem_base = ".".join(parts[:-1])
-                rb_mode_tag = f"{subsystem_base}.ctrl_mode"
+    def publish_unknown(self):
+        self._drain_external_telemetry()
 
-                # Check if the subsystem has an active mode, and ensure we aren't trying to change the mode itself
-                # Switching OFF is locked out too: the PLC deliberately holds e.g. the target voltage
-                # and the ioniser on while the cesium is hot (vapour must stay ionised and directed,
-                # or it coats the source's isolator ceramics). Only the PLC decides when that's safe.
-                if rb_mode_tag in self.tags and not tag.endswith("cmd_ctrl_mode"):
-                    active_mode = self.state.get(rb_mode_tag) or 0.0
-                    if int(active_mode) in NON_LOCKING_MODES.get(subsystem_base, ()):
-                        active_mode = 0.0
-                    if active_mode > 0 and origin != "optimizer":
-                        cmd.reject(f"locked out: {subsystem_base} is in automatic control mode {int(active_mode)}")
-                        continue
+    # ------------------------------------------------------------------ permits / commands
+    def permit(self, subsystem: str):
+        if not self.connected:
+            return False, "PLC not connected"
+        s = self.state
+        if s.get("ion_beam.system.pc_plc_comms_lost") == 1.0:
+            return False, "the PLC reports lost communication with the PC (watchdog)"
+        if subsystem in UNLEASABLE:
+            return True, ""
+        if subsystem in RELAY_SUBSYSTEMS and s.get("ion_beam.facilities.safety_relay_active") != 1.0:
+            return False, "safety relay de-energised"
+        if subsystem in SOURCE_DECK and (s.get("ion_beam.system.remote_io_lost") == 1.0
+                                         or s.get("faults.Remote_IO_Lost") == 1.0):
+            return False, "remote I/O to the source deck lost"
+        steps = [s.get("ion_beam.system.remote_shutdown_step") or 0, s.get("ion_beam.system.pc_shutdown_step") or 0]
+        if subsystem in SHUTDOWN_SUBSYSTEMS and (s.get("ion_beam.system.src_auto_sdown") == 1.0 or max(steps) > 0):
+            return False, "automated source shutdown in progress"
+        mode = self._locking_mode(subsystem)
+        if mode:
+            return False, f"{MODE_NAMES.get(mode, f'mode {mode}')}: the PLC is controlling this (ctrl_mode {mode})"
+        if s.get(f"{subsystem}.stat_lockout") == 1.0:
+            return False, "PLC interlock (lockout)"
+        return True, ""
 
-            refusal = self._cesium_hold_refusal(tag, value)
-            if refusal:
-                cmd.reject(refusal)
-                continue
+    def _locking_mode(self, subsystem) -> int:
+        mode = self.state.get(f"{subsystem}.ctrl_mode")
+        if not mode or f"{subsystem}.ctrl_mode" not in self.tags:
+            return 0
+        mode = int(mode)
+        return 0 if mode in NON_LOCKING_MODES.get(subsystem, ()) else mode
 
-            # --- 2. FAIL-SAFE LIMITS: Software Gatekeeper ---
-            # Check PC-side limits to prevent Snap7 network flooding, even though the PLC hardware provides ultimate protection.
-            meta = self.registry_limits.get(tag)
-            if meta is not None:
-                min_v = meta["min_val"]
-                max_v = meta["max_val"]
+    def reset_faults(self, cmd):
+        self.handle_command(cmd, "ion_beam.system", "cmd_fault_reset")
 
-                # Drop the command entirely if the bounds have not been configured in the JSON yet
-                if min_v is None or max_v is None:
-                    cmd.reject("no min/max limits configured for this tag in system_tags.json")
-                    continue
-
-                try:
-                    float_val = float(value)
-                except (ValueError, TypeError):
-                    cmd.reject(f"value {value!r} is not a number")
-                    continue
-                if not (min_v <= float_val <= max_v):
-                    cmd.reject(f"{float_val:g} is outside the allowed range [{min_v:g}, {max_v:g}]")
-                    continue
-
-            # --- 3. Execute Write ---
-            ok, reason = self._write_tag(tag, value)
-            if ok:
-                cmd.ok("written to PLC")
-            else:
-                cmd.fail(reason)
+    def handle_command(self, cmd, subsystem: str, leaf: str):
+        tag, value = cmd.tag, cmd.value
+        if tag not in self.tags:
+            cmd.reject("unknown PLC tag (not in system_tags.json)")
+            return
+        if value is None:
+            cmd.reject("no value given")
+            return
+        if not leaf.startswith(COMMANDABLE_PREFIXES):
+            cmd.reject("not a command or setpoint tag - status/permissive tags are set by the PC services only")
+            return
+        if not self.tags[tag].get("writable", True):
+            cmd.reject("tag is read-only")
+            return
+        if not self.connected:
+            cmd.reject("PLC not connected")
+            return
+        # Under PLC control (ctrl_mode > 0): the PLC owns it. Switching OFF is refused too: the PLC
+        # deliberately holds e.g. the target voltage and the ioniser on while the cesium is hot.
+        mode = self._locking_mode(subsystem)
+        if mode and leaf != "cmd_ctrl_mode":
+            cmd.reject(f"locked out: {subsystem} is in automatic control mode {mode} "
+                       f"({MODE_NAMES.get(mode, 'PLC controlled')})")
+            return
+        refusal = self._cesium_hold_refusal(tag, value)
+        if refusal:
+            cmd.reject(refusal)
+            return
+        if leaf == "cmd_enable" and value and subsystem in RELAY_SUBSYSTEMS \
+                and self.state.get("ion_beam.facilities.safety_relay_active") != 1.0:
+            cmd.reject("safety relay de-energised - it can't be switched on")
+            return
+        meta = self.registry_limits.get(tag)
+        if meta is not None:
+            lo, hi = meta["min_val"], meta["max_val"]
+            if lo is None or hi is None:
+                cmd.reject("no min/max limits configured for this tag in system_tags.json")
+                return
+            try:
+                number = float(value)
+            except (ValueError, TypeError):
+                cmd.reject(f"value {value!r} is not a number")
+                return
+            if not lo <= number <= hi:
+                cmd.reject(f"{number:g} is outside the allowed range [{lo:g}, {hi:g}]")
+                return
+        ok, reason = self._write_tag(tag, value)
+        if ok:
+            cmd.ok("written to PLC")
+        else:
+            cmd.fail(reason)
 
     def _cesium_hold_refusal(self, tag, value):
         """Why the PLC would not do this while the cesium is hot (None if it would)."""
@@ -680,59 +699,6 @@ class PlcMicroservice:
                 return f"{hot}: the target must stay at or above {vmin:g} kV until it has cooled"
         return None
 
-    def _publish(self, current_time_unix):
-        self.state["timestamp"] = current_time_unix
-        try:
-            self.pub_socket.send_multipart([TOPIC_PLC_DATA, orjson.dumps(self.state)])
-        except zmq.ZMQError as e:
-            if (n := self._throttle.ready("publish")) is not None:
-                log.error("Publish error: %s%s", e, Throttle.suffix(n))
-
-        if current_time_unix - self.last_hb_time >= 0.5:
-            self.hb_socket.send_json({"service": "service_plc", "ts": current_time_unix})
-            self.last_hb_time = current_time_unix
-
-    def run(self):
-        self.events.log_general("Starting Daemon..." + (" (SIMULATED PLC)" if simulation_enabled() else ""))
-        current_time_pc = time.perf_counter()
-        next_tick = current_time_pc + POLL_INTERVAL
-
-        while self.running:
-            if not self.connected:
-                self._poll_connection()
-
-            if self.connected:
-                self._read_and_parse_dbs()
-            self._process_commands()          # always answered, even while disconnected
-            if self.connected:
-                self._process_external_telemetry()
-                self._enforce_it_watchdogs()
-                self._evaluate_word_faults()
-            else:
-                self._drain_external_telemetry()
-
-            current_time_unix = time.time()
-            if self.connected and current_time_unix - self.last_heartbeat >= HEARTBEAT_INTERVAL:
-                self._increment_watchdog()
-                self.last_heartbeat = current_time_unix
-
-            self._publish(current_time_unix)
-
-            sleep_time = next_tick - time.perf_counter()
-            if sleep_time > 0.002:
-                time.sleep(sleep_time - 0.002)
-
-            while time.perf_counter() < next_tick:
-                pass
-            next_tick += POLL_INTERVAL
-            # If a cycle overran badly (e.g. PLC timeouts), don't try to catch up with a burst
-            if next_tick < time.perf_counter() - 1.0:
-                next_tick = time.perf_counter() + POLL_INTERVAL
-
-        self.commands.close()
-        for sock in (self.pub_socket, self.telem_socket, self.hb_socket):
-            sock.close(0)
-
     def _drain_external_telemetry(self):
         """While the PLC is unreachable, keep the subscription drained and the IT watchdogs current."""
         try:
@@ -744,6 +710,11 @@ class PlcMicroservice:
                         self.last_seen[service] = time.time()
         except zmq.Again:
             pass
+
+
+    def run(self):
+        self.events.log_general("Starting Daemon..." + (" (SIMULATED PLC)" if simulation_enabled() else ""))
+        super().run()
 
 
 if __name__ == "__main__":

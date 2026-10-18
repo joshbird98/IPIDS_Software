@@ -96,6 +96,12 @@ class Command:
     def short_tag(self) -> str:
         return self.tag.split(".")[-1]
 
+    @property
+    def holder(self):
+        """Control-lease holder the command is sent on behalf of (None = no lease, e.g. the operator)."""
+        h = self.raw.get("holder") if isinstance(self.raw, dict) else None
+        return str(h) if h else None
+
     def ok(self, note: str = ""):
         self._reply(OK, note)
 
@@ -118,6 +124,21 @@ class Command:
 
     def __repr__(self):
         return f"Command({self.tag}={self.value!r}, origin={self.origin}, id={self.id})"
+
+
+def bind_retrying(sock, endpoint: str, timeout: float = 3.0):
+    """bind(), retrying while the address is still held: closing a ZeroMQ socket releases its
+    port asynchronously, so a service restarted in the same process (or a test) can find it
+    still taken for a moment."""
+    deadline = time.monotonic() + timeout
+    while True:
+        try:
+            sock.bind(endpoint)
+            return
+        except zmq.ZMQError as e:
+            if e.errno != zmq.EADDRINUSE or time.monotonic() > deadline:
+                raise
+            time.sleep(0.05)
 
 
 class CommandServer:
@@ -149,7 +170,7 @@ class CommandServer:
         self.sock = ctx.socket(zmq.ROUTER)
         self.sock.setsockopt(zmq.LINGER, 0)
         self.sock.setsockopt(zmq.RCVHWM, 1000)
-        self.sock.bind(endpoint)
+        bind_retrying(self.sock, endpoint)
         self._pending = []
 
     def poll(self, max_messages: int = 200):
@@ -214,7 +235,7 @@ class CommandServer:
                 self.events.log_command(
                     text, ok=ok,
                     metadata={"id": cmd.id, "tag": cmd.tag, "value": cmd.value, "origin": cmd.origin,
-                              "status": cmd.status, "reason": cmd.reason,
+                              "holder": cmd.holder, "status": cmd.status, "reason": cmd.reason,
                               "latency_ms": round((time.time() - cmd.ts) * 1000.0, 1) if cmd.ts else None})
             except Exception:  # auditing must never break command handling
                 self._log.exception("Audit write failed")
@@ -274,11 +295,14 @@ class CommandClient:
         return sock
 
     def send(self, subsystem: str, tag: str, value, origin: str = "hmi", timeout: float = None,
-             cmd_id: str = None, ts: float = None, extra: dict = None) -> str:
-        """Queue one command. Returns its id; the outcome arrives through poll()."""
+             cmd_id: str = None, ts: float = None, extra: dict = None, holder: str = None) -> str:
+        """Queue one command. Returns its id; the outcome arrives through poll(). `holder`: the
+        control lease the command is sent under (src/core/leases.py)."""
         cmd_id = cmd_id or new_command_id()
         now = time.time()
         req = {"id": cmd_id, "tag": tag, "value": value, "ts": ts if ts is not None else now, "origin": origin}
+        if holder:
+            req["holder"] = holder
         if extra:
             req.update(extra)
         meta = {"subsystem": subsystem, "tag": tag, "value": value, "origin": origin, "id": cmd_id,
@@ -357,9 +381,10 @@ class CommandClient:
         out, self._ready = self._ready, []
         return out
 
-    def request(self, subsystem: str, tag: str, value, origin: str = "script", timeout: float = None) -> dict:
+    def request(self, subsystem: str, tag: str, value, origin: str = "script", timeout: float = None,
+                holder: str = None) -> dict:
         """Blocking convenience for scripts and tests: send and wait for this command's reply."""
-        cmd_id = self.send(subsystem, tag, value, origin=origin, timeout=timeout)
+        cmd_id = self.send(subsystem, tag, value, origin=origin, timeout=timeout, holder=holder)
         deadline = time.time() + (timeout or self.default_timeout) + 1.0
         held = []
         try:
@@ -391,13 +416,14 @@ class CommandTicket:
     """Thread-safe handle for one command sent through ZMQCommandThread.
     Callers that don't care can ignore it; automation waits on it."""
 
-    def __init__(self, subsystem, tag, value, origin, timeout=None):
+    def __init__(self, subsystem, tag, value, origin, timeout=None, holder=None):
         self.id = new_command_id()
         self.subsystem = subsystem
         self.tag = tag
         self.value = value
         self.origin = origin
         self.timeout = timeout
+        self.holder = holder
         self.created = time.time()
         self.result = None
         self._event = threading.Event()

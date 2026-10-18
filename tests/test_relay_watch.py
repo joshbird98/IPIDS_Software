@@ -90,29 +90,24 @@ def test_smu_reconnect_after_unseen_trip_does_not_restore_bias(monkeypatch):
         sub = FakeSub()
         svc.relay.sock = sub
         sub.push(1.0, time.time())
-        svc._update_safety_permissives()
-        assert not svc.safety_tripped
+        assert svc.update_relay()
         svc.sp_cache[SP_BIAS] = 50.0                 # bias live when the SMU stopped answering
         svc.hw.output_state = True
         now = time.time()
         for i, relay in enumerate([0.0, None, 1.0]):  # E-stop pressed and reset while the loop was blocked
             sub.push(relay, now - 0.3 + 0.1 * i)
-        svc._update_safety_permissives()
+        assert not svc.update_relay()
         assert svc.sp_cache[SP_BIAS] == 0.0          # the trip reset the bias
         sub.push(1.0, time.time())
-        assert svc.hw.connect()                      # the SMU answers again
-        svc._after_connect(bias_was_on=True)
+        assert svc.connect_device()                  # the SMU answers again (bias was on before)
+        svc.after_connect(0)
         assert svc.hw.output_state is False and svc.sp_cache[SP_BIAS] == 0.0
     finally:
-        svc.commands.close()
-        for sock in (svc.pub_socket, svc.plc_socket, svc.hb_socket):
-            sock.close(0)
+        svc.shutdown()
 
 
 def _close(svc):
-    svc.commands.close()
-    for sock in (svc.pub_socket, svc.plc_socket, svc.hb_socket):
-        sock.close(0)
+    svc.shutdown()
 
 
 def test_magnet_trip_between_checks_forces_output_off(monkeypatch):
@@ -126,16 +121,14 @@ def test_magnet_trip_between_checks_forces_output_off(monkeypatch):
         svc.relay.sock = sub
         assert svc.hw.connect()
         sub.push(1.0, time.time())
-        svc._update_safety_permissives()
-        assert not svc.safety_tripped
+        assert svc.update_relay()
         svc.hw.set_current(20.0)
         svc.hw.set_output(True)
         now = time.time()
         sub.push(0.0, now - 0.2)                     # tripped and reset before the next check
         sub.push(1.0, now - 0.1)
-        svc._update_safety_permissives()
-        assert svc.safety_tripped
-        svc._force_safe_outputs()
+        assert not svc.update_relay()
+        svc.force_safe_outputs()
         assert svc.hw.psu.output is False and svc.hw.psu.i_set == 0.0
     finally:
         _close(svc)
@@ -149,15 +142,12 @@ def test_spellman_trip_between_checks_counts_as_power_loss(monkeypatch):
         sub = FakeSub()
         svc.relay.sock = sub
         sub.push(1.0, time.time())
-        svc._update_safety_permissives()
-        assert svc.safety_relay_active
+        assert svc.update_relay()
         now = time.time()
         sub.push(None, now - 0.2)                    # PLC lost, then back with the relay on
         sub.push(1.0, now - 0.1)
-        svc._update_safety_permissives()
-        assert not svc.safety_relay_active          # one cycle off: buses severed, state reset
+        assert not svc.update_relay()               # one cycle off: buses severed, state reset
         sub.push(1.0, time.time())
-        svc._update_safety_permissives()
-        assert svc.safety_relay_active
+        assert svc.update_relay()
     finally:
         _close(svc)

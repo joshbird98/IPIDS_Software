@@ -83,17 +83,17 @@ class ZMQCommandThread(QThread):
         self._tickets = {}
 
     def send_command(self, subsystem: str, tag: str, value: any, origin: str = "hmi",
-                     timeout: float = None) -> CommandTicket:
+                     timeout: float = None, holder: str = None) -> CommandTicket:
         if not subsystem:
             subsystem = route_for_tag(tag)
-        ticket = CommandTicket(subsystem, tag, value, origin, timeout)
+        ticket = CommandTicket(subsystem, tag, value, origin, timeout, holder=holder)
         self.cmd_queue.put(ticket)
         return ticket
 
     def send_command_sync(self, subsystem: str, tag: str, value, origin: str = "hmi",
-                          timeout: float = None) -> dict:
+                          timeout: float = None, holder: str = None) -> dict:
         """Blocking - for worker threads only, never the GUI thread."""
-        ticket = self.send_command(subsystem, tag, value, origin=origin, timeout=timeout)
+        ticket = self.send_command(subsystem, tag, value, origin=origin, timeout=timeout, holder=holder)
         result = ticket.wait((timeout or self.default_timeout) + 2.0)
         return result or {"status": "timeout", "reason": "command thread did not respond", "tag": tag,
                           "value": value, "subsystem": subsystem, "origin": origin}
@@ -117,7 +117,8 @@ class ZMQCommandThread(QThread):
                         self._tickets[ticket.id] = ticket
                         try:
                             client.send(ticket.subsystem, ticket.tag, ticket.value, origin=ticket.origin,
-                                        timeout=ticket.timeout, cmd_id=ticket.id, ts=ticket.created)
+                                        timeout=ticket.timeout, cmd_id=ticket.id, ts=ticket.created,
+                                        holder=ticket.holder)
                         except Exception as e:  # never let one bad command kill the command thread
                             log.exception("Could not send %r", ticket)
                             self._resolve({"id": ticket.id, "status": UNREACHABLE, "reason": f"send failed: {e}",

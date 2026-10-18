@@ -62,17 +62,47 @@ def test_unknown_and_status_tags_rejected(plc_service):
     assert r["status"] == C.REJECTED
 
 
-def test_automatic_mode_locks_out_hmi_but_not_optimiser(plc_service):
+def test_plc_control_mode_locks_out_everyone(plc_service):
+    """ctrl_mode > 0 means the PLC is controlling it: refused whoever sends it (the old
+    origin='optimizer' bypass is gone - sequences use control leases instead)."""
     c = _client()
     assert c.request("plc", "ion_beam.source.extraction.cmd_ctrl_mode", 1)["status"] == C.OK
     deadline = time.time() + 3
     while time.time() < deadline and (plc_service.state.get("ion_beam.source.extraction.ctrl_mode") or 0) < 1:
         time.sleep(0.05)
-    r = c.request("plc", "ion_beam.source.extraction.sp_requested_voltage", 5.0, origin="hmi")
-    assert r["status"] == C.REJECTED and "locked out" in r["reason"]
-    r = c.request("plc", "ion_beam.source.extraction.sp_requested_voltage", 5.0, origin="optimizer")
-    assert r["status"] == C.OK
+    for origin in ("hmi", "optimizer"):
+        r = c.request("plc", "ion_beam.source.extraction.sp_requested_voltage", 5.0, origin=origin)
+        assert r["status"] == C.REJECTED and "locked out" in r["reason"]
+    assert plc_service.state["ion_beam.source.extraction.permit"] == 0.0
+    assert plc_service.state["ion_beam.source.extraction.permit_reason"]   # (the relay is off here too)
     c.request("plc", "ion_beam.source.extraction.cmd_ctrl_mode", 0)
+
+
+def test_control_lease_admits_only_its_holder(plc_service):
+    c = _client()
+    sub = "ion_beam.source.extraction"
+    lease = {"op": "claim", "holder": "seq-1", "purpose": "recipe 'Test'", "ttl": 5}
+    assert c.request("plc", f"{sub}.cmd_lease", lease)["status"] == C.OK
+    r = c.request("plc", f"{sub}.sp_requested_voltage", 5.0)
+    assert r["status"] == C.REJECTED and "recipe 'Test'" in r["reason"]
+    assert c.request("plc", f"{sub}.sp_requested_voltage", 5.0, holder="seq-1")["status"] == C.OK
+    assert _wait_state(plc_service, f"{sub}.lease_holder", "seq-1") == "seq-1"
+    assert plc_service.state[f"{sub}.permit"] == 0.0
+    # A second sequence can't take it; the operator can, and the holder's renewal then fails
+    assert c.request("plc", f"{sub}.cmd_lease", dict(lease, holder="seq-2"))["status"] == C.REJECTED
+    assert c.request("plc", f"{sub}.cmd_lease", {"op": "take"}, origin="hmi")["status"] == C.OK
+    r = c.request("plc", f"{sub}.cmd_lease", dict(lease, op="renew"))
+    assert r["status"] == C.REJECTED and "taken by the operator" in r["reason"]
+    assert c.request("plc", f"{sub}.sp_requested_voltage", 6.0)["status"] == C.OK
+    # The relay, shutdown, fault reset and gate valve can never be leased
+    for unleasable in ("ion_beam.system", "ion_beam.source.chamber"):
+        assert c.request("plc", f"{unleasable}.cmd_lease", lease)["status"] == C.REJECTED
+
+
+def test_enable_refused_without_the_relay(plc_service):
+    r = _client().request("plc", "ion_beam.source.target.cmd_enable", True)
+    assert r["status"] == C.REJECTED and "relay" in r["reason"]
+    assert _client().request("plc", "ion_beam.source.target.sp_requested_voltage", 4.0)["status"] == C.OK
 
 
 def test_batched_writes_skip_read_only_tags(plc_service):
@@ -136,6 +166,7 @@ def test_simulated_supply_follows_setpoint(plc_service, monkeypatch):
                         lambda self, now: self.set("ion_beam.source.chamber.stat_gv_open", 1))
     c = _client()
     assert c.request("plc", "ion_beam.system.cmd_enable_safety", True)["status"] == C.OK
+    assert _wait_state(plc_service, "ion_beam.facilities.safety_relay_active", 1.0) == 1.0
     assert c.request("plc", "ion_beam.source.target.sp_requested_voltage", 4.0)["status"] == C.OK
     assert c.request("plc", "ion_beam.source.target.cmd_enable", True)["status"] == C.OK
     deadline = time.time() + 6

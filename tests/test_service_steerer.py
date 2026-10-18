@@ -50,8 +50,10 @@ def test_relay_trip_forces_output_off_and_stays_off(stack):
     r = client.request("steerer_magnet", f"{BASE}.sp_requested_current", 3.0)
     assert r["status"] == C.REJECTED
     assert client.request("steerer_magnet", f"{BASE}.cmd_enable", False)["status"] == C.OK
-    # changing the control mode never touches the hardware, so it stays allowed
-    assert client.request("steerer_magnet", f"{BASE}.cmd_ctrl_mode", 0)["status"] == C.OK
+    # control leases never touch the hardware, so they work while interlocked
+    lease = {"op": "claim", "holder": "test", "purpose": "test", "ttl": 5}
+    assert client.request("steerer_magnet", f"{BASE}.cmd_lease", lease)["status"] == C.OK
+    assert client.request("steerer_magnet", f"{BASE}.cmd_lease", dict(lease, op="release"))["status"] == C.OK
 
     plc.relay = True    # permissive back: the output does NOT come back on by itself
     tap.wait_for(lambda d: d[SAFE] == 1.0, timeout=3)

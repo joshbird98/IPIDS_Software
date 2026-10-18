@@ -83,3 +83,26 @@ _PUMP = FakeUSSPump()
 
 def shared_pump() -> FakeUSSPump:
     return _PUMP
+
+
+class FakeUssLink:
+    """Drop-in for src.drivers.turbo_uss.UssLink talking to the shared simulated pump."""
+
+    def __init__(self, ip=None, port=None, timeout=1.0):
+        self.ip, self.port = ip, port
+        self.connected = False
+        self.on_problem = lambda message: None
+        self.pump = shared_pump()
+
+    def connect(self):
+        if "turbo_disconnect" in injected_faults():
+            raise ConnectionError("simulated: Waveshare bridge not reachable")
+        self.connected = True
+
+    def close(self):
+        self.connected = False
+
+    def transaction(self, pnu, index, value=0, ak=1, control_word=0x0400):
+        if not self.connected:
+            return None, None, None
+        return self.pump.transaction(pnu, index, value, ak, control_word)

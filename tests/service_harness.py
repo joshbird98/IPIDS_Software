@@ -5,6 +5,7 @@ import time
 import orjson
 import zmq
 
+from src.core.commands import bind_retrying
 from src.core.network_map import ZMQ_PORT_PLC_PUB, TOPIC_PLC_DATA
 
 RELAY_TAG = "ion_beam.facilities.safety_relay_active"
@@ -19,7 +20,8 @@ class FakePlcPublisher:
         self.paused = False
         self.running = True
         self.sock = zmq.Context.instance().socket(zmq.PUB)
-        self.sock.bind(ZMQ_PORT_PLC_PUB)
+        self.sock.setsockopt(zmq.LINGER, 0)
+        bind_retrying(self.sock, ZMQ_PORT_PLC_PUB)
         self.t = threading.Thread(target=self._run, daemon=True)
         self.t.start()
 

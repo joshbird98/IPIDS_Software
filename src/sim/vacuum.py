@@ -106,3 +106,34 @@ def shared_graphix() -> FakeGraphix:
     if _GRAPHIX is None:
         _GRAPHIX = FakeGraphix()
     return _GRAPHIX
+
+
+class FakeGraphixLink:
+    """Drop-in for src.drivers.graphix.GraphixLink talking to the shared simulated controllers."""
+
+    def __init__(self, ip=None, port=None, timeout=0.3):
+        self.ip, self.port = ip, port
+        self.connected = False
+        self.stats = {}
+        self.graphix = shared_graphix()
+
+    def connect(self):
+        if "vacuum_disconnect" in injected_faults():
+            raise ConnectionError("simulated: Waveshare bridge not reachable")
+        self.connected = True
+
+    def close(self):
+        self.connected = False
+
+    def read(self, node, group, param):
+        if not self.connected:
+            return None
+        value = self.graphix.read(node, group, param)
+        if value is None and "vacuum_disconnect" in injected_faults():
+            self.connected = False
+        return value
+
+    def write(self, node, group, param, value):
+        if not self.connected:
+            return "ERROR"
+        return self.graphix.write(node, group, param, value)
