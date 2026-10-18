@@ -331,7 +331,7 @@ def make_metadata(t0, t1, mode, channels, info, markers, project_root, bin_s=Non
                      "multiplied values; the main column is unmultiplied.")
     return {
         "exported_at": datetime.now().astimezone().isoformat(timespec="seconds"),
-        "software": {"name": "IPIDS Data Viewer", "git": git_version(project_root)},
+        "software": {"name": "SINDIE Data Viewer", "git": git_version(project_root)},
         "time_range": {"start_unix": t0, "end_unix": t1, "start_local": iso(t0), "end_local": iso(t1),
                        "duration_s": t1 - t0},
         "mode": mode, "bin_seconds": bin_s, "spread_columns": bool(spread),

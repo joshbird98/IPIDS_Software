@@ -13,12 +13,13 @@ if __name__ == "__main__":
         sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")))
     if "--sim" in sys.argv[1:]:
         # Must be set before src.core.paths is imported (it decides the data folder at import)
-        os.environ["IPIDS_SIMULATE"] = "1"
+        os.environ["SINDIE_SIMULATE"] = "1"
 
 import psutil
 import zmq
 
 from src.core import paths
+from src.core.env import flag, getenv
 from src.core.commands import CommandServer
 from src.core.event_helper import EventHelper
 from src.core.log_setup import setup_logging
@@ -97,13 +98,13 @@ class RestartPolicy:
 
 
 def instance_key(env) -> tuple:
-    """Which IPIDS installation a process belongs to: (port offset, simulated?).
+    """Which SINDIE installation a process belongs to: (port offset, simulated?).
     Services inherit the manager's environment, so they carry the same key."""
     try:
-        offset = int(env.get("IPIDS_PORT_OFFSET", "0") or 0)
+        offset = int(getenv("PORT_OFFSET", "0", environ=env) or 0)
     except ValueError:
         offset = None
-    return offset, env.get("IPIDS_SIMULATE", "").strip().lower() in {"1", "true", "yes", "on"}
+    return offset, flag("SIMULATE", environ=env)
 
 
 MY_INSTANCE = (PORT_OFFSET, paths.simulation_enabled())
@@ -139,7 +140,7 @@ def find_orphans(script_names, me=None, my_instance=MY_INSTANCE):
     return found
 
 
-class IpidsServiceManager:
+class SindieServiceManager:
     def __init__(self, services=None):
         self.services = services or SERVICES_CONFIG
         self.events = EventHelper("service_manager")   # needed by the singleton check
@@ -403,14 +404,14 @@ class IpidsServiceManager:
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="IPIDS service manager")
+    parser = argparse.ArgumentParser(description="SINDIE service manager")
     parser.add_argument("--sim", action="store_true",
-                        help="simulation mode: fake devices, data in data_sim/ (sets IPIDS_SIMULATE=1)")
+                        help="simulation mode: fake devices, data in data_sim/ (sets SINDIE_SIMULATE=1)")
     parser.parse_args()
 
     setup_logging("service_manager")
     harden_windows_process()
-    manager = IpidsServiceManager()
+    manager = SindieServiceManager()
 
     # Stop the services too when the manager itself is stopped (kill/Task Manager 'End task'
     # on Linux sends SIGTERM, Ctrl+Break on Windows sends SIGBREAK); previously they were orphaned

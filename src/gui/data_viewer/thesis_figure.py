@@ -1,5 +1,5 @@
 """
-Publication-quality figure from an IPIDS Data Viewer export.
+Publication-quality figure from a SINDIE Data Viewer export.
 
 This file is copied into every export folder as `make_figure.py`, so a figure
 can be regenerated and restyled long after the export, on any machine with
@@ -239,9 +239,14 @@ def render(cols, meta, out_base, **opts):
 
         # event markers
         if o["show_markers"]:
+            # Markers anywhere in the exported range (not only between the first and last data
+            # rows: a marker placed after the newest sample used to be left out of the figure)
+            m_lo = t0 + float(o["start"]) if o["start"] is not None else t0
+            m_hi = t0 + float(o["end"]) if o["end"] is not None else \
+                float(meta["time_range"].get("end_unix", ts[-1] if len(ts) else t0))
             for mk in meta.get("markers", []):
                 t = float(mk["timestamp"])
-                if not (ts[0] <= t <= ts[-1]) if len(ts) else True:
+                if not m_lo <= t <= m_hi:
                     continue
                 xm = local_datetimes(np.array([t]))[0] if o["time_axis"] == "clock" else (t - t0) / div
                 for ax in axes:

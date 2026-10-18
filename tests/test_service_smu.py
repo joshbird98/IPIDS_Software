@@ -16,8 +16,8 @@ EN, RB, SP, COMMS = f"{BASE}.stat_enabled", f"{BASE}.rb_voltage", f"{BASE}.sp_ac
 
 @pytest.fixture
 def stack(monkeypatch):
-    monkeypatch.setenv("IPIDS_SIMULATE", "1")
-    monkeypatch.delenv("IPIDS_SIM_FAULTS", raising=False)
+    monkeypatch.setenv("SINDIE_SIMULATE", "1")
+    monkeypatch.delenv("SINDIE_SIM_FAULTS", raising=False)
     plc = FakePlcPublisher(relay=True)
     from src.services.service_smu import SmuMicroservice
     svc = SmuMicroservice()
@@ -39,13 +39,13 @@ def bias_on(client, tap, volts=50.0):
 
 
 def drop_link(tap, monkeypatch):
-    monkeypatch.setenv("IPIDS_SIM_FAULTS", "smu_disconnect")
+    monkeypatch.setenv("SINDIE_SIM_FAULTS", "smu_disconnect")
     d = tap.wait_for(lambda d: d[COMMS] == 1.0, timeout=5)
     assert d[EN] is None and d[SP] is None            # unknown while disconnected
 
 
 def restore_link(tap, monkeypatch):
-    monkeypatch.delenv("IPIDS_SIM_FAULTS")
+    monkeypatch.delenv("SINDIE_SIM_FAULTS")
     return tap.wait_for(lambda d: d[COMMS] == 0.0 and d[EN] is not None and d[RB] is not None, timeout=15)
 
 

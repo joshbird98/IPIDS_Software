@@ -5,7 +5,7 @@ inductive load (current follows the setpoint with a ~1 s time constant),
 voltage = I x R, and constant-voltage limiting when the voltage setpoint is
 too low for the requested current.
 
-Injected faults (IPIDS_SIM_FAULTS): magnet_disconnect, steerer_disconnect.
+Injected faults (SINDIE_SIM_FAULTS): magnet_disconnect, steerer_disconnect.
 """
 import threading
 

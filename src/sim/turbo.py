@@ -5,7 +5,7 @@ service's own _transaction() returns. The pump spins up while the control word
 has the ON bit set, coasts down otherwise, and reports the vent/relay strategy
 parameters the service checks as already configured (so no flash write).
 
-Injected faults (IPIDS_SIM_FAULTS): turbo_disconnect, turbo_error.
+Injected faults (SINDIE_SIM_FAULTS): turbo_disconnect, turbo_error.
 """
 import threading
 import time

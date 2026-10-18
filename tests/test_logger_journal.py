@@ -81,7 +81,7 @@ def test_logger_killed_mid_chunk_loses_at_most_seconds(tmp_path):
     """Run the real logger process, feed it telemetry, kill -9 it, restart it: the rows
     since the last chunk come back from the journal (previously up to 15 min were lost)."""
     from src.core.network_map import ZMQ_PORT_PLC_PUB, TOPIC_PLC_DATA
-    env = dict(os.environ, IPIDS_DATA_DIR=str(tmp_path), PYTHONPATH=os.getcwd())
+    env = dict(os.environ, SINDIE_DATA_DIR=str(tmp_path), PYTHONPATH=os.getcwd())
     script = os.path.join("src", "services", "service_logger.py")
     tag = "ion_beam.source.extraction.rb_voltage"
 

@@ -17,9 +17,9 @@ ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 class Stack:
     def __init__(self, data_dir):
         self.data_dir = data_dir
-        env = dict(os.environ, IPIDS_SIMULATE="1", IPIDS_DATA_DIR=str(data_dir),
-                   IPIDS_LOG_DIR=str(data_dir / "logs"), PYTHONPATH=ROOT)
-        env.pop("IPIDS_SIM_FAULTS", None)
+        env = dict(os.environ, SINDIE_SIMULATE="1", SINDIE_DATA_DIR=str(data_dir),
+                   SINDIE_LOG_DIR=str(data_dir / "logs"), PYTHONPATH=ROOT)
+        env.pop("SINDIE_SIM_FAULTS", None)
         self.log = open(data_dir / "manager_console.log", "w")
         self.proc = subprocess.Popen([sys.executable, os.path.join(ROOT, "src", "services", "service_manager.py")],
                                      env=env, cwd=ROOT, stdout=self.log, stderr=subprocess.STDOUT)

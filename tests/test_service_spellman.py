@@ -18,8 +18,8 @@ ARC = f"{EINZEL}.stat_arc_exceeded"
 
 @pytest.fixture
 def stack(monkeypatch):
-    monkeypatch.setenv("IPIDS_SIMULATE", "1")
-    monkeypatch.delenv("IPIDS_SIM_FAULTS", raising=False)
+    monkeypatch.setenv("SINDIE_SIMULATE", "1")
+    monkeypatch.delenv("SINDIE_SIM_FAULTS", raising=False)
     from src.sim import spellman as simsp
     simsp._BUSES.clear()
     plc = FakePlcPublisher()
@@ -97,7 +97,7 @@ def test_unresponsive_supply_is_unknown_and_service_keeps_heartbeating(stack, mo
     hb.setsockopt(zmq.SUBSCRIBE, b"")
     hb.bind(ZMQ_PORT_HEARTBEAT)
     try:
-        monkeypatch.setenv("IPIDS_SIM_FAULTS", "spellman_no_reply")
+        monkeypatch.setenv("SINDIE_SIM_FAULTS", "spellman_no_reply")
         d = tap.wait_for(lambda d: d.get(f"{EINZEL}.stat_comms_fail") == 1.0, timeout=6)
         assert d[f"{EINZEL}.stat_enabled"] is None    # don't claim 'disabled' when HV might be on
         beats = []
@@ -128,11 +128,11 @@ def test_arc_is_detected_latched_and_cleared_by_fault_reset(stack, monkeypatch):
     bring_up(c, tap, 6.0)
     assert tap.holds_for(lambda d: d[ARC] == 0.0, 1.0)            # running normally: no arc
 
-    monkeypatch.setenv("IPIDS_SIM_FAULTS", "spellman_arc")         # output collapses to ~10 V
+    monkeypatch.setenv("SINDIE_SIM_FAULTS", "spellman_arc")         # output collapses to ~10 V
     d = tap.wait_for(lambda d: d[ARC] == 1.0, timeout=3)
     assert d[f"{EINZEL}.rb_voltage"] < 0.6
 
-    monkeypatch.delenv("IPIDS_SIM_FAULTS")                         # arc over, output recovers ...
+    monkeypatch.delenv("SINDIE_SIM_FAULTS")                         # arc over, output recovers ...
     tap.wait_for(lambda d: abs(d[f"{EINZEL}.rb_voltage"] - 6.0) < 0.3, timeout=5)
     assert tap.holds_for(lambda d: d[ARC] == 1.0, 0.5)             # ... but the latch holds
 
@@ -146,7 +146,7 @@ def test_no_arc_below_the_minimum_setpoint(stack, monkeypatch):
     c = C.CommandClient(default_timeout=3.0)
     wait_powered(tap)
     bring_up(c, tap, 0.3)
-    monkeypatch.setenv("IPIDS_SIM_FAULTS", "spellman_arc")
+    monkeypatch.setenv("SINDIE_SIM_FAULTS", "spellman_arc")
     tap.wait_for(lambda d: d[f"{EINZEL}.rb_voltage"] < 0.03, timeout=3)
     assert tap.holds_for(lambda d: d[ARC] == 0.0, 4.0)   # longer than settle_s
 
@@ -175,7 +175,7 @@ def test_arc_is_caught_while_the_setpoint_keeps_stepping(stack, monkeypatch):
     try:
         time.sleep(0.5)
         assert tap.holds_for(lambda d: d[ARC] == 0.0, 1.5)       # sweeping a healthy output: no arc
-        monkeypatch.setenv("IPIDS_SIM_FAULTS", "spellman_arc")
+        monkeypatch.setenv("SINDIE_SIM_FAULTS", "spellman_arc")
         tap.wait_for(lambda d: d[ARC] == 1.0, timeout=2.5)        # caught while the sweep goes on
     finally:
         stop.set()
@@ -303,7 +303,7 @@ def test_refused_enable_is_reported_as_failed(stack, monkeypatch):
     """A '*' reply is a refusal; it used to be acknowledged as 'output enabled/disabled'."""
     plc, svc, tap = stack
     wait_powered(tap)
-    monkeypatch.setenv("IPIDS_SIM_FAULTS", "spellman_refuse")
+    monkeypatch.setenv("SINDIE_SIM_FAULTS", "spellman_refuse")
     c = C.CommandClient(default_timeout=3.0)
     r = c.request("spellman", f"{EINZEL}.cmd_enable", True)
     assert r["status"] == C.FAILED and "refused" in r["reason"]

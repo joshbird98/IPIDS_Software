@@ -1,6 +1,8 @@
 import os
 import json
 
+from src.core.env import getenv
+
 # Define absolute path to the config file relative to this script
 CONFIG_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), '../../config/network_config.json'))
 
@@ -10,10 +12,10 @@ with open(CONFIG_PATH, 'r') as f:
 
 HOST = _cfg["host"]
 
-# IPIDS_PORT_OFFSET shifts every ZeroMQ port, so the automated tests (and a
+# SINDIE_PORT_OFFSET shifts every ZeroMQ port, so the automated tests (and a
 # second copy of the stack) can run on the same PC as the live system without
 # talking to it. Unset in normal use.
-PORT_OFFSET = int(os.environ.get("IPIDS_PORT_OFFSET", "0") or 0)
+PORT_OFFSET = int(getenv("PORT_OFFSET", "0") or 0)
 
 # Ports added after a config file was written fall back to these defaults.
 _DEFAULT_PORTS = {"monitor_pub": 5576}

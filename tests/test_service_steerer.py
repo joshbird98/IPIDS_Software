@@ -12,8 +12,8 @@ SAFE = "system.safe_to_run"
 
 @pytest.fixture
 def stack(monkeypatch):
-    monkeypatch.setenv("IPIDS_SIMULATE", "1")
-    monkeypatch.delenv("IPIDS_SIM_FAULTS", raising=False)
+    monkeypatch.setenv("SINDIE_SIMULATE", "1")
+    monkeypatch.delenv("SINDIE_SIM_FAULTS", raising=False)
     from src.sim import magnet as simmag
     simmag._STATE.clear()
     plc = FakePlcPublisher(relay=True)

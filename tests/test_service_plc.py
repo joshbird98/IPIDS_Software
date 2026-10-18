@@ -11,8 +11,8 @@ from src.core.network_map import ZMQ_PORT_HEARTBEAT, ZMQ_PORT_PLC_PUB
 
 @pytest.fixture
 def plc_service(monkeypatch):
-    monkeypatch.setenv("IPIDS_SIMULATE", "1")
-    monkeypatch.delenv("IPIDS_SIM_FAULTS", raising=False)
+    monkeypatch.setenv("SINDIE_SIMULATE", "1")
+    monkeypatch.delenv("SINDIE_SIM_FAULTS", raising=False)
     from src.services.service_plc import PlcMicroservice
     from src.sim import plc as simplc
     simplc._PLC = None  # fresh simulated PLC for each test
@@ -93,7 +93,7 @@ def test_disconnect_keeps_heartbeat_and_publishes_unknown(plc_service, monkeypat
     hb.bind(ZMQ_PORT_HEARTBEAT)
     try:
         time.sleep(0.3)
-        monkeypatch.setenv("IPIDS_SIM_FAULTS", "plc_disconnect")
+        monkeypatch.setenv("SINDIE_SIM_FAULTS", "plc_disconnect")
         deadline = time.time() + 3
         while plc_service.connected and time.time() < deadline:
             time.sleep(0.05)
@@ -119,7 +119,7 @@ def test_disconnect_keeps_heartbeat_and_publishes_unknown(plc_service, monkeypat
         r = _client().request("plc", "ion_beam.source.extraction.cmd_enable", True)
         assert r["status"] == C.REJECTED and "not connected" in r["reason"]
         # recovery
-        monkeypatch.delenv("IPIDS_SIM_FAULTS")
+        monkeypatch.delenv("SINDIE_SIM_FAULTS")
         deadline = time.time() + 5
         while not plc_service.connected and time.time() < deadline:
             time.sleep(0.05)

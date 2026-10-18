@@ -7,13 +7,12 @@ if __name__ == "__main__":
         sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "..")))
     if "--sim" in sys.argv[1:]:
         # Simulation mode: read data_sim/ (must be set before src.core.paths is imported)
-        os.environ["IPIDS_SIMULATE"] = "1"
+        os.environ["SINDIE_SIMULATE"] = "1"
 
 import time
 import numpy as np
 import copy
 from datetime import datetime, timedelta
-import textwrap
 import sqlite3
 import json
 import zmq
@@ -46,6 +45,8 @@ from src.core.perf_utils import PerfTracker
 from src.core.live_buffer import break_gaps
 from src.core import export_data as export_data
 from src.gui.data_viewer.export_dialog import ExportDialog, ExportWorker
+from src.gui.data_viewer.event_overlay import EventOverlay
+from src.gui.settings import gui_settings
 
 class MarkerDialog(QDialog):
     def __init__(self, parent=None):
@@ -151,7 +152,7 @@ class DataViewerApp(QMainWindow):
     GRID_TICK_LEVEL = 0      # grid/tick levels drawn: 0 = major only (fastest), 1 = +minor, 2 = pyqtgraph default
     LIVE_FPS = 5             # live plot refresh rate (was 10; ~halves live-mode CPU)
 
-    def __init__(self, shared_cache, window_title="IPIDS Data Viewer"):
+    def __init__(self, shared_cache, window_title="SINDIE Data Viewer"):
         super().__init__()
         self.setWindowTitle(window_title)
         self.resize(1200, 800)
@@ -347,7 +348,10 @@ class DataViewerApp(QMainWindow):
 
         if not os.path.exists(default_path): os.makedirs(default_path)
 
-        self.edit_export_path.setText(os.path.join(default_path, "IPIDS_Snapshot"))
+        # The export dialog starts from this box and writes its choice back here; remember it
+        st = gui_settings("SINDIE", "DataViewer")
+        self.edit_export_path.setText(os.path.join(st.value("export/dest", default_path) or default_path,
+                                                   st.value("export/name", "SINDIE_Snapshot") or "SINDIE_Snapshot"))
         path_layout.addWidget(self.edit_export_path)
 
         btn_browse = QPushButton("...")
@@ -430,7 +434,8 @@ class DataViewerApp(QMainWindow):
         self.pin_lines = []  # Ctrl+Click pins
         self.delta_labels = []  # Time delta text
 
-        self.marker_items = {}
+        self.event_overlay = EventOverlay(on_delete=self._delete_marker)
+        self._pending_markers = {}   # markers sent to the events service, not yet seen in events.db
         self.event_data = {}   # loaded per view window by _refresh_event_markers
 
         # Connect global mouse system_logs to the entire layout scene
@@ -508,8 +513,7 @@ class DataViewerApp(QMainWindow):
             if vb.scene(): vb.scene().removeItem(vb)
         for c in self.curves.values():
             if c.scene(): c.scene().removeItem(c)
-        for m in self.marker_items.values():
-            if m.scene(): m.scene().removeItem(m)
+        self.event_overlay.clear()
 
         self.layout_widget.clear()
         self.layout_widget.ci.layout.setSpacing(35)
@@ -524,7 +528,6 @@ class DataViewerApp(QMainWindow):
         self.delta_labels.clear()
         self.curves.clear()
         self.hist_curves.clear()
-        self.marker_items.clear()
         self.time_axes = []
         self._legend_tags = set()
 
@@ -1364,7 +1367,6 @@ class DataViewerApp(QMainWindow):
             if dlg.exec():
                 text, color = dlg.get_data()
                 if text:
-                    self._add_marker_to_graph(absolute_ts, text, color)
                     self._save_markers(absolute_ts, {"text": text, "color": color})
 
     def _ensure_inspector_items(self):
@@ -1690,7 +1692,8 @@ class DataViewerApp(QMainWindow):
     def _save_markers(self, timestamp, data_dict):
         """Optimistic UI: Saves to RAM, forces checkbox ON, then publishes."""
         key = f"{timestamp:.3f}"
-        self.event_data[key] = data_dict
+        data_dict = dict(data_dict, type="USER_MARKER")
+        self._pending_markers[key] = data_dict
 
         # 1. OPTIMISTIC UI: Force the checkbox to be visible
         user_cb = self.filter_checkboxes.get("User Markers")
@@ -1699,48 +1702,65 @@ class DataViewerApp(QMainWindow):
             user_cb.blockSignals(True)
             user_cb.setChecked(True)
             user_cb.blockSignals(False)
+            self._ev_types = None            # filters changed: reload on the next refresh
+        self.event_data[key] = data_dict
+        self._refresh_event_markers(reload=False)
 
-            # Explicitly refresh so the new marker renders immediately
-            self._refresh_event_markers()
-
-        # 2. Fire-and-Forget ZMQ Command to backend
+        # 2. Publish to the events service, which writes it to events.db
         self.events.log_user_marker(marker_ts=timestamp, text=data_dict["text"], color=data_dict["color"])
+        # Publishing can't tell whether anyone received it: check the database shortly after
+        # (a marker shown but never saved also never reached exports)
+        QTimer.singleShot(3000, lambda: self._verify_marker_saved(timestamp, data_dict))
 
-    def _add_marker_to_graph(self, ts_str, text, color="#00E5FF"):
-        if not self.lanes: return
-        base_plot = list(self.lanes.values())[0]
+    def _marker_in_db(self, timestamp):
+        conn = self._events_conn()
+        if conn is None:
+            return False
+        try:
+            return conn.execute("SELECT 1 FROM events WHERE event_type = 'USER_MARKER' AND "
+                                "timestamp BETWEEN ? AND ? LIMIT 1",
+                                (timestamp - 0.002, timestamp + 0.002)).fetchone() is not None
+        except sqlite3.Error:
+            self._ev_conn = None
+            return False
 
-        ts_float = float(ts_str)
-        relative_x = ts_float - self.t0
-        wrapped_text = textwrap.fill(text, width=25)
+    def _verify_marker_saved(self, timestamp, data_dict, attempt=1):
+        if self._marker_in_db(timestamp):
+            self._pending_markers.pop(f"{timestamp:.3f}", None)
+            return
+        if attempt < 3:      # the events service writes in batches; give it a little longer
+            QTimer.singleShot(2000, lambda: self._verify_marker_saved(timestamp, data_dict, attempt + 1))
+            return
+        key = f"{timestamp:.3f}"
+        self._pending_markers.pop(key, None)
+        self.event_data.pop(key, None)
+        self.event_overlay.forget(key)
+        self._refresh_event_markers(reload=False)
+        self._marker_save_failed(data_dict.get("text", ""))
 
-        # Stagger logic remains the same
-        stagger_heights = [0.90, 0.75, 0.60, 0.45, 0.30]
-        row_index = int(abs(hash(ts_str)) % len(stagger_heights))
-
-        line = pg.InfiniteLine(
-            pos=relative_x, angle=90, movable=False,
-            pen=pg.mkPen(color, width=2, style=Qt.PenStyle.DashLine),
-            label=wrapped_text,
-            labelOpts={'position': stagger_heights[row_index], 'color': color, 'fill': (0, 0, 0, 200)}
-        )
-
-        # Store using the STRING as the key
-        self.marker_items[ts_str] = line
-        base_plot.addItem(line)
-
-        # Connect click, but pass the string key
-        line.sigClicked.connect(lambda obj, ev, k=ts_str: self._confirm_delete_marker(k))
+    def _marker_save_failed(self, text):
+        from PyQt6.QtWidgets import QMessageBox
+        box = QMessageBox(QMessageBox.Icon.Warning, "Marker not saved",
+                          f"The marker \"{text}\" did not reach the event database "
+                          f"({paths.EVENTS_DB}), so it has been taken off the plot and would not be "
+                          "in exports.\n\nIs the events service running for this system? (A viewer "
+                          "started on its own - not by the service manager / run_simulation.py - "
+                          "with the --sim flag mismatched, or on another PC, sends its markers "
+                          "nowhere.)", parent=self)
+        box.setModal(False)
+        box.show()
 
     def _refresh_event_markers(self, *_, reload=True):
-        """Synchronizes RAM markers with SQLite database.
+        """Synchronizes RAM markers with SQLite database and redraws the overlay.
 
         reload=False only re-places markers for the current view from the
         cached self.event_data (cheap). The SQLite read happens on the 1 s
         marker_sync_timer, filter changes and UI rebuilds, not on every
         render frame (it was previously hit ~11x per second).
         """
-        if not self.lanes: return
+        if not self.lanes:
+            self.event_overlay.clear()
+            return
 
         base_plot = list(self.lanes.values())[0]
         view_range = base_plot.viewRange()[0]
@@ -1763,74 +1783,26 @@ class DataViewerApp(QMainWindow):
             self._ev_version = self._events_db_version()
             self.event_data = self._load_markers(w0, w1)
             self._ev_window, self._ev_types = (w0, w1), types
+            if "USER_MARKER" in types:
+                self.event_data.update(self._pending_markers)   # sent, not yet in the database
 
-        # 1. Prune deleted or off-screen markers
-        to_remove = []
-
-        for ts_str, item in list(self.marker_items.items()):
-            # If it was deleted by another window/service
-            if ts_str not in self.event_data:
-                if item.scene(): item.scene().removeItem(item)
-                to_remove.append(ts_str)
-                continue
-
-            # If it's too far off-screen, unload from RAM
-            rel_x = float(ts_str) - self.t0
-            if rel_x < (view_range[0] - self.live_span) or rel_x > (view_range[1] + self.live_span):
-                if item.scene(): item.scene().removeItem(item)
-                to_remove.append(ts_str)
-
-        for k in to_remove:
-            del self.marker_items[k]
-
-        # 2. Add new markers
-        for ts_str, data in self.event_data.items():
-            rel_x = float(ts_str) - self.t0
-            if view_range[0] <= rel_x <= view_range[1]:
-                if ts_str not in self.marker_items:
-                    self._add_marker_to_graph(ts_str, data['text'], data['color'])
+        lanes = list(self.lanes.values())
+        legend = self.lane_legends.get(next(iter(self.lanes)))
+        self.event_overlay.update(lanes, legend, self.event_data, self.t0, view_range)
 
         # (A forced self.layout_widget.scene().update() used to sit here. It made Qt
         # repaint the whole scene 10x/s even when idle: ~45% CPU at 1080p. Adding or
         # removing items already schedules the repaint Qt needs.)
 
-    def _confirm_delete_marker(self, ts_key):
-        """Optimistic UI: Removes from screen instantly, then publishes delete command."""
-
-        if ts_key in self.event_data:
-            if self.event_data[ts_key].get("type") != "USER_MARKER":
-                from PyQt6.QtWidgets import QMessageBox
-                QMessageBox.warning(self, "Access Denied",
-                                    "System events and faults are read-only and cannot be manually deleted.")
-                return
-
-        if hasattr(self, '_is_confirming_delete') and self._is_confirming_delete:
-            return
-
-        self._is_confirming_delete = True
-        from PyQt6.QtWidgets import QMessageBox
-
-        msg = QMessageBox(self)
-        msg.setIcon(QMessageBox.Icon.Question)
-        msg.setWindowTitle("Delete Marker")
-        msg.setText("Delete this event marker?")
-        msg.setStandardButtons(QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
-
-        if msg.exec() == QMessageBox.StandardButton.Yes:
-            # 1. Optimistic visual removal
-            if ts_key in self.event_data:
-                del self.event_data[ts_key]
-
-            if ts_key in self.marker_items:
-                item = self.marker_items[ts_key]
-                if item.scene():
-                    item.scene().removeItem(item)
-                del self.marker_items[ts_key]
-
-            # 2. Fire-and-Forget to service_events.py
-            self.events.delete_user_marker(marker_ts=float(ts_key))
-
-        self._is_confirming_delete = False
+    def _delete_marker(self, ts_key):
+        """From the marker's right-click menu (choosing 'Delete marker ...' is the confirmation)."""
+        if self.event_data.get(ts_key, {}).get("type", "USER_MARKER") != "USER_MARKER":
+            return      # system events are read-only (the menu doesn't offer them anyway)
+        self.event_data.pop(ts_key, None)
+        self._pending_markers.pop(ts_key, None)
+        self.event_overlay.forget(ts_key)
+        self.events.delete_user_marker(marker_ts=float(ts_key))
+        self._refresh_event_markers(reload=False)
 
     def _show_profile_context_menu(self, pos):
         """Generates the right-click menu for items INSIDE the profile dropdown."""
@@ -1972,8 +1944,8 @@ if __name__ == "__main__":
 
     # 2. Launch Multiple Thin-Client Windows
     # The windows will automatically fetch their required data the moment they render
-    window_1 = DataViewerApp(master_cache, window_title="IPIDS Data Viewer - Window 1")
-    #window_2 = DataViewerApp(master_cache, window_title="IPIDS Data Viewer - Window 2")
+    window_1 = DataViewerApp(master_cache, window_title="SINDIE Data Viewer - Window 1")
+    #window_2 = DataViewerApp(master_cache, window_title="SINDIE Data Viewer - Window 2")
 
     window_1.show()
     #window_2.show()

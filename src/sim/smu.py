@@ -8,7 +8,7 @@ expects them, so a mass scan in the simulator finds O, Si-28/29/30 and friends.
 The peaks scale with the source's extracted beam (the extraction current above its
 50 MOhm bleed), so nothing arrives until the source is running (see src/sim/plc.py).
 
-Injected faults (IPIDS_SIM_FAULTS): smu_disconnect.
+Injected faults (SINDIE_SIM_FAULTS): smu_disconnect.
 """
 import math
 import random

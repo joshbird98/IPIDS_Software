@@ -1,6 +1,6 @@
 """Test configuration.
 
-Every test process runs with its ZeroMQ ports shifted (IPIDS_PORT_OFFSET) and its
+Every test process runs with its ZeroMQ ports shifted (SINDIE_PORT_OFFSET) and its
 data/log folders redirected to a temporary directory, so the suite can run on
 the lab PC while the real system is running without touching it.
 """
@@ -8,10 +8,10 @@ import os
 import sys
 import tempfile
 
-_TMP = tempfile.mkdtemp(prefix="ipids_tests_")
-os.environ.setdefault("IPIDS_PORT_OFFSET", "20000")
-os.environ.setdefault("IPIDS_DATA_DIR", os.path.join(_TMP, "data"))
-os.environ.setdefault("IPIDS_LOG_DIR", os.path.join(_TMP, "logs"))
+_TMP = tempfile.mkdtemp(prefix="sindie_tests_")
+os.environ.setdefault("SINDIE_PORT_OFFSET", "20000")
+os.environ.setdefault("SINDIE_DATA_DIR", os.path.join(_TMP, "data"))
+os.environ.setdefault("SINDIE_LOG_DIR", os.path.join(_TMP, "logs"))
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
@@ -20,15 +20,15 @@ if ROOT not in sys.path:
 
 # A tag registry built fresh from the config files in this checkout (not whatever
 # config/system_tags.json happens to be on this machine), so limits match the config.
-if not os.environ.get("IPIDS_REGISTRY", "").strip():
+if not os.environ.get("SINDIE_REGISTRY", "").strip():
     import contextlib  # noqa: E402
     import io  # noqa: E402
 
-    os.environ["IPIDS_REGISTRY"] = os.path.join(_TMP, "system_tags.json")
+    os.environ["SINDIE_REGISTRY"] = os.path.join(_TMP, "system_tags.json")
     from src.utils.build_registry import build_system_registry  # noqa: E402
 
     with contextlib.redirect_stdout(io.StringIO()):
-        build_system_registry(os.environ["IPIDS_REGISTRY"])
+        build_system_registry(os.environ["SINDIE_REGISTRY"])
 
 import socket  # noqa: E402
 

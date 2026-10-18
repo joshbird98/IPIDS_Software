@@ -14,21 +14,21 @@ def spawn(folder, env_extra):
     folder.mkdir()
     script = folder / SCRIPT
     script.write_text("import time\ntime.sleep(60)\n")
-    env = {k: v for k, v in os.environ.items() if k not in ("IPIDS_PORT_OFFSET", "IPIDS_SIMULATE")}
+    env = {k: v for k, v in os.environ.items() if k not in ("SINDIE_PORT_OFFSET", "SINDIE_SIMULATE")}
     env.update(env_extra)
     return subprocess.Popen([sys.executable, str(script)], env=env)
 
 
 def test_instance_key():
     assert instance_key({}) == (0, False)
-    assert instance_key({"IPIDS_PORT_OFFSET": "10000", "IPIDS_SIMULATE": "1"}) == (10000, True)
-    assert instance_key({"IPIDS_PORT_OFFSET": "", "IPIDS_SIMULATE": "0"}) == (0, False)
+    assert instance_key({"SINDIE_PORT_OFFSET": "10000", "SINDIE_SIMULATE": "1"}) == (10000, True)
+    assert instance_key({"SINDIE_PORT_OFFSET": "", "SINDIE_SIMULATE": "0"}) == (0, False)
 
 
 def test_only_this_instances_orphans_are_found(tmp_path):
     live = spawn(tmp_path / "live", {})                                        # the real system
-    sim = spawn(tmp_path / "sim", {"IPIDS_PORT_OFFSET": "10000", "IPIDS_SIMULATE": "1"})
-    mine = spawn(tmp_path / "mine", {"IPIDS_PORT_OFFSET": "31000", "IPIDS_SIMULATE": "1"})
+    sim = spawn(tmp_path / "sim", {"SINDIE_PORT_OFFSET": "10000", "SINDIE_SIMULATE": "1"})
+    mine = spawn(tmp_path / "mine", {"SINDIE_PORT_OFFSET": "31000", "SINDIE_SIMULATE": "1"})
     try:
         time.sleep(0.5)
         found = {p.pid for p, _ in find_orphans([SCRIPT], my_instance=(31000, True))}

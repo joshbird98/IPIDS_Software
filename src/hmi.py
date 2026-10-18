@@ -7,7 +7,7 @@ if __package__ in (None, ""):
 
 if "--sim" in sys.argv[1:]:
     # Simulation mode (fake devices, data in data_sim/): must be set before src.* is imported
-    os.environ["IPIDS_SIMULATE"] = "1"
+    os.environ["SINDIE_SIMULATE"] = "1"
 
 os.environ["QT_API"] = "PyQt6"
 

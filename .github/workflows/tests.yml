@@ -64,6 +64,6 @@ jobs:
         with:
           name: service-logs
           path: |
-            /tmp/ipids_tests_*/
+            /tmp/sindie_tests_*/
             /tmp/pytest-of-*/
           retention-days: 7

@@ -25,6 +25,7 @@ log = logging.getLogger("service_data_compactor")
 
 COMPACTION_TIME = "02:00"  # 24-hour format
 
+# A real folder on the lab PC (still under the machine's old name): rename it there before changing it here
 ONEDRIVE_PATH = r"C:\Users\100kV\Josh\OneDrive\OneDrive - University of Surrey\IPIDS_Project\IPIDS_Data_Backup"
 
 

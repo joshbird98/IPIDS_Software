@@ -1,6 +1,6 @@
-"""Fake devices for running the whole IPIDS stack on a laptop.
+"""Fake devices for running the whole SINDIE stack on a laptop.
 
-Set IPIDS_SIMULATE=1 (run_simulation.py does this) and every hardware service
+Set SINDIE_SIMULATE=1 (run_simulation.py does this) and every hardware service
 swaps its device driver for one of the classes in this package; everything
 above the driver - command handling, interlocks, telemetry, logging, the HMI,
 the viewer - is the real code. Data goes to data_sim/ instead of data/.
@@ -12,7 +12,7 @@ the physics of the implanter.
 
 Faults can be injected while it runs by listing them (comma or newline separated)
 in data_sim/sim_faults.txt - run_simulation.py has a menu for it - or for one
-process through the environment variable IPIDS_SIM_FAULTS. Known faults:
+process through the environment variable SINDIE_SIM_FAULTS. Known faults:
 
     plc_disconnect      PLC unreachable            plc_relay_trip      safety relay drops
     spellman_no_reply   supply silent (timeouts)   spellman_refuse     supply rejects settings
@@ -28,6 +28,7 @@ import random
 import time
 
 from src.core import paths
+from src.core.env import getenv
 from src.core.paths import simulation_enabled  # noqa: F401  (re-exported for the services)
 
 FAULTS_FILE = os.path.join(paths.DATA_DIR, "sim_faults.txt")
@@ -73,7 +74,7 @@ def _file_faults() -> frozenset:
 
 
 def injected_faults() -> set:
-    env = {f.strip() for f in os.environ.get("IPIDS_SIM_FAULTS", "").split(",") if f.strip()}
+    env = {f.strip() for f in getenv("SIM_FAULTS").split(",") if f.strip()}
     return env | set(_file_faults())
 
 

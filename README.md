@@ -1,8 +1,11 @@
-# IPIDS software
+# SINDIE software
 
-Control and data system for the IPIDS ion implanter (Surrey Ion Beam Centre):
+Control and data system for the SINDIE ion implanter (Surrey Ion Beam Centre):
 hardware services that talk to the PLC and the supplies, the operator HMI, and the
 data viewer for the logged telemetry.
+
+(The machine used to be called IPIDS. The old `IPIDS_*` environment variables still work, and
+the HMI and viewer pick up their saved layouts and export settings from the old name once.)
 
 ```
 src/services/       one process per device (PLC, Spellman, magnet, steerer, SMU, turbo, gauges)
@@ -24,6 +27,14 @@ python src/services/service_manager.py      starts and supervises every service
 python src/hmi.py                           operator HMI
 python src/gui/data_viewer/viewer_main.py   data viewer
 ```
+
+In the data viewer, double-click the plot to add a marker. Hover over a marker line for its full
+text; right-click it to delete a user marker. Zoomed out, events within a few pixels of each
+other are drawn as one line ("12 events"), and labels that don't fit (or would sit under the
+legend) are left off but still show on hover. A marker that doesn't reach the event database
+within a few seconds (events service not running for that viewer) is taken off with a warning.
+The export dialog starts from the Export Settings folder/name in the sidebar and writes its
+choice back there.
 
 The manager restarts a crashed service with increasing delays (2 s ... 5 min) and shows
 BACKOFF / STOPPED in the HMI's services panel, where services can also be stopped and started.

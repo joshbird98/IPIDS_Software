@@ -9,7 +9,7 @@ The output is current-limited: with the current limit (I1) at 0 the voltage can'
 rise. (The HMI sends a 50 uA limit with every voltage setpoint "to unclamp the CC
 loop", so the real units appear to behave the same way.)
 
-Injected faults (IPIDS_SIM_FAULTS):
+Injected faults (SINDIE_SIM_FAULTS):
     spellman_no_reply   every transaction times out (supply unpowered / cable out)
     spellman_refuse     set commands are answered with an error ('*')
     spellman_arc        a discharge path appears: the output runs into its current

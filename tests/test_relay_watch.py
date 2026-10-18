@@ -83,7 +83,7 @@ def test_stale_queued_message_is_not_fresh(watch):
 
 def test_smu_reconnect_after_unseen_trip_does_not_restore_bias(monkeypatch):
     """The review's scenario on the real SMU service object (its loop not running)."""
-    monkeypatch.setenv("IPIDS_SIMULATE", "1")
+    monkeypatch.setenv("SINDIE_SIMULATE", "1")
     from src.services.service_smu import SP_BIAS, SmuMicroservice
     svc = SmuMicroservice()
     try:
@@ -116,7 +116,7 @@ def _close(svc):
 
 
 def test_magnet_trip_between_checks_forces_output_off(monkeypatch):
-    monkeypatch.setenv("IPIDS_SIMULATE", "1")
+    monkeypatch.setenv("SINDIE_SIMULATE", "1")
     from src.sim import magnet as simmag
     simmag._STATE.clear()
     from src.services.service_magnet_psu import MagnetMicroservice
@@ -142,7 +142,7 @@ def test_magnet_trip_between_checks_forces_output_off(monkeypatch):
 
 
 def test_spellman_trip_between_checks_counts_as_power_loss(monkeypatch):
-    monkeypatch.setenv("IPIDS_SIMULATE", "1")
+    monkeypatch.setenv("SINDIE_SIMULATE", "1")
     from src.services.service_spellman_mpd import SpellmanMicroservice
     svc = SpellmanMicroservice()
     try:

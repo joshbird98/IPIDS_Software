@@ -3,12 +3,13 @@ import os
 import sys
 import time
 from PyQt6.QtWidgets import QMainWindow, QDockWidget, QMessageBox, QInputDialog, QLineEdit
-from PyQt6.QtCore import Qt, QTimer, QUrl, QSettings
+from PyQt6.QtCore import Qt, QTimer, QUrl
 from PyQt6.QtGui import QAction
 from PyQt6.QtMultimedia import QSoundEffect
 
 from qfluentwidgets import FluentIcon as FIF, Theme, InfoBar, InfoBarPosition
 from src.core.theme import is_dark_mode
+from src.gui.settings import gui_settings
 
 from src.core.network_map import (
     ZMQ_PORT_PLC_PUB, ZMQ_PORT_VACUUM_PUB,
@@ -77,12 +78,12 @@ class AudioManager:
 class ControlMainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("IPIDS Operator HMI" + ("  [SIMULATION - fake devices]" if simulation_enabled() else ""))
+        self.setWindowTitle("SINDIE Operator HMI" + ("  [SIMULATION - fake devices]" if simulation_enabled() else ""))
         self.setObjectName("ControlMainWindow")
         self.resize(1600, 900)
         self.setDockOptions(QMainWindow.DockOption.AllowNestedDocks | QMainWindow.DockOption.AllowTabbedDocks)
 
-        self.settings = QSettings("SurreyIonBeam", "IPIDS_HMI")
+        self.settings = gui_settings("SurreyIonBeam", "SINDIE_HMI")
         self.audio = AudioManager()
 
         self.memory_active_faults = set()
@@ -200,7 +201,7 @@ class ControlMainWindow(QMainWindow):
 
     def _open_help_docs(self):
         QMessageBox.information(self, "Documentation",
-                                "IPIDS Documentation Library coming soon...\n\nOr more likely 10 years time.")
+                                "SINDIE Documentation Library coming soon...\n\nOr more likely 10 years time.")
 
     def _init_docks(self):
         # 1. Left Area Docks

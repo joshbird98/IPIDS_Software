@@ -18,7 +18,7 @@ import time
 import traceback
 from datetime import datetime
 
-from PyQt6.QtCore import QDateTime, QSettings, QThread, pyqtSignal
+from PyQt6.QtCore import QDateTime, QThread, pyqtSignal
 from PyQt6.QtWidgets import (
     QButtonGroup, QCheckBox, QComboBox, QDateTimeEdit, QDialog, QDialogButtonBox, QDoubleSpinBox,
     QFileDialog, QFormLayout, QGroupBox, QHBoxLayout, QLabel, QLineEdit, QPushButton, QRadioButton,
@@ -26,6 +26,7 @@ from PyQt6.QtWidgets import (
 )
 
 from src.core import export_data as ex
+from src.gui.settings import gui_settings
 
 NICE_BINS = [0.1, 0.2, 0.5, 1, 2, 5, 10, 15, 30, 60, 120, 300, 600, 900, 1800, 3600, 7200, 21600, 86400]
 
@@ -51,7 +52,7 @@ class ExportDialog(QDialog):
         self.n_channels = max(1, n_channels)
         self.tick_s = tick_s
         self.displayed_rows = displayed_rows
-        st = QSettings("IPIDS", "DataViewer")
+        st = gui_settings("SINDIE", "DataViewer")
         lay = QVBoxLayout(self)
 
         # --- range
@@ -136,11 +137,11 @@ class ExportDialog(QDialog):
         # --- destination
         g = QGroupBox("Save to")
         f = QFormLayout(g)
-        self.ed_dest = QLineEdit(st.value("export/dest", default_dest))
+        self.ed_dest = QLineEdit(default_dest)      # from the viewer's Export Settings box
         b = QPushButton("..."); b.setFixedWidth(30); b.clicked.connect(self._browse)
         h = QHBoxLayout(); h.addWidget(self.ed_dest); h.addWidget(b)
         f.addRow("Folder", h)
-        self.ed_name = QLineEdit(st.value("export/name", default_name))
+        self.ed_name = QLineEdit(default_name)
         f.addRow("Name", self.ed_name)
         self.lbl_out = QLabel(); self.lbl_out.setStyleSheet("color: #666;")
         f.addRow(self.lbl_out)
@@ -205,7 +206,7 @@ class ExportDialog(QDialog):
             self.lbl_est.setStyleSheet("color: #C62828;")
             return
         o = self.options()
-        st = QSettings("IPIDS", "DataViewer")
+        st = gui_settings("SINDIE", "DataViewer")
         for k in ("mode", "spread", "csv", "parquet", "markers", "screen_svg", "figure", "width_cm",
                   "lane_height_cm", "font", "dest", "name"):
             st.setValue(f"export/{k}", o[k])
@@ -222,7 +223,7 @@ class ExportDialog(QDialog):
                 "width_cm": self.sp_w.value(), "lane_height_cm": self.sp_h.value(),
                 "font": self.cmb_font.currentText(),
                 "time_axis": "clock" if self.cmb_time.currentIndex() == 1 else "elapsed",
-                "dest": self.ed_dest.text(), "name": self.ed_name.text() or "IPIDS_export"}
+                "dest": self.ed_dest.text(), "name": self.ed_name.text() or "SINDIE_export"}
 
 
 class ExportWorker(QThread):

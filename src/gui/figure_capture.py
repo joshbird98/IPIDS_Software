@@ -106,7 +106,7 @@ def render_widget(widget, out_base, width_cm=16.0, formats=("pdf", "svg", "png")
         path = f"{out_base}.pdf"
         pdf = QPdfWriter(path)
         pdf.setResolution(1200)
-        pdf.setCreator("IPIDS figure capture")
+        pdf.setCreator("SINDIE figure capture")
         pdf.setPageLayout(QPageLayout(QPageSize(QSizeF(width_cm * 10, height_cm * 10), QPageSize.Unit.Millimeter),
                                       QPageLayout.Orientation.Portrait, QMarginsF(0, 0, 0, 0)))
         p = QPainter(pdf)

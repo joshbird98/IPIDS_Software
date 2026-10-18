@@ -133,7 +133,7 @@ class TurbovacMicroservice:
         self.commands = CommandServer(ZMQ_PORT_SRC_TURBO_CMD, "service_source_turbo", context=self.context,
                                       events=self.events, max_age=MAX_CMD_AGE)
 
-        # Simulated pump (IPIDS_SIMULATE=1) replaces the Waveshare socket
+        # Simulated pump (SINDIE_SIMULATE=1) replaces the Waveshare socket
         self._sim = None
         if simulation_enabled():
             from src.sim.turbo import shared_pump

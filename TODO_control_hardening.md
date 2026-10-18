@@ -60,7 +60,7 @@ simulator; none of it has been tried on the real hardware yet (see "Lab PC valid
   - Mass Scan: the log view is a symmetric log (negative currents in red on their own log scale below
     zero, labelled -1 pA, -10 pA, ...); Y refits to the visible data when switching scale, clearing or
     loading a trace (it used to keep a stale range - data squashed at the top).
-- Found on the way and fixed: the manager's start-up purge killed every IPIDS service process on the PC (so a
+- Found on the way and fixed: the manager's start-up purge killed every SINDIE service process on the PC (so a
   simulator or test run would have killed the live system's services) - now only its own; the HMI config editor
   never rebuilt the registry (wrong script path); the recipe builder's tag picker and fault list looked in
   src/config/ (never found); the viewer saved plot settings to src/config/ (now config/, old file still read);
@@ -87,7 +87,7 @@ simulator; none of it has been tried on the real hardware yet (see "Lab PC valid
    ```
    (.gitignore now lists them, so they won't be re-added.) Other clones that pull that commit lose their copies;
    the history keeps ~500 MB unless it is rewritten (git filter-repo + force push - only if wanted). Optional:
-   point `IPIDS_DATA_DIR` at a folder outside the repo so git can never touch live data.
+   point `SINDIE_DATA_DIR` at a folder outside the repo so git can never touch live data.
 3. After the first HMI start on the lab PC: check config/recipes/ for recipes copied from src/config/recipes/
    (the HMI log says which), commit them, then delete src/config/.
 4. Possible later: approach the magnet current from below in "Calculate & set amps" (hysteresis - the scan

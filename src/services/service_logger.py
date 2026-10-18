@@ -50,7 +50,7 @@ class CrashJournal:
     Format: magic, uint32 header length, JSON header {"keys": [...]}, then fixed-size
     records (float64 timestamp + float32 per key). A record torn by a crash is ignored.
     """
-    MAGIC = b"IPIDSJ1\n"
+    MAGIC = b"IPIDSJ1\n"   # file-format id from when the machine was called IPIDS; kept so older journals load
 
     def __init__(self, directory: str, keys: list):
         self.path = os.path.join(directory, JOURNAL_NAME)

@@ -5,7 +5,7 @@ controllers with plausible pumped-down pressures that wander slightly, relay
 set points taken from vac_gauges_config.json (so the service's start-up
 'enforce config' step finds everything already matching), and accepts writes.
 
-Injected faults (IPIDS_SIM_FAULTS): vacuum_disconnect, vacuum_vent_source (VG1 rises to atmosphere).
+Injected faults (SINDIE_SIM_FAULTS): vacuum_disconnect, vacuum_vent_source (VG1 rises to atmosphere).
 """
 import json
 import math

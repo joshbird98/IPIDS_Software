@@ -12,7 +12,7 @@ from tests.sim_stack import start_stack, stop_stack
 
 pytestmark = pytest.mark.slow
 
-SHOTS = os.environ.get("IPIDS_TEST_SHOTS")   # set to a folder to save screenshots of each stage
+SHOTS = os.environ.get("SINDIE_TEST_SHOTS")   # set to a folder to save screenshots of each stage
 
 
 @pytest.fixture(scope="module")
