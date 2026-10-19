@@ -1,4 +1,6 @@
 """Plot lanes (one pyqtgraph plot per lane), their axes and the curves drawn on them."""
+import time
+
 import numpy as np
 import zlib
 import pyqtgraph as pg
@@ -190,6 +192,42 @@ class LanesMixin:
                     self.sidebar_value_labels[t] = val_lbl
 
         self._apply_lane_axis_styles()
+        self._time_limits = None
+        self._apply_time_limits()
+
+    # How far past the logged data the time axis may go: this fraction of the data's span each
+    # side, but at least TIME_MARGIN_MIN_S (so a short or fresh record can still be zoomed out a bit)
+    TIME_MARGIN_FRACTION = 0.10
+    TIME_MARGIN_MIN_S = 3600.0
+
+    def time_limits(self, now=None):
+        """(x_min, x_max) for the time axis, in view coordinates (seconds from t0): the logged data
+        (from the logger's file names) plus the live buffer, each side widened by 10 % of their span.
+        A quick zoom-out used to run on to a century of empty axis."""
+        now = time.time() if now is None else now
+        lo = hi = now
+        bounds = self.cache.engine.data_bounds()
+        if bounds is not None:
+            lo, hi = min(lo, bounds[0]), max(hi, bounds[1])
+        oldest_live = self.cache.live.oldest_time()
+        if oldest_live is not None:
+            lo = min(lo, oldest_live)
+        margin = max(self.TIME_MARGIN_FRACTION * (hi - lo), self.TIME_MARGIN_MIN_S)
+        return lo - margin - self.t0, hi + margin - self.t0
+
+    def _apply_time_limits(self):
+        """Hold zooming and panning within time_limits (pyqtgraph's own view limits: the view stops
+        at the edge). Re-applied as the record grows - cheaply, only when the limits have moved."""
+        if not getattr(self, "lanes", None):
+            return
+        x_min, x_max = self.time_limits()
+        last = getattr(self, "_time_limits", None)
+        if last is not None and abs(last[0] - x_min) < 60 and abs(last[1] - x_max) < 60:
+            return
+        self._time_limits = (x_min, x_max)
+        boxes = [p.vb for p in self.lanes.values()] + list(getattr(self, "lane_axes", {}).values())
+        for vb in boxes:
+            vb.setLimits(xMin=x_min, xMax=x_max, maxXRange=x_max - x_min)
 
     def _apply_lane_axis_styles(self):
         """Per-lane axis/grid setup from the channel config (called on layout build).

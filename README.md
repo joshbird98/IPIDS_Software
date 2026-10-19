@@ -38,7 +38,8 @@ it in full: an event details window lists every event of that line (or group) wi
 time to the millisecond, type, full text and stored details, and its text can be copied. Hovering
 shows the texts too; right-click to delete a user marker. Zoomed out, events within a few pixels
 of each other are drawn as one line ("12 events"), and labels that don't fit (or would sit under
-the legend) are left off but the line can still be clicked. A marker that doesn't reach the event database
+the legend) are left off but the line can still be clicked. Zooming and panning stop 10 % (at least an hour) beyond the
+logged data, so a quick zoom-out can't run on to decades of empty axis. A marker that doesn't reach the event database
 within a few seconds (events service not running for that viewer) is taken off with a warning.
 The export dialog starts from the Export Settings folder/name in the sidebar and writes its
 choice back there.

@@ -541,6 +541,31 @@ class TimeSeriesEngine:
             clean = {k: v[order] for k, v in clean.items()}
         return ts_arr, clean
 
+    CHUNK_SECONDS = 15 * 60
+
+    def data_bounds(self):
+        """(earliest, latest) time of the logged data, from the file names (no file is read), or
+        None if there are none. Day files cover their whole day; a chunk its 15 minutes."""
+        files = self._get_files()
+        starts, ends = [], []
+        for f in files.get("days", []) + files.get("macro_1m", []):
+            match = re.search(r"day_(\d{8})", os.path.basename(f))
+            if match:
+                try:
+                    t = datetime.strptime(match.group(1), "%Y%m%d").timestamp()
+                except ValueError:
+                    continue
+                starts.append(t)
+                ends.append(t + 86400)
+        for f in files.get("chunks", []):
+            t = self._get_chunk_ts(f)
+            if t:
+                starts.append(t)
+                ends.append(t + self.CHUNK_SECONDS)
+        if not starts:
+            return None
+        return min(starts), max(ends)
+
     def _get_chunk_ts(self, filepath):
         """Extracts timestamp from filename for filtering."""
         match = re.search(r'chunk_(\d{8})_(\d{6})', filepath)

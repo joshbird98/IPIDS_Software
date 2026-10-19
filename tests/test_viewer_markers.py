@@ -103,7 +103,8 @@ def test_delete_from_the_menu_choice(viewer, app):
 def test_zoomed_out_events_are_grouped_and_labels_do_not_overlap(viewer, app):
     from src.gui.data_viewer import event_overlay as eo
     base = list(viewer.lanes.values())[0]
-    viewer._toggle_scroll_lock(manual_break=True) if viewer.auto_scroll else None
+    if viewer.auto_scroll:
+        viewer._toggle_scroll_lock(manual_break=True)
     now = time.time() - viewer.t0
     events = {f"{viewer.t0 + now - 100 + i * 0.05:.3f}": {"text": f"burst {i}", "color": "#F44336", "type": "FAULT"}
               for i in range(200)}
@@ -123,3 +124,16 @@ def test_zoomed_out_events_are_grouped_and_labels_do_not_overlap(viewer, app):
         for b in rects[i + 1:]:
             assert not a.intersects(b.adjusted(1, 1, -1, -1)), "labels overlap"
     assert all(len(it["text"]) <= eo.MAX_LABEL_CHARS for it in ov.items.values())
+
+
+def test_zooming_out_stops_at_the_data_plus_ten_percent(viewer, app):
+    """A quick zoom-out used to run on to a century of empty axis."""
+    base = list(viewer.lanes.values())[0]
+    if viewer.auto_scroll:
+        viewer._toggle_scroll_lock(manual_break=True)
+    base.setXRange(-100 * 365 * 86400, 0, padding=0)
+    pump(app, 0.5)
+    x0, x1 = base.viewRange()[0]
+    lo, hi = viewer.time_limits()
+    assert x0 >= lo - 1 and x1 <= hi + 1 and (x1 - x0) <= (hi - lo) + 1
+    assert (x1 - x0) < 365 * 86400                     # (the simulator's record is minutes long)

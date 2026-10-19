@@ -615,6 +615,7 @@ class DataViewerApp(LanesMixin, InspectorMixin, MarkersMixin, ExportMixin, Profi
 
     def _check_and_fetch_history(self):
         if not self.lanes: return
+        self._apply_time_limits()           # (the record grows; cheap unless the limits moved)
         base_plot = list(self.lanes.values())[0]
 
         view_start, view_end = base_plot.viewRange()[0]
