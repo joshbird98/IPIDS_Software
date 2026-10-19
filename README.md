@@ -158,4 +158,6 @@ Names (keys) can't be changed there: the services look supplies, gauges and port
   overlay is ticked.
 - `data/parquet_logs/`: 15-minute telemetry chunks, plus `logger_journal.bin` (the logger's
   crash journal, so at most ~5 s is lost if it dies); `data/daily_logs/`: the nightly compacted
-  day files. Machine data is not kept in git.
+  day files. Machine data is not kept in git. If the disk won't take a chunk (full, permissions),
+  the logger keeps it in RAM and tries again every minute, for up to 2 h of data (then the oldest
+  goes, with a CRITICAL event); it warns when the data drive has less than 2 GB free.

@@ -395,6 +395,9 @@ class PlcMicroservice(DeviceService):
         except (TypeError, ValueError) as e:
             return False, f"bad value for {dtype}: {e}"
         except Exception as e:  # snap7 raises assorted types: treat the link as lost (dropped and re-made)
+            # Deliberately not told apart: snap7 doesn't say why a write failed - an address / memory
+            # area the PC can't reach, or the connection itself - and reconnecting is the best
+            # general answer to either.
             self._mark_disconnected(f"write of {tag} failed: {e}")
             return False, f"PLC write failed: {e}"
 

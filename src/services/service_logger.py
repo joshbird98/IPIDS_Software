@@ -3,6 +3,7 @@ import json
 import logging
 import os
 import queue
+import shutil
 import struct
 import threading
 import time
@@ -33,6 +34,8 @@ PROJECT_ROOT = os.path.abspath(os.path.join(CURRENT_DIR, "../../"))
 DEFAULT_LOG_DIRECTORY = paths.PARQUET_DIR
 LOGGER_CONFIG_PATH = os.path.join(PROJECT_ROOT, "config", "logger_config.json")
 JOURNAL_NAME = "logger_journal.bin"
+UNRECOVERED = JOURNAL_NAME + ".unrecovered_"     # a journal kept because it couldn't be recovered at start-up
+PLAUSIBLE_SINCE = 946684800.0                     # 2000-01-01: journal rows stamped earlier are damage, not data
 
 log = logging.getLogger("service_logger")
 
@@ -68,17 +71,30 @@ class CrashJournal:
             f.flush()
             os.fsync(f.fileno())
         os.replace(tmp, self.path)
-        self._f = open(self.path, "ab")
+        self._f = open(self.path, "ab", buffering=0)
 
     def append(self, ts: np.ndarray, vals: np.ndarray):
+        """Append records; on a failed or partial write (disk full) the file is cut back to its last
+        whole record and OSError raised - a part-written record would misalign every later one."""
         if self._f is None or len(ts) == 0:
             return
         rec = np.empty(len(ts), dtype=self.dtype)
         rec["ts"] = ts
         rec["v"] = vals
-        self._f.write(rec.tobytes())
-        self._f.flush()
-        os.fsync(self._f.fileno())
+        data = rec.tobytes()
+        size = os.fstat(self._f.fileno()).st_size
+        try:
+            written = self._f.write(data)
+            if written != len(data):
+                raise OSError(f"journal write cut short ({written} of {len(data)} bytes) - disk full?")
+            os.fsync(self._f.fileno())
+        except OSError:
+            try:
+                self._f.truncate(size)
+            except OSError as e:          # can't repair it: stop journaling rather than write misaligned
+                log.error("Crash journal could not be cut back after a failed write (%s) - journaling stopped", e)
+                self.close()
+            raise
 
     def close(self):
         if self._f is not None:
@@ -115,14 +131,18 @@ class CrashJournal:
         return keys, rec["ts"].copy(), rec["v"].copy()
 
 
-def latest_chunk_end(directory: str) -> float:
+def latest_chunk_end(directory: str, before: float = None) -> float:
     """Largest timestamp in the most recent chunk file (0 if none) - used to drop journal
-    rows that already made it into a chunk before a crash."""
+    rows that already made it into a chunk before a crash. before: only chunks written up to
+    then (by the time in their name), for a journal kept from an earlier run."""
     try:
         chunks = sorted(f for f in os.listdir(directory)
                         if f.startswith("chunk_") and f.endswith(".parquet") and "_temp" not in f)
     except OSError:
         return 0.0
+    if before is not None:
+        newest = datetime.fromtimestamp(before).strftime("chunk_%Y%m%d_%H%M%S")
+        chunks = [c for c in chunks if c[:len(newest)] <= newest]
     best = 0.0
     for name in chunks[-3:]:
         try:
@@ -145,9 +165,50 @@ def write_chunk(filepath: str, ts, data, keys):
     os.replace(temp_path, filepath)
 
 
-def recover_journal(directory: str):
-    """Turn rows left in the journal by a crash into a chunk file. Returns rows recovered."""
+def recover_journals(directory: str) -> tuple:
+    """Turn rows left in the journal by a crash - and in journals kept from earlier runs whose
+    recovery failed - into chunk files, each on its own: one that fails (its chunk can't be
+    written) stays for the next start - the current one moved aside, or a fresh journal would
+    overwrite it - and the others are still recovered. Returns (rows recovered, [(file, error)])."""
+    try:
+        kept = sorted(f for f in os.listdir(directory) if f.startswith(UNRECOVERED) and ".bad_" not in f)
+    except OSError:
+        kept = []
+    rows, failed = 0, []
+    for name in kept + [JOURNAL_NAME]:
+        try:
+            rows += _recover_journal_file(directory, os.path.join(directory, name), name != JOURNAL_NAME)
+        except Exception as e:   # disk full, polars errors...: this one waits; the rest go ahead
+            log.warning("Crash journal %s not recovered: %s", name, e, exc_info=True)
+            if name == JOURNAL_NAME:
+                try:
+                    name = keep_unrecovered_journal(directory)
+                except OSError as e2:
+                    e = f"{e} - and it couldn't be kept ({e2}), so its rows are lost"
+            failed.append((name, str(e)))
+    return rows, failed
+
+
+def recover_journal(directory: str) -> int:
+    """recover_journals, raising if any journal couldn't be recovered (tools and tests)."""
+    rows, failed = recover_journals(directory)
+    if failed:
+        raise OSError("; ".join(f"{name}: {error}" for name, error in failed))
+    return rows
+
+
+def keep_unrecovered_journal(directory: str) -> str:
+    """Move the journal aside (a fresh one would overwrite it) for recover_journal to try again
+    at the next start. Returns the new name ('' if there was none)."""
     path = os.path.join(directory, JOURNAL_NAME)
+    if not os.path.exists(path):
+        return ""
+    name = f"{UNRECOVERED}{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+    os.replace(path, os.path.join(directory, name))
+    return name
+
+
+def _recover_journal_file(directory: str, path: str, kept: bool) -> int:
     if not os.path.exists(path):
         return 0
     got = CrashJournal.read(path)
@@ -157,7 +218,13 @@ def recover_journal(directory: str):
         return 0
     keys, ts, vals = got
     if len(ts):
-        already = latest_chunk_end(directory)
+        plausible = np.isfinite(ts) & (ts > PLAUSIBLE_SINCE) & (ts < time.time() + 86400.0)
+        if not plausible.any():     # e.g. records misaligned by a write the disk cut short
+            log.error("Crash journal %s holds no plausible timestamps - moved aside", path)
+            os.replace(path, path + f".bad_{int(time.time())}")
+            return 0
+        ts, vals = ts[plausible], vals[plausible]
+        already = latest_chunk_end(directory, before=float(ts[-1]) if kept else None)
         keep = ts > already
         ts, vals = ts[keep], vals[keep]
     if len(ts):
@@ -172,6 +239,111 @@ def recover_journal(directory: str):
                     len(ts), float(ts[-1] - ts[0]), os.path.basename(out))
     os.remove(path)
     return int(len(ts))
+
+
+PENDING_LIMIT_S = 2 * 3600.0       # unwritten data held in RAM while the disk won't take it, then the oldest goes
+RETRY_S = 60.0                     # meanwhile, try again this often
+LOW_DISK_BYTES = 2 * 1024 ** 3     # warn when the data drive has less free space than this
+IO_REPORT_S = 900.0                # repeat a write-failure event at most this often
+
+
+class ChunkWriter:
+    """The logger's chunk writing, on its I/O thread.
+
+    A chunk the disk won't take (full, permissions, ...) stays in RAM and is tried again every
+    RETRY_S, oldest first, so it is saved within a minute of the disk taking data again. Beyond
+    PENDING_LIMIT_S of waiting data (by its timestamps - a forced flush makes a short chunk) the
+    oldest is dropped (CRITICAL event), so RAM can't grow without bound: 15 minutes of data is
+    channels x 18000 rows x 4 bytes, ~25 MB at 340 channels.
+
+    The crash journal starts afresh only after a new chunk - and every one still waiting - is
+    written: only then is every row it holds in a chunk. (A retry between flushes must not: the
+    journal then also holds rows logged since the last flush, which are in no chunk yet.) A data
+    drive running low on space - the likely cause - is a WARNING before it fills."""
+
+    def __init__(self, directory: str, flush_interval: float, events, journal=None, write=None,
+                 clock=time.time, disk_free=None):
+        self.directory = directory
+        self.flush_interval = float(flush_interval)
+        self.events = events
+        self.journal = journal
+        self.waiting = []           # (filepath, ts, data, keys), oldest first
+        self._write = write or write_chunk
+        self._clock = clock
+        self._disk_free = disk_free or (lambda: shutil.disk_usage(self.directory).free)
+        self._last_try = 0.0
+        self._failing = False
+        self._report = Throttle(IO_REPORT_S, clock=clock)
+        self._space_report = Throttle(3600.0, clock=clock)
+
+    def add(self, item):
+        """A new chunk (just flushed): written now, after any still waiting."""
+        self.waiting.append(item)
+        self.write_waiting(restart_journal=True)
+
+    def retry_due(self) -> bool:
+        return bool(self.waiting) and self._clock() - self._last_try >= RETRY_S
+
+    def waiting_s(self) -> float:
+        """Seconds of data waiting: the oldest chunk's first row to the newest one's last."""
+        if not self.waiting or not len(self.waiting[0][1]) or not len(self.waiting[-1][1]):
+            return 0.0
+        return float(self.waiting[-1][1][-1] - self.waiting[0][1][0])
+
+    def write_waiting(self, restart_journal: bool = False) -> bool:
+        """Write the waiting chunks, oldest first; True when none is left. restart_journal: only
+        for a just-flushed chunk (see the class docstring)."""
+        self._last_try = self._clock()
+        written = 0
+        while self.waiting:
+            item = self.waiting[0]
+            try:
+                self._write(*item)
+            except Exception as e:   # disk full, permissions, polars errors...: kept for the next try
+                log.warning("Failed to write %s: %s", os.path.basename(item[0]), e, exc_info=True)
+                self._failed(item, e)
+                return False
+            self.waiting.pop(0)
+            written += 1
+        if self._failing:
+            self._failing = False
+            self._report.reset("write")
+            self.events.log_general(f"Logger is writing to disk again: {written} waiting chunk(s) saved")
+        if restart_journal and self.journal is not None:
+            try:
+                self.journal.start()
+            except OSError as e:
+                self.events.log_general(f"Cannot restart crash journal: {e}", severity="ERROR")
+        self._check_space()
+        return True
+
+    def _free_gb(self):
+        try:
+            return self._disk_free() / 1024 ** 3
+        except OSError:
+            return None
+
+    def _failed(self, item, error):
+        self._failing = True
+        while len(self.waiting) > 1 and self.waiting_s() > PENDING_LIMIT_S:
+            dropped = self.waiting.pop(0)
+            self.events.log_general(f"Dropped unwritable chunk {os.path.basename(dropped[0])}: the disk hasn't taken "
+                                    f"data for over {PENDING_LIMIT_S / 3600:g} h", severity="CRITICAL")
+        if (n := self._report.ready("write")) is not None:
+            free = self._free_gb()
+            self.events.log_general(
+                f"[Logger I/O Error] Cannot write {os.path.basename(item[0])}: {error}"
+                + (f" ({free:.1f} GB free on the data drive)" if free is not None else "")
+                + f" - {self.waiting_s() / 60:.0f} min of data waiting in RAM, tried again every {RETRY_S:g} s; "
+                f"beyond {PENDING_LIMIT_S / 3600:g} h of it the oldest is dropped{Throttle.suffix(n)}", severity="ERROR")
+
+    def _check_space(self):
+        free = self._free_gb()
+        if free is not None and free * 1024 ** 3 < LOW_DISK_BYTES \
+                and (n := self._space_report.ready("space")) is not None:
+            self.events.log_general(f"The data drive is low on space: {free:.1f} GB free for {self.directory} - "
+                                    f"the logger can't save data once it is full{Throttle.suffix(n)}",
+                                    severity="WARNING")
 
 
 class TelemetryLoggerService:
@@ -250,10 +422,13 @@ class TelemetryLoggerService:
         # 6. Crash journal: first recover anything a previous crash left behind
         os.makedirs(self.log_directory, exist_ok=True)
         try:
-            recovered = recover_journal(self.log_directory)
+            recovered, failed = recover_journals(self.log_directory)
             if recovered:
                 self.events.log_general(f"Recovered {recovered} logged rows from the crash journal",
                                         severity="WARNING")
+            for name, error in failed:      # kept (moved aside, so the new journal doesn't overwrite it)
+                self.events.log_general(f"Crash journal {name} could not be turned into a chunk ({error}) - "
+                                        "tried again when the logger next starts", severity="ERROR")
         except Exception:   # recovering old rows must never stop new ones being logged
             log.exception("Crash-journal recovery failed")
         self.journal = CrashJournal(self.log_directory, self.keys)
@@ -264,8 +439,10 @@ class TelemetryLoggerService:
                                     severity="ERROR")
             self.journal = None
 
-        # 7. Disk I/O Background Thread
-        self._pending_chunks = []   # chunks whose write failed, retried before the next one
+        # 7. Disk I/O Background Thread - with its own event socket (ZeroMQ sockets aren't thread-safe)
+        self.io_events = EventHelper("service_logger")
+        self.writer = ChunkWriter(self.log_directory, self.flush_interval, self.io_events, journal=self.journal)
+        self._io_report = Throttle(IO_REPORT_S)
         self.write_queue = queue.Queue()
         self.running = True
         self.io_thread = threading.Thread(target=self._disk_writer_loop, name="logger-io", daemon=True)
@@ -280,6 +457,10 @@ class TelemetryLoggerService:
         self.perf_max_loop_ms = 0.0
         self.perf_max_zmq_drain_ms = 0.0
         self.perf_max_tick_delta_ms = 0.0
+
+    def _heartbeat(self):
+        self.hb_socket.send_json({"service": "service_logger", "ts": time.time()})
+        self.last_hb_time = time.perf_counter()
 
     def stop(self):
         self.running = False
@@ -379,8 +560,14 @@ class TelemetryLoggerService:
             completion_event = threading.Event()
             self.write_queue.put(("chunk", filepath, ts_data, val_data, self.keys, completion_event))
 
-            # Pause here until the background thread sets the event (Max 2 seconds)
-            return completion_event.wait(timeout=2.0)
+            # Wait for the background thread (max 2 s), heartbeating meanwhile: the manager calls
+            # the logger hung after 2 s without one, and a slow disk mustn't get it killed
+            deadline = time.monotonic() + 2.0
+            while not completion_event.wait(timeout=0.25):
+                self._heartbeat()
+                if time.monotonic() >= deadline:
+                    return False
+            return True
         else:
             # Standard fire-and-forget background flush
             self.write_queue.put(("chunk", filepath, ts_data, val_data, self.keys, None))
@@ -391,6 +578,8 @@ class TelemetryLoggerService:
             try:
                 task = self.write_queue.get(timeout=1.0)
             except queue.Empty:
+                if self.writer.retry_due():      # chunks the disk refused: tried again every minute
+                    self.writer.write_waiting()
                 continue
             try:
                 if task[0] == "journal":
@@ -398,36 +587,14 @@ class TelemetryLoggerService:
                     try:
                         self.journal.append(ts, vals)
                     except OSError as e:
-                        if (n := self._throttle.ready("journal")) is not None:
-                            self.events.log_general(f"Crash journal write failed: {e}{Throttle.suffix(n)}",
-                                                    severity="ERROR")
+                        if (n := self._io_report.ready("journal")) is not None:
+                            self.io_events.log_general(f"Crash journal write failed: {e}{Throttle.suffix(n)}",
+                                                       severity="ERROR")
                     continue
 
                 _, filepath, ts, data, keys, completion_event = task
                 try:
-                    self._pending_chunks.append((filepath, ts, data, keys))
-                    while self._pending_chunks:
-                        item = self._pending_chunks[0]
-                        try:
-                            write_chunk(*item)
-                        except Exception as io_err:  # disk full, permissions, polars errors...
-                            log.exception("Failed to write %s", os.path.basename(item[0]))
-                            self.events.log_general(
-                                f"[Logger I/O Error] Failed to write {os.path.basename(item[0])}: {io_err} "
-                                f"(kept in RAM and in the crash journal; retried at the next flush)",
-                                severity="ERROR")
-                            if len(self._pending_chunks) > 8:   # ~2 h of data: don't grow RAM without bound
-                                dropped = self._pending_chunks.pop(0)
-                                self.events.log_general(f"Dropped unwritable chunk {os.path.basename(dropped[0])}",
-                                                        severity="CRITICAL")
-                            break
-                        self._pending_chunks.pop(0)
-                    # Only when every row is safely in a chunk may the journal start empty again
-                    if not self._pending_chunks and self.journal is not None:
-                        try:
-                            self.journal.start()
-                        except OSError as e:
-                            self.events.log_general(f"Cannot restart crash journal: {e}", severity="ERROR")
+                    self.writer.add((filepath, ts, data, keys))
                 finally:
                     # Wake up the main ZMQ thread immediately after the file is safe on disk
                     if completion_event:
@@ -480,8 +647,7 @@ class TelemetryLoggerService:
 
                 # 1. 2Hz Heartbeat
                 if current_time - self.last_hb_time >= 0.5:
-                    self.hb_socket.send_json({"service": "service_logger", "ts": time.time()})
-                    self.last_hb_time = current_time
+                    self._heartbeat()
 
                 # 2. INSTANT ZMQ Poll
                 zmq_start_drain = time.perf_counter()
@@ -547,6 +713,10 @@ class TelemetryLoggerService:
         self.events.log_general("Shutdown signal received. Forcing final disk flush...")
         self._queue_flush()
         self.io_thread.join(timeout=10.0)
+        if self.writer.waiting:
+            self.events.log_general(f"Shutting down with {self.writer.waiting_s() / 60:.0f} min of data the disk "
+                                    "wouldn't take: only what the crash journal holds is recovered at the next "
+                                    "start", severity="CRITICAL")
         if self.journal is not None:
             self.journal.close()
         self.events.log_general("Shutdown complete.")

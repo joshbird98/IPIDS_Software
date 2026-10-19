@@ -10,6 +10,7 @@ The peaks scale with the source's extracted beam (the extraction current above i
 
 Injected faults (SINDIE_SIM_FAULTS): smu_disconnect.
 """
+import atexit
 import math
 import random
 import threading
@@ -31,16 +32,24 @@ BLEED_MA_PER_KV = 1.0 / 50.0
 
 
 class _BeamModel:
-    """Background subscriber holding the latest magnet current and beam energy."""
+    """Background subscriber holding the latest magnet current and beam energy. Stopped at exit:
+    a thread left inside a ZeroMQ poll while the interpreter shuts down can crash it (the test
+    run then ended with a segfault after every test had passed)."""
 
     def __init__(self):
         from src.core.network_map import ZMQ_PORT_MAGNET_PUB, ZMQ_PORT_PLC_PUB
         self.mag_a = 0.0
         self.energy_kev = 0.0
         self.extracted_ua = 0.0
+        self._stop = threading.Event()
         self._t = threading.Thread(target=self._run, args=(ZMQ_PORT_MAGNET_PUB, ZMQ_PORT_PLC_PUB),
                                    name="sim-beam", daemon=True)
         self._t.start()
+        atexit.register(self.close)
+
+    def close(self):
+        self._stop.set()
+        self._t.join(timeout=2.0)
 
     def _run(self, mag_ep, plc_ep):
         ctx = zmq.Context()
@@ -48,21 +57,25 @@ class _BeamModel:
         sub.setsockopt(zmq.SUBSCRIBE, b"")
         sub.connect(mag_ep)
         sub.connect(plc_ep)
-        while True:
-            if not sub.poll(500):
-                continue
-            try:
-                d = orjson.loads(sub.recv_multipart()[1])
-            except (ValueError, IndexError):
-                continue
-            if "ion_beam.beamline.magnet.rb_current" in d:
-                self.mag_a = d["ion_beam.beamline.magnet.rb_current"] or 0.0
-            if "ion_beam.source.extraction.rb_voltage" in d:
-                ext = d.get("ion_beam.source.extraction.rb_voltage") or 0.0
-                tgt = d.get("ion_beam.source.target.rb_voltage") or 0.0
-                self.energy_kev = ext + tgt
-                ext_ma = d.get("ion_beam.source.extraction.rb_current") or 0.0
-                self.extracted_ua = max(0.0, (ext_ma - ext * BLEED_MA_PER_KV) * 1000.0)
+        try:
+            while not self._stop.is_set():
+                if not sub.poll(200):
+                    continue
+                try:
+                    d = orjson.loads(sub.recv_multipart()[1])
+                except (ValueError, IndexError):
+                    continue
+                if "ion_beam.beamline.magnet.rb_current" in d:
+                    self.mag_a = d["ion_beam.beamline.magnet.rb_current"] or 0.0
+                if "ion_beam.source.extraction.rb_voltage" in d:
+                    ext = d.get("ion_beam.source.extraction.rb_voltage") or 0.0
+                    tgt = d.get("ion_beam.source.target.rb_voltage") or 0.0
+                    self.energy_kev = ext + tgt
+                    ext_ma = d.get("ion_beam.source.extraction.rb_current") or 0.0
+                    self.extracted_ua = max(0.0, (ext_ma - ext * BLEED_MA_PER_KV) * 1000.0)
+        finally:
+            sub.close(0)
+            ctx.term()
 
     def beam_current(self):
         e_ev = self.energy_kev * 1000.0

@@ -40,8 +40,10 @@ SERVICES_CONFIG = {
     "service_vac_gauge_controllers": {"script": os.path.join(CURRENT_DIR, "service_vac_gauge_controllers.py"),
                                       "tier": 2, "timeout": 2.0, "boot_grace": 15.0},
     "service_source_turbo": {"script": os.path.join(CURRENT_DIR, "service_source_turbo.py"), "tier": 2, "timeout": 2.0, "boot_grace": 15.0},
-    "service_magnet_psu": {"script": os.path.join(CURRENT_DIR, "service_magnet_psu.py"), "tier": 2, "timeout": 2.0, "boot_grace": 15.0},
-    "service_steerer_magnet_psu": {"script": os.path.join(CURRENT_DIR, "service_steerer_magnet_psu.py"), "tier": 2, "timeout": 2.0, "boot_grace": 15.0},
+    # The magnet PSUs: one unanswered Modbus request holds the service ~2 s (pymodbus: 4 tries x 0.5 s),
+    # so allow 3 s before calling it hung
+    "service_magnet_psu": {"script": os.path.join(CURRENT_DIR, "service_magnet_psu.py"), "tier": 2, "timeout": 3.0, "boot_grace": 15.0},
+    "service_steerer_magnet_psu": {"script": os.path.join(CURRENT_DIR, "service_steerer_magnet_psu.py"), "tier": 2, "timeout": 3.0, "boot_grace": 15.0},
     "service_spellman_mpd": {"script": os.path.join(CURRENT_DIR, "service_spellman_mpd.py"), "tier": 2, "timeout": 2.5, "boot_grace": 15.0},
     "service_smu": {"script": os.path.join(CURRENT_DIR, "service_smu.py"), "tier": 2, "timeout": 10, "boot_grace": 15.0},
     # Recipes, mass scans and the optimiser: after the device services, whose telemetry it needs

@@ -7,9 +7,9 @@ zero, which needs no scaling - but a non-zero setpoint or switching the output o
 (RatingsUnknown) and the voltage/current readbacks are unknown (None). The ratings are read
 again every RATINGS_RETRY_S, after a telemetry read the PSU answered, until they arrive - unless
 the PSU didn't answer the ratings read at all (ratings_retrying False): an unanswered request
-holds the poll loop for about 2 s (4 tries x 0.5 s), as long as the manager's hung-service
-timeout, so then they are only read again on the next reconnect. A poll never waits for more
-than one unanswered request. (The driver used to carry on with 1 V / 1 A ratings, which turned
+holds the poll loop for about 2 s (4 tries x 0.5 s), close to the manager's 3 s hung-service
+timeout for the magnet services, so then they are only read again on the next reconnect. A poll
+never waits for more than one unanswered request. (The driver used to carry on with 1 V / 1 A ratings, which turned
 any request of 1 A or more into a full-scale current.)
 """
 import logging

@@ -33,10 +33,13 @@ log = logging.getLogger("hmi.config_editor")
 WHOLE_SYSTEM = "WHOLE SYSTEM (by hand)"
 ALL_SERVICES = "ALL SERVICES"
 HMI = "HMI_GUI"
+FAULT_READERS = "service_plc + service_alarms"
+SERVICE_GROUPS = {FAULT_READERS: ("service_plc", "service_alarms")}
 CONFIG_TO_SERVICE = {
     "alarm_config.json": "service_alarms",
-    # read by the PLC and alarm services, and by the HMI's fault list
-    "fault_config.json": ALL_SERVICES,
+    # read by the PLC and alarm services, and by the HMI's fault list (every service's event helper
+    # loads it too, but only the PLC service logs faults) - so not every service is restarted
+    "fault_config.json": FAULT_READERS,
     # every program - the manager and the HMI too - reads its ports when it starts: restarting
     # the services alone would leave them talking past the manager (which then restarts them...)
     "network_config.json": WHOLE_SYSTEM,
@@ -301,21 +304,22 @@ class ConfigEditorDialog(QDialog):
             return "Restart the operator HMI for the change to take effect."
         states = self._service_states()
         hmi = " Restart the operator HMI too (it reads this file at start-up)." if filename in HMI_TOO else ""
-        stopped = []
         if target == ALL_SERVICES:
             if not states:
                 return ("Nothing was restarted: the service manager isn't reporting which services run. "
                         "Restart them from the services panel (or restart the manager).")
-            names = [n for n, state in states.items() if state != "STOPPED"]
-            stopped = [n for n, state in states.items() if state == "STOPPED"]
-            if not names:
-                return ("Nothing was restarted: every service is stopped. They read the new settings when they "
-                        "are started again from the services panel." + hmi)
-        elif states.get(target) == "STOPPED":
-            return (f"{target} was not restarted: it is stopped (on purpose?). It reads the new settings when "
-                    "it is started again from the services panel." + hmi)
+            group = list(states)
         else:
-            names = [target]
+            group = list(SERVICE_GROUPS.get(target, (target,)))
+        names = [n for n in group if states.get(n) != "STOPPED"]
+        stopped = [n for n in group if states.get(n) == "STOPPED"]
+        if not names:
+            if len(group) == 1:
+                return (f"{target} was not restarted: it is stopped (on purpose?). It reads the new settings when "
+                        "it is started again from the services panel." + hmi)
+            which = "every service is" if target == ALL_SERVICES else f"{' and '.join(stopped)} are"
+            return (f"Nothing was restarted: {which} stopped. They read the new settings when they are started "
+                    "again from the services panel." + hmi)
         for svc in names:
             self.cmd_thread.send_command("manager", "manager_cmd", {"command": "restart", "service": svc})
         told = f"Restart requested for {', '.join(names)}."

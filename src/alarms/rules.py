@@ -64,6 +64,9 @@ DEFAULT_CONFIG = {
          "delay_on": 2, "message": "{device}: pressure approaching its set point"},
         {"kind": "flag", "match": "*.stat_rapid_rise", "id": "vacuum.{path}.rapid_rise", "priority": 2,
          "message": "{device}: pressure rising rapidly"},
+        {"kind": "flag", "tag": "ion_beam.vacuum.stat_relay_sp_mismatch", "id": "vacuum.relay_set_points",
+         "priority": 2, "message": "Gauge relay set points not confirmed against vac_gauges_config.json - see the "
+                                   "event log (VG1/VG2 relays: gate valve held shut)"},
         {"kind": "flag", "match": "*.stat_arc_exceeded", "id": "hv.{path}.arc", "priority": 2,
          "message": "{device}: arc (output collapsed) - latched until fault reset"},
         {"kind": "sequencer", "priority": 3},

@@ -144,22 +144,36 @@ simulator; none of it has been tried on the real hardware yet (see "Lab PC valid
    calibrates on the way up), if the landing isn't repeatable enough.
 5. Lab PC validation of the second round: a recipe and a mass scan under leases on the real supplies; Take
    control mid-run; alarm rules on real data (nuisance alarms? priorities right?); horn audible.
-6. Decisions wanted (how these should behave when something fails):
-   - vacuum gauge relay set points the controller refuses at start-up: now an ERROR event naming the relay
-     (it used to be an INFO line, and a refused second write wasn't noticed); the service carries on -
-     or should it withhold the vacuum OK until the set points match the config?
-   - a refused PLC write drops and re-makes the whole PLC link (now) - or treat refusals separately?
-   - the logger keeps up to 8 unwritable chunks (~2 h) in RAM, then drops the oldest (CRITICAL event) -
-     right ceiling?
-   - config editor "restart ALL SERVICES" (fault_config.json) also restarts service_plc, pausing the PC
-     watchdog for a few seconds - does the PLC's watchdog timeout cover that?
-   - the config checks can't know every safe value: VG1's relays feed the gate-valve permissive, so a
-     relay set point of 0.9 mbar there would let the valve open at rough vacuum; it is only range-checked
-     (1e-10..1000 mbar) and needs the x3 tick. Hard caps wanted for some fields (VG1/VG2 relays, each
-     Spellman's max_value for its model, magnet max_current)? Give me the numbers.
-   - (seen while reviewing, unchanged) a magnet PSU that keeps its TCP link but stops answering holds its
-     service ~2 s per request (pymodbus: 4 tries x 0.5 s) - the manager's hung timeout for the magnet
-     services is also 2 s, so it restarts them. Harmless but noisy; raise that timeout to ~5 s?
+6. Decided (October 2026):
+   - vacuum relay set points: the gate-valve permissive is withheld until VG1's and VG2's relays are read
+     back holding the configured channel and set points (start-up check, then the round-robin - a front-
+     panel change or a controller reset counts too, once three reads in a row give the same other value,
+     ~25 s: single answers on that bus can be garbled - the driver can't check replies - and losing
+     the permissive can close the gate valve; a deliberate read-back needs two agreeing answers). Any
+     relay that differs: ERROR event + alarm (stat_relay_sp_mismatch). A config giving VG1 or VG2 no
+     relay holds the permissive back too (it used to ignore that gauge's pressure), and so does VG1 or
+     VG2 without a good reading for 10 s (it kept its last value). Relay set point commands: on / off
+     only (channels come from the config), within the registry limits, on below off; what they set is
+     expected until the service restarts. Found on the way: a controller that didn't answer at all
+     (e.g. node 20 off) made the start-up check write to it, the write timed out, the link dropped and
+     the whole connect ran again - in a loop, VG1/VG2 unread; it is now left out until it answers.
+   - a refused PLC write keeps dropping and re-making the PLC link: snap7 doesn't say why a write failed,
+     and reconnecting is the best general answer.
+   - logger: up to 2 h of data the disk won't take (by its timestamps - forced flushes make short
+     chunks) stays in RAM, then the oldest goes (CRITICAL event); now retried every minute instead of
+     at the next 15-min flush, without restarting the crash journal early; WARNING when the data drive
+     has less than 2 GB free. Also: a crash journal that can't be recovered at start-up is kept and
+     tried again at the next start (it was overwritten), each on its own; a journal write the disk cuts
+     short is cut back, so later records stay aligned; CRITICAL at shutdown if data is still waiting;
+     a forced flush (viewer start, export) heartbeats while it waits, so a slow disk can't get the
+     logger restarted as hung; the I/O thread has its own event socket.
+   - config editor: fault_config.json restarts only service_plc and service_alarms (the services that
+     use it) instead of every service. The PLC-service restart still pauses the PC watchdog for a few
+     seconds, as a restart from the services panel does - never seen to trip anything.
+   - magnet services' hung timeout 2 s -> 3 s (one unanswered Modbus request holds them ~2 s).
+   - waiting for numbers: hard caps (fixed limits in the code, past which the editor - and so the
+     registry limits for the HMI, recipes and sequencer - can't go) for VG1/VG2 relays (and the other
+     relays?), each Spellman's max_value, magnet / steerer max_current and max_voltage, SMU range.
 7. Future: a one-page interlock overview (every permissive and what is holding it), as discussed.
 
 ## Notes

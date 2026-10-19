@@ -90,6 +90,13 @@
     },
     {
       "kind": "flag",
+      "tag": "ion_beam.vacuum.stat_relay_sp_mismatch",
+      "id": "vacuum.relay_set_points",
+      "priority": 2,
+      "message": "Gauge relay set points not confirmed against vac_gauges_config.json - see the event log (VG1/VG2 relays: gate valve held shut)"
+    },
+    {
+      "kind": "flag",
       "match": "*.stat_arc_exceeded",
       "id": "hv.{path}.arc",
       "priority": 2,

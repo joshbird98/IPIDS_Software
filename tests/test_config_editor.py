@@ -209,27 +209,46 @@ def test_keys_are_not_editable(env):
     assert seen > 10
 
 
-def test_all_services_means_the_running_ones(env):
-    dlg = open_file(env.make(), "fault_config.json")
-    assert dlg.cb_service.currentText() == "ALL SERVICES"
+def reword_a_fault(dlg):
     udt = next(iter(dlg.original))
     bit = next(iter(dlg.original[udt]["bits"]))
     widget_at(dlg, udt, "bits", bit, "description").setText("reworded")
+
+
+def test_fault_config_restarts_the_services_that_read_it(env):
+    """Only the PLC and alarm services use fault_config.json (and the HMI): the others aren't
+    restarted for it any more."""
+    env.state["services"]["service_alarms"] = "ONLINE"
+    dlg = open_file(env.make(), "fault_config.json")
+    assert dlg.cb_service.currentText() == "service_plc + service_alarms"
+    reword_a_fault(dlg)
+    dlg._save_and_restart()
+    assert restarted(env) == ["service_plc", "service_alarms"]
+    assert "Restart the operator HMI too" in env.boxes[-1][1]
+    env.state["services"]["service_alarms"] = "STOPPED"
+    dlg = open_file(env.make(), "fault_config.json")
+    widget_at(dlg, *next(p for _, p, _ in dlg._leaves if p[-1] == "description")).setText("reworded again")
+    dlg._save_and_restart()
+    assert restarted(env)[2:] == ["service_plc"] and "Left stopped: service_alarms" in env.boxes[-1][1]
+
+
+def test_all_services_means_the_running_ones(env):
+    (env.cfg / "x.json").write_text(json.dumps({"a": 1.5}))        # a file no service is known to read
+    dlg = open_file(env.make(), "x.json")
+    assert dlg.cb_service.currentText() == "ALL SERVICES"
+    widget_at(dlg, "a").setText("2.5")
     dlg._save_and_restart()
     assert restarted(env) == ["service_plc", "service_smu"]          # not the one stopped on purpose
     assert "Left stopped: service_monitor" in env.boxes[-1][1]
-    assert "Restart the operator HMI too" in env.boxes[-1][1]
 
 
 def test_all_services_with_every_service_stopped(env):
     env.state["services"] = {"service_plc": "STOPPED", "service_smu": "STOPPED"}
-    dlg = open_file(env.make(), "fault_config.json")
-    udt = next(iter(dlg.original))
-    bit = next(iter(dlg.original[udt]["bits"]))
-    widget_at(dlg, udt, "bits", bit, "description").setText("reworded")
+    (env.cfg / "x.json").write_text(json.dumps({"a": 1.5}))
+    dlg = open_file(env.make(), "x.json")
+    widget_at(dlg, "a").setText("2.5")
     dlg._save_and_restart()
     assert env.cmds.sent == [] and "every service is stopped" in env.boxes[-1][1]
-    assert "Restart the operator HMI too" in env.boxes[-1][1]
 
 
 def test_network_changes_restart_nothing_automatically(env):
@@ -245,10 +264,9 @@ def test_network_changes_restart_nothing_automatically(env):
 
 def test_no_service_list_no_blind_restarts(env):
     env.state["services"] = {}
-    dlg = open_file(env.make(), "fault_config.json")
-    udt = next(iter(dlg.original))
-    bit = next(iter(dlg.original[udt]["bits"]))
-    widget_at(dlg, udt, "bits", bit, "description").setText("reworded")
+    (env.cfg / "x.json").write_text(json.dumps({"a": 1.5}))        # -> ALL SERVICES: which ones run?
+    dlg = open_file(env.make(), "x.json")
+    widget_at(dlg, "a").setText("2.5")
     dlg._save_and_restart()
     assert env.cmds.sent == [] and "Nothing was restarted" in env.boxes[-1][1]
 
