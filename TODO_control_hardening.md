@@ -151,6 +151,10 @@ simulator; none of it has been tried on the real hardware yet (see "Lab PC valid
     follows the keyboard - only the last alarm stayed selected, or none with Ctrl held. Selection now
     follows the alarms through redraws and re-sorting; the buttons are enabled only when they would act
     on something, and their tooltips say how to select.
+  - Gate valve shut by its interlock (vacuum permissive gone): the PLC service clears the OPEN request
+    (cmd_open_gv) once the valve has been fully closed, permissive gone and OPEN still set, for 3 s in a
+    row (a flickering permissive or a valve still travelling is left to the PLC), with a WARNING event.
+    It then stays shut until OPEN is pressed again. (The simulated PLC re-opened it by itself.)
   - Tests no longer use the real saved HMI layout (SINDIE_SETTINGS_DIR): a test window saved its layout
     over the operator's when it closed, and started from whatever was saved last.
 - Found on the way and fixed: the manager's start-up purge killed every SINDIE service process on the PC (so a
@@ -172,10 +176,10 @@ simulator; none of it has been tried on the real hardware yet (see "Lab PC valid
    - restart the HMI with the source running: nothing is sent (Command Log stays empty), every box shows the
      live setpoint, the magnet box included;
    - **gate valve after an interlock**: close it by withdrawing the vacuum permissive (e.g. a gauge
-     controller unplugged), then restore it. In the simulator the valve re-opens 2 s later by itself: the
-     OPEN command (cmd_open_gv) stays set in the PLC. What does the real PLC do (its seq_cmd_open_gv)?
-     It should stay shut until OPEN is pressed again - in the PLC program, or the PLC service could clear
-     cmd_open_gv when it sees the valve closed with the permissive gone (Josh to decide);
+     controller unplugged), then restore it. It must stay shut until OPEN is pressed again: the PLC service
+     clears cmd_open_gv once the valve has been shut by its interlock for 3 s (decided Oct 2026; the
+     simulated PLC re-opened it by itself otherwise). Check the real PLC agrees (its seq_cmd_open_gv), and
+     that OPEN afterwards opens it;
    - unplug a device: service stays ONLINE with comms-fail (no restart loop); SMU reconnect behaviour as above;
    - turbo start/stop; logger journal file appears in data/parquet_logs; tolerance rules sensible;
    - closing the gate valve with the relay on: relay drops, supplies show off, Safety_Relay_Tripped shows,

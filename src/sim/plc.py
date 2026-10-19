@@ -34,8 +34,9 @@ Modelled behaviour (from Josh's description of the machine, Oct 2026)
     ~10 % of it and shows in the extraction current (the simulated Faraday cup scales with it).
   * steering, gate valve (only opens with the vacuum permissive), Faraday cup.
     ASSUMED: OPEN (cmd_open_gv) is a standing request - the valve closes when the permissive goes
-    and opens again by itself 2 s after it returns. Check against the PLC program (its own
-    seq_cmd_open_gv): it should probably stay shut until OPEN is pressed again.
+    and would open again by itself 2 s after it returns. The PLC service clears the request once
+    the valve has been shut by its interlock for 3 s, so it stays shut until OPEN is pressed again
+    (Josh, Oct 2026). Check the real program's seq_cmd_open_gv against this.
   * comms-fail flags and the source einzel's status/arc flags written by the PC are
     mirrored into the fault words
 """

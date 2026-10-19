@@ -292,3 +292,36 @@ def test_bad_fault_map_entries_are_left_out(monkeypatch, tmp_path):
         assert edges == [("Good", True), ("Good", False)]
     finally:
         svc.shutdown()
+
+
+def test_a_gate_valve_shut_by_its_interlock_stays_shut(plc_service):
+    """OPEN stays set in the PLC; when the vacuum permissive went the valve closed, and opened again by
+    itself 2 s after it came back. Shut by the interlock for 3 s, the request is now cleared (an event
+    says so): the valve stays shut until OPEN is pressed again - which then works."""
+    from src.sim.plc import shared_plc
+    plc, base = shared_plc(), "ion_beam.source.chamber"
+    plc_service.SERVICE_TIMEOUT_SEC = 1e9           # no vacuum service here: the test sets the permissive
+    plc.set(f"{base}.stat_vac_ok_for_gv", 1)
+    c = _client()
+
+    def wait(cond, timeout, what):
+        end = time.time() + timeout
+        while time.time() < end:
+            if cond():
+                return
+            time.sleep(0.05)
+        raise AssertionError(what)
+    assert c.request("plc", f"{base}.cmd_open_gv", True)["status"] == C.OK
+    wait(lambda: plc.get(f"{base}.stat_gv_open") == 1.0, 5, "valve open")
+    time.sleep(3.5)
+    assert plc.get(f"{base}.cmd_open_gv") == 1.0                       # open and permitted: left alone
+    plc.set(f"{base}.stat_vac_ok_for_gv", 0)                           # vacuum permissive gone
+    wait(lambda: plc.get(f"{base}.stat_gv_closed") == 1.0, 3, "valve closed")
+    time.sleep(1.5)
+    assert plc.get(f"{base}.cmd_open_gv") == 1.0                       # not before the wait
+    wait(lambda: plc.get(f"{base}.cmd_open_gv") == 0.0, 4, "OPEN request cleared")
+    plc.set(f"{base}.stat_vac_ok_for_gv", 1)                           # permissive back
+    time.sleep(3.0)
+    assert plc.get(f"{base}.stat_gv_open") == 0.0                      # stays shut
+    assert c.request("plc", f"{base}.cmd_open_gv", True)["status"] == C.OK
+    wait(lambda: plc.get(f"{base}.stat_gv_open") == 1.0, 5, "valve opens on a new OPEN")

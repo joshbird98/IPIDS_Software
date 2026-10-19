@@ -33,6 +33,7 @@ from src.core.network_map import (
 
 POLL_INTERVAL = 0.1  # 100ms cycle (10Hz)
 HEARTBEAT_INTERVAL = 0.5  # PC->PLC watchdog increment
+GV_REQUEST_CLEAR_S = 3.0  # gate valve shut by its interlock this long: its OPEN request is cleared
 MAX_CMD_AGE = 0.5  # TTL: Reject incoming commands older than 500ms
 RECONNECT_DELAYS = (1.0, 2.0, 5.0, 10.0)  # seconds between PLC connection attempts (backs off, then stays at 10 s)
 
@@ -140,6 +141,7 @@ class PlcMicroservice(DeviceService):
         self.last_seen = {"VACUUM": time.time(), "TURBO": time.time(), "SPELLMAN": time.time(),
                           "MAGNET": time.time()}
         self.SERVICE_TIMEOUT_SEC = 2.0
+        self._gv_stale_since = None     # gate valve shut by its interlock with OPEN still requested, since
 
     def _evaluate_word_faults(self):
         """Log each PLC fault bit's edges (from the 32-bit fault words) to the event log.
@@ -543,6 +545,41 @@ class PlcMicroservice(DeviceService):
             if pending_updates:
                 self._write_tags_batched(pending_updates)
 
+    def _clear_stale_gv_request(self):
+        """Gate valve shut by its interlock: drop the OPEN request, so it stays shut.
+
+        OPEN sets cmd_open_gv and it stays set. When the vacuum permissive goes, the PLC closes the
+        valve - and (in the simulator, at least) opened it again by itself as soon as the permissive
+        came back, because the request was still there (Josh, Oct 2026: it should stay shut until
+        someone presses OPEN again). So once the valve has been fully closed, with the permissive
+        gone and OPEN still set, for GV_REQUEST_CLEAR_S in a row, the request is cleared. The wait
+        means a permissive that only flickers, or a valve still travelling, is left to the PLC; a
+        new OPEN afterwards is a fresh request. Only the request is touched: the valve is already
+        shut, so this can never move it."""
+        s = self.state
+        stale = (s.get("ion_beam.source.chamber.cmd_open_gv") == 1.0
+                 and s.get("ion_beam.source.chamber.stat_gv_closed") == 1.0
+                 and s.get("ion_beam.source.chamber.stat_gv_open") == 0.0
+                 and (s.get("ion_beam.source.chamber.stat_gv_open_permissive") == 0.0
+                      or s.get("ion_beam.source.chamber.stat_vac_ok_for_gv") == 0.0))
+        if not stale:
+            self._gv_stale_since = None
+            return
+        now = time.monotonic()
+        if self._gv_stale_since is None:
+            self._gv_stale_since = now
+            return
+        if now - self._gv_stale_since < GV_REQUEST_CLEAR_S:
+            return
+        ok, reason = self._write_tag("ion_beam.source.chamber.cmd_open_gv", False)
+        if ok:
+            self._gv_stale_since = None
+            self.events.log_general("Gate valve closed by its interlock (vacuum permissive gone): its OPEN "
+                                    "request is cleared, so it stays shut. Press OPEN again once the vacuum "
+                                    "is OK.", severity="WARNING")
+        elif (n := self.throttle.ready("gv-clear")) is not None:
+            log.warning("Could not clear the gate valve's OPEN request: %s%s", reason, Throttle.suffix(n))
+
     def _enforce_it_watchdogs(self):
         current_time = time.time()
         fallback_updates = {}
@@ -582,6 +619,8 @@ class PlcMicroservice(DeviceService):
         self._enforce_it_watchdogs()
         self._evaluate_word_faults()
         now = time.time()
+        if self.connected:
+            self._clear_stale_gv_request()
         if self.connected and now - self.last_heartbeat >= HEARTBEAT_INTERVAL:
             self._increment_watchdog()
             self.last_heartbeat = now

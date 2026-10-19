@@ -56,6 +56,8 @@ source panel marks a leased supply "🤖 SEQUENCE". Leases are renewed every sec
 (the Automation bar's Take control button, clicked twice): a recipe then pauses (Resume repeats
 the step it was on), a scan or optimiser run stops.
 Safety-relay, shutdown, fault-reset and gate-valve controls can never be leased.
+A gate valve shut by its interlock (vacuum permissive gone) stays shut: once it has been closed
+that way for 3 s the PLC service clears its OPEN request, and it opens again only on a new OPEN.
 
 Every service also publishes, per subsystem, whether an operator command would be accepted now
 (`<subsystem>.permit`) and why not (`permit_reason`: relay off, PLC in control, cesium hot,
