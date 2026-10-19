@@ -32,7 +32,10 @@ Modelled behaviour (from Josh's description of the machine, Oct 2026)
     SNICS-style, a target (sputter) current once thermionic > 200 W, target > 4 kV and
     cesium > 50 degC: ~0.1 mA there, ~1 mA at 250 W / 8 kV / 100 degC. The extracted beam is
     ~10 % of it and shows in the extraction current (the simulated Faraday cup scales with it).
-  * steering, gate valve (only opens with the vacuum permissive), Faraday cup
+  * steering, gate valve (only opens with the vacuum permissive), Faraday cup.
+    ASSUMED: OPEN (cmd_open_gv) is a standing request - the valve closes when the permissive goes
+    and opens again by itself 2 s after it returns. Check against the PLC program (its own
+    seq_cmd_open_gv): it should probably stay shut until OPEN is pressed again.
   * comms-fail flags and the source einzel's status/arc flags written by the PC are
     mirrored into the fault words
 """

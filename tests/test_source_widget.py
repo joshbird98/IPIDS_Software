@@ -69,3 +69,68 @@ def test_locks_come_from_the_services_permits(panel):
     no_data = {k: v for k, v in LIVE.items() if not k.startswith("ion_beam.source.cesium")}
     panel.update_telemetry(no_data)
     assert "no live data from the PLC service" in panel.psu_controls["Cesium"]["sp_box"].toolTip()
+
+
+def _focused():
+    from PyQt6.QtWidgets import QApplication
+    return QApplication.focusWidget()
+
+
+def _shown(panel):
+    from PyQt6.QtTest import QTest
+    from PyQt6.QtWidgets import QApplication
+    app = QApplication.instance()
+    panel.show()
+    panel.activateWindow()
+    QTest.qWaitForWindowActive(panel, 2000)
+    return app
+
+
+def test_start_up_focus_and_locks_send_nothing(panel):
+    """October 2026, run_simulation.py: the einzel box had the window's first focus, still showing its
+    default 0 (a focused box didn't follow telemetry). The first telemetry - relay off - locked it, Qt
+    moved the focus on, and every box it passed sent its 0: einzel, extraction, target, filament,
+    thermionic, cesium. On the real machine with the source running, those would have been obeyed."""
+    from PyQt6.QtCore import Qt
+    from PyQt6.QtTest import QTest
+    app = _shown(panel)
+    panel.psu_controls["Source Einzel"]["sp_box"].setFocus(Qt.FocusReason.OtherFocusReason)
+    app.processEvents()
+    relay_off = {"system.connected": True, "ion_beam.facilities.safety_relay_active": 0.0,
+                 "manager.services": {"service_spellman_mpd": "ONLINE"},
+                 **{f"ion_beam.source.{s}.permit": 0.0 for s in ("einzel", "extraction", "target", "filament",
+                                                                  "thermionic", "cesium")},
+                 **{f"ion_beam.source.{s}.permit_reason": "safety relay de-energised"
+                    for s in ("einzel", "extraction", "target", "filament", "thermionic", "cesium")}}
+    panel.update_telemetry(relay_off)
+    app.processEvents()
+    running = dict(LIVE, **{"ion_beam.source.einzel.sp_actual_voltage": 10.0,
+                            "ion_beam.source.extraction.sp_actual_voltage": 15.0,
+                            "ion_beam.source.filament.sp_actual_current": 28.0})
+    panel.update_telemetry(running)
+    box = panel.psu_controls["Source Einzel"]["sp_box"]
+    box.setFocus(Qt.FocusReason.MouseFocusReason)
+    for _ in range(25):                                       # the operator tabs through the whole panel
+        QTest.keyClick(_focused(), Qt.Key.Key_Tab)
+        panel.update_telemetry(running)
+    assert panel.cmd_thread.sent == []
+    assert box.value() == 10.0 and panel.psu_controls["Extraction"]["sp_box"].value() == 15.0
+
+
+def test_a_typed_setpoint_is_sent_alone(panel):
+    """Typed + Enter: the setpoint, nothing else (the einzel's current limit is the Spellman service's job)."""
+    from PyQt6.QtCore import Qt
+    from PyQt6.QtTest import QTest
+    app = _shown(panel)
+    panel.update_telemetry(LIVE)
+    for name, text, expected in (("Source Einzel", "4", ("spellman", "ion_beam.source.einzel.sp_requested_voltage", 4.0)),
+                                 ("Extraction", "12.5", ("plc", "ion_beam.source.extraction.sp_requested_voltage", 12.5)),
+                                 ("Cesium", "95", ("plc", "ion_beam.source.cesium.sp_requested_temp", 95.0))):
+        box = panel.psu_controls[name]["sp_box"]
+        box.setFocus(Qt.FocusReason.MouseFocusReason)
+        box.lineEdit().selectAll()
+        QTest.keyClicks(box.lineEdit(), text)
+        QTest.keyClick(box.lineEdit(), Qt.Key.Key_Return)
+        app.processEvents()
+        assert panel.cmd_thread.sent[-1] == expected, name
+    assert len(panel.cmd_thread.sent) == 3

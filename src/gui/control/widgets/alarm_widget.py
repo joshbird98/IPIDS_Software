@@ -4,10 +4,13 @@ Unacknowledged alarms flash and sound (the most urgent one's sound, looped) unti
 SILENCE stops the sound without acknowledging (a new alarm sounds again). Shelving takes an
 alarm out of annunciation for a while, with a reason. If the alarm service stops, the panel says
 so and sounds a critical alarm of its own: nothing is watching the alarms then.
+
+Alarms are selected by clicking their rows (Ctrl+click / Shift+click for several). The selection
+belongs to the alarms, not the rows: it stays while the list is redrawn and re-sorted.
 """
 import time
 
-from PyQt6.QtCore import Qt, QTimer
+from PyQt6.QtCore import QItemSelection, QItemSelectionModel, Qt, QTimer
 from PyQt6.QtGui import QColor, QFont
 from PyQt6.QtWidgets import (QAbstractItemView, QDialog, QDialogButtonBox, QFormLayout, QHBoxLayout, QHeaderView,
                              QLabel, QLineEdit, QPushButton, QSpinBox, QTableWidget, QTableWidgetItem, QVBoxLayout,
@@ -18,6 +21,7 @@ from src.gui.control.alarm_horn import AlarmHorn
 
 OFFLINE_ID = "hmi.alarm_service_offline"
 COLUMNS = ["", "Priority", "State", "Time", "Alarm", "Count"]
+SELECT_TIP = "Click an alarm in the list to select it (Ctrl+click or Shift+click for several)."
 PRIORITY_COLOURS = {1: ("#B71C1C", "white"), 2: ("#E65100", "white"), 3: ("#F9A825", "black"), 4: ("#1565C0", "white")}
 FLASH_COLOURS = {1: "#EF9A9A", 2: "#FFCC80", 3: "#FFF59D", 4: "#90CAF9"}
 QUIET_COLOUR = ("#9E9E9E", "black")
@@ -88,7 +92,10 @@ class AlarmPanel(QWidget):
         self.table.setHorizontalHeaderLabels(COLUMNS)
         self.table.verticalHeader().setVisible(False)
         self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        self.table.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
         self.table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        self.table.setToolTip(SELECT_TIP)
+        self.table.itemSelectionChanged.connect(self._update_buttons)
         header = self.table.horizontalHeader()
         for col in range(len(COLUMNS)):
             header.setSectionResizeMode(col, QHeaderView.ResizeMode.ResizeToContents)
@@ -110,6 +117,7 @@ class AlarmPanel(QWidget):
             buttons.addWidget(b)
         buttons.addStretch()
         layout.addLayout(buttons)
+        self._update_buttons()
 
     # ------------------------------------------------------------------ commands
     def _send(self, tag, value):
@@ -117,7 +125,39 @@ class AlarmPanel(QWidget):
 
     def selected_ids(self) -> list:
         rows = sorted({i.row() for i in self.table.selectedIndexes()})
-        return [self.table.item(r, 4).data(Qt.ItemDataRole.UserRole) for r in rows]
+        return [self.table.item(r, 4).data(Qt.ItemDataRole.UserRole) for r in rows
+                if self.table.item(r, 4) is not None]
+
+    def _selected_alarms(self) -> list:
+        ids = set(self.selected_ids()) - {OFFLINE_ID}
+        return [a for a in self.alarms if a["id"] in ids]
+
+    def _update_buttons(self):
+        """What the buttons would act on; with nothing selected they say how to select."""
+        chosen = self._selected_alarms()
+        to_ack = [a for a in chosen if a["state"] in (UNACK, RTN_UNACK)]
+        shelved = [a for a in chosen if a.get("shelved_until")]
+        self.btn_ack.setEnabled(bool(to_ack))
+        self.btn_ack.setToolTip(
+            f"Acknowledge the {len(to_ack)} selected unacknowledged alarm{'s' if len(to_ack) != 1 else ''}. "
+            "An acknowledged alarm leaves the list once its condition has cleared." if to_ack else
+            ("The selected alarms are already acknowledged: they leave the list when their condition clears."
+             if chosen else SELECT_TIP + " Then acknowledge them here - or use ACK ALL."))
+        self.btn_shelve.setEnabled(len(chosen) == 1)
+        self.btn_shelve.setToolTip("Take the selected alarm out of annunciation for a while (needs a reason)."
+                                   if len(chosen) == 1 else "Select one alarm to shelve. " + SELECT_TIP)
+        self.btn_unshelve.setEnabled(bool(shelved))
+        self.btn_unshelve.setToolTip("Put the selected shelved alarms back into annunciation." if shelved
+                                     else "Select a shelved alarm (💤) to unshelve it.")
+
+    def _restore_selection(self, ids: set):
+        """Select the rows of these alarms (all of them, wherever they now are in the list)."""
+        model = self.table.model()
+        selection = QItemSelection()
+        for row, alarm in enumerate(self.alarms):
+            if alarm["id"] in ids:
+                selection.select(model.index(row, 0), model.index(row, len(COLUMNS) - 1))
+        self.table.selectionModel().select(selection, QItemSelectionModel.SelectionFlag.ClearAndSelect)
 
     def ack_selected(self):
         ids = [i for i in self.selected_ids() if i != OFFLINE_ID]
@@ -194,7 +234,16 @@ class AlarmPanel(QWidget):
         if signature == self._signature:
             return
         self._signature = signature
-        selected = set(self.selected_ids())
+        selected = set(self.selected_ids())       # (read from the rows as they were drawn)
+        self.table.blockSignals(True)
+        try:
+            self._fill(selected)
+        finally:
+            self.table.blockSignals(False)
+        self._update_buttons()
+        self._paint()
+
+    def _fill(self, selected: set):
         self.table.setRowCount(len(self.alarms))
         for row, alarm in enumerate(self.alarms):
             marks = ("⭐" if alarm.get("first_out") else "") + ("💤" if alarm.get("shelved_until") else "") + \
@@ -211,11 +260,11 @@ class AlarmPanel(QWidget):
                 item = QTableWidgetItem(text)
                 if col == 4:
                     item.setData(Qt.ItemDataRole.UserRole, alarm["id"])
-                    item.setToolTip(f"{alarm['id']}\n{message}")
+                    item.setToolTip(f"{alarm['id']}\n{message}\n\n{SELECT_TIP}")
                 self.table.setItem(row, col, item)
-            if alarm["id"] in selected:
-                self.table.selectRow(row)
-        self._paint()
+        # Re-selected by alarm, all at once: selectRow() per row followed the keyboard's modifiers -
+        # only the last alarm stayed selected, or (Ctrl held) the selection was toggled off
+        self._restore_selection(selected)
 
     def _flash(self):
         self._flash_on = not self._flash_on

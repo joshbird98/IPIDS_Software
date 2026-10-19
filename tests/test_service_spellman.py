@@ -40,9 +40,8 @@ def wait_powered(tap):
 
 
 def bring_up(c, tap, kv):
-    """What the HMI does: voltage, the automatic 50 uA current limit, then enable."""
+    """What the HMI does: the voltage, then enable (the service sets the current limit)."""
     assert c.request("spellman", f"{EINZEL}.sp_requested_voltage", kv)["status"] == C.OK
-    assert c.request("spellman", f"{EINZEL}.sp_requested_current", 50.0)["status"] == C.OK
     assert c.request("spellman", f"{EINZEL}.cmd_enable", True)["status"] == C.OK
     return tap.wait_for(lambda d: d[f"{EINZEL}.stat_enabled"] == 1.0
                         and abs((d[f"{EINZEL}.rb_voltage"] or 0) - kv) < 0.05 * kv + 0.01, timeout=6)
@@ -63,13 +62,86 @@ def test_enable_and_setpoint_acknowledged(stack):
 
 def test_current_limit_comes_from_mpd_config(stack):
     """max_current_ua in mpd_config.json (the MPD30's 330 uA); before it existed every
-    current-limit command - including the HMI's automatic 50 uA - was refused."""
+    current-limit command - including the HMI's automatic 50 uA, as it was then - was refused."""
     plc, svc, tap = stack
     wait_powered(tap)
     c = C.CommandClient(default_timeout=3.0)
     assert c.request("spellman", f"{EINZEL}.sp_requested_current", 330.0)["status"] == C.OK
     r = c.request("spellman", f"{EINZEL}.sp_requested_current", 400.0)
     assert r["status"] == C.REJECTED and "outside the allowed range" in r["reason"]
+
+
+def test_the_service_sets_a_current_limit_when_the_supply_holds_none(stack):
+    """Every power-up leaves a supply's current limit at 0, and with none its output can't rise. The
+    HMI's source panel used to send 50 uA with each voltage - but only when its registry had current
+    limits: with a system_tags.json from before them (Josh's simulator session, Oct 2026) the einzel
+    took 10 kV, stayed at 0 V and latched an arc. The service now sets it, whoever sends the voltage."""
+    plc, svc, tap = stack
+    d = wait_powered(tap)
+    assert d[f"{EINZEL}.sp_actual_current"] == 0.0                     # as it comes from power-up
+    c = C.CommandClient(default_timeout=3.0)
+    r = c.request("spellman", f"{EINZEL}.sp_requested_voltage", 10.0, origin="recipe")
+    assert r["status"] == C.OK and "current limit was 0, set to 50 uA" in r["reason"], r
+    assert c.request("spellman", f"{EINZEL}.cmd_enable", True)["status"] == C.OK
+    d = tap.wait_for(lambda d: abs((d[f"{EINZEL}.rb_voltage"] or 0) - 10.0) < 0.5, timeout=6)
+    assert d[f"{EINZEL}.sp_actual_current"] == pytest.approx(50.0)
+    assert tap.holds_for(lambda d: d[ARC] == 0.0, 3.5)                 # longer than settle_s
+    # A limit someone chose is left alone
+    assert c.request("spellman", f"{EINZEL}.sp_requested_current", 120.0)["status"] == C.OK
+    r = c.request("spellman", f"{EINZEL}.sp_requested_voltage", 12.0)
+    assert r["status"] == C.OK and "current limit" not in r["reason"]
+    tap.wait_for(lambda d: d[f"{EINZEL}.sp_actual_current"] == pytest.approx(120.0), timeout=2)
+
+
+def test_after_a_power_cycle_the_limit_is_set_again_and_the_old_setpoints_are_not_shown(stack):
+    """Unpowered, the supplies forget their setpoints. The service's own record of what it last set is
+    dropped with the relay (it stood in for a supply that didn't answer a setpoint query, and would have
+    shown 50 uA - and the old voltage - for a supply holding 0)."""
+    plc, svc, tap = stack
+    c = C.CommandClient(default_timeout=3.0)
+    wait_powered(tap)
+    bring_up(c, tap, 8.0)
+    plc.relay = False
+    tap.wait_for(lambda d: d[f"{EINZEL}.stat_enabled"] == 0.0 and d[f"{EINZEL}.rb_voltage"] is None, timeout=3)
+    assert svc.sp_cache == {}
+    plc.relay = True
+    d = tap.wait_for(lambda d: d[f"{EINZEL}.rb_voltage"] is not None, timeout=5)
+    assert d[f"{EINZEL}.sp_actual_voltage"] == 0.0 and d[f"{EINZEL}.sp_actual_current"] == 0.0
+    r = c.request("spellman", f"{EINZEL}.cmd_enable", True)            # enabling sets it too
+    assert r["status"] == C.OK and "set to 50 uA" in r["reason"], r
+
+
+def test_no_voltage_or_enable_without_a_current_limit(stack, monkeypatch):
+    """If the supply won't take a current limit, the voltage (or enable) isn't sent either - it could
+    only sit at 0 V and trip the arc detection - and the reply says why."""
+    plc, svc, tap = stack
+    wait_powered(tap)
+    hw = next(iter(svc.buses.values()))
+    real = hw.transaction
+
+    def refuse_current(address, dev_type, cmd, operator="", data=""):
+        if cmd == "I1" and operator == "=":
+            return f"{address}{dev_type}{cmd}*"
+        return real(address, dev_type, cmd, operator, data)
+    monkeypatch.setattr(hw, "transaction", refuse_current)
+    c = C.CommandClient(default_timeout=3.0)
+    r = c.request("spellman", f"{EINZEL}.sp_requested_voltage", 5.0)
+    assert r["status"] == C.FAILED and r["reason"].startswith("voltage not set: the supply holds no current limit")
+    r = c.request("spellman", f"{EINZEL}.cmd_enable", True)
+    assert r["status"] == C.FAILED and r["reason"].startswith("output not enabled")
+    assert c.request("spellman", f"{EINZEL}.sp_requested_voltage", 0.0)["status"] == C.OK   # 0 needs none
+    d = tap.wait_for(lambda d: d[f"{EINZEL}.sp_actual_voltage"] == 0.0, timeout=2)
+    assert d[f"{EINZEL}.stat_enabled"] == 0.0
+
+
+def test_default_current_limit_comes_from_the_config_within_its_range():
+    from src.services.service_spellman_mpd import SpellmanMicroservice as S
+    assert S.default_current_ua({}) == 50.0
+    assert S.default_current_ua({"default_current_ua": 80.0, "max_current_ua": 330.0}) == 80.0
+    assert S.default_current_ua({"default_current_ua": 500.0, "max_current_ua": 330.0}) == 330.0
+    assert S.default_current_ua({"max_current_ua": 20.0}) == 20.0
+    assert S.default_current_ua({"default_current_ua": "lots", "min_current_ua": 60.0}) == 60.0
+    assert S.default_current_ua({"default_current_ua": float("nan")}) == 50.0
 
 
 def test_relay_trip_reports_disabled_and_unknown_readbacks(stack):
@@ -305,10 +377,12 @@ def test_refused_enable_is_reported_as_failed(stack, monkeypatch):
     """A '*' reply is a refusal; it used to be acknowledged as 'output enabled/disabled'."""
     plc, svc, tap = stack
     wait_powered(tap)
-    monkeypatch.setenv("SINDIE_SIM_FAULTS", "spellman_refuse")
     c = C.CommandClient(default_timeout=3.0)
+    assert c.request("spellman", f"{EINZEL}.sp_requested_current", 50.0)["status"] == C.OK   # (else that
+    tap.wait_for(lambda d: d[f"{EINZEL}.sp_actual_current"] == 50.0, timeout=2)              # is refused first)
+    monkeypatch.setenv("SINDIE_SIM_FAULTS", "spellman_refuse")
     r = c.request("spellman", f"{EINZEL}.cmd_enable", True)
-    assert r["status"] == C.FAILED and "refused" in r["reason"]
+    assert r["status"] == C.FAILED and "supply refused the enable" in r["reason"]
 
 
 def test_enable_refused_while_the_supply_holds_a_setpoint_past_the_cap(stack):

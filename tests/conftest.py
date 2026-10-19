@@ -1,8 +1,8 @@
 """Test configuration.
 
 Every test process runs with its ZeroMQ ports shifted (SINDIE_PORT_OFFSET) and its
-data/log folders redirected to a temporary directory, so the suite can run on
-the lab PC while the real system is running without touching it.
+data/log folders (and saved window layouts) redirected to a temporary directory, so the
+suite can run on the lab PC while the real system is running without touching it.
 """
 import os
 import sys
@@ -12,6 +12,8 @@ _TMP = tempfile.mkdtemp(prefix="sindie_tests_")
 os.environ.setdefault("SINDIE_PORT_OFFSET", "20000")
 os.environ.setdefault("SINDIE_DATA_DIR", os.path.join(_TMP, "data"))
 os.environ.setdefault("SINDIE_LOG_DIR", os.path.join(_TMP, "logs"))
+# Window layouts the test windows save (and restore) stay here, not in the user's settings
+os.environ.setdefault("SINDIE_SETTINGS_DIR", os.path.join(_TMP, "settings"))
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))

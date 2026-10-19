@@ -69,16 +69,69 @@ def test_low_priority_alarms_never_sound(panel):
 
 def test_acknowledge_shelve_commands(panel):
     w, cmds = panel
-    w.update_telemetry(telemetry([alarm("a", 2), alarm("b", 3)], horn=2))
+    w.update_telemetry(telemetry([alarm("a", 2), alarm("b", 3), alarm("c", 3, shelved_until=4e9)], horn=2))
     w.btn_ack_all.click()
     assert cmds.sent[-1] == ("alarms", "alarms.cmd_ack", {"all": True})
     w.table.selectRow(1)
     w.btn_ack.click()
     assert cmds.sent[-1] == ("alarms", "alarms.cmd_ack", {"ids": ["b"]})
+    w.table.selectRow(2)
     w.btn_unshelve.click()
-    assert cmds.sent[-1] == ("alarms", "alarms.cmd_unshelve", {"id": "b"})
+    assert cmds.sent[-1] == ("alarms", "alarms.cmd_unshelve", {"id": "c"})
     w.btn_first_out.click()
     assert cmds.sent[-1][1] == "alarms.cmd_reset_first_out"
+
+
+def click_row(w, row, modifier=None):
+    from PyQt6.QtCore import QPoint, Qt
+    from PyQt6.QtTest import QTest
+    QTest.mouseClick(w.table.viewport(), Qt.MouseButton.LeftButton, modifier or Qt.KeyboardModifier.NoModifier,
+                     QPoint(w.table.columnViewportPosition(4) + 10, w.table.rowViewportPosition(row) + 5))
+
+
+def test_selected_alarms_stay_selected_while_the_list_changes(panel, app):
+    """Rows are clicked to select them (Ctrl/Shift+click for several). Every change in the list redraws
+    it; the redraw used to re-select row by row with selectRow(), which followed the keyboard: only the
+    last alarm stayed selected - or none, with Ctrl still held from the selecting."""
+    from PyQt6.QtCore import Qt
+    w, cmds = panel
+    w.resize(800, 300)
+    w.show()
+    alarms = [alarm("a", 1), alarm("b", 2), alarm("c", 3), alarm("d", 3)]
+    w.update_telemetry(telemetry(alarms, horn=1))
+    click_row(w, 1)
+    click_row(w, 3, Qt.KeyboardModifier.ControlModifier)
+    assert w.selected_ids() == ["b", "d"]
+    alarms[0]["count"] = 2                                    # a chattering alarm: redrawn, Ctrl last used
+    w.update_telemetry(telemetry(alarms, horn=1))
+    assert w.selected_ids() == ["b", "d"]
+    click_row(w, 2, Qt.KeyboardModifier.NoModifier)           # a plain click: just that one
+    assert w.selected_ids() == ["c"]
+    click_row(w, 0, Qt.KeyboardModifier.ShiftModifier)        # Shift+click: the range
+    assert w.selected_ids() == ["a", "b", "c"]
+    w.update_telemetry(telemetry([alarm("e", 1)] + alarms, horn=1))     # a new alarm on top: rows move
+    assert w.selected_ids() == ["a", "b", "c"]
+    w.btn_ack.click()
+    assert cmds.sent[-1] == ("alarms", "alarms.cmd_ack", {"ids": ["a", "b", "c"]})
+    w.update_telemetry(telemetry([alarm("e", 1), alarm("c", 3)], horn=1))    # a and b cleared and gone
+    assert w.selected_ids() == ["c"]
+
+
+def test_the_buttons_say_what_they_would_act_on(panel):
+    w, cmds = panel
+    w.update_telemetry(telemetry([alarm("a", 2), alarm("b", 3, "ACKED"), alarm("c", 3, "ACKED", shelved_until=4e9)],
+                                 horn=2))
+    assert not w.btn_ack.isEnabled() and "Click an alarm" in w.btn_ack.toolTip()
+    assert not w.btn_shelve.isEnabled() and not w.btn_unshelve.isEnabled()
+    w.btn_ack.click()
+    assert cmds.sent == []
+    w.table.selectRow(1)                                      # already acknowledged
+    assert not w.btn_ack.isEnabled() and "already acknowledged" in w.btn_ack.toolTip()
+    assert w.btn_shelve.isEnabled()
+    w.table.selectRow(0)
+    assert w.btn_ack.isEnabled() and "Acknowledge the 1 selected" in w.btn_ack.toolTip()
+    w.table.selectRow(2)
+    assert w.btn_unshelve.isEnabled()
 
 
 def test_shelve_dialog_needs_a_reason(app):

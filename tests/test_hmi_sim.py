@@ -74,6 +74,38 @@ def log_rows(w):
     return [[t.item(r, c).text() for c in range(t.columnCount())] for r in range(t.rowCount())]
 
 
+def test_start_up_sends_no_commands(stack, app):
+    """First in the module: the relay is still off. An HMI that has just opened sends nothing - the
+    services hold the machine's state and it only shows it. In October 2026 it did: the einzel box had
+    the first focus and its default 0, the first telemetry locked it (relay off), and as the focus
+    hopped down the source panel each box sent its 0 (on the real machine, to a running source).
+    Now no control has the focus at start, and a box only sends what the operator typed."""
+    from PyQt6.QtCore import Qt
+    from PyQt6.QtWidgets import QApplication
+    from src.gui.control.control_main import ControlMainWindow
+    w = ControlMainWindow()
+    sent = []
+    real = w.cmd_thread.send_command
+    w.cmd_thread.send_command = lambda *a, **k: (sent.append(a), real(*a, **k))[1]
+    try:
+        w.resize(1700, 1000)
+        w.show()
+        pump(app, 0.5)
+        focused = QApplication.focusWidget()
+        assert focused is None or focused is w, f"{type(focused).__name__} has the focus at start-up"
+        einzel = w.src_widget.psu_controls["Source Einzel"]["sp_box"]
+        einzel.setFocus(Qt.FocusReason.OtherFocusReason)          # as Qt used to give it, or a click
+        wait_for(app, lambda: w.master_telemetry_cache.get("system.connected") is True, 20, "PLC telemetry")
+        assert w.master_telemetry_cache.get("ion_beam.facilities.safety_relay_active") == 0.0
+        wait_for(app, lambda: not einzel.isEnabled(), 10, "einzel box locked (relay off)")
+        w.vac_widget.btn_gv_close.setFocus(Qt.FocusReason.MouseFocusReason)   # the operator clicks elsewhere
+        pump(app, 1.0)
+        assert sent == []
+    finally:
+        w.close()
+        pump(app, 0.3)
+
+
 def test_fresh_view_and_services(hmi, app):
     view = hmi.master_telemetry_cache
     assert view["system.connected"] is True
@@ -118,19 +150,27 @@ def test_einzel_needs_two_clicks_to_enable_one_to_disable(hmi, app):
              "einzel disabled")
 
 
-def test_einzel_setpoint_from_the_gui_brings_its_current_limit(hmi, app):
-    """The HMI sends a 50 uA current limit with each einzel voltage (it was always refused before
-    the limits were in mpd_config.json); without it the supply's output can't come up."""
+def test_einzel_setpoint_typed_in_the_gui_brings_the_output_up(hmi, app):
+    """Typed and Enter, as the operator does: the HMI sends the voltage alone. The Spellman service sets
+    the supply's current limit if it holds none (it used to be the HMI's 50 uA, sent only when the
+    registry had current limits - an older system_tags.json left the einzel at 0 V and latched an arc)."""
+    from PyQt6.QtCore import Qt
+    from PyQt6.QtTest import QTest
     ctrl = hmi.src_widget.psu_controls["Source Einzel"]
-    wait_for(app, ctrl["sp_box"].isEnabled, 15, "einzel setpoint box available")
+    box = ctrl["sp_box"]
+    wait_for(app, box.isEnabled, 15, "einzel setpoint box available")
     n_before = len(log_rows(hmi))
-    ctrl["sp_box"].setValue(4.0)
-    ctrl["sp_box"].editingFinished.emit()
-    wanted = {"ion_beam.source.einzel.sp_requested_voltage", "ion_beam.source.einzel.sp_requested_current"}
-    def accepted_since():   # the log is newest-first
+    box.setFocus(Qt.FocusReason.MouseFocusReason)
+    box.lineEdit().selectAll()
+    QTest.keyClicks(box.lineEdit(), "4")
+    QTest.keyClick(box.lineEdit(), Qt.Key.Key_Return)
+
+    def since():   # the log is newest-first
         rows = log_rows(hmi)
-        return {r[3] for r in rows[:len(rows) - n_before] if r[5] == "OK"}
-    wait_for(app, lambda: wanted <= accepted_since(), 5, "voltage and current limit accepted")
+        return rows[:len(rows) - n_before]
+    wait_for(app, lambda: any(r[3] == "ion_beam.source.einzel.sp_requested_voltage" and r[5] == "OK"
+                              for r in since()), 5, "voltage accepted")
+    assert [r[3] for r in since()] == ["ion_beam.source.einzel.sp_requested_voltage"]
     btn = ctrl["btn_enable"]
     btn.click()
     btn.click()                                           # arm + confirm

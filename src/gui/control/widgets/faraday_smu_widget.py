@@ -1,12 +1,13 @@
 import math
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, QLabel,
-    QPushButton, QGroupBox, QDoubleSpinBox, QComboBox, QStackedWidget
+    QPushButton, QGroupBox, QComboBox, QStackedWidget
 )
 from PyQt6.QtCore import Qt, QRectF, QPointF
 from PyQt6.QtGui import QPainter, QPen, QColor, QFont
 
 from src.gui.control.permits import permit_reason
+from src.gui.control.setpoint_box import SetpointBox
 from src.core.theme import (
     COLOR_OK, COLOR_FAULT, COLOR_INACTIVE, COLOR_WARNING, COLOR_BUTTON_STANDARD
 )
@@ -138,16 +139,16 @@ class FaradaySMUWidget(QWidget):
             "Target bias voltage. Positive bias suppresses secondary electron emission; negative bias repels ambient electrons.")
         layout.addWidget(lbl_sp, 1, 0)
 
-        self.sp_bias = QDoubleSpinBox()
+        # Sends only what the operator types or steps (setpoint_box.py)
+        self.sp_bias = SetpointBox()
+        self.sp_bias.setObjectName("SMU bias setpoint")
         self.sp_bias.setRange(-200.0, 200.0)
         self.sp_bias.setSuffix(" V")
         self.sp_bias.setDecimals(1)
-        self.sp_bias.setKeyboardTracking(False)
         self.sp_bias.setToolTip("Enter the target bias voltage (-200 V to +200 V: the SMU bias hard cap). "
                                 "Requires Master Safety Relay.")
-        self.sp_bias.editingFinished.connect(
-            lambda: self._dispatch_smu("ion_beam.beamline.faraday.smu.sp_requested_voltage", self.sp_bias.value())
-        )
+        self.sp_bias.committed.connect(
+            lambda v: self._dispatch_smu("ion_beam.beamline.faraday.smu.sp_requested_voltage", v))
         layout.addWidget(self.sp_bias, 1, 1)
 
         self.lbl_bias_rb = QLabel("RB: --- V")
@@ -404,10 +405,7 @@ class FaradaySMUWidget(QWidget):
         elif self.lbl_bias_rb.styleSheet():
             self.lbl_bias_rb.setStyleSheet("")
             self.lbl_bias_rb.setToolTip("Live readback of the actual voltage currently being applied by the SMU.")
-        if v_sp is not None and not self.sp_bias.hasFocus():
-            self.sp_bias.blockSignals(True)
-            self.sp_bias.setValue(float(v_sp))
-            self.sp_bias.blockSignals(False)
+        self.sp_bias.show_setpoint(v_sp)
 
         if i_rb is not None:
             formatted_i = self._format_current(i_rb)

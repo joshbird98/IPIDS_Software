@@ -248,6 +248,10 @@ def _check_mpd(c: _Checker, d):
             ilo = c.num(cfg, "min_current_ua", dw, ge=0, optional=True)
             ihi = c.num(cfg, "max_current_ua", dw, gt=0, optional=True)
             c.order(ilo, ihi, f"{dw}.min_current_ua", f"{dw}.max_current_ua", strict=False)
+            # Set by the service when the supply holds no current limit (0 after every power-up)
+            dflt = c.num(cfg, "default_current_ua", dw, gt=0, optional=True)
+            c.order(ilo, dflt, f"{dw}.min_current_ua", f"{dw}.default_current_ua", strict=False)
+            c.order(dflt, ihi, f"{dw}.default_current_ua", f"{dw}.max_current_ua", strict=False)
             if "arc_detection" in cfg:
                 _check_arc(c, cfg["arc_detection"], f"{dw}.arc_detection")
 

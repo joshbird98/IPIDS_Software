@@ -3,7 +3,7 @@ import logging
 
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QGridLayout, QLabel,
-    QPushButton, QGroupBox, QDoubleSpinBox
+    QPushButton, QGroupBox
 )
 from PyQt6.QtCore import Qt
 
@@ -17,6 +17,7 @@ from src.core.theme import (
 from src.core.tolerance import FLAG_PREFIX
 from src.gui.control.permits import permit_reason
 from src.gui.control.arming import ArmedToggle
+from src.gui.control.setpoint_box import SetpointBox
 
 log = logging.getLogger("hmi.source")
 
@@ -67,14 +68,6 @@ class IonSourceWidget(QWidget):
         sp_box.setProperty("cap_note", hard_caps.note(tag))
         sp_box.setToolTip(hard_caps.note(tag))
 
-    def _dispatch_spellman_setpoints(self, base_tag: str, voltage: float):
-        """Dispatches voltage and autonomously sets a safe 50uA current limit to unclamp the CC loop."""
-        self._dispatch_command(f"{base_tag}.sp_requested_voltage", voltage)
-        # The service refuses current limits that have no min/max in the registry (and always
-        # silently did) - only send it once limits are configured (mpd_config.json max_current_ua).
-        if f"{base_tag}.sp_requested_current" in self._limited_tags:
-            self._dispatch_command(f"{base_tag}.sp_requested_current", 50.0)
-
     def _init_psu_ui(self):
         psu_group = QGroupBox("Source Power Supplies")
         self.psu_layout = QGridLayout()
@@ -117,7 +110,10 @@ class IonSourceWidget(QWidget):
         arm = ArmedToggle(btn_enable, lambda on, t=base_tag: self._dispatch_command(f"{t}.cmd_enable", on),
                           what=name.upper())
 
-        sp_box = QDoubleSpinBox()
+        # Sends only what the operator types or steps (setpoint_box.py): focus passing through, the
+        # window losing focus or the box being locked send nothing
+        sp_box = SetpointBox()
+        sp_box.setObjectName(f"{name} setpoint")
         sp_box.setRange(min_v, max_v)
         sp_box.setSuffix(f" {pri_unit}")
         sp_box.setDecimals(decimals)
@@ -129,16 +125,11 @@ class IonSourceWidget(QWidget):
         else:
             sp_box.setSingleStep(0.1)
 
-        sp_box.setKeyboardTracking(False)
-        self._apply_limits(sp_box, f"{base_tag}.sp_requested_{'voltage' if is_voltage else 'current'}")
-
-        if "einzel" in base_tag:
-            sp_box.editingFinished.connect(
-                lambda t=base_tag, b=sp_box: self._dispatch_spellman_setpoints(t, b.value()))
-        else:
-            sp_box.editingFinished.connect(
-                lambda t=base_tag, b=sp_box, iv=is_voltage: self._dispatch_command(
-                    f"{t}.sp_requested_{'voltage' if iv else 'current'}", b.value()))
+        sp_tag = f"{base_tag}.sp_requested_{'voltage' if is_voltage else 'current'}"
+        self._apply_limits(sp_box, sp_tag)
+        # (The einzel's current limit is the Spellman service's job now: it sets one when the
+        # supply holds none, whoever sets the voltage - this panel used to send 50 uA with each.)
+        sp_box.committed.connect(lambda value, t=sp_tag: self._dispatch_command(t, value))
 
         self.psu_layout.addWidget(lbl_name, row, 0)
         self.psu_layout.addWidget(lbl_rb, row, 1)
@@ -184,12 +175,12 @@ class IonSourceWidget(QWidget):
         btn_cool.clicked.connect(
             lambda *args, b=btn_cool: self._dispatch_command("ion_beam.source.cesium.cmd_force_cooling", b.isChecked()))
 
-        sp_box = QDoubleSpinBox()
+        sp_box = SetpointBox()
+        sp_box.setObjectName("Cesium setpoint")
         sp_box.setRange(0.0, 200.0)
         self._apply_limits(sp_box, "ion_beam.source.cesium.sp_requested_temp")
         sp_box.setSuffix(" °C")
-        sp_box.editingFinished.connect(
-            lambda: self._dispatch_command("ion_beam.source.cesium.sp_requested_temp", sp_box.value()))
+        sp_box.committed.connect(lambda value: self._dispatch_command("ion_beam.source.cesium.sp_requested_temp", value))
 
         self.psu_layout.addWidget(lbl_name, row, 0)
         self.psu_layout.addWidget(lbl_rb, row, 1)
@@ -297,14 +288,10 @@ class IonSourceWidget(QWidget):
                 ctrl["lbl_rb"].setStyleSheet("")
                 ctrl["lbl_rb"].setToolTip("")
 
-            # B. Active Setpoints
+            # B. Active Setpoints (shown unless the operator is typing a new one)
             sp_tag = "sp_actual_temp" if name == "Cesium" else (
                 "sp_actual_voltage" if ctrl["is_voltage"] else "sp_actual_current")
-            active_sp = data.get(f"{base_tag}.{sp_tag}")
-            if active_sp is not None and not sp_box.hasFocus():
-                sp_box.blockSignals(True)
-                sp_box.setValue(float(active_sp))
-                sp_box.blockSignals(False)
+            sp_box.show_setpoint(data.get(f"{base_tag}.{sp_tag}"))
 
             # C. Hardware State
             hw_lockout = bool(data.get(f"{base_tag}.stat_lockout", 0.0))

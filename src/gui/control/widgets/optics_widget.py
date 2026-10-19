@@ -14,6 +14,7 @@ from src.core.mass_calibration import current_for_mass
 from src.core.theme import COLOR_BUTTON_STANDARD, COLOR_FAULT, COLOR_INACTIVE, COLOR_OK
 from src.gui.control.arming import ArmedAction, ArmedToggle
 from src.gui.control.permits import permit_reason
+from src.gui.control.setpoint_box import SetpointBox
 from src.gui.control.widgets.source_widget import TOLERANCE_STYLE, TOLERANCE_TIP, setpoint_limits, tolerance_flagged
 
 log = logging.getLogger("hmi.optics")
@@ -48,13 +49,6 @@ class BeamlineOpticsWidget(QWidget):
 
         self.main_layout.addStretch()
 
-    def _dispatch_spellman_setpoints(self, base_tag: str, voltage: float):
-        """Dispatches voltage and autonomously sets a safe 50uA current limit to unclamp the CC loop."""
-        self._dispatch_command(f"{base_tag}.sp_requested_voltage", voltage)
-        # Only once current limits are configured (the service refuses - and always dropped - it otherwise)
-        if f"{base_tag}.sp_requested_current" in self._limited_tags:
-            self._dispatch_command(f"{base_tag}.sp_requested_current", 50.0)
-
     def _dispatch_command(self, tag: str, value):
         self.cmd_thread.send_command(route_for_tag(tag), tag, value)
 
@@ -62,11 +56,18 @@ class BeamlineOpticsWidget(QWidget):
         self._dispatch_command("ion_beam.beamline.steering.cmd_enable", state)
         self._dispatch_command("ion_beam.beamline.steerer_magnet.cmd_enable", state)
 
-    def _log_manual_slit(self, position_name: str, spinbox: QDoubleSpinBox):
-        val = spinbox.value()
-        self.event_helper.log_user_marker(time.time(), f"Manual Adjustment: {position_name} set to {val} mm", "#9C27B0")
-        tag_name = position_name.lower().replace(" ", "_").replace("-", "_")
-        self._dispatch_command(f"ion_beam.beamline.slits.{tag_name}", val)
+    def _log_manual_slit(self, position_name: str, value: float):
+        """The slits are set by hand: their widths only go into the event log. (A command used to be
+        sent as well, to ion_beam.beamline.slits.* - no such tag, so every one was refused.)"""
+        self.event_helper.log_user_marker(time.time(), f"Manual Adjustment: {position_name} set to {value} mm",
+                                          "#9C27B0")
+
+    def _setpoint_box(self, name: str, send) -> SetpointBox:
+        """A box that sends only what the operator types or steps (setpoint_box.py)."""
+        box = SetpointBox()
+        box.setObjectName(name)
+        box.committed.connect(send)
+        return box
 
     def _init_pre_magnet_ui(self):
         group = QGroupBox("1. Pre-Magnet Tuning")
@@ -79,14 +80,12 @@ class BeamlineOpticsWidget(QWidget):
         self.lbl_y_rb.setMinimumWidth(80)
         layout.addWidget(self.lbl_y_rb, 0, 1)
 
-        self.sp_y_steer = QDoubleSpinBox()
+        self.sp_y_steer = self._setpoint_box(
+            "Y-steerer setpoint", lambda v: self._dispatch_command("ion_beam.beamline.steering.sp_requested_y_volts", v))
         self.sp_y_steer.setRange(*self._limited_tags.get("ion_beam.beamline.steering.sp_requested_y_volts",
                                                          (-200.0, 200.0)))
         self.sp_y_steer.setSuffix(" V")
         self.sp_y_steer.setDecimals(1)
-        self.sp_y_steer.setKeyboardTracking(False)
-        self.sp_y_steer.editingFinished.connect(
-            lambda: self._dispatch_command("ion_beam.beamline.steering.sp_requested_y_volts", self.sp_y_steer.value()))
         layout.addWidget(self.sp_y_steer, 0, 2)
 
         # Master Steering Enable (Applies to both X and Y)
@@ -104,31 +103,26 @@ class BeamlineOpticsWidget(QWidget):
         self.lbl_x_rb.setMinimumWidth(120)
         layout.addWidget(self.lbl_x_rb, 1, 1)
 
-        self.sp_x_steer = QDoubleSpinBox()
+        self.sp_x_steer = self._setpoint_box(
+            "X-steerer setpoint",
+            lambda v: self._dispatch_command("ion_beam.beamline.steerer_magnet.sp_requested_current", v))
         self.sp_x_steer.setRange(*self._limited_tags.get("ion_beam.beamline.steerer_magnet.sp_requested_current",
                                                          (0.0, 80.0)))
         self.sp_x_steer.setSuffix(" A")
         self.sp_x_steer.setDecimals(2)
         self.sp_x_steer.setToolTip(hard_caps.note("ion_beam.beamline.steerer_magnet.sp_requested_current"))
         self.sp_x_steer.setSingleStep(0.1)
-        self.sp_x_steer.setKeyboardTracking(False)
-        self.sp_x_steer.editingFinished.connect(
-            lambda: self._dispatch_command("ion_beam.beamline.steerer_magnet.sp_requested_current", self.sp_x_steer.value()))
         layout.addWidget(self.sp_x_steer, 1, 2)
 
         # Object Slits
         layout.addWidget(QLabel("<b>Object Slits (L / R):</b>"), 2, 0)
         slit_layout = QHBoxLayout()
 
-        self.sp_obj_l = QDoubleSpinBox()
+        self.sp_obj_l = self._setpoint_box("Object slit left", lambda v: self._log_manual_slit("Object Slit Left", v))
         self.sp_obj_l.setSuffix(" mm")
-        self.sp_obj_l.setKeyboardTracking(False)
-        self.sp_obj_l.editingFinished.connect(lambda: self._log_manual_slit("Object Slit Left", self.sp_obj_l))
 
-        self.sp_obj_r = QDoubleSpinBox()
+        self.sp_obj_r = self._setpoint_box("Object slit right", lambda v: self._log_manual_slit("Object Slit Right", v))
         self.sp_obj_r.setSuffix(" mm")
-        self.sp_obj_r.setKeyboardTracking(False)
-        self.sp_obj_r.editingFinished.connect(lambda: self._log_manual_slit("Object Slit Right", self.sp_obj_r))
 
         slit_layout.addWidget(self.sp_obj_l)
         slit_layout.addWidget(self.sp_obj_r)
@@ -153,17 +147,14 @@ class BeamlineOpticsWidget(QWidget):
         self.lbl_mag_rb = QLabel("RB: --- A | --- V")
         layout.addWidget(self.lbl_mag_rb, 1, 1)
 
-        self.sp_mag_current = QDoubleSpinBox()
+        self.sp_mag_current = self._setpoint_box(
+            "Magnet setpoint", lambda v: self._dispatch_command("ion_beam.beamline.magnet.sp_requested_current", v))
         self.sp_mag_current.setRange(*self._limited_tags.get("ion_beam.beamline.magnet.sp_requested_current",
                                                              (0.0, 80.0)))
         self.sp_mag_current.setSuffix(" A")
         self.sp_mag_current.setDecimals(2)
         self.sp_mag_current.setToolTip(hard_caps.note("ion_beam.beamline.magnet.sp_requested_current"))
         self.sp_mag_current.setSingleStep(0.01)
-        self.sp_mag_current.setKeyboardTracking(False)
-        self.sp_mag_current.editingFinished.connect(
-            lambda: self._dispatch_command("ion_beam.beamline.magnet.sp_requested_current",
-                                           self.sp_mag_current.value()))
         layout.addWidget(self.sp_mag_current, 1, 2)
 
         self.btn_mag_en = QPushButton("ENABLE MAGNET")
@@ -241,7 +232,8 @@ class BeamlineOpticsWidget(QWidget):
                                        f"outside 0 - {self.sp_mag_current.maximum():g} A.")
             return
 
-        self.sp_mag_current.setValue(amps)
+        self.sp_mag_current.discard_edit()
+        self.sp_mag_current.show_setpoint(amps)
         self._dispatch_command("ion_beam.beamline.magnet.sp_requested_current", amps)
         self.event_helper.log_user_marker(
             time.time(), f"Magnet set to {amps:.3f} A for {target_amu:g} amu at {energy_ev / 1000.0:.3f} keV "
@@ -255,15 +247,11 @@ class BeamlineOpticsWidget(QWidget):
         layout.addWidget(QLabel("<b>Image Slits (L / R):</b>"), 0, 0)
         slit_layout = QHBoxLayout()
 
-        self.sp_img_l = QDoubleSpinBox()
+        self.sp_img_l = self._setpoint_box("Image slit left", lambda v: self._log_manual_slit("Image Slit Left", v))
         self.sp_img_l.setSuffix(" mm")
-        self.sp_img_l.setKeyboardTracking(False)
-        self.sp_img_l.editingFinished.connect(lambda: self._log_manual_slit("Image Slit Left", self.sp_img_l))
 
-        self.sp_img_r = QDoubleSpinBox()
+        self.sp_img_r = self._setpoint_box("Image slit right", lambda v: self._log_manual_slit("Image Slit Right", v))
         self.sp_img_r.setSuffix(" mm")
-        self.sp_img_r.setKeyboardTracking(False)
-        self.sp_img_r.editingFinished.connect(lambda: self._log_manual_slit("Image Slit Right", self.sp_img_r))
 
         slit_layout.addWidget(self.sp_img_l)
         slit_layout.addWidget(self.sp_img_r)
@@ -295,15 +283,14 @@ class BeamlineOpticsWidget(QWidget):
         arm = ArmedToggle(btn_enable, lambda on, t=base_tag: self._dispatch_command(f"{t}.cmd_enable", on),
                           what=name.upper())
 
-        sp_box = QDoubleSpinBox()
+        # (Its current limit is the Spellman service's job: it sets one when the supply holds none)
+        sp_box = self._setpoint_box(f"{name} setpoint", lambda v, t=f"{base_tag}.sp_requested_voltage":
+                                    self._dispatch_command(t, v))
         sp_box.setRange(*self._limited_tags.get(f"{base_tag}.sp_requested_voltage", (min_v, max_v)))
         sp_box.setToolTip(hard_caps.note(f"{base_tag}.sp_requested_voltage"))
         sp_box.setSuffix(f" {pri_unit}")
         sp_box.setDecimals(3)
         sp_box.setSingleStep(0.001)
-        sp_box.setKeyboardTracking(False)
-        sp_box.editingFinished.connect(
-            lambda t=base_tag, b=sp_box: self._dispatch_spellman_setpoints(t, b.value()))
 
         self.optics_layout.addWidget(lbl_name, row, 0)
         self.optics_layout.addWidget(lbl_rb, row, 1)
@@ -336,6 +323,9 @@ class BeamlineOpticsWidget(QWidget):
             self.lbl_mag_cooling.setText("MAG COOLING: FAULT")
             self.lbl_mag_cooling.setStyleSheet(COLOR_FAULT)
 
+        # The setpoint the magnet service holds (the box never showed it, so after an HMI restart it
+        # read 0.00 A whatever the magnet was at - one arrow-key step from there would have sent ~0 A)
+        self.sp_mag_current.show_setpoint(data.get("ion_beam.beamline.magnet.sp_actual_current"))
         mag_v = data.get("ion_beam.beamline.magnet.rb_voltage")
         mag_i = data.get("ion_beam.beamline.magnet.rb_current")
         self.lbl_mag_rb.setText(f"RB: {mag_i:.2f} A | {mag_v:.2f} V" if mag_v is not None and mag_i is not None
@@ -374,10 +364,8 @@ class BeamlineOpticsWidget(QWidget):
         y_steer_en = bool(data.get("ion_beam.beamline.steering.stat_enabled", False))
         y_rb = data.get("ion_beam.beamline.steering.sp_actual_y_volts")
         self.lbl_y_rb.setText(f"RB: {y_rb:.1f} V" if y_rb is not None else "RB: --- V")
-        if y_rb is not None and y_steer_en and not self.sp_y_steer.hasFocus():
-            self.sp_y_steer.blockSignals(True)
-            self.sp_y_steer.setValue(float(y_rb))
-            self.sp_y_steer.blockSignals(False)
+        if y_steer_en:      # (as before: with the steering off this reads 0 V - in the simulator's PLC at least)
+            self.sp_y_steer.show_setpoint(y_rb)
 
         x_steer_en = bool(data.get("ion_beam.beamline.steerer_magnet.stat_enabled", False))
         x_v_rb = data.get("ion_beam.beamline.steerer_magnet.rb_voltage")
@@ -386,10 +374,7 @@ class BeamlineOpticsWidget(QWidget):
         self.lbl_x_rb.setText(f"RB: {x_i_rb:.2f} A | {x_v_rb:.1f} V" if x_i_rb is not None and x_v_rb is not None
                               else "RB: --- A | --- V")
         _show_tolerance(self.lbl_x_rb, data, ("ion_beam.beamline.steerer_magnet.rb_current",))
-        if x_i_sp is not None and x_steer_en and not self.sp_x_steer.hasFocus():
-            self.sp_x_steer.blockSignals(True)
-            self.sp_x_steer.setValue(float(x_i_sp))
-            self.sp_x_steer.blockSignals(False)
+        self.sp_x_steer.show_setpoint(x_i_sp)       # the steerer service's setpoint, output on or off
 
         # Master enable button shows OK only if BOTH steerers are verified active
         steer_known = ("ion_beam.beamline.steering.stat_enabled" in data
@@ -419,11 +404,7 @@ class BeamlineOpticsWidget(QWidget):
             ctrl["lbl_rb"].setText(f"RB: {v_str} {ctrl['pri_unit']} | {i_str} {ctrl['sec_unit']}")
             _show_tolerance(ctrl["lbl_rb"], data, (f"{base_tag}.rb_voltage", f"{base_tag}.rb_current"))
 
-            sp_val = data.get(f"{base_tag}.sp_actual_voltage")
-            if sp_val is not None and not ctrl["sp_box"].hasFocus():
-                ctrl["sp_box"].blockSignals(True)
-                ctrl["sp_box"].setValue(float(sp_val))
-                ctrl["sp_box"].blockSignals(False)
+            ctrl["sp_box"].show_setpoint(data.get(f"{base_tag}.sp_actual_voltage"))
 
             reason = permit_reason(data, base_tag, "Spellman")
             self._lock([ctrl["btn_enable"]], reason, "Click twice to switch ON (confirm); once to switch OFF")

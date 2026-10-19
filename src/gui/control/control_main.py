@@ -110,6 +110,13 @@ class ControlMainWindow(QMainWindow):
         self.watchdog_timer.timeout.connect(self._ui_update_loop)
         self.watchdog_timer.start(100)
 
+        # No control holds the keyboard focus when the HMI opens. Qt would give it to the first one
+        # in the window - the gate valve's OPEN button, or a setpoint box - where a stray Space or
+        # Enter would act on it. (The HMI sends nothing until the operator does something: the
+        # services hold the machine's state, and the panels show it from their telemetry.) The window
+        # keeps its NoFocus policy: clicking an empty part of it still leaves the focus where it is.
+        self.setFocus(Qt.FocusReason.OtherFocusReason)
+
     def _setup_menus(self):
         menubar = self.menuBar()
 

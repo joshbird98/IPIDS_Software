@@ -110,6 +110,37 @@ simulator; none of it has been tried on the real hardware yet (see "Lab PC valid
     the box sends its value when focus leaves it - so scrolling a panel could change e.g. the extraction
     voltage by a step and the next click elsewhere sent it. The wheel now does nothing over value boxes
     and drop-downs in the HMI (`src/gui/control/wheel_guard.py`); values are typed or stepped.
+- After Josh's second simulator session (Oct 2026):
+  - **The HMI sent setpoints nobody typed** (simulator and real machine alike). Qt reports "editing finished"
+    on every focus loss - focus passing through, the window losing focus, the box being locked - and the
+    setpoint boxes sent their value then, while a box with focus didn't follow the live setpoint. At start-up
+    the box with the window's first focus still held its default 0; the first telemetry (relay off) locked
+    it, and as the focus hopped down the source panel each box sent its 0. Reproduced in the simulator:
+    einzel (refused: relay off - the message Josh saw), then extraction, target, filament, thermionic and
+    cesium, all accepted by the PLC. On the real machine with the source running they would have been obeyed.
+    Now (`src/gui/control/setpoint_box.py`) a box sends only what the operator typed or stepped, on Enter or
+    when moving on to another control; nothing when the window loses focus (the edit waits) or the box is
+    locked mid-edit (dropped); Escape drops it; until edited the box follows the live setpoint, focused or
+    not. No control has the keyboard focus when the HMI opens (Qt gave it to the gate valve's OPEN button).
+    Same fix for the magnet box, which never showed the magnet's setpoint at all (0.00 A after every HMI
+    start, an arrow-key step from sending ~0 A), and the mass calibration boxes (any click through them
+    relabelled a fitted calibration "entered by hand"). The slit boxes no longer send a command (the
+    slits are manual; there is no such tag, so each was refused) - the width still goes into the event log.
+  - Einzel at 10 kV stayed at 0 V and latched an arc: the simulator was running on a system_tags.json from
+    before the einzel's current limits, so the HMI never sent its 50 uA and the supply (0 uA after every
+    power-up) couldn't raise its output. The Spellman service now sets the current limit itself before a
+    non-zero voltage or an enable when the supply holds none (`default_current_ua` in mpd_config.json,
+    50 uA) - whoever sends the voltage (recipes, optimiser) - and refuses the voltage / enable, saying why,
+    if the supply won't take one. The HMI sends just the voltage. The service also forgets what it last set
+    when the relay drops (the supplies do), so a supply not answering a setpoint query can't be shown
+    holding its pre-trip setpoints. run_simulation.py builds its own registry from the config files at
+    every start (data_sim/system_tags.json).
+  - Alarms panel: a redraw (any change in the list) re-selected rows one by one with Qt's selectRow, which
+    follows the keyboard - only the last alarm stayed selected, or none with Ctrl held. Selection now
+    follows the alarms through redraws and re-sorting; the buttons are enabled only when they would act
+    on something, and their tooltips say how to select.
+  - Tests no longer use the real saved HMI layout (SINDIE_SETTINGS_DIR): a test window saved its layout
+    over the operator's when it closed, and started from whatever was saved last.
 - Found on the way and fixed: the manager's start-up purge killed every SINDIE service process on the PC (so a
   simulator or test run would have killed the live system's services) - now only its own; the HMI config editor
   never rebuilt the registry (wrong script path); the recipe builder's tag picker and fault list looked in
@@ -122,9 +153,17 @@ simulator; none of it has been tried on the real hardware yet (see "Lab PC valid
 1. Lab PC validation (real hardware):
    - every service connects and answers commands; Command Log shows OK / reasons;
    - relay trip: Spellman shows DISABLED, steerer output goes off and stays off, SMU bias to 0 V;
-   - einzel: voltage + 50 uA limit accepted, output comes up, enable/disable answered OK (refusals now show as
-     failed), **no false arc trips** during normal use (ramps, optimiser, enable/disable) - the main thing to
-     watch with the new 10 % arc test;
+   - einzel: after a relay cycle the supply reports a 0 uA current limit and the service sets 50 uA with the
+     first voltage or enable (the reply says so); output comes up, enable/disable answered OK (refusals now
+     show as failed), **no false arc trips** during normal use (ramps, optimiser, enable/disable) - the main
+     thing to watch with the new 10 % arc test;
+   - restart the HMI with the source running: nothing is sent (Command Log stays empty), every box shows the
+     live setpoint, the magnet box included;
+   - **gate valve after an interlock**: close it by withdrawing the vacuum permissive (e.g. a gauge
+     controller unplugged), then restore it. In the simulator the valve re-opens 2 s later by itself: the
+     OPEN command (cmd_open_gv) stays set in the PLC. What does the real PLC do (its seq_cmd_open_gv)?
+     It should stay shut until OPEN is pressed again - in the PLC program, or the PLC service could clear
+     cmd_open_gv when it sees the valve closed with the permissive gone (Josh to decide);
    - unplug a device: service stays ONLINE with comms-fail (no restart loop); SMU reconnect behaviour as above;
    - turbo start/stop; logger journal file appears in data/parquet_logs; tolerance rules sensible;
    - closing the gate valve with the relay on: relay drops, supplies show off, Safety_Relay_Tripped shows,

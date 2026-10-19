@@ -10,6 +10,8 @@ simulator and the automated tests never touch real machine data:
     SINDIE_REGISTRY=...  tag registry to use instead of config/system_tags.json
                          (the tests build a fresh one from the config files)
     SINDIE_RECIPES_DIR=... recipe folder instead of config/recipes (the tests use a copy)
+    SINDIE_SETTINGS_DIR=... saved window layouts in .ini files there, not the user's settings
+                         (src/gui/settings.py; the tests use it)
 (The machine's old name also works: IPIDS_SIMULATE etc., see src/core/env.py.)
 
 The values are read once at import, so set the variables before starting a

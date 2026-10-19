@@ -543,7 +543,7 @@ class PrecisionMassScannerWidget(QWidget):
             except OSError as e:
                 log.error("Could not save the calibration in %s: %s", self.current_csv_path, e)
 
-    def _calibration_typed(self):
+    def _calibration_typed(self, *_):
         self.calibration_source = "entered by hand"
 
     def current_calibration(self) -> dict:

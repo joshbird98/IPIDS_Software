@@ -6,14 +6,18 @@ operator HMI and the data viewer.
 
 It uses its own ZeroMQ ports (offset 10000) and keeps its data and logs in data_sim/,
 so it is safe to start on the lab PC while the real system is running: nothing it does
-reaches the real services, hardware or data.
+reaches the real services, hardware or data. Its tag registry (data_sim/system_tags.json)
+is built from the config files at every start, so it always matches them.
 
 This window then shows a menu for injecting faults (PLC lost, safety relay trip,
 Spellman arc, magnet sag, ...) to see how the services and the HMI react.
 Type q (or close this window) to stop everything.
 """
 import argparse
+import contextlib
+import io
 import os
+import shutil
 import signal
 import socket
 import subprocess
@@ -22,6 +26,27 @@ import time
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
 SIM_PORT_OFFSET = 10000
+
+
+def prepare_registry(data_dir, seed=os.path.join(ROOT, "config", "system_tags.json")):
+    """The simulator's own tag registry, built from the config files at every start
+    (data_sim/system_tags.json); returns its path.
+
+    The services and the HMI take their setpoint limits from the registry. config/system_tags.json
+    is only rebuilt by hand (or by the config editor), so after a pull it can be older than the
+    config files - the simulator then behaved differently from them (October 2026: no einzel
+    current limit in it, so the HMI never sent one, the einzel stayed at 0 V and latched an arc).
+    Display names hand-edited in config/system_tags.json are kept (copied over, then merged)."""
+    path = os.path.join(data_dir, "system_tags.json")
+    os.makedirs(data_dir, exist_ok=True)
+    if os.path.exists(seed):
+        shutil.copyfile(seed, path)
+    elif os.path.exists(path):
+        os.remove(path)
+    from src.utils.build_registry import build_system_registry
+    with contextlib.redirect_stdout(io.StringIO()):
+        build_system_registry(path)
+    return path
 
 
 def _launch(cmd, log_path, env, new_group=False):
@@ -116,10 +141,7 @@ def main():
     os.environ["SINDIE_SIMULATE"] = "1"
     os.environ["SINDIE_PORT_OFFSET"] = str(args.port_offset)
     sys.path.insert(0, ROOT)
-    env = dict(os.environ, PYTHONPATH=ROOT + (os.pathsep + os.environ["PYTHONPATH"]
-                                               if os.environ.get("PYTHONPATH") else ""))
 
-    from src import sim
     from src.core import paths
     from src.core.network_map import MANAGER_LOCK_PORT
 
@@ -131,6 +153,12 @@ def main():
                  f"(another run_simulation.py?). Stop it first, or use --port-offset.")
     finally:
         probe.close()
+
+    if not os.environ.get("SINDIE_REGISTRY", "").strip():       # (unless one was chosen on purpose)
+        os.environ["SINDIE_REGISTRY"] = prepare_registry(paths.DATA_DIR)
+    env = dict(os.environ, PYTHONPATH=ROOT + (os.pathsep + os.environ["PYTHONPATH"]
+                                               if os.environ.get("PYTHONPATH") else ""))
+    from src import sim
 
     os.makedirs(paths.LOG_DIR, exist_ok=True)
     sim.set_faults(set())

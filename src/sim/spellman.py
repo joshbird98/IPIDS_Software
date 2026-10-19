@@ -6,8 +6,9 @@ setpoints and a lagging output, and loses its state when the bus is severed
 (the safety relay de-energises the supplies), just like the real units.
 
 The output is current-limited: with the current limit (I1) at 0 the voltage can't
-rise. (The HMI sends a 50 uA limit with every voltage setpoint "to unclamp the CC
-loop", so the real units appear to behave the same way.)
+rise, and every power-up leaves it at 0. (The HMI used to send a 50 uA limit with every
+voltage setpoint "to unclamp the CC loop", so the real units appear to behave the same
+way; the Spellman service now sets one itself when a supply holds none.)
 
 Injected faults (SINDIE_SIM_FAULTS):
     spellman_no_reply   every transaction times out (supply unpowered / cable out)

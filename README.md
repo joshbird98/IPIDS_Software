@@ -61,6 +61,13 @@ Every service also publishes, per subsystem, whether an operator command would b
 (`<subsystem>.permit`) and why not (`permit_reason`: relay off, PLC in control, cesium hot,
 leased, ...); the HMI greys out those controls with the reason as their tooltip.
 
+The HMI holds no machine state: the services do, and carry on whatever happens to it. An HMI that
+has just opened sends nothing - it shows what the services publish, and no control has the
+keyboard focus. Its setpoint boxes follow the live setpoint and send only a value the operator
+typed or stepped, on Enter or when moving on to another control; focus passing through a box,
+the window losing focus, or a box being locked mid-edit sends nothing
+(`src/gui/control/setpoint_box.py`).
+
 ### Alarms
 
 `service_alarms` turns PLC fault bits, comms losses, stale services, vacuum set points, arcs
@@ -71,7 +78,9 @@ first PLC trip after a reset is marked first-out (⭐); gauge comms alarms are s
 their controller's own comms alarm is active. Acknowledgements and shelves survive a restart
 (`data/alarm_state.json`). In the HMI's Alarms dock the horn sounds the most urgent
 unacknowledged alarm (priority 1-3; 4 is listed only) until it is acknowledged or silenced; a new
-alarm sounds again. If the alarm service itself isn't running the HMI raises its own alarm.
+alarm sounds again. Click alarms to select them (Ctrl+click / Shift+click for several) for
+Acknowledge selected, Shelve or Unshelve; an acknowledged alarm leaves the list once its condition
+has cleared. If the alarm service itself isn't running the HMI raises its own alarm.
 
 ## Simulator (no hardware needed)
 
@@ -81,7 +90,8 @@ python run_simulation.py
 
 Starts every service against simulated devices, then the HMI and the viewer. It uses its own
 ports and keeps its data and logs in `data_sim/`, so it can run on the lab PC next to the real
-system without touching it. The window it runs in has a menu for injecting faults (PLC lost,
+system without touching it; its tag registry (`data_sim/system_tags.json`) is built from the
+config files at every start. The window it runs in has a menu for injecting faults (PLC lost,
 safety relay trip, Spellman arc, magnet 10 % low, ...). As on the real machine, open the gate
 valve and energise the safety relay before the supplies accept commands.
 
@@ -133,7 +143,9 @@ start-up and on every command. Raising a cap is a code change.
   after changing limits in `mpd_config.json`, `magnet_config.json`, `steerer_magnet_config.json`,
   `smu_config.json`, `vac_gauges_config.json`, `plc_config.json` or `fault_config.json` (the HMI's
   config editor does this itself), then restart the services and the HMI.
-- `mpd_config.json`: Spellman supplies - voltage and current-limit ranges, and the software arc
+- `mpd_config.json`: Spellman supplies - voltage and current-limit ranges; the current limit the
+  service sets before a voltage or an enable when a supply holds none (`default_current_ua`, 50 µA:
+  every power-up leaves it at 0, and with none the output can't rise); and the software arc
   detection (`arc_detection`: an output collapsed below 10 % of its setpoint on two polls in a row
   latches an arc fault until fault reset; not judged below 0.5 kV).
 - `config/recipes/`: the recipes (in git). The HMI's recipe panel and builder read and save

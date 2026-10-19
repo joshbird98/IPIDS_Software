@@ -5,6 +5,10 @@ The supplies are powered through the safety relay: while it is off (or its state
 buses are severed, the supplies report disabled with unknown readbacks, and commands are
 refused with that reason. Software arc detection (src/core/arc_detection.py) latches
 stat_arc_exceeded until fault reset; the PLC service turns it into a PLC fault.
+
+A supply comes up from every power-up holding a current limit of 0, and with none its output
+can't rise. Before a non-zero voltage or an enable, the service sets one (default_current_ua in
+mpd_config.json, else 50 uA) if the supply holds none (see ensure_current_limit).
 """
 import time
 from typing import Any, Dict
@@ -22,6 +26,7 @@ from src.drivers.spellman_mpd import (CMD_HV_ENABLE, CMD_REQ_KV, CMD_REQ_MA, CMD
 
 PLC_TELEMETRY_TIMEOUT = 2.0   # relay state counts as unknown (= off) if the PLC goes quiet this long
 HELD_SP_TOLERANCE_KV = 0.05   # a held setpoint read back this close to its hard cap is taken as at it
+DEFAULT_CURRENT_UA = 50.0     # current limit set when a supply holds none (mpd_config.json: default_current_ua)
 
 
 def _protocol_class():
@@ -123,6 +128,9 @@ class SpellmanMicroservice(DeviceService):
             self.heartbeat()
 
     def sever_connections(self):
+        # Unpowered, the supplies forget their setpoints: what was last set here is no longer what
+        # they hold (the poll falls back to these when a supply doesn't answer a setpoint query)
+        self.sp_cache.clear()
         for bus_id, hw in self.buses.items():
             if hw.connected and hw.sock:
                 self.log.info("Safety relay off: severing connection to bus '%s'.", bus_id)
@@ -175,6 +183,43 @@ class SpellmanMicroservice(DeviceService):
                     cleared += 1
         cmd.ok(f"software arc latches cleared; hardware fault clear sent to {cleared} supply(ies)")
 
+    # ------------------------------------------------------------------ current limit
+    @staticmethod
+    def default_current_ua(info: dict) -> float:
+        """The current limit to set when a supply holds none: the device's default_current_ua in
+        mpd_config.json, else DEFAULT_CURRENT_UA - kept within its min/max_current_ua."""
+        ua = info.get("default_current_ua", DEFAULT_CURRENT_UA)
+        if not hard_caps.is_number(ua) or ua <= 0:
+            ua = DEFAULT_CURRENT_UA
+        hi, lo = info.get("max_current_ua"), info.get("min_current_ua")
+        if hard_caps.is_number(hi) and hi > 0:
+            ua = min(ua, hi)
+        if hard_caps.is_number(lo):
+            ua = max(ua, lo)
+        return float(ua)
+
+    def ensure_current_limit(self, hw, prefix: str, info: dict) -> str:
+        """Set the default current limit if the supply holds none (0, or not read yet).
+
+        Every power-up leaves the limit at 0, and with none the output can't rise: the arc
+        detection then sees an output that collapsed. The limit used to come only from the HMI's
+        source panel, which sent 50 uA with each voltage - and only when the registry had current
+        limits for the supply. A voltage set from anywhere else (a recipe, the optimiser), or an HMI
+        reading a system_tags.json older than those limits, left the output at 0 and latched an
+        arc. Returns a note for the reply ('' if nothing was needed); raises IOError if the supply
+        won't take it."""
+        held = self.state.get(f"{prefix}.sp_actual_current")
+        if hard_caps.is_number(held) and held > 0:
+            return ""
+        ua = self.default_current_ua(info)
+        res = hw.transaction(info["address"], info["dev_type"], CMD_SET_MA, "=", f"{ua:07.1f}")
+        if not res or "*" in res:
+            raise IOError(f"the supply holds no current limit and did not accept {ua:g} uA (reply: {res!r}); "
+                          "without one its output can't rise")
+        self.sp_cache[f"{prefix}.sp_actual_current"] = ua
+        self.state[f"{prefix}.sp_actual_current"] = ua     # until the next poll reads it back
+        return f"current limit {'was 0' if held == 0 else 'not read yet'}, set to {ua:g} uA"
+
     # ------------------------------------------------------------------ commands
     def handle_command(self, cmd, prefix: str, leaf: str):
         target_dev = self.device_at(prefix)
@@ -199,11 +244,16 @@ class SpellmanMicroservice(DeviceService):
 
         if leaf == "sp_requested_voltage":
             if self.within_limits(cmd, value, "kV"):
+                try:
+                    note = self.ensure_current_limit(hw, prefix, info) if value else ""
+                except IOError as e:
+                    cmd.fail(f"voltage not set: {e}")
+                    return
                 formatted = f"{value * 1000.0:07.1f}"
                 res = hw.transaction(addr, dtype, CMD_SET_KV, "=", formatted)
                 if res and "*" not in res:
                     self.sp_cache[f"{prefix}.sp_actual_voltage"] = value
-                    cmd.ok(f"supply accepted {formatted} V")
+                    cmd.ok(f"supply accepted {formatted} V" + (f" ({note})" if note else ""))
                 else:
                     cmd.fail(f"supply did not accept the setpoint (reply: {res!r})")
         elif leaf == "sp_requested_current":
@@ -223,12 +273,19 @@ class SpellmanMicroservice(DeviceService):
                 cmd.reject(hard_caps.SPELLMAN_CAP_KV.explain("the voltage setpoint the supply holds", held)
                            + " Set the voltage here first.")
                 return
+            note = ""
+            if value:
+                try:
+                    note = self.ensure_current_limit(hw, prefix, info)
+                except IOError as e:
+                    cmd.fail(f"output not enabled: {e}")
+                    return
             res = hw.transaction(addr, dtype, CMD_HV_ENABLE, "=", "1" if value else "0")
             # A reply containing '*' is a refusal (any reply used to count as success, so a refused
             # 'disable' was reported as done while HV stayed on).
             if res and "*" not in res:
                 self.arc_detector(target_dev).restart()
-                cmd.ok("output enabled" if value else "output disabled")
+                cmd.ok(("output enabled" + (f" ({note})" if note else "")) if value else "output disabled")
             elif res is None:
                 cmd.fail("no reply from supply")
             else:

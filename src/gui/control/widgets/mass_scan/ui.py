@@ -5,6 +5,7 @@ from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import (QCheckBox, QDoubleSpinBox, QGridLayout, QGroupBox, QHBoxLayout, QHeaderView, QLabel,
                              QLineEdit, QPushButton, QSpinBox, QSplitter, QTableWidget, QVBoxLayout, QWidget)
 
+from src.gui.control.setpoint_box import SetpointBox
 from src.gui.control.widgets.mass_scan.axis import SmartCurrentAxis
 from src.sequencer.mass_scan import DEFAULT_EXPORT, NPLC_RANGE
 
@@ -14,8 +15,8 @@ OFF_STYLE = "background-color: #555555; color: #888888; font-weight: bold; paddi
 PANEL_WIDTH = 340
 
 
-def _spin(lo, hi, decimals, value, suffix="", step=None, tip=""):
-    box = QDoubleSpinBox()
+def _spin(lo, hi, decimals, value, suffix="", step=None, tip="", box=None):
+    box = box if box is not None else QDoubleSpinBox()
     box.setRange(lo, hi)
     box.setDecimals(decimals)
     box.setValue(value)
@@ -189,12 +190,14 @@ def _analysis_panel(w):
     grid = QGridLayout()
     w.lbl_energy_display = QLabel("--- keV")
     w.lbl_energy_display.setStyleSheet("font-weight: bold; color: #00E5FF;")
-    w.sp_k_factor = _spin(1.0, 10000.0, 2, 1391.9, step=1.0)
-    w.sp_i_offset = _spin(-10.0, 10.0, 3, 0.223, step=0.01)
+    # SetpointBox: "entered by hand" only when someone types or steps one (any focus-out used to
+    # relabel a fitted calibration as typed - and that label goes into "Calculate & set amps" markers)
+    w.sp_k_factor = _spin(1.0, 10000.0, 2, 1391.9, step=1.0, box=SetpointBox())
+    w.sp_i_offset = _spin(-10.0, 10.0, 3, 0.223, step=0.01, box=SetpointBox())
     w.sp_k_factor.valueChanged.connect(w._recalculate_mass_axis)
     w.sp_i_offset.valueChanged.connect(w._recalculate_mass_axis)
-    w.sp_k_factor.editingFinished.connect(w._calibration_typed)
-    w.sp_i_offset.editingFinished.connect(w._calibration_typed)
+    w.sp_k_factor.committed.connect(w._calibration_typed)
+    w.sp_i_offset.committed.connect(w._calibration_typed)
     grid.addWidget(QLabel("<b>Model:</b> AMU = k * (I + I_off)² / E"), 0, 0, 1, 2)
     for r, (label, widget) in enumerate((("Beam Energy (E):", w.lbl_energy_display),
                                          ("Calib. Constant (k):", w.sp_k_factor),
