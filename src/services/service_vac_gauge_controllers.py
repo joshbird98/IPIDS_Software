@@ -21,6 +21,7 @@ service restarts and writes the config back.
 import time
 from typing import Dict, Optional
 
+from src.core import hard_caps
 from src.core.device_service import DeviceService
 from src.core.log_setup import setup_logging
 from src.core.os_helper import harden_windows_process
@@ -113,6 +114,7 @@ class VacuumMicroservice(DeviceService):
         self._relay_differs = {}    # (node, relay, kind) -> (value, routine reads in a row giving it)
         self._relay_bad = {}        # (node, relay) -> reported as not matching (for the events)
         self._relays_checked = False    # the start-up check is done (unconfirmed relays alarm from then on)
+        self.relay_cap_problems = {}    # (node, relay) -> why its config values are refused (hard caps)
         self.silent_nodes = set()       # controllers that answered nothing at connect (not checked then)
         self.build_relay_maps()
         self.gv_config_problems = self._find_gv_config_problems()
@@ -145,7 +147,14 @@ class VacuumMicroservice(DeviceService):
                     pass
                 expected = {"ch": relay_value("ch", ch), "on": relay_value("on", params.get("on_val")),
                             "off": relay_value("off", params.get("off_val"))}
-                if node in NODE_IDS and relay in RELAY_PARAMS and None not in expected.values():
+                # The cap is judged on what would be written: a hand-edited file may hold "0.7" (text),
+                # which the editor refuses as not a number but float() here would turn into 0.7
+                cap = hard_caps.relay_cap(node, ch)
+                over = [k for k in ("on", "off") if expected[k] is not None and cap.breach(float(expected[k]))]
+                if over:            # a file edited past the editor: never written to the controller
+                    self.relay_cap_problems[(node, relay)] = cap.explain(
+                        f"vac_gauges_config.json node {node} relay {relay} {over[0]} point", float(expected[over[0]]))
+                elif node in NODE_IDS and relay in RELAY_PARAMS and None not in expected.values():
                     self.relay_expected[(node, relay)] = expected
                     self.relay_configured[(node, relay)] = dict(expected)
 
@@ -222,10 +231,14 @@ class VacuumMicroservice(DeviceService):
 
     def enforce_startup_config(self):
         """Gauge names and relay set points as in vac_gauges_config.json (written only if they differ)."""
-        if self.gv_config_problems and not self._gv_problems_reported:
+        if not self._gv_problems_reported:
             self._gv_problems_reported = True
-            self.events.log_general("Gate-valve permissive withheld: it judges VG1 and VG2 by their relays, and "
-                                    + "; ".join(self.gv_config_problems), severity="ERROR")
+            if self.gv_config_problems:
+                self.events.log_general("Gate-valve permissive withheld: it judges VG1 and VG2 by their relays, and "
+                                        + "; ".join(self.gv_config_problems), severity="ERROR")
+            for (node, relay), why in sorted(self.relay_cap_problems.items()):
+                if not any(why in p for p in self.gv_config_problems):
+                    self.events.log_general(f"Node {node} relay {relay} not set: {why}", severity="ERROR")
         if not self.config:
             self.events.log_general("WARNING: No config loaded. Skipping enforcement.")
             self._relays_checked = True
@@ -363,7 +376,8 @@ class VacuumMicroservice(DeviceService):
             relays = self.relays_of(gauge)
             if not relays:
                 problems.append(f"{name} has no relay in vac_gauges_config.json")
-            problems += [f"{name}'s relay {r} has no valid channel / on / off point in vac_gauges_config.json"
+            problems += [self.relay_cap_problems.get((gauge[0], r)) or
+                         f"{name}'s relay {r} has no valid channel / on / off point in vac_gauges_config.json"
                          for r in relays if (gauge[0], r) not in self.relay_expected]
         return problems
 
@@ -402,8 +416,9 @@ class VacuumMicroservice(DeviceService):
 
     # ------------------------------------------------------------------ commands
     def handle_command(self, cmd, subsystem: str, leaf: str):
-        """ion_beam.vacuum.controller_<node>.relay_<n>_on / _off: a relay set point, within the
-        registry limits of its graphix tag and with on below off. Channels come from the config."""
+        """ion_beam.vacuum.controller_<node>.relay_<n>_on / _off: a relay set point, within its
+        gauge's hard cap (src/core/hard_caps.py), the registry limits of its graphix tag, and with
+        on below off. Channels come from the config."""
         parts = cmd.tag.split('.')
         if len(parts) < 4 or "controller_" not in parts[2] or "relay_" not in parts[3]:
             cmd.reject("unsupported vacuum command")
@@ -423,6 +438,11 @@ class VacuumMicroservice(DeviceService):
             cmd.reject("only a relay's on / off set points can be set here (its channel comes from "
                        "vac_gauges_config.json)")
             return
+        exp = self.relay_expected.get((node, relay))
+        cap = hard_caps.relay_cap(node, exp["ch"] if exp else self.relay_to_channel_map.get((node, relay)))
+        if cap.breach(value):       # first, so the reason given is the cap's
+            cmd.reject(cap.explain(f"node {node} relay {relay} {kind} point", value))
+            return
         lim = self.registry_limits.get(f"ion_beam.facilities.{GRAPHIX.get(node)}.relay_{relay}_{kind}") \
             or self.registry_limits.get(cmd.tag) or {}
         lo, hi = lim.get("min_val"), lim.get("max_val")
@@ -433,7 +453,6 @@ class VacuumMicroservice(DeviceService):
             cmd.reject(f"{value:.1E} mbar is outside {lo:g}..{hi:g} mbar")
             return
         text = f"{value:.1E}"
-        exp = self.relay_expected.get((node, relay))
         if exp is not None:
             on, off = (text, exp["off"]) if kind == "on" else (exp["on"], text)
             if not float(on) < float(off):
@@ -592,7 +611,8 @@ class VacuumMicroservice(DeviceService):
                 and self.gv_relays_confirmed())
         self.state["ion_beam.vacuum.gv_permissive_ready"] = 1.0 if safe else 0.0
         states = [self.relay_state(n, r) for n, r in self.relay_expected]
-        if self.gv_config_problems or "differs" in states or (self._relays_checked and None in states):
+        if self.gv_config_problems or self.relay_cap_problems or "differs" in states or \
+                (self._relays_checked and None in states):
             self.state[MISMATCH_TAG] = 1.0      # differs, or still unread after the start-up check: an alarm
         else:
             self.state[MISMATCH_TAG] = None if None in states else 0.0

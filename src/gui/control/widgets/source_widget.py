@@ -7,7 +7,7 @@ from PyQt6.QtWidgets import (
 )
 from PyQt6.QtCore import Qt
 
-from src.core import paths
+from src.core import hard_caps, paths
 from src.core.theme import (
     COLOR_OK,
     COLOR_FAULT,
@@ -59,10 +59,13 @@ class IonSourceWidget(QWidget):
         self.cmd_thread.send_command(target, tag, value)
 
     def _apply_limits(self, sp_box, tag):
-        """The setpoint box only offers what the service will accept (registry limits)."""
+        """The setpoint box only offers what the service will accept (registry limits); a hard cap
+        among them is named in its tooltip (a value typed past the box's maximum just doesn't go in)."""
         if tag in self._limited_tags:
             lo, hi = self._limited_tags[tag]
             sp_box.setRange(lo, hi)
+        sp_box.setProperty("cap_note", hard_caps.note(tag))
+        sp_box.setToolTip(hard_caps.note(tag))
 
     def _dispatch_spellman_setpoints(self, base_tag: str, voltage: float):
         """Dispatches voltage and autonomously sets a safe 50uA current limit to unclamp the CC loop."""
@@ -440,5 +443,5 @@ class IonSourceWidget(QWidget):
                 lbl_badge.show()
             else:
                 sp_box.setEnabled(not comp_lockout)
-                sp_box.setToolTip(f"Disabled: {comp_lock_reason}" if comp_lockout else "")
+                sp_box.setToolTip(f"Disabled: {comp_lock_reason}" if comp_lockout else sp_box.property("cap_note") or "")
                 lbl_badge.hide()

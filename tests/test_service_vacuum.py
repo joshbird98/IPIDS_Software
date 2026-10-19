@@ -238,7 +238,11 @@ def test_relay_commands_are_limited(idle):
     status, reason = command(svc, "relay_1_ch", 3)
     assert status == "rejected" and "channel comes from vac_gauges_config.json" in reason
     status, reason = command(svc, "relay_1_on", 2000.0)
-    assert status == "rejected" and "outside" in reason
+    assert status == "rejected" and reason.startswith("Hard cap")                # the cap is said first
+    status, reason = command(svc, "relay_1_on", 2e-5)                         # VG1: the gate valve's relay
+    assert status == "rejected" and reason.startswith("Hard cap") and "gate valve may open" in reason
+    status, reason = command(svc, "relay_1_on", 1.5, node=20)                  # VG4: the other relays' cap
+    assert status == "rejected" and "1 mbar cap" in reason
     status, reason = command(svc, "relay_1_on", 9e-6)                          # off is 8.0E-06
     assert status == "rejected" and "below the off point" in reason
     assert graphix.relays[(10, 1)]["on"] == pytest.approx(5.5e-6) and svc.gv_relays_confirmed()
@@ -343,3 +347,64 @@ def test_a_controller_that_comes_back_gets_the_check_it_missed(idle, monkeypatch
     assert "node 20 answers again" in " ".join(e["message"] for e in events.events)
     svc.evaluate_gv_permissive()
     assert svc.state[MISMATCH] == 0.0 and svc.state[PERMISSIVE] == 1.0
+
+
+def test_config_values_past_a_hard_cap_are_never_written(monkeypatch, fake_events):
+    """A vac_gauges_config.json edited past the editor: those relay values aren't written to the
+    controller; for VG1 / VG2 the gate-valve permissive is withheld, with the reason."""
+    monkeypatch.setenv("SINDIE_SIMULATE", "1")
+    monkeypatch.delenv("SINDIE_SIM_FAULTS", raising=False)
+    from src.sim import vacuum as simvac
+    simvac._GRAPHIX = None
+    import src.services.service_vac_gauge_controllers as vac
+    from src.core import config_store
+    monkeypatch.setattr(vac.time, "sleep", lambda s: None)
+    config = config_store.read("vac_gauges_config.json")
+    config["10"]["relays"]["1"].update(on_val=0.7, off_val=0.8)
+    monkeypatch.setattr(vac.VacuumMicroservice, "load_config", lambda self, name, default: config)
+    svc = vac.VacuumMicroservice()
+    try:
+        svc.events = fake_events
+        svc.link.connect()
+        written = []
+        real_write = simvac.shared_graphix().write
+        monkeypatch.setattr(simvac.shared_graphix(), "write",
+                            lambda node, group, param, value: written.append((node, param)) or real_write(node, group, param, value))
+        check_all_relays(svc)
+        assert (10, "2") not in written and (10, "3") not in written         # relay 1's on / off untouched
+        assert svc.state[PERMISSIVE] == 0.0 and svc.state[MISMATCH] == 1.0
+        assert "Hard cap" in errors(fake_events)[0] and "gate valve may open" in errors(fake_events)[0]
+    finally:
+        svc.shutdown()
+
+
+@pytest.mark.parametrize("relay, values, gate_valve", [
+    ("1", {"on_val": "7e-1", "off_val": "8e-1"}, True),     # text, as a hand edit might leave it
+    ("3", {"on_val": 1.5, "off_val": 2.0}, False),         # VG3: the other relays' 1 mbar cap
+])
+def test_config_values_past_a_cap_are_never_written(monkeypatch, fake_events, relay, values, gate_valve):
+    monkeypatch.setenv("SINDIE_SIMULATE", "1")
+    monkeypatch.delenv("SINDIE_SIM_FAULTS", raising=False)
+    from src.sim import vacuum as simvac
+    simvac._GRAPHIX = None
+    import src.services.service_vac_gauge_controllers as vac
+    from src.core import config_store
+    monkeypatch.setattr(vac.time, "sleep", lambda s: None)
+    config = config_store.read("vac_gauges_config.json")
+    config["10"]["relays"][relay].update(values)
+    monkeypatch.setattr(vac.VacuumMicroservice, "load_config", lambda self, name, default: config)
+    svc = vac.VacuumMicroservice()
+    try:
+        svc.events = fake_events
+        svc.link.connect()
+        params = vac.RELAY_PARAMS[int(relay)]
+        written = []
+        real_write = simvac.shared_graphix().write
+        monkeypatch.setattr(simvac.shared_graphix(), "write", lambda node, group, param, value:
+                            written.append((node, param)) or real_write(node, group, param, value))
+        check_all_relays(svc)
+        assert not {(10, params["on"]), (10, params["off"])} & set(written)
+        assert any("Hard cap" in e for e in errors(fake_events))
+        assert svc.state[MISMATCH] == 1.0 and svc.state[PERMISSIVE] == (0.0 if gate_valve else 1.0)
+    finally:
+        svc.shutdown()

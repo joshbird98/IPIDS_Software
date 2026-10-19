@@ -12,6 +12,7 @@ from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import (QApplication, QFileDialog, QInputDialog, QLabel, QMessageBox, QTableWidgetItem,
                              QWidget)
 
+from src.core import hard_caps
 from src.core.mass_calibration import current_for_mass, mass_for_current
 from src.gui.control.sequencer_link import FETCH_ORIGIN, OFFLINE_TEXT, SequencerSlot
 from src.gui.control.widgets.mass_scan import isotopes, peaks, traces, ui
@@ -61,6 +62,8 @@ class PrecisionMassScannerWidget(QWidget):
         if limits:
             for box in (self.sp_start, self.sp_stop):
                 box.setRange(*limits)
+        for box in (self.sp_start, self.sp_stop):
+            box.setToolTip(hard_caps.note(SP_TAG))
         self._lock_ui(False)
         self._update_eta()
 

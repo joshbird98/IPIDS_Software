@@ -10,6 +10,7 @@ and at once if the PSU reports its output on anyway; it does not come back on by
 import time
 from dataclasses import dataclass, field
 
+from src.core import hard_caps
 from src.core.device_service import DeviceService
 from src.drivers.magnet_modbus import IO_ERRORS, RatingsUnknown
 from src.core.log_setup import Throttle, setup_logging
@@ -22,6 +23,7 @@ from src.core.network_map import (
 
 FORCE_SAFE_REPEAT_S = 1.0     # while interlocked, re-send 'output off' this often
 SETTLE_S = 1.5                # after a setpoint change, before judging the coil resistance
+HELD_SP_TOLERANCE = 0.05      # A / V: a held setpoint read back this close to its hard cap is taken as at it
 
 
 @dataclass(frozen=True)
@@ -95,6 +97,14 @@ class MagnetPsuService(DeviceService):
         self.base = k.base
         self.address = f"{k.ip}:{k.port}"
         self.limits = self.load_config(k.config_file, k.defaults)
+        self.cap_current, self.cap_voltage = hard_caps.magnet_caps(k.config_file)
+        for key, cap in (("max_current", self.cap_current), ("max_voltage", self.cap_voltage)):
+            value = self.limits.get(key)            # a file edited past the editor: the cap is used instead
+            if value is not None and (not hard_caps.is_number(value) or cap.breach(value)):
+                why = cap.explain(f"{k.config_file} {key}", value) if hard_caps.is_number(value) or \
+                    cap.breach(value) else f"{k.config_file} {key} {value!r} is not a number."
+                self.events.log_general(f"{why} {cap.high:g} {cap.unit} is used.", severity="ERROR")
+                self.limits[key] = cap.high
         self.hw = make_driver(k)
         self.sp_cache = {}
         self.last_setpoint_ts = 0.0
@@ -160,7 +170,10 @@ class MagnetPsuService(DeviceService):
     # ------------------------------------------------------------------ setpoints
     def apply_smart_setpoint(self, target_current: float):
         """Voltage limit from the current (I x R x overhead, at least 1 V, at most max_voltage; 0 V
-        for 0 A), raised before the current when going up and lowered after it when going down."""
+        for 0 A), raised before the current when going up and lowered after it when going down.
+        Never past the hard cap (the commands are checked before; this is the last line)."""
+        if self.cap_current.breach(abs(target_current)):
+            raise ValueError(self.cap_current.explain("the current", abs(target_current)))
         if target_current == 0:
             target_voltage = 0.0        # as force_safe_outputs; zero is also all the PSU takes without its ratings
         else:
@@ -174,6 +187,21 @@ class MagnetPsuService(DeviceService):
             self.hw.set_voltage(target_voltage)
         self.sp_cache[f"{self.base}.sp_actual_voltage"] = target_voltage
         self.sp_cache[f"{self.base}.sp_actual_current"] = target_current
+
+    def _held_setpoint_past_cap(self) -> str:
+        """Why switching the output on is refused, if the setpoints the PSU holds (e.g. set on its
+        front panel) are past the hard caps - switching on would drive them - else ''."""
+        held = self.hw.read_setpoints()
+        if held is None:
+            return ""
+        volts, amps = held
+        for cap, value, what in ((self.cap_current, amps, "current"), (self.cap_voltage, volts, "voltage")):
+            # (read back through the PSU's setpoint resolution: a value set exactly at the cap may read
+            # a hair over it)
+            if cap.breach(value) and not abs(value) <= cap.high + HELD_SP_TOLERANCE:
+                return (f"{cap.explain(f'the {what} setpoint the PSU holds', value)} Set the current here first "
+                        "(that also sets the voltage limit).")
+        return ""
 
     def execute_degauss_cycle(self):
         if not self.degauss_active:
@@ -190,6 +218,10 @@ class MagnetPsuService(DeviceService):
         self.log.info("Degauss step %d/%d: %.1f A", self.degauss_step_idx + 1, len(steps), amps)
         try:
             self.apply_smart_setpoint(amps)
+        except ValueError as e:       # a step past the hard cap (refused at the command; a file edited since)
+            self.degauss_active = False
+            self.events.log_general(f"Degauss aborted - {e}", severity="ERROR")
+            return
         except RatingsUnknown as e:   # reconnected without the PSU's ratings: end at 0 A, as the full sequence does
             self.degauss_active = False
             try:
@@ -236,11 +268,19 @@ class MagnetPsuService(DeviceService):
                     self.last_setpoint_ts = time.time()
                     cmd.ok()
             elif leaf == "cmd_enable":
+                if value and (why := self._held_setpoint_past_cap()):
+                    cmd.reject(why)
+                    return
                 self.hw.set_output(bool(value))
                 self.last_setpoint_ts = time.time()
                 cmd.ok("output on" if value else "output off")
             elif leaf == "cmd_degauss":
-                if value:
+                over = [abs(s) for s in self.limits.get("degauss_steps_amps", []) if self.cap_current.breach(abs(s))]
+                if value and over:
+                    cmd.reject(self.cap_current.explain(f"{self.kind.config_file} degauss step", max(over)))
+                elif value and (why := self._held_setpoint_past_cap()):     # it switches the output on
+                    cmd.reject(why)
+                elif value:
                     self.events.log_general("Initiating autonomous Degauss sequence...")
                     self.degauss_active = True
                     self.degauss_step_idx = 0
@@ -252,6 +292,8 @@ class MagnetPsuService(DeviceService):
             else:
                 cmd.reject(f"unsupported command '{leaf}'")
         except RatingsUnknown as e:     # the driver refused it (no ratings): nothing wrong with the link
+            cmd.reject(str(e))
+        except ValueError as e:         # apply_smart_setpoint's hard-cap check (the last line)
             cmd.reject(str(e))
         except IO_ERRORS as e:   # PSU write failed part-way (anything else: DeviceService answers 'internal error')
             cmd.fail(f"PSU write failed: {e}")

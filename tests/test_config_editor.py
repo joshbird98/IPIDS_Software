@@ -327,3 +327,49 @@ def test_a_service_stopped_on_purpose_stays_stopped(env):
     dlg._save_and_restart()
     assert cs.read("magnet_config.json", str(env.cfg))["max_current"] == 90.0
     assert env.cmds.sent == [] and "was not restarted: it is stopped" in env.boxes[-1][1]
+
+
+def test_a_hard_cap_is_refused_and_shown_on_the_field(env):
+    """Past a hard cap nothing gets applied - there is no tick to confirm it - and the field turns red
+    with the reason as its tooltip."""
+    from src.gui.control.dialogs import config_editor_dialog as ced
+    dlg = open_file(env.make(), "vac_gauges_config.json")
+    before = (env.cfg / "vac_gauges_config.json").read_bytes()
+    widget_at(dlg, "10", "relays", "1", "on_val").setText("0.7")
+    widget_at(dlg, "10", "relays", "1", "off_val").setText("0.8")
+    dlg._save_and_restart()
+    kind, text = env.boxes[-1]
+    assert kind == "warning" and "over a hard cap" in text and "gate valve may open" in text
+    assert env.confirm["shown"] == []                                  # no confirmation offered at all
+    assert (env.cfg / "vac_gauges_config.json").read_bytes() == before
+    field = widget_at(dlg, "10", "relays", "1", "on_val")
+    assert field.styleSheet() == ced.CAP_STYLE and "1e-05 mbar cap" in field.toolTip()
+    field.setText("5.5e-06")
+    widget_at(dlg, "10", "relays", "1", "off_val").setText("1e-05")    # at the cap is allowed
+    dlg._save_and_restart()
+    assert field.styleSheet() == "" and env.boxes[-1][0] == "information" and "Saved" in env.boxes[-1][1]
+    assert cs.read("vac_gauges_config.json", str(env.cfg))["10"]["relays"]["1"]["off_val"] == 1e-05
+
+
+def test_history_wont_put_back_a_version_past_a_cap(env, monkeypatch):
+    from src.gui.control.dialogs import config_editor_dialog as ced
+    data = json.loads((env.cfg / "magnet_config.json").read_text())
+    (env.cfg / "magnet_config.json").write_text(json.dumps(dict(data, max_current=120.0)))   # edited by hand
+    dlg = open_file(env.make(), "magnet_config.json")
+    widget_at(dlg, "max_current").setText("90")
+    dlg._save_and_restart()                                           # the 120 A file is kept as a backup
+    assert cs.read("magnet_config.json", str(env.cfg))["max_current"] == 90.0
+    monkeypatch.setattr(ced.QInputDialog, "getItem", staticmethod(lambda *a, **k: (a[3][0], True)))
+    dlg._show_history()
+    assert cs.read("magnet_config.json", str(env.cfg))["max_current"] == 90.0     # not put back
+    assert "Hard cap: max_current 120 A is above the 95 A cap" in env.boxes[-1][1]
+
+
+def test_a_file_already_past_a_cap_is_shown_when_opened(env):
+    from src.gui.control.dialogs import config_editor_dialog as ced
+    data = json.loads((env.cfg / "magnet_config.json").read_text())
+    (env.cfg / "magnet_config.json").write_text(json.dumps(dict(data, max_current=120.0)))   # edited by hand
+    dlg = env.make()
+    dlg.cb_files.setCurrentText("magnet_config.json")
+    assert not dlg.lbl_problems.isHidden() and "Hard cap: max_current 120 A" in dlg.lbl_problems.text()
+    assert widget_at(dlg, "max_current").styleSheet() == ced.CAP_STYLE

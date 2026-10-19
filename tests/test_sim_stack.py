@@ -76,7 +76,7 @@ def test_einzel_arc_latches_a_plc_fault_until_reset(stack):
 
 def test_rejections_carry_reasons(stack):
     r = stack.cmd("spellman", "ion_beam.source.einzel.sp_requested_voltage", 99.0)
-    assert r["status"] == C.REJECTED and "range" in r["reason"]
+    assert r["status"] == C.REJECTED and "Hard cap" in r["reason"]
     r = stack.cmd("plc", "ion_beam.source.chamber.stat_vac_ok_for_gv", True)
     assert r["status"] == C.REJECTED
     r = stack.cmd("magnet", "ion_beam.beamline.magnet.sp_requested_voltage", 3.0)

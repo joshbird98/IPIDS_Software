@@ -64,7 +64,7 @@ def test_sets_the_current_from_the_mass_scan_calibration(optics):
 @pytest.mark.parametrize("telemetry, why", [
     ({"ion_beam.source.extraction.rb_voltage": 5.0}, "Beam energy unknown"),     # target readback stale
     ({"ion_beam.source.target.rb_voltage": 0.0, "ion_beam.source.extraction.rb_voltage": 0.0}, "Calculation error"),
-    ({"ion_beam.source.target.rb_voltage": 95.0, "ion_beam.source.extraction.rb_voltage": 5.0}, "Out of range"),
+    ({"ion_beam.source.target.rb_voltage": 95.0, "ion_beam.source.extraction.rb_voltage": 5.0}, "Hard cap"),
 ])
 def test_refuses_without_a_usable_energy_or_in_range_result(optics, telemetry, why):
     w, cmd, events, warnings = optics
@@ -72,6 +72,14 @@ def test_refuses_without_a_usable_energy_or_in_range_result(optics, telemetry, w
     w.sp_mass.setValue(250.0)
     w._calculate_mass()
     assert warnings == [why] and not cmd.sent
+
+
+def test_a_current_below_zero_is_out_of_range(optics):
+    w, cmd, events, warnings = optics
+    w._latest_telemetry = {"ion_beam.source.target.rb_voltage": 0.0, "ion_beam.source.extraction.rb_voltage": 0.005}
+    w.sp_mass.setValue(1.0)                                   # 5 eV: below the calibration's offset
+    w._calculate_mass()
+    assert warnings == ["Out of range"] and not cmd.sent
 
 
 def test_refuses_without_a_calibration(optics):

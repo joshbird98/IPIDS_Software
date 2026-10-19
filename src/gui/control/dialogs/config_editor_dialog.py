@@ -6,6 +6,8 @@ Safeguards (the checking, backups and git commit are in src/core/config_store.py
   * on apply, the edits are checked (types, ranges, limits the right way round...), the changes
     are listed for confirmation with an optional reason, and a number that changes by more than
     a factor of 3 needs a tick to confirm it was meant (95.0 typed as 950),
+  * a value over a hard cap (src/core/hard_caps.py: VG relays, Spellman, magnet, SMU) is refused
+    outright - no tick gets past it - and its field is marked red with the reason as tooltip,
   * nothing is written if the file changed on disk since it was opened (a hand edit or git pull
     would otherwise be silently undone),
   * the previous file is kept in config/backups/ ('History...' puts one back), only the changed
@@ -25,7 +27,7 @@ from PyQt6.QtWidgets import (QCheckBox, QComboBox, QDialog, QDialogButtonBox, QH
                              QLineEdit, QListWidget, QMessageBox, QPushButton, QTreeWidget, QTreeWidgetItem,
                              QVBoxLayout)
 
-from src.core import config_store, paths
+from src.core import config_store, hard_caps, paths
 from src.core.config_store import REGISTRY_INPUTS, ConfigError
 
 log = logging.getLogger("hmi.config_editor")
@@ -57,6 +59,9 @@ HMI_TOO = {"fault_config.json"}          # the HMI reads these at start-up as we
 SERVICE_CHOICES = ["service_events", "service_logger", "service_data_compactor", "service_plc", "service_monitor",
                    "service_alarms", "service_vac_gauge_controllers", "service_source_turbo", "service_magnet_psu",
                    "service_steerer_magnet_psu", "service_spellman_mpd", "service_smu", "service_sequencer"]
+
+
+CAP_STYLE = "background-color: #FFCDD2; border: 2px solid #C62828; color: #B71C1C; font-weight: bold;"
 
 
 def format_float(value: float) -> str:
@@ -210,6 +215,7 @@ class ConfigEditorDialog(QDialog):
         self.original = data
         self._populate_tree(self.tree.invisibleRootItem(), data, ())
         self.tree.expandAll()
+        self._mark_caps(filename, data)
         self.btn_save.setEnabled(True)
         self._show_problems(problems, "Problems in the file as it is now (the services are using it - fix them "
                                       "here, or put back a working version with History...):")
@@ -243,8 +249,27 @@ class ConfigEditorDialog(QDialog):
         if key == "bus_id":
             w.setEnabled(False)
             w.setToolTip("Bus ID cannot be changed as it maps to physical hardware and network configs.")
+        w.setProperty("plain_tip", w.toolTip())
         self.tree.setItemWidget(item, 1, w)
         self._leaves.append((item, path, value))
+
+    def _mark_caps(self, filename, data):
+        """Fields past a hard cap in red, with the reason as their tooltip (cleared once they're
+        within it again); the first one is scrolled into view. Returns how many there are."""
+        breaches = {v.path: v.message for v in hard_caps.violations(filename, data)}
+        first = None
+        for item, path, _ in self._leaves:
+            w = self.tree.itemWidget(item, 1)
+            if path in breaches:
+                w.setStyleSheet(CAP_STYLE)
+                w.setToolTip(breaches[path])
+                first = first or item
+            elif w.styleSheet() == CAP_STYLE:
+                w.setStyleSheet("")
+                w.setToolTip(w.property("plain_tip") or "")
+        if first is not None:
+            self.tree.scrollToItem(first)
+        return len(breaches)
 
     # ------------------------------------------------------------------ edits
     @staticmethod
@@ -368,6 +393,14 @@ class ConfigEditorDialog(QDialog):
             QMessageBox.warning(self, "Not Applied", f"Check your inputs:\n\n{e}")
             return
         problems = config_store.check(filename, data, self.original)
+        if self._mark_caps(filename, data):
+            capped = [p for p in problems if p.startswith("Hard cap:")]
+            others = [p for p in problems if not p.startswith("Hard cap:")]
+            QMessageBox.warning(self, "Refused: Hard Cap",
+                                f"{filename} was not changed: a value is over a hard cap (marked red - hover "
+                                "over it for the reason).\n\n• " + "\n• ".join(capped)
+                                + ("\n\nAlso:\n• " + "\n• ".join(others) if others else ""))
+            return
         if problems:
             QMessageBox.warning(self, "Not Applied", f"{filename} would have problems the services trip over:"
                                                      "\n\n• " + "\n• ".join(problems))

@@ -10,6 +10,7 @@ from dataclasses import asdict, dataclass
 
 import numpy as np
 
+from src.core import hard_caps
 from src.sequencer.jobs import GeneratorJob
 from src.sequencer.points import PointLog
 from src.sequencer.protocol import OPTIMISER, key
@@ -77,7 +78,10 @@ class OptimiserConfig:
                 raise ValueError(f"{axis.upper()} start/stop must be finite numbers")
             if start == stop:
                 raise ValueError(f"{axis.upper()} start and stop are the same")
+            cap = hard_caps.command_cap(tag)
             for v in (start, stop):
+                if cap is not None and cap.breach(v):                    # said as the cap, with its reason
+                    raise ValueError(cap.explain(f"{axis.upper()} {tag}", v))
                 if not lo <= v <= hi:
                     raise ValueError(f"{axis.upper()} {v:g} is outside the allowed range [{lo:g}, {hi:g}] of {tag}")
             if not STEPS_RANGE[0] <= getattr(cfg, f"{axis}_steps") <= STEPS_RANGE[1]:
@@ -180,6 +184,10 @@ class OptimiserJob(GeneratorJob):
         if not self.active or self._phase != "body":
             return False, "no sweep is running - set the values directly", None
         reg = self.ctx.registry
+        for axis, v in (("x", x), ("y", y)):
+            cap = hard_caps.command_cap(getattr(self.cfg, f"{axis}_tag"))
+            if cap is not None and cap.breach(v):
+                return False, cap.explain(f"{axis.upper()}", v), None
         if not (self.cfg.within("x", x, reg) and self.cfg.within("y", y, reg)):
             return False, f"({x:g}, {y:g}) is outside the setpoints' allowed ranges", None
         self.goto = (x, y)

@@ -171,9 +171,15 @@ simulator; none of it has been tried on the real hardware yet (see "Lab PC valid
      use it) instead of every service. The PLC-service restart still pauses the PC watchdog for a few
      seconds, as a restart from the services panel does - never seen to trip anything.
    - magnet services' hung timeout 2 s -> 3 s (one unanswered Modbus request holds them ~2 s).
-   - waiting for numbers: hard caps (fixed limits in the code, past which the editor - and so the
-     registry limits for the HMI, recipes and sequencer - can't go) for VG1/VG2 relays (and the other
-     relays?), each Spellman's max_value, magnet / steerer max_current and max_voltage, SMU range.
+   - hard caps (src/core/hard_caps.py), Josh's numbers: VG1/VG2 relay points 1e-5 mbar, other relays
+     1 mbar, every Spellman 22 kV, magnet 95 A / 25 V, steerer 80 A / 40 V, SMU +-200 V. The editor
+     refuses a value past one (no tick gets past it) and marks the field red with the reason; the
+     registry's setpoint limits are kept within them; the services refuse commands past them and
+     don't use config values past them (magnet: the cap is used, with an ERROR event; vacuum: the
+     relay isn't written, and for VG1/VG2 the gate-valve permissive is withheld); ENABLE is refused
+     while a Spellman or magnet PSU holds a setpoint past its cap (e.g. set at its front panel); mass
+     scans, the optimiser and "Calculate & set amps" name the cap when they refuse; the HMI's setpoint
+     boxes name their cap in the tooltip (a value typed past a box's maximum just doesn't go in).
 7. Future: a one-page interlock overview (every permissive and what is holding it), as discussed.
 
 ## Notes

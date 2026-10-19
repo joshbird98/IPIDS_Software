@@ -6,6 +6,7 @@ import sys
 if __package__ in (None, ""):
     # Run as a script (python src/utils/build_registry.py): make 'src' importable
     sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")))
+from src.core import hard_caps  # noqa: E402
 from src.core.spellman_locations import LOCATIONS  # noqa: E402
 
 # --- Configuration & Constants ---
@@ -115,9 +116,11 @@ def get_vacuum_tags(config_dir):
                 else:
                     continue
 
+                # Within the transducer's range, and its gauge's hard cap (src/core/hard_caps.py)
+                relay_max = min(LEYBOLD_MAX_MBAR, hard_caps.relay_cap(node_id, relay_params.get("channel")).high)
                 tags[f"{base_relay_tag}_on"] = {
                     "source": "service_vacuum", "datatype": "REAL", "writable": True,
-                    "auto_controllable": True, "min_val": LEYBOLD_MIN_MBAR, "max_val": LEYBOLD_MAX_MBAR,
+                    "auto_controllable": True, "min_val": LEYBOLD_MIN_MBAR, "max_val": relay_max,
                     "unit": "mB", "default_scale": "log", "multiplier": 1.0,
                     "description": f"Node {node_id} Relay {relay_id} Turn-On Setpoint",
                     "default_label": f"Relay {relay_id} ON", "short_name": "ON SP"
@@ -125,7 +128,7 @@ def get_vacuum_tags(config_dir):
 
                 tags[f"{base_relay_tag}_off"] = {
                     "source": "service_vacuum", "datatype": "REAL", "writable": True,
-                    "auto_controllable": True, "min_val": LEYBOLD_MIN_MBAR, "max_val": LEYBOLD_MAX_MBAR,
+                    "auto_controllable": True, "min_val": LEYBOLD_MIN_MBAR, "max_val": relay_max,
                     "unit": "mB", "default_scale": "log", "multiplier": 1.0,
                     "description": f"Node {node_id} Relay {relay_id} Turn-Off Setpoint",
                     "default_label": f"Relay {relay_id} OFF", "short_name": "OFF SP"
@@ -189,8 +192,8 @@ def get_spellman_tags(config_dir):
             # Extract hardware limits, converting V to kV to match registry units
             min_v = dev_info.get("min_value")
             max_v = dev_info.get("max_value")
-            min_kv = (min_v / 1000.0) if min_v is not None else None
-            max_kv = (max_v / 1000.0) if max_v is not None else None
+            min_kv = hard_caps.clamp((min_v / 1000.0) if min_v is not None else None, hard_caps.SPELLMAN_CAP_KV)
+            max_kv = hard_caps.clamp((max_v / 1000.0) if max_v is not None else None, hard_caps.SPELLMAN_CAP_KV)
 
             # Readbacks
             tags[f"{base_tag}.rb_voltage"] = {
@@ -263,7 +266,7 @@ def get_magnet_tags(config_dir):
     except FileNotFoundError:
         mag_config = {}
 
-    max_i = mag_config.get("max_current")
+    max_i = hard_caps.clamp(mag_config.get("max_current"), hard_caps.magnet_caps("magnet_config.json")[0])
     min_i = 0.0 if max_i is not None else None
 
     # Readbacks
@@ -336,7 +339,7 @@ def get_steerer_magnet_tags(config_dir):
     except FileNotFoundError:
         mag_config = {}
 
-    max_i = mag_config.get("max_current")
+    max_i = hard_caps.clamp(mag_config.get("max_current"), hard_caps.magnet_caps("steerer_magnet_config.json")[0])
     min_i = 0.0 if max_i is not None else None
 
     # Readbacks
@@ -409,8 +412,8 @@ def get_smu_tags(config_dir):
     except FileNotFoundError:
         smu_config = {}
 
-    min_v = smu_config.get("min_v")
-    max_v = smu_config.get("max_v")
+    min_v = hard_caps.clamp(smu_config.get("min_v"), hard_caps.SMU_CAP)
+    max_v = hard_caps.clamp(smu_config.get("max_v"), hard_caps.SMU_CAP)
 
     tags[f"{base_tag}.stat_comms_fail"] = {
         "source": source, "datatype": "BOOL", "writable": False, "unit": "", "default_scale": "linear",

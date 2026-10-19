@@ -8,6 +8,7 @@ from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import (QDoubleSpinBox, QGridLayout, QGroupBox, QHBoxLayout, QLabel, QMessageBox, QPushButton,
                              QVBoxLayout, QWidget)
 
+from src.core import hard_caps
 from src.core.commands import route_for_tag
 from src.core.mass_calibration import current_for_mass
 from src.core.theme import COLOR_BUTTON_STANDARD, COLOR_FAULT, COLOR_INACTIVE, COLOR_OK
@@ -108,6 +109,7 @@ class BeamlineOpticsWidget(QWidget):
                                                          (0.0, 80.0)))
         self.sp_x_steer.setSuffix(" A")
         self.sp_x_steer.setDecimals(2)
+        self.sp_x_steer.setToolTip(hard_caps.note("ion_beam.beamline.steerer_magnet.sp_requested_current"))
         self.sp_x_steer.setSingleStep(0.1)
         self.sp_x_steer.setKeyboardTracking(False)
         self.sp_x_steer.editingFinished.connect(
@@ -156,6 +158,7 @@ class BeamlineOpticsWidget(QWidget):
                                                              (0.0, 80.0)))
         self.sp_mag_current.setSuffix(" A")
         self.sp_mag_current.setDecimals(2)
+        self.sp_mag_current.setToolTip(hard_caps.note("ion_beam.beamline.magnet.sp_requested_current"))
         self.sp_mag_current.setSingleStep(0.01)
         self.sp_mag_current.setKeyboardTracking(False)
         self.sp_mag_current.editingFinished.connect(
@@ -228,6 +231,11 @@ class BeamlineOpticsWidget(QWidget):
         except ValueError:
             self._warn("Calculation error", f"Beam energy is {energy_ev / 1000.0:.3f} keV - cannot resolve a mass.")
             return
+        cap = hard_caps.command_cap("ion_beam.beamline.magnet.sp_requested_current")
+        if cap is not None and cap.breach(amps):
+            self._warn("Hard cap", f"{target_amu:g} amu at {energy_ev / 1000.0:.3f} keV needs {amps:.2f} A.\n\n"
+                                   + cap.explain("that current", amps))
+            return
         if not 0.0 <= amps <= self.sp_mag_current.maximum():
             self._warn("Out of range", f"{target_amu:g} amu at {energy_ev / 1000.0:.3f} keV needs {amps:.2f} A, "
                                        f"outside 0 - {self.sp_mag_current.maximum():g} A.")
@@ -289,6 +297,7 @@ class BeamlineOpticsWidget(QWidget):
 
         sp_box = QDoubleSpinBox()
         sp_box.setRange(*self._limited_tags.get(f"{base_tag}.sp_requested_voltage", (min_v, max_v)))
+        sp_box.setToolTip(hard_caps.note(f"{base_tag}.sp_requested_voltage"))
         sp_box.setSuffix(f" {pri_unit}")
         sp_box.setDecimals(3)
         sp_box.setSingleStep(0.001)
@@ -343,7 +352,8 @@ class BeamlineOpticsWidget(QWidget):
             mag_reason = "Magnet hardware interlock/cooling fault."
         self._lock([self.btn_mag_en], mag_reason,
                    "Click twice to switch the magnet ON (confirm); once to switch it OFF.")
-        self._lock([self.sp_mag_current], mag_reason, "Set manual magnet current")
+        self._lock([self.sp_mag_current], mag_reason,
+                   "Set manual magnet current. " + hard_caps.note("ion_beam.beamline.magnet.sp_requested_current"))
         self._lock([self.btn_mag_deg], mag_reason, "Click to trigger autonomous degaussing sequence")
         self._lock([self.sp_mass], mag_reason, "Target mass for auto-tuning")
         self._lock([self.btn_calc_mass], mag_reason,
@@ -391,7 +401,8 @@ class BeamlineOpticsWidget(QWidget):
         x_reason = permit_reason(data, "ion_beam.beamline.steerer_magnet", "steerer magnet")
         self._lock([self.btn_steer_en], y_reason or x_reason, "Enable Beam Steerer Outputs")
         self._lock([self.sp_y_steer], y_reason, "Adjust Y-Axis Beam Deflection")
-        self._lock([self.sp_x_steer], x_reason, "Adjust X-Axis Magnet Current")
+        self._lock([self.sp_x_steer], x_reason, "Adjust X-Axis Magnet Current. "
+                   + hard_caps.note("ion_beam.beamline.steerer_magnet.sp_requested_current"))
 
         # --- 3. Manual slit inputs (only logged: the events service must be there) ---
         slit_reason = "" if events_state == "ONLINE" else "Events microservice is offline (Cannot log manual adjustments)."
@@ -416,7 +427,7 @@ class BeamlineOpticsWidget(QWidget):
 
             reason = permit_reason(data, base_tag, "Spellman")
             self._lock([ctrl["btn_enable"]], reason, "Click twice to switch ON (confirm); once to switch OFF")
-            self._lock([ctrl["sp_box"]], reason, "")
+            self._lock([ctrl["sp_box"]], reason, hard_caps.note(f"{base_tag}.sp_requested_voltage"))
             stat_en = data.get(f"{base_tag}.stat_enabled")
             ctrl["arm"].show_state(None if stat_en is None else bool(stat_en), COLOR_OK, COLOR_BUTTON_STANDARD,
                                    f"{name} output state unknown - supply not answering or not configured.")

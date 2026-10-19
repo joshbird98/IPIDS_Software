@@ -110,6 +110,13 @@ class FakeMagnetModbus:
         self._check()
         return True
 
+    def read_setpoints(self):
+        self._check()
+        if not self.ratings_ok:
+            return None
+        with _LOCK:
+            return self.psu.v_set, self.psu.i_set
+
     def read_telemetry(self):
         if not self.connected:
             return None

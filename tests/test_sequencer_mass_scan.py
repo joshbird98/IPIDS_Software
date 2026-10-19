@@ -95,7 +95,8 @@ def test_fetch_gives_the_whole_pass():
 
 
 @pytest.mark.parametrize("change, why", [
-    ({"stop_a": 120.0}, "outside the magnet's range"), ({"step_a": 0.0}, "more than 0 A"),
+    ({"stop_a": 120.0}, "Hard cap: stop_a 120 A is above the 95 A cap"), ({"stop_a": -1.0}, "outside the magnet's range"),
+    ({"step_a": 0.0}, "more than 0 A"),
     ({"stop_a": 24.0}, "the same"), ({"nplc": 500}, "NPLC"), ({"samples": 0}, "at least one"),
     ({"samples": 2.5}, "whole number"), ({"bogus": 1}, "unknown"), ({"step_a": 1e-6}, "bigger step"),
 ])

@@ -122,6 +122,11 @@ if that fails), and restarts what reads the file - a service stopped on purpose 
 after a change to `network_config.json` it restarts nothing and asks for the manager and the HMI to
 be restarted.
 Names (keys) can't be changed there: the services look supplies, gauges and ports up by name.
+Some values have **hard caps** (`src/core/hard_caps.py`): VG1/VG2 relay points 1e-5 mbar (they open
+the gate valve), other gauge relays 1 mbar, every Spellman 22 kV, magnet 95 A / 25 V, steerer
+80 A / 40 V, SMU ±200 V. Past one, the editor refuses the file and marks the field red with the
+reason; the registry's setpoint limits stay within them; and the services check them again at
+start-up and on every command. Raising a cap is a code change.
 
 - `config/system_tags.json` (the tag registry, not in git) is **generated** from the other config
   files and `plc/generated/PLC_PC_Interface.scl` by `python src/utils/build_registry.py`. Re-run it

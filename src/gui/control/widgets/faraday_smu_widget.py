@@ -143,7 +143,8 @@ class FaradaySMUWidget(QWidget):
         self.sp_bias.setSuffix(" V")
         self.sp_bias.setDecimals(1)
         self.sp_bias.setKeyboardTracking(False)
-        self.sp_bias.setToolTip("Enter the target bias voltage (-200V to +200V). Requires Master Safety Relay.")
+        self.sp_bias.setToolTip("Enter the target bias voltage (-200 V to +200 V: the SMU bias hard cap). "
+                                "Requires Master Safety Relay.")
         self.sp_bias.editingFinished.connect(
             lambda: self._dispatch_smu("ion_beam.beamline.faraday.smu.sp_requested_voltage", self.sp_bias.value())
         )
@@ -363,7 +364,7 @@ class FaradaySMUWidget(QWidget):
             self.btn_enable_bias.setEnabled(True)
             self.btn_enable_bias.setToolTip("Click to enable or disable the SMU bias voltage output.")
             self.sp_bias.setEnabled(True)
-            self.sp_bias.setToolTip("Enter the target bias voltage (-200V to +200V).")
+            self.sp_bias.setToolTip("Enter the target bias voltage (-200 V to +200 V: the SMU bias hard cap).")
 
         live_msg = "Live beam current measured by the Source-Measure Unit."
         self.lbl_digital_current.setToolTip(live_msg)

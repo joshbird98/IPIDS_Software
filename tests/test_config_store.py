@@ -172,13 +172,13 @@ def test_backups_are_pruned_and_restorable(cfg, monkeypatch):
     name = "smu_config.json"
     for v in (1, 2, 3, 4, 5):
         data = cs.read(name, str(cfg))
-        assert cs.save(name, dict(data, max_v=200 + v), data, config_dir=str(cfg), commit=False,
+        assert cs.save(name, dict(data, max_v=190 + v), data, config_dir=str(cfg), commit=False,
                        clock=lambda: next(clock)).saved
     kept = cs.backups(name, str(cfg))
     assert len(kept) == 3 and kept == sorted(kept, reverse=True)
-    assert json.load(open(kept[0]))["max_v"] == 204                   # newest backup: before the last save
+    assert json.load(open(kept[0]))["max_v"] == 194                   # newest backup: before the last save
     result = cs.restore(name, kept[-1], config_dir=str(cfg), commit=False)
-    assert result.saved and cs.read(name, str(cfg))["max_v"] == 202
+    assert result.saved and cs.read(name, str(cfg))["max_v"] == 192
     assert len(cs.backups(name, str(cfg))) == 3
 
 

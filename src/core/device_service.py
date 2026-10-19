@@ -44,7 +44,7 @@ import time
 import orjson
 import zmq
 
-from src.core import paths
+from src.core import hard_caps, paths
 from src.core.commands import CommandServer, bind_retrying
 from src.core.event_helper import EventHelper
 from src.core.leases import LEASE_SUFFIX, LeaseTable
@@ -339,7 +339,13 @@ class DeviceService:
             return None
 
     def within_limits(self, cmd, value: float, unit: str = "") -> bool:
-        """Registry min/max for the command's tag; rejects the command (and returns False) if out."""
+        """Registry min/max for the command's tag, and any hard cap on it (src/core/hard_caps.py:
+        checked here too, so a registry built or edited past one can't get round it); rejects the
+        command (and returns False) if out."""
+        cap = hard_caps.command_cap(cmd.tag)
+        if cap is not None and cap.breach(value):
+            cmd.reject(cap.explain("the setpoint", value))
+            return False
         lim = self.registry_limits.get(cmd.tag, {})
         lo, hi = lim.get("min_val"), lim.get("max_val")
         if lo is None or hi is None:

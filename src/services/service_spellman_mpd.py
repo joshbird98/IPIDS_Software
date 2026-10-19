@@ -9,6 +9,7 @@ stat_arc_exceeded until fault reset; the PLC service turns it into a PLC fault.
 import time
 from typing import Any, Dict
 
+from src.core import hard_caps
 from src.core.arc_detection import ARC_DEFAULTS, ArcDetector, arc_settings  # noqa: F401  (re-exported)
 from src.core.device_service import DeviceService, ReconnectBackoff
 from src.core.log_setup import Throttle, setup_logging
@@ -20,6 +21,7 @@ from src.drivers.spellman_mpd import (CMD_HV_ENABLE, CMD_REQ_KV, CMD_REQ_MA, CMD
                                       CMD_SET_MA, SpellmanMPDProtocol)
 
 PLC_TELEMETRY_TIMEOUT = 2.0   # relay state counts as unknown (= off) if the PLC goes quiet this long
+HELD_SP_TOLERANCE_KV = 0.05   # a held setpoint read back this close to its hard cap is taken as at it
 
 
 def _protocol_class():
@@ -214,6 +216,13 @@ class SpellmanMicroservice(DeviceService):
                 else:
                     cmd.fail(f"supply did not accept the current limit (reply: {res!r})")
         elif leaf == "cmd_enable":
+            held = self.state.get(f"{prefix}.sp_actual_voltage")    # the setpoint the supply holds (polled)
+            cap = hard_caps.SPELLMAN_CAP_KV        # (read back through its DAC: a hair over at the cap is "at")
+            if value and cap.breach(held) and not abs(held) <= cap.high + HELD_SP_TOLERANCE_KV:
+                # e.g. set on its front panel: enabling would drive it
+                cmd.reject(hard_caps.SPELLMAN_CAP_KV.explain("the voltage setpoint the supply holds", held)
+                           + " Set the voltage here first.")
+                return
             res = hw.transaction(addr, dtype, CMD_HV_ENABLE, "=", "1" if value else "0")
             # A reply containing '*' is a refusal (any reply used to count as success, so a refused
             # 'disable' was reported as done while HV stayed on).

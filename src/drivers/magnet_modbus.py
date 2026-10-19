@@ -166,6 +166,18 @@ class MagnetModbusProtocol:
         self._require()
         return self._checked(self.client.write_coil(411, True), "alarm clear")
 
+    def read_setpoints(self) -> Optional[Tuple[float, float]]:
+        """(volts, amps) the PSU holds as setpoints (registers 500, 501) - what switching the output
+        on would drive - or None if it can't say (no ratings, or it refuses the read)."""
+        self._require()
+        if not self.ratings_ok:
+            return None
+        res = self.client.read_holding_registers(address=500, count=2)
+        regs = None if res.isError() else getattr(res, "registers", None)
+        if not regs or len(regs) < 2:
+            return None
+        return self._from_counts(regs[0], self.nom_v), self._from_counts(regs[1], self.nom_i)
+
     def read_telemetry(self) -> Optional[Tuple[Optional[float], Optional[float], bool, dict]]:
         """(volts, amps, output on, alarms) or None (and connected=False) if the read failed.
         Volts and amps are None while the nominal ratings are unknown."""

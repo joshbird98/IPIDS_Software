@@ -13,7 +13,7 @@ from PyQt6.QtCore import QEvent, QRectF
 from PyQt6.QtWidgets import (QCheckBox, QDoubleSpinBox, QGridLayout, QGroupBox, QHBoxLayout, QLabel, QMessageBox,
                              QPushButton, QVBoxLayout, QWidget)
 
-from src.core import paths
+from src.core import hard_caps, paths
 from src.core.commands import route_for_tag
 from src.gui.control.dialogs.optimiser_tag_dialog import OptimizerTagSelectorDialog
 from src.gui.control.sequencer_link import OFFLINE_TEXT, SequencerSlot
@@ -173,15 +173,15 @@ class ParameterOptimizerWidget(QWidget):
         meta = self.registry.get(tag, {})
         if axis == "X":
             self.x_tag, self.x_meta = tag, meta
-            self._apply_target_constraints(meta, self.btn_x, self.sp_x_start, self.sp_x_stop, "X")
+            self._apply_target_constraints(meta, self.btn_x, self.sp_x_start, self.sp_x_stop, "X", tag)
             self.plot_widget.setLabel('bottom', meta.get("default_label", "X-Axis"), units=meta.get("unit", ""))
         else:
             self.y_tag, self.y_meta = tag, meta
-            self._apply_target_constraints(meta, self.btn_y, self.sp_y_start, self.sp_y_stop, "Y")
+            self._apply_target_constraints(meta, self.btn_y, self.sp_y_start, self.sp_y_stop, "Y", tag)
             self.plot_widget.setLabel('left', meta.get("default_label", "Y-Axis"), units=meta.get("unit", ""))
 
     @staticmethod
-    def _apply_target_constraints(meta, btn, sp_start, sp_stop, axis_label):
+    def _apply_target_constraints(meta, btn, sp_start, sp_stop, axis_label, tag=""):
         unit = meta.get("unit", "")
         btn.setText(f"{axis_label}: {meta.get('default_label', 'Unknown')} [{unit}]")
         btn.setStyleSheet("text-align: center; font-weight: bold; padding: 6px;")
@@ -190,6 +190,7 @@ class ParameterOptimizerWidget(QWidget):
             box.setRange(lo, hi)
             box.setValue(value)
             box.setSuffix(f" {unit}")
+            box.setToolTip(hard_caps.note(tag))
 
     # ================================================================== the sweep (sequencer)
     def sweep_settings(self) -> dict:

@@ -64,7 +64,8 @@ def test_refused_axis_fails_the_sweep():
 
 @pytest.mark.parametrize("change, why", [
     ({"y_tag": X}, "same setpoint"), ({"x_tag": "ion_beam.source.target.sp_requested_voltage"}, "may sweep"),
-    ({"x_stop": 99.0}, "outside the allowed range"), ({"x_steps": 1}, "steps must be"),
+    ({"x_stop": 99.0}, "Hard cap: X .* 99 A is above the 95 A cap"), ({"x_stop": -1.0}, "outside the allowed range"),
+    ({"x_steps": 1}, "steps must be"),
     ({"dwell": 0.0}, "dwell"), ({"y_start": 2.0}, "start and stop are the same"),
 ])
 def test_bad_optimiser_settings(change, why):

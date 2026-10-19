@@ -118,3 +118,59 @@ def test_degauss_cut_short_by_missing_ratings_ends_at_zero(stack, fake_events):
     errors = [e for e in fake_events.events if e["severity"] == "ERROR"]
     assert len(errors) == 1 and "Degauss aborted" in errors[0]["message"] and "set to 0 A" in errors[0]["message"]
     assert svc.sp_cache[f"{BASE}.sp_actual_current"] == 0.0 and svc.hw.psu.i_set == 0.0 and svc.hw.connected
+
+
+def test_hard_caps_on_current_and_degauss(stack):
+    plc, svc, tap, client = stack
+    tap.wait_for(lambda d: d["system.safe_to_run"] == 1.0 and d[f"{BASE}.stat_comms_fail"] == 0.0, timeout=5)
+    r = client.request("magnet", f"{BASE}.sp_requested_current", 96.0)
+    assert r["status"] == C.REJECTED and "Hard cap" in r["reason"] and "95 A cap" in r["reason"]
+    svc.limits["degauss_steps_amps"] = [100.0, 0.0]                    # a file edited past the editor
+    r = client.request("magnet", f"{BASE}.cmd_degauss", True)
+    assert r["status"] == C.REJECTED and "degauss step 100 A" in r["reason"]
+    with pytest.raises(ValueError, match="Hard cap"):
+        svc.apply_smart_setpoint(120.0)                                # and the last line holds too
+
+
+def test_enable_refused_while_the_psu_holds_a_current_past_the_cap(stack):
+    plc, svc, tap, client = stack
+    tap.wait_for(lambda d: d["system.safe_to_run"] == 1.0 and d[f"{BASE}.stat_comms_fail"] == 0.0, timeout=5)
+    svc.hw.psu.i_set = 100.0                                           # set at the PSU itself
+    r = client.request("magnet", f"{BASE}.cmd_enable", True)
+    assert r["status"] == C.REJECTED and "current setpoint the PSU holds 100 A" in r["reason"]
+    assert not svc.hw.psu.output
+    assert client.request("magnet", f"{BASE}.sp_requested_current", 10.0)["status"] == C.OK
+    assert client.request("magnet", f"{BASE}.cmd_enable", True)["status"] == C.OK
+
+
+def test_a_config_past_the_cap_is_held_to_it(monkeypatch, fake_events):
+    """magnet_config.json edited by hand past the editor: the service uses the caps, and says so."""
+    monkeypatch.setenv("SINDIE_SIMULATE", "1")
+    from src.services import service_magnet_psu as smp
+    real = smp.MagnetPsuService.load_config
+
+    def load(self, name, defaults):
+        return dict(real(self, name, defaults), max_current=150.0, max_voltage=float("nan"))
+    monkeypatch.setattr(smp.MagnetPsuService, "load_config", load)
+    from src.core import event_helper
+    events = []
+    monkeypatch.setattr(event_helper.EventHelper, "log_general", lambda self, message, severity="INFO", **k:
+                        events.append((severity, message)))
+    svc = smp.MagnetPsuService("magnet")
+    try:
+        assert svc.limits["max_current"] == 95.0 and svc.limits["max_voltage"] == 25.0
+        errors = [m for sev, m in events if sev == "ERROR"]
+        assert any("max_current 150 A is above the 95 A cap" in m for m in errors)
+        assert any("max_voltage nan V is above the 25 V cap" in m for m in errors)
+    finally:
+        svc.shutdown()
+
+
+def test_degauss_refused_while_the_psu_holds_a_current_past_the_cap(stack):
+    """Degauss switches the output on at once (its first step comes a cycle later)."""
+    plc, svc, tap, client = stack
+    tap.wait_for(lambda d: d["system.safe_to_run"] == 1.0 and d[f"{BASE}.stat_comms_fail"] == 0.0, timeout=5)
+    svc.hw.psu.i_set = 100.0
+    r = client.request("magnet", f"{BASE}.cmd_degauss", True)
+    assert r["status"] == C.REJECTED and "current setpoint the PSU holds 100 A" in r["reason"]
+    assert not svc.hw.psu.output and not svc.degauss_active

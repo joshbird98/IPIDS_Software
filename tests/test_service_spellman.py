@@ -56,6 +56,8 @@ def test_enable_and_setpoint_acknowledged(stack):
     assert d[f"{EINZEL}.sp_actual_voltage"] == pytest.approx(10.0)
     assert d[f"{EINZEL}.sp_actual_current"] == pytest.approx(50.0)
     r = c.request("spellman", f"{EINZEL}.sp_requested_voltage", 99.0)
+    assert r["status"] == C.REJECTED and r["reason"].startswith("Hard cap") and "22 kV cap" in r["reason"]
+    r = c.request("spellman", f"{EINZEL}.sp_requested_voltage", -1.0)
     assert r["status"] == C.REJECTED and "outside the allowed range" in r["reason"]
 
 
@@ -307,3 +309,29 @@ def test_refused_enable_is_reported_as_failed(stack, monkeypatch):
     c = C.CommandClient(default_timeout=3.0)
     r = c.request("spellman", f"{EINZEL}.cmd_enable", True)
     assert r["status"] == C.FAILED and "refused" in r["reason"]
+
+
+def test_enable_refused_while_the_supply_holds_a_setpoint_past_the_cap(stack):
+    """A setpoint put in at the supply's front panel past the 22 kV cap: ENABLE would drive it."""
+    plc, svc, tap = stack
+    wait_powered(tap)
+    from src.sim import spellman as simsp
+    device = next(iter(next(iter(simsp._BUSES.values())).devices.values()))
+    device.v_set = 25000.0                                             # volts, held by the supply
+    tap.wait_for(lambda d: d[f"{EINZEL}.sp_actual_voltage"] == pytest.approx(25.0), timeout=5)
+    c = C.CommandClient(default_timeout=3.0)
+    r = c.request("spellman", f"{EINZEL}.cmd_enable", True)
+    assert r["status"] == C.REJECTED and "voltage setpoint the supply holds 25 kV" in r["reason"]
+    assert "22 kV cap" in r["reason"] and not device.enabled
+
+
+def test_a_setpoint_held_at_the_cap_reads_as_at_it(stack):
+    """The supply reports its setpoint through its DAC: exactly 22 kV may read back a hair over."""
+    plc, svc, tap = stack
+    wait_powered(tap)
+    from src.sim import spellman as simsp
+    device = next(iter(next(iter(simsp._BUSES.values())).devices.values()))
+    device.v_set = 22003.0
+    tap.wait_for(lambda d: d[f"{EINZEL}.sp_actual_voltage"] == pytest.approx(22.003), timeout=5)
+    c = C.CommandClient(default_timeout=3.0)
+    assert c.request("spellman", f"{EINZEL}.cmd_enable", True)["status"] == C.OK

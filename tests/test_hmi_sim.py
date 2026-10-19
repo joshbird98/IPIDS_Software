@@ -154,7 +154,8 @@ def test_arming_times_out(hmi, app):
 
 def test_rejection_is_shown_to_the_operator(hmi, app):
     hmi.cmd_thread.send_command("spellman", "ion_beam.source.einzel.sp_requested_voltage", 99.0)
-    wait_for(app, lambda: any(r[5] == "REJECTED" and "range" in r[6] for r in log_rows(hmi)), 5, "rejection logged")
+    wait_for(app, lambda: any(r[5] == "REJECTED" and "Hard cap" in r[6] and "22 kV cap" in r[6]
+                              for r in log_rows(hmi)), 5, "rejection logged with the cap's reason")
     hmi.cmd_log_dock.raise_()
     pump(app, 0.2)
     shot(hmi, "2_rejected_command")

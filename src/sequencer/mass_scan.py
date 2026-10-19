@@ -14,7 +14,7 @@ from datetime import datetime
 
 import numpy as np
 
-from src.core import paths
+from src.core import hard_caps, paths
 from src.sequencer.jobs import GeneratorJob, JobFailed
 from src.sequencer.points import PointLog
 from src.sequencer.protocol import MASS_SCAN, key
@@ -77,7 +77,10 @@ class ScanConfig:
         if magnet_limits is None or None in magnet_limits:
             raise ValueError(f"no min/max limits for {SP_TAG} in the tag registry")
         lo, hi = magnet_limits
+        cap = hard_caps.command_cap(SP_TAG)
         for name in ("start_a", "stop_a"):
+            if cap is not None and cap.breach(getattr(cfg, name)):        # said as the cap, with its reason
+                raise ValueError(cap.explain(name, getattr(cfg, name)))
             if not lo <= getattr(cfg, name) <= hi:
                 raise ValueError(f"{name} {getattr(cfg, name):g} A is outside the magnet's range [{lo:g}, {hi:g}] A")
         if cfg.start_a == cfg.stop_a:

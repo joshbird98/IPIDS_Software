@@ -111,3 +111,11 @@ def test_bias_switched_off_by_operator_stays_off_after_reconnect(stack):
     drop_link(tap, mp)
     restore_link(tap, mp)
     assert tap.holds_for(lambda d: d[EN] == 0.0 and abs(d[RB]) < 0.01, 1.0)
+
+
+def test_bias_past_the_hard_cap_is_refused_with_its_reason(stack):
+    plc, svc, tap, client, mp = stack
+    bias_on(client, tap, 50.0)
+    svc.registry_limits["ion_beam.beamline.faraday.smu.sp_requested_voltage"] = {"min_val": -500.0, "max_val": 500.0}
+    r = client.request("smu", f"{BASE}.sp_requested_voltage", 250.0)     # even with a registry built wider
+    assert r["status"] == C.REJECTED and r["reason"].startswith("Hard cap") and "200 V cap" in r["reason"]

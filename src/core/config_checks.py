@@ -15,6 +15,7 @@ import json
 import math
 import re
 
+from src.core import hard_caps
 from src.core.spellman_locations import LOCATIONS as SPELLMAN_LOCATIONS
 
 GAUGE_RANGE_MBAR = (1e-10, 1000.0)     # what the gauges can read (as the registry's command limits)
@@ -45,6 +46,7 @@ def check(name: str, data, original=None) -> list:
         except (KeyError, TypeError, AttributeError, ValueError) as e:
             c.bad(f"unexpected layout ({type(e).__name__}: {e})")
         problems += c.problems
+    problems += [v.message for v in hard_caps.violations(name, data)]
     return problems
 
 
