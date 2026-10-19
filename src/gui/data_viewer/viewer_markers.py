@@ -173,7 +173,8 @@ class MarkersMixin:
                 markers[key] = {
                     "text": msg,
                     "color": color,
-                    "type": e_type
+                    "type": e_type,
+                    "meta": meta,          # shown in full in the event details window
                 }
         except sqlite3.Error as e:
             logging.getLogger("viewer.markers").error("Event markers not readable from events.db: %s", e)

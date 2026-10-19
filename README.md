@@ -33,10 +33,12 @@ python src/hmi.py                           operator HMI
 python src/gui/data_viewer/viewer_main.py   data viewer
 ```
 
-In the data viewer, double-click the plot to add a marker. Hover over a marker line for its full
-text; right-click it to delete a user marker. Zoomed out, events within a few pixels of each
-other are drawn as one line ("12 events"), and labels that don't fit (or would sit under the
-legend) are left off but still show on hover. A marker that doesn't reach the event database
+In the data viewer, double-click the plot to add a marker. Click an event's label or line to read
+it in full: an event details window lists every event of that line (or group) with its date and
+time to the millisecond, type, full text and stored details, and its text can be copied. Hovering
+shows the texts too; right-click to delete a user marker. Zoomed out, events within a few pixels
+of each other are drawn as one line ("12 events"), and labels that don't fit (or would sit under
+the legend) are left off but the line can still be clicked. A marker that doesn't reach the event database
 within a few seconds (events service not running for that viewer) is taken off with a warning.
 The export dialog starts from the Export Settings folder/name in the sidebar and writes its
 choice back there.

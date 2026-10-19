@@ -5,18 +5,26 @@
   zoomed-out view isn't a wall of lines and text.
 * Labels are one line (long texts shortened) and placed in rows along the top of the first
   lane, left to right; a label that would overlap another one or the lane's legend is left
-  out. Hovering over a line or label shows the full text (and the list, for a group).
+  out. Hovering over a line or label shows the texts in full (wrapped), for a group the first
+  few.
+* Click a label or a line to read everything: an event details window lists each event of it
+  (or of the group) with its date and time to the millisecond, type, full text and the details
+  stored with it. It is one window, reused - clicking another line shows that one instead -
+  and its text can be selected and copied. (It used to be the hover text only, cut at 15 lines,
+  and hovering a 1-2 px line is hit and miss.)
 * The line itself runs through every lane; only the first lane carries the label.
 * Right-click a line for a menu to delete one of its user markers (system events are
-  read-only). A plain click does nothing, so clicking about while zoomed out can't open a
-  stream of "Delete marker?" questions any more.
+  read-only), or open the details. Deleting is only ever from that menu, so clicking about
+  while zoomed out can't open a stream of "Delete marker?" questions.
 """
+import html
+import json
 from datetime import datetime
 
 import pyqtgraph as pg
 from PyQt6.QtCore import QPointF, Qt
 from PyQt6.QtGui import QFontMetricsF
-from PyQt6.QtWidgets import QApplication, QMenu
+from PyQt6.QtWidgets import QApplication, QDialog, QDialogButtonBox, QMenu, QTextBrowser, QVBoxLayout
 
 GROUP_PX = 6            # events closer than this (pixels) are drawn as one line
 ROW_PITCH_PX = 24       # label rows (a label is ~23 px high)
@@ -88,15 +96,76 @@ def group_text(members):
 
 
 def group_tooltip(members, t0):
+    """Rich text, so Qt wraps long texts instead of running them off the screen."""
     lines = []
     for x, _key, ev in sorted(members, key=lambda p: p[0])[:TOOLTIP_LINES]:
         when = datetime.fromtimestamp(x + t0).strftime("%H:%M:%S")
-        lines.append(f"{when}  {ev.get('text', '')}")
+        lines.append(f"<b>{when}</b>&nbsp; {html.escape(str(ev.get('text', '')))}")
     if len(members) > TOOLTIP_LINES:
-        lines.append(f"... and {len(members) - TOOLTIP_LINES} more (zoom in)")
+        lines.append(f"... and {len(members) - TOOLTIP_LINES} more")
+    hint = "Click for the full details"
     if any(ev.get("type") == "USER_MARKER" for _x, _k, ev in members):
-        lines.append("(right-click to delete a user marker)")
-    return "\n".join(lines)
+        hint += "; right-click to delete a user marker"
+    lines.append(f"<i>{hint}.</i>")
+    return "<qt>" + "<br>".join(lines) + "</qt>"
+
+
+def _metadata_text(meta) -> str:
+    if meta in (None, "", {}):
+        return ""
+    if isinstance(meta, str):
+        try:
+            meta = json.loads(meta)
+        except ValueError:
+            return meta
+    if isinstance(meta, dict):
+        return "\n".join(f"{k}: {v if not isinstance(v, (dict, list)) else json.dumps(v)}" for k, v in meta.items())
+    return json.dumps(meta)
+
+
+def details_html(members, t0) -> str:
+    """Every event of a line or group, nothing shortened: date and time (ms), type, full text and
+    the details stored with it."""
+    parts = []
+    for x, _key, ev in sorted(members, key=lambda p: p[0]):
+        when = datetime.fromtimestamp(x + t0)
+        stamp = when.strftime("%Y-%m-%d %H:%M:%S.") + f"{when.microsecond // 1000:03d}"
+        color = html.escape(str(ev.get("color", "#FFFFFF")))
+        kind = html.escape(str(ev.get("type", "")))
+        text = html.escape(str(ev.get("text", ""))).replace("\n", "<br>")
+        meta = _metadata_text(ev.get("meta"))
+        block = (f"<p><span style='color:{color}'>&#9632;</span> <b>{stamp}</b> &nbsp;<i>{kind}</i><br>"
+                 f"{text}")
+        if meta:
+            block += ("<br><span style='color:#9E9E9E; font-family:monospace'>"
+                      + html.escape(meta).replace("\n", "<br>") + "</span>")
+        parts.append(block + "</p>")
+    return "<hr>".join(parts)
+
+
+class EventDetails(QDialog):
+    """The events of one line (or group), in full; selectable and copyable. One window, reused."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Event details")
+        self.setModal(False)
+        self.resize(560, 420)
+        lay = QVBoxLayout(self)
+        self.text = QTextBrowser()
+        self.text.setOpenLinks(False)
+        lay.addWidget(self.text)
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
+        buttons.rejected.connect(self.close)
+        lay.addWidget(buttons)
+
+    def show_events(self, members, t0):
+        n = len(members)
+        self.setWindowTitle("Event details" if n == 1 else f"Event details - {n} events")
+        self.text.setHtml(details_html(members, t0))
+        self.show()
+        self.raise_()
+        self.activateWindow()
 
 
 class EventOverlay:
@@ -105,6 +174,7 @@ class EventOverlay:
         self.items = {}                 # display key -> {"lines": [...], "members": [...]}
         self._lanes = []
         self._t0 = 0.0
+        self.details = None             # the EventDetails window, made on the first click
 
     # ------------------------------------------------------------------ bookkeeping
     def clear(self):
@@ -179,6 +249,8 @@ class EventOverlay:
                                                               "fill": (0, 0, 0, 200)})
                 line.label.setToolTip(tip)
                 line.label.setZValue(1000)          # above the legend if they ever meet
+                # (a fixed label ignores clicks; this makes clicking it show the details)
+                line.label.mouseClickEvent = lambda ev, k=dkey: self._clicked(k, ev)
             else:
                 line = pg.InfiniteLine(pos=x, angle=90, movable=False,
                                        pen=pg.mkPen(pg.mkColor(color).darker(130), width=1,
@@ -227,14 +299,29 @@ class EventOverlay:
             label.setVisible(True)
 
     # ------------------------------------------------------------------ interaction
+    def show_details(self, dkey):
+        it = self.items.get(dkey)
+        if it is None:
+            return
+        if self.details is None:
+            views = self._lanes[0].scene().views() if self._lanes and self._lanes[0].scene() else []
+            self.details = EventDetails(views[0].window() if views else None)
+        self.details.show_events(it["members"], self._t0)
+
     def _clicked(self, dkey, ev):
+        if ev.button() == Qt.MouseButton.LeftButton:
+            ev.accept()                 # read it all (one window, reused: no pile of them)
+            self.show_details(dkey)
+            return
         if ev.button() != Qt.MouseButton.RightButton:
-            return                      # plain clicks pass through to the plot
+            return
         ev.accept()                     # one menu, however many lines are under the cursor
         it = self.items.get(dkey)
         if it is None:
             return
         menu = QMenu()
+        menu.addAction("Show the full details...").triggered.connect(lambda _c=False: self.show_details(dkey))
+        menu.addSeparator()
         for x, key, e in sorted(it["members"], key=lambda p: p[0])[:25]:
             when = datetime.fromtimestamp(x + self._t0).strftime("%H:%M:%S")
             if e.get("type") == "USER_MARKER":
