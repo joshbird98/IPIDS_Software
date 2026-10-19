@@ -81,7 +81,7 @@ def test_the_service_sets_a_current_limit_when_the_supply_holds_none(stack):
     assert d[f"{EINZEL}.sp_actual_current"] == 0.0                     # as it comes from power-up
     c = C.CommandClient(default_timeout=3.0)
     r = c.request("spellman", f"{EINZEL}.sp_requested_voltage", 10.0, origin="recipe")
-    assert r["status"] == C.OK and "current limit was 0, set to 50 uA" in r["reason"], r
+    assert r["status"] == C.OK and "current limit set to 50 uA - the supply held none" in r["reason"], r
     assert c.request("spellman", f"{EINZEL}.cmd_enable", True)["status"] == C.OK
     d = tap.wait_for(lambda d: abs((d[f"{EINZEL}.rb_voltage"] or 0) - 10.0) < 0.5, timeout=6)
     assert d[f"{EINZEL}.sp_actual_current"] == pytest.approx(50.0)
@@ -132,6 +132,74 @@ def test_no_voltage_or_enable_without_a_current_limit(stack, monkeypatch):
     assert c.request("spellman", f"{EINZEL}.sp_requested_voltage", 0.0)["status"] == C.OK   # 0 needs none
     d = tap.wait_for(lambda d: d[f"{EINZEL}.sp_actual_voltage"] == 0.0, timeout=2)
     assert d[f"{EINZEL}.stat_enabled"] == 0.0
+
+
+@pytest.fixture
+def manual(monkeypatch):
+    """The service driven cycle by cycle (no thread), so commands can be put in one batch."""
+    monkeypatch.setenv("SINDIE_SIMULATE", "1")
+    monkeypatch.delenv("SINDIE_SIM_FAULTS", raising=False)
+    from src.sim import spellman as simsp
+    simsp._BUSES.clear()
+    plc = FakePlcPublisher()
+    from src.services.service_spellman_mpd import SpellmanMicroservice
+    svc = SpellmanMicroservice()
+    client = C.CommandClient(default_timeout=3.0)
+    deadline = time.time() + 10
+    while time.time() < deadline and not (svc.relay_ok and svc.state.get(f"{EINZEL}.rb_voltage") is not None):
+        svc.run_cycle()
+        time.sleep(0.05)
+    device = next(iter(simsp._BUSES.values())).devices["01"]
+    yield svc, client, device
+    client.close()
+    svc.shutdown()
+    plc.stop()
+
+
+def batch(svc, client, *commands):
+    """Send the commands at once, then run one service cycle: they are handled together, before the
+    cycle's poll (as a recipe's parallel steps or the optimiser's restore of both axes are)."""
+    ids = [client.send("spellman", f"{EINZEL}.{leaf}", value) for leaf, value in commands]
+    time.sleep(0.3)
+    svc.run_cycle()
+    replies, deadline = {}, time.time() + 3
+    while len(replies) < len(ids) and time.time() < deadline:
+        for r in client.poll(100):
+            replies[r["id"]] = r
+    return [replies[i] for i in ids]
+
+
+def test_a_limit_sent_with_the_voltage_or_an_explicit_0_is_kept(manual):
+    """The current limit and the voltage in one batch, after power-up: the limit asked for stays
+    (the voltage used to see the last poll's 0 and put 50 uA over the 120). An explicit 0 stays too:
+    an optimiser sweep of the current limit really measures its 0 uA column at 0 uA."""
+    svc, client, device = manual
+    current, voltage = batch(svc, client, ("sp_requested_current", 120.0), ("sp_requested_voltage", 10.0))
+    assert current["status"] == voltage["status"] == C.OK and "current limit" not in voltage["reason"]
+    assert device.i_set == 120.0
+    assert batch(svc, client, ("sp_requested_current", 0.0))[0]["status"] == C.OK
+    svc.run_cycle()
+    assert batch(svc, client, ("sp_requested_voltage", 5.0))[0]["status"] == C.OK
+    assert device.i_set == 0.0
+
+
+def test_a_limit_the_supply_already_holds_is_kept(manual):
+    """After a service restart (the supplies stayed powered) the supply is asked first."""
+    svc, client, device = manual
+    device.i_set = 120.0                          # set before the service started
+    r = batch(svc, client, ("sp_requested_voltage", 8.0))[0]
+    assert r["status"] == C.OK and "current limit" not in r["reason"] and device.i_set == 120.0
+
+
+def test_a_supply_that_lost_its_limit_by_itself_gets_one_again(manual):
+    """Power lost at the supply alone (the relay stayed in): the poll sees the limit gone."""
+    svc, client, device = manual
+    assert "set to 50 uA" in batch(svc, client, ("sp_requested_voltage", 8.0))[0]["reason"]
+    assert batch(svc, client, ("sp_requested_voltage", 9.0))[0]["reason"] == "supply accepted 09000.0 V"
+    device.reset()                                # its own power blip: V and I limits back to 0
+    svc.run_cycle()
+    r = batch(svc, client, ("sp_requested_voltage", 7.0))[0]
+    assert r["status"] == C.OK and "set to 50 uA" in r["reason"] and device.i_set == 50.0
 
 
 def test_default_current_limit_comes_from_the_config_within_its_range():

@@ -9,8 +9,13 @@ new setpoint to the supply.
 With the guard installed, wheel events over any QAbstractSpinBox or QComboBox are dropped:
 values are typed (or stepped with the arrow keys / buttons). An open drop-down list still
 scrolls, since its list is a separate widget.
+
+A wheel doesn't give them the focus either: their focus policy is turned from WheelFocus into
+StrongFocus when they are first shown. Qt hands out wheel focus before any event filter sees the
+wheel, so a wheel passing over one box took the focus from another - finishing (and sending) a
+half-typed value there.
 """
-from PyQt6.QtCore import QEvent, QObject
+from PyQt6.QtCore import QEvent, QObject, Qt
 from PyQt6.QtWidgets import QAbstractSpinBox, QComboBox
 
 _installed = {}
@@ -18,9 +23,13 @@ _installed = {}
 
 class WheelGuard(QObject):
     def eventFilter(self, obj, event):
-        if event.type() == QEvent.Type.Wheel and isinstance(obj, (QAbstractSpinBox, QComboBox)):
+        kind = event.type()
+        if kind == QEvent.Type.Wheel and isinstance(obj, (QAbstractSpinBox, QComboBox)):
             event.ignore()
             return True
+        if kind == QEvent.Type.Polish and isinstance(obj, (QAbstractSpinBox, QComboBox)) \
+                and obj.focusPolicy() == Qt.FocusPolicy.WheelFocus:
+            obj.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         return False
 
 

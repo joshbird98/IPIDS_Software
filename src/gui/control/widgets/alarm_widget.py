@@ -64,6 +64,7 @@ class AlarmPanel(QWidget):
         self.alarms = []
         self.online = None
         self._signature = None
+        self._order = []          # alarm ids in the order their rows were drawn
         self._flash_on = False
         self._init_ui()
         self.flash_timer = QTimer(self)
@@ -150,14 +151,24 @@ class AlarmPanel(QWidget):
         self.btn_unshelve.setToolTip("Put the selected shelved alarms back into annunciation." if shelved
                                      else "Select a shelved alarm (💤) to unshelve it.")
 
-    def _restore_selection(self, ids: set):
-        """Select the rows of these alarms (all of them, wherever they now are in the list)."""
+    def _current_id(self):
+        index = self.table.currentIndex()
+        item = self.table.item(index.row(), 4) if index.isValid() else None
+        return item.data(Qt.ItemDataRole.UserRole) if item is not None else None
+
+    def _restore_selection(self, ids: set, current_id=None):
+        """Select the rows of these alarms (all of them, wherever they now are in the list), and make
+        the current alarm current again (a Shift+click range starts from it)."""
         model = self.table.model()
         selection = QItemSelection()
         for row, alarm in enumerate(self.alarms):
             if alarm["id"] in ids:
                 selection.select(model.index(row, 0), model.index(row, len(COLUMNS) - 1))
-        self.table.selectionModel().select(selection, QItemSelectionModel.SelectionFlag.ClearAndSelect)
+        sel = self.table.selectionModel()
+        sel.select(selection, QItemSelectionModel.SelectionFlag.ClearAndSelect)
+        row = next((r for r, a in enumerate(self.alarms) if a["id"] == current_id), None)
+        if row is not None:
+            sel.setCurrentIndex(model.index(row, 4), QItemSelectionModel.SelectionFlag.NoUpdate)
 
     def ack_selected(self):
         ids = [i for i in self.selected_ids() if i != OFFLINE_ID]
@@ -182,9 +193,9 @@ class AlarmPanel(QWidget):
                                              "reason": dialog.reason.text().strip()})
 
     def unshelve_selected(self):
-        for alarm_id in self.selected_ids():
-            if alarm_id != OFFLINE_ID:
-                self._send("alarms.cmd_unshelve", {"id": alarm_id})
+        for alarm in self._selected_alarms():
+            if alarm.get("shelved_until"):            # (the others would only be refused)
+                self._send("alarms.cmd_unshelve", {"id": alarm["id"]})
 
     # ------------------------------------------------------------------ telemetry
     def _sounding(self) -> frozenset:
@@ -235,15 +246,23 @@ class AlarmPanel(QWidget):
             return
         self._signature = signature
         selected = set(self.selected_ids())       # (read from the rows as they were drawn)
+        current = self._current_id()
         self.table.blockSignals(True)
         try:
-            self._fill(selected)
+            self._fill(selected, current)
         finally:
             self.table.blockSignals(False)
         self._update_buttons()
         self._paint()
 
-    def _fill(self, selected: set):
+    def _fill(self, selected: set, current_id=None):
+        order = [a["id"] for a in self.alarms]
+        scroll = self.table.verticalScrollBar().value()
+        if order != self._order:
+            # The rows hold other alarms now: start the table afresh. Qt keeps the Shift+click anchor
+            # as a row number, which would now point at a different alarm.
+            self.table.setRowCount(0)
+            self._order = order
         self.table.setRowCount(len(self.alarms))
         for row, alarm in enumerate(self.alarms):
             marks = ("⭐" if alarm.get("first_out") else "") + ("💤" if alarm.get("shelved_until") else "") + \
@@ -264,7 +283,8 @@ class AlarmPanel(QWidget):
                 self.table.setItem(row, col, item)
         # Re-selected by alarm, all at once: selectRow() per row followed the keyboard's modifiers -
         # only the last alarm stayed selected, or (Ctrl held) the selection was toggled off
-        self._restore_selection(selected)
+        self._restore_selection(selected, current_id)
+        self.table.verticalScrollBar().setValue(scroll)
 
     def _flash(self):
         self._flash_on = not self._flash_on

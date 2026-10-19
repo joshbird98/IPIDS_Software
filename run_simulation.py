@@ -36,7 +36,9 @@ def prepare_registry(data_dir, seed=os.path.join(ROOT, "config", "system_tags.js
     is only rebuilt by hand (or by the config editor), so after a pull it can be older than the
     config files - the simulator then behaved differently from them (October 2026: no einzel
     current limit in it, so the HMI never sent one, the einzel stayed at 0 V and latched an arc).
-    Display names hand-edited in config/system_tags.json are kept (copied over, then merged)."""
+    The fields the builder keeps from an existing registry (labels, units, scaling, data types -
+    hand edits) come from config/system_tags.json: it is copied over first, then built on.
+    The builder's warnings (a missing PLC interface file, say) are printed."""
     path = os.path.join(data_dir, "system_tags.json")
     os.makedirs(data_dir, exist_ok=True)
     if os.path.exists(seed):
@@ -44,8 +46,12 @@ def prepare_registry(data_dir, seed=os.path.join(ROOT, "config", "system_tags.js
     elif os.path.exists(path):
         os.remove(path)
     from src.utils.build_registry import build_system_registry
-    with contextlib.redirect_stdout(io.StringIO()):
+    out = io.StringIO()
+    with contextlib.redirect_stdout(out):
         build_system_registry(path)
+    for line in out.getvalue().splitlines():
+        if "warning" in line.lower() or "could not" in line.lower():
+            print(f"Tag registry: {line}")
     return path
 
 

@@ -21,6 +21,7 @@ from src.core.event_helper import EventHelper
 from src.core.paths import simulation_enabled
 from src.core.telemetry_cache import TelemetryCache
 from src.gui.control.sequencer_link import FETCH_ORIGIN
+from src.gui.control.setpoint_box import SetpointBox
 
 # --- Core/Thread Imports ---
 from src.core.network_threads import ZMQTelemetryThread, ZMQCommandThread
@@ -116,6 +117,58 @@ class ControlMainWindow(QMainWindow):
         # services hold the machine's state, and the panels show it from their telemetry.) The window
         # keeps its NoFocus policy: clicking an empty part of it still leaves the focus where it is.
         self.setFocus(Qt.FocusReason.OtherFocusReason)
+        # ... nor after the focused control is locked or its panel goes away (see _keep_focus_here)
+        self._focus_choice = None
+        QApplication.instance().focusChanged.connect(self._keep_focus_here)
+        for dock in self.findChildren(QDockWidget):
+            dock.visibilityChanged.connect(lambda visible, d=dock: visible or self._panel_gone(d))
+        # Setpoint entries that were not sent, and why (setpoint_box.py)
+        for box in self.findChildren(SetpointBox):
+            box.notice.connect(self._show_notice)
+
+    def _keep_focus_here(self, old, new):
+        """Qt hands the keyboard to the next control when the focused one is locked (a relay trip
+        locks a whole panel) or hidden: the operator's next keys - Space, digits and Enter - would
+        then act on a control they never chose. Park it on the window instead. With the window in
+        the background Qt moves it without a word, and the keyboard lands there when the operator
+        comes back: then too."""
+        try:
+            if new is None or new is self or not self.isAncestorOf(new):
+                return
+            if old is not None and self.isAncestorOf(old):
+                if not old.isEnabled() or not old.isVisible():
+                    self._park_focus()
+                    return
+            else:                       # back into the window
+                chosen = self._focus_choice
+                if chosen is not None and chosen is not new and (not chosen.isEnabled() or not chosen.isVisible()):
+                    self._park_focus()
+                    return
+            self._focus_choice = new
+        except RuntimeError:            # (a widget already deleted)
+            self._focus_choice = None
+
+    def _park_focus(self):
+        self._focus_choice = None
+        self.setFocus(Qt.FocusReason.OtherFocusReason)
+
+    def _panel_gone(self, dock):
+        """A dock closed or switched away (Qt keeps a switched-away tab's widgets, and their focus,
+        off-screen): an unsent entry in it is dropped, and the keyboard comes back to the window."""
+        for box in dock.findChildren(SetpointBox):
+            if box.editing:
+                box.drop_edit("its panel was closed or switched away before you pressed Enter")
+        focused = QApplication.focusWidget()
+        if focused is not None and dock.isAncestorOf(focused):
+            self._park_focus()
+
+    def _show_notice(self, message: str):
+        log.info("Setpoint not sent: %s", message)
+        try:
+            InfoBar.warning("Not sent", message, orient=Qt.Orientation.Horizontal, isClosable=True,
+                            position=InfoBarPosition.TOP_RIGHT, duration=8000, parent=self)
+        except Exception:  # a cosmetic pop-up must never take the HMI down
+            log.exception("Could not show the setpoint notice")
 
     def _setup_menus(self):
         menubar = self.menuBar()

@@ -7,8 +7,9 @@ refused with that reason. Software arc detection (src/core/arc_detection.py) lat
 stat_arc_exceeded until fault reset; the PLC service turns it into a PLC fault.
 
 A supply comes up from every power-up holding a current limit of 0, and with none its output
-can't rise. Before a non-zero voltage or an enable, the service sets one (default_current_ua in
-mpd_config.json, else 50 uA) if the supply holds none (see ensure_current_limit).
+can't rise. Before the first non-zero voltage or enable after power-up, unless a limit has been
+set since, the service sets one (default_current_ua in mpd_config.json, else 50 uA) if the supply
+holds none (see ensure_current_limit).
 """
 import time
 from typing import Any, Dict
@@ -27,6 +28,7 @@ from src.drivers.spellman_mpd import (CMD_HV_ENABLE, CMD_REQ_KV, CMD_REQ_MA, CMD
 PLC_TELEMETRY_TIMEOUT = 2.0   # relay state counts as unknown (= off) if the PLC goes quiet this long
 HELD_SP_TOLERANCE_KV = 0.05   # a held setpoint read back this close to its hard cap is taken as at it
 DEFAULT_CURRENT_UA = 50.0     # current limit set when a supply holds none (mpd_config.json: default_current_ua)
+NO_LIMIT_UA = 0.5             # a current limit read back below this counts as none (0 after power-up)
 
 
 def _protocol_class():
@@ -65,6 +67,9 @@ class SpellmanMicroservice(DeviceService):
         self.arc_detectors: Dict[str, ArcDetector] = {
             dev: ArcDetector(arc_settings(self.config, info)) for _, dev, info in self.configured_devices()}
         self.arc_fault_latches: Dict[str, bool] = {}
+        # Per supply: a current limit was set (by a command, or here) since the supplies were last
+        # powered up - then it is left alone, an explicit 0 included
+        self._limit_set: Dict[str, bool] = {}
 
     @property
     def safety_relay_active(self) -> bool:
@@ -131,6 +136,7 @@ class SpellmanMicroservice(DeviceService):
         # Unpowered, the supplies forget their setpoints: what was last set here is no longer what
         # they hold (the poll falls back to these when a supply doesn't answer a setpoint query)
         self.sp_cache.clear()
+        self._limit_set.clear()
         for bus_id, hw in self.buses.items():
             if hw.connected and hw.sock:
                 self.log.info("Safety relay off: severing connection to bus '%s'.", bus_id)
@@ -199,26 +205,41 @@ class SpellmanMicroservice(DeviceService):
         return float(ua)
 
     def ensure_current_limit(self, hw, prefix: str, info: dict) -> str:
-        """Set the default current limit if the supply holds none (0, or not read yet).
+        """Before a voltage or an enable: give the supply a current limit if it has none.
 
-        Every power-up leaves the limit at 0, and with none the output can't rise: the arc
-        detection then sees an output that collapsed. The limit used to come only from the HMI's
-        source panel, which sent 50 uA with each voltage - and only when the registry had current
-        limits for the supply. A voltage set from anywhere else (a recipe, the optimiser), or an HMI
-        reading a system_tags.json older than those limits, left the output at 0 and latched an
-        arc. Returns a note for the reply ('' if nothing was needed); raises IOError if the supply
-        won't take it."""
-        held = self.state.get(f"{prefix}.sp_actual_current")
-        if hard_caps.is_number(held) and held > 0:
+        Every power-up leaves the limit at 0, and with none the output can't rise: the arc detection
+        then sees an output that collapsed. The limit used to come only from the HMI's source panel,
+        which sent 50 uA with each voltage - and only when the registry had current limits for the
+        supply - so a voltage set from anywhere else (a recipe, the optimiser), or an HMI reading a
+        system_tags.json older than those limits, left the output at 0 and latched an arc.
+
+        Once a limit has been set since power-up (a command - even 0 - or here) nothing is done.
+        Otherwise the supply's own limit is read now (the last poll may predate a command in the
+        same batch, or a reconnect), and only if it holds none (or can't say) is the default set.
+        Returns a note for the reply ('' if nothing was needed); raises IOError if the supply won't
+        take it."""
+        if self._limit_set.get(prefix):
+            return ""
+        addr, dtype = info["address"], info["dev_type"]
+        held = None
+        raw = hw.transaction(addr, dtype, CMD_SET_MA, "?")
+        try:
+            held = float(raw.split("=")[-1]) if raw and "*" not in raw else None
+        except ValueError:
+            pass
+        if held is not None and held >= NO_LIMIT_UA:
+            self._limit_set[prefix] = True
             return ""
         ua = self.default_current_ua(info)
-        res = hw.transaction(info["address"], info["dev_type"], CMD_SET_MA, "=", f"{ua:07.1f}")
+        res = hw.transaction(addr, dtype, CMD_SET_MA, "=", f"{ua:07.1f}")
         if not res or "*" in res:
             raise IOError(f"the supply holds no current limit and did not accept {ua:g} uA (reply: {res!r}); "
                           "without one its output can't rise")
+        self._limit_set[prefix] = True
         self.sp_cache[f"{prefix}.sp_actual_current"] = ua
         self.state[f"{prefix}.sp_actual_current"] = ua     # until the next poll reads it back
-        return f"current limit {'was 0' if held == 0 else 'not read yet'}, set to {ua:g} uA"
+        return (f"current limit set to {ua:g} uA - the supply held "
+                + ("none" if held is not None else "one it would not report"))
 
     # ------------------------------------------------------------------ commands
     def handle_command(self, cmd, prefix: str, leaf: str):
@@ -262,6 +283,8 @@ class SpellmanMicroservice(DeviceService):
                 res = hw.transaction(addr, dtype, CMD_SET_MA, "=", formatted)
                 if res and "*" not in res:
                     self.sp_cache[f"{prefix}.sp_actual_current"] = value
+                    self.state[f"{prefix}.sp_actual_current"] = value   # (a voltage in the same batch sees it)
+                    self._limit_set[prefix] = True                       # chosen: left alone from now on
                     cmd.ok(f"supply accepted {formatted} uA")
                 else:
                     cmd.fail(f"supply did not accept the current limit (reply: {res!r})")
@@ -365,7 +388,12 @@ class SpellmanMicroservice(DeviceService):
             elif f"{prefix}.sp_actual_voltage" in self.sp_cache:
                 self.state[f"{prefix}.sp_actual_voltage"] = self.sp_cache[f"{prefix}.sp_actual_voltage"]
             if raw_sp_i:
-                self.state[f"{prefix}.sp_actual_current"] = float(raw_sp_i.split('=')[-1])
+                held_ua = float(raw_sp_i.split('=')[-1])
+                self.state[f"{prefix}.sp_actual_current"] = held_ua
+                if held_ua < NO_LIMIT_UA <= self.sp_cache.get(f"{prefix}.sp_actual_current", 0.0):
+                    # The limit set here is gone without the relay dropping (the supply lost power on
+                    # its own): the next voltage or enable sets one again
+                    self._limit_set[prefix] = False
             elif f"{prefix}.sp_actual_current" in self.sp_cache:
                 self.state[f"{prefix}.sp_actual_current"] = self.sp_cache[f"{prefix}.sp_actual_current"]
         except ValueError as e:

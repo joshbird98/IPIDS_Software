@@ -38,3 +38,14 @@ def test_without_a_machine_registry_it_is_built_from_scratch(tmp_path):
     with open(path) as f:
         built = json.load(f)
     assert built[CURRENT]["max_val"] == 330.0 and len(built) > 100
+
+
+def test_the_builders_warnings_are_shown(tmp_path, monkeypatch, capsys):
+    """A missing PLC interface file gives a registry without PLC tags (every PLC setpoint refused):
+    the simulator says so instead of starting quietly."""
+    real_exists = os.path.exists
+    monkeypatch.setattr(os.path, "exists", lambda p: False if str(p).endswith("PLC_PC_Interface.scl")
+                        else real_exists(p))
+    run_simulation.prepare_registry(str(tmp_path / "data_sim"), seed=str(tmp_path / "missing.json"))
+    out = capsys.readouterr().out
+    assert "Tag registry: Warning: PLC SCL file not found" in out

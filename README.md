@@ -64,8 +64,12 @@ leased, ...); the HMI greys out those controls with the reason as their tooltip.
 The HMI holds no machine state: the services do, and carry on whatever happens to it. An HMI that
 has just opened sends nothing - it shows what the services publish, and no control has the
 keyboard focus. Its setpoint boxes follow the live setpoint and send only a value the operator
-typed or stepped, on Enter or when moving on to another control; focus passing through a box,
-the window losing focus, or a box being locked mid-edit sends nothing
+typed or stepped, on Enter or when moving on to another control. Focus passing through a box
+sends nothing, and when the window loses focus an entry waits. An entry is dropped, with a "Not
+sent" note saying why, if its box is locked or its panel closed or switched away first, if it
+isn't a number, or if the setpoint changed meanwhile; Escape drops it too. While a setpoint isn't
+known the box is empty and can't be stepped. When the focused control is locked or its panel goes
+away, the keyboard goes back to the window, not to the next control
 (`src/gui/control/setpoint_box.py`).
 
 ### Alarms
@@ -144,8 +148,9 @@ start-up and on every command. Raising a cap is a code change.
   `smu_config.json`, `vac_gauges_config.json`, `plc_config.json` or `fault_config.json` (the HMI's
   config editor does this itself), then restart the services and the HMI.
 - `mpd_config.json`: Spellman supplies - voltage and current-limit ranges; the current limit the
-  service sets before a voltage or an enable when a supply holds none (`default_current_ua`, 50 µA:
-  every power-up leaves it at 0, and with none the output can't rise); and the software arc
+  service sets before the first voltage or enable after power-up when a supply holds none and none
+  has been set since (`default_current_ua`, 50 µA: every power-up leaves it at 0, and with none the
+  output can't rise); and the software arc
   detection (`arc_detection`: an output collapsed below 10 % of its setpoint on two polls in a row
   latches an arc fault until fault reset; not judged below 0.5 kV).
 - `config/recipes/`: the recipes (in git). The HMI's recipe panel and builder read and save

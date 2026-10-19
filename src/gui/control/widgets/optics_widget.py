@@ -62,9 +62,10 @@ class BeamlineOpticsWidget(QWidget):
         self.event_helper.log_user_marker(time.time(), f"Manual Adjustment: {position_name} set to {value} mm",
                                           "#9C27B0")
 
-    def _setpoint_box(self, name: str, send) -> SetpointBox:
-        """A box that sends only what the operator types or steps (setpoint_box.py)."""
-        box = SetpointBox()
+    def _setpoint_box(self, name: str, send, live: bool = True) -> SetpointBox:
+        """A box that sends only what the operator types or steps (setpoint_box.py); live: it shows a
+        setpoint from telemetry."""
+        box = SetpointBox(live=live)
         box.setObjectName(name)
         box.committed.connect(send)
         return box
@@ -118,10 +119,12 @@ class BeamlineOpticsWidget(QWidget):
         layout.addWidget(QLabel("<b>Object Slits (L / R):</b>"), 2, 0)
         slit_layout = QHBoxLayout()
 
-        self.sp_obj_l = self._setpoint_box("Object slit left", lambda v: self._log_manual_slit("Object Slit Left", v))
+        self.sp_obj_l = self._setpoint_box("Object slit left", lambda v: self._log_manual_slit("Object Slit Left", v),
+                                           live=False)
         self.sp_obj_l.setSuffix(" mm")
 
-        self.sp_obj_r = self._setpoint_box("Object slit right", lambda v: self._log_manual_slit("Object Slit Right", v))
+        self.sp_obj_r = self._setpoint_box("Object slit right", lambda v: self._log_manual_slit("Object Slit Right", v),
+                                           live=False)
         self.sp_obj_r.setSuffix(" mm")
 
         slit_layout.addWidget(self.sp_obj_l)
@@ -247,10 +250,12 @@ class BeamlineOpticsWidget(QWidget):
         layout.addWidget(QLabel("<b>Image Slits (L / R):</b>"), 0, 0)
         slit_layout = QHBoxLayout()
 
-        self.sp_img_l = self._setpoint_box("Image slit left", lambda v: self._log_manual_slit("Image Slit Left", v))
+        self.sp_img_l = self._setpoint_box("Image slit left", lambda v: self._log_manual_slit("Image Slit Left", v),
+                                           live=False)
         self.sp_img_l.setSuffix(" mm")
 
-        self.sp_img_r = self._setpoint_box("Image slit right", lambda v: self._log_manual_slit("Image Slit Right", v))
+        self.sp_img_r = self._setpoint_box("Image slit right", lambda v: self._log_manual_slit("Image Slit Right", v),
+                                           live=False)
         self.sp_img_r.setSuffix(" mm")
 
         slit_layout.addWidget(self.sp_img_l)
@@ -364,8 +369,9 @@ class BeamlineOpticsWidget(QWidget):
         y_steer_en = bool(data.get("ion_beam.beamline.steering.stat_enabled", False))
         y_rb = data.get("ion_beam.beamline.steering.sp_actual_y_volts")
         self.lbl_y_rb.setText(f"RB: {y_rb:.1f} V" if y_rb is not None else "RB: --- V")
-        if y_steer_en:      # (as before: with the steering off this reads 0 V - in the simulator's PLC at least)
-            self.sp_y_steer.show_setpoint(y_rb)
+        # The setpoint the PLC holds, steering on or off (sp_actual reads 0 V while it is off - so the
+        # box used to keep its default 0 then, and a step from it sent 1 V)
+        self.sp_y_steer.show_setpoint(data.get("ion_beam.beamline.steering.sp_requested_y_volts"))
 
         x_steer_en = bool(data.get("ion_beam.beamline.steerer_magnet.stat_enabled", False))
         x_v_rb = data.get("ion_beam.beamline.steerer_magnet.rb_voltage")

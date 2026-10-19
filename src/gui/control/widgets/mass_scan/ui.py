@@ -192,8 +192,8 @@ def _analysis_panel(w):
     w.lbl_energy_display.setStyleSheet("font-weight: bold; color: #00E5FF;")
     # SetpointBox: "entered by hand" only when someone types or steps one (any focus-out used to
     # relabel a fitted calibration as typed - and that label goes into "Calculate & set amps" markers)
-    w.sp_k_factor = _spin(1.0, 10000.0, 2, 1391.9, step=1.0, box=SetpointBox())
-    w.sp_i_offset = _spin(-10.0, 10.0, 3, 0.223, step=0.01, box=SetpointBox())
+    w.sp_k_factor = _spin(1.0, 10000.0, 2, 1391.9, step=1.0, box=SetpointBox(live=False))
+    w.sp_i_offset = _spin(-10.0, 10.0, 3, 0.223, step=0.01, box=SetpointBox(live=False))
     w.sp_k_factor.valueChanged.connect(w._recalculate_mass_axis)
     w.sp_i_offset.valueChanged.connect(w._recalculate_mass_axis)
     w.sp_k_factor.committed.connect(w._calibration_typed)

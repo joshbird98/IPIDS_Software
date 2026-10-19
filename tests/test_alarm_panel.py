@@ -117,6 +117,33 @@ def test_selected_alarms_stay_selected_while_the_list_changes(panel, app):
     assert w.selected_ids() == ["c"]
 
 
+def test_a_shift_click_range_starts_from_the_same_alarm_after_a_redraw(panel):
+    """Qt keeps the Shift+click anchor as a row number: after a new alarm pushed the rows down, the
+    range started at whichever alarm then sat in the old row."""
+    from PyQt6.QtCore import Qt
+    w, cmds = panel
+    w.resize(800, 300)
+    w.show()
+    alarms = [alarm("a", 1), alarm("b", 2), alarm("c", 3), alarm("d", 3)]
+    w.update_telemetry(telemetry(alarms, horn=1))
+    click_row(w, 1)                                          # b
+    w.update_telemetry(telemetry([alarm("e", 1)] + alarms, horn=1))     # e on top: b is row 2 now
+    click_row(w, 4, Qt.KeyboardModifier.ShiftModifier)       # Shift+click d
+    assert w.selected_ids() == ["b", "c", "d"]
+
+
+def test_unshelve_only_asks_for_shelved_alarms(panel):
+    from PyQt6.QtCore import Qt
+    w, cmds = panel
+    w.resize(800, 300)
+    w.show()
+    w.update_telemetry(telemetry([alarm("a", 2), alarm("b", 3, shelved_until=4e9)], horn=2))
+    click_row(w, 0)
+    click_row(w, 1, Qt.KeyboardModifier.ControlModifier)
+    w.btn_unshelve.click()
+    assert [c for c in cmds.sent if c[1] == "alarms.cmd_unshelve"] == [("alarms", "alarms.cmd_unshelve", {"id": "b"})]
+
+
 def test_the_buttons_say_what_they_would_act_on(panel):
     w, cmds = panel
     w.update_telemetry(telemetry([alarm("a", 2), alarm("b", 3, "ACKED"), alarm("c", 3, "ACKED", shelved_until=4e9)],

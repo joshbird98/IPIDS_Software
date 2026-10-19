@@ -126,10 +126,22 @@ simulator; none of it has been tried on the real hardware yet (see "Lab PC valid
     start, an arrow-key step from sending ~0 A), and the mass calibration boxes (any click through them
     relabelled a fitted calibration "entered by hand"). The slit boxes no longer send a command (the
     slits are manual; there is no such tag, so each was refused) - the width still goes into the event log.
+    An independent review of that fix found more, all fixed with tests: a lock arriving while a box had the
+    keyboard passed it to the next box, text selected, so the rest of the typing set another supply (the
+    keyboard now goes to the window - for any control locked or hidden - and the dropped entry is reported
+    with a "Not sent" note); empty text or a lone '-' re-sent the old value (or a box's default); a box
+    stepped from its default or a stale number while the setpoint was unknown (now empty, no steps; the
+    Y-steerer box shows the PLC's held setpoint, also with the steering off); a switched-away dock tab kept
+    the keyboard off-screen and the next click sent what was typed into it (dropped now); an entry made
+    before someone else changed the setpoint was sent (dropped); a passing mouse wheel took the focus from
+    a box being edited, sending its half-typed value (no wheel focus for value boxes and drop-downs).
+    Alarms: a Shift+click range could start from the wrong alarm after a redraw; Unshelve asked for
+    alarms that weren't shelved.
   - Einzel at 10 kV stayed at 0 V and latched an arc: the simulator was running on a system_tags.json from
     before the einzel's current limits, so the HMI never sent its 50 uA and the supply (0 uA after every
-    power-up) couldn't raise its output. The Spellman service now sets the current limit itself before a
-    non-zero voltage or an enable when the supply holds none (`default_current_ua` in mpd_config.json,
+    power-up) couldn't raise its output. The Spellman service now sets the current limit itself before the
+    first non-zero voltage or enable after power-up, if the supply holds none (it asks it) and none has been
+    set since - a limit sent just before, or an explicit 0, is kept (`default_current_ua` in mpd_config.json,
     50 uA) - whoever sends the voltage (recipes, optimiser) - and refuses the voltage / enable, saying why,
     if the supply won't take one. The HMI sends just the voltage. The service also forgets what it last set
     when the relay drops (the supplies do), so a supply not answering a setpoint query can't be shown
