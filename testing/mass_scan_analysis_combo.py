@@ -1,6 +1,6 @@
 import collections
 
-# Replace this string with your new measured Niobium-target SNICS data
+# Replace this string with your new measured Niobium-target TESS data
 raw_data = """26 450nA
 38 4nA
 40 3nA

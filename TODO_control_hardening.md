@@ -16,8 +16,23 @@ simulator; none of it has been tried on the real hardware yet (see "Lab PC valid
 5. The HMI opens once with the new default layout (layouts saved by older versions aren't restored);
    arrange it and save it under View > Layouts if wanted. Both programs start dark: View > Theme or
    Ctrl+Shift+T for light (remembered in config/appearance.json, per machine).
+6. `pip install -r requirements.txt` - adds the Markdown package the help pages use (Help, F1). Without it
+   the help still opens, plainer (no call-out boxes or table borders).
 
 ## Done
+- Help (October 2026): Help in the HMI and the data viewer opens the help window on the Markdown pages in
+  docs/ (contents, search, back/forward, print or save as PDF, follows the theme); F1 opens the page of the
+  panel under the mouse pointer; Help > About SINDIE shows the version (git commit) and the folders in use.
+  Pages: safety rules, starting the software, a tour of the HMI, the controls, beam start-up and shutdown,
+  alarms and faults, tuning, recording an experiment, every panel, the data viewer, troubleshooting,
+  messages, how it works (PLC, services, alarms, logging, simulator), configuration, tests, glossary.
+  Screenshots from the simulator: python src/utils/make_help_screenshots.py. tests/test_help.py checks every
+  page, link, section link, screenshot and panel page; CI now checks out docs/.
+- Found on the way: `--sim` on the HMI, the viewer or the manager now also selects the simulator's ports
+  (offset 10000 unless SINDIE_PORT_OFFSET is set) - a `--sim` HMI on the lab PC used to talk to the real
+  services; two recipes (sub_startup.json, so master_implant.json, and test_sequence.json) named an old tag
+  path (ion_beam.beamline_diagnostics...) that the PLC service refuses - fixed, and a test checks every
+  recipe's tags; the source panel shows the source body temperature (read only; the start-up checks it).
 - Acknowledged commands (ROUTER/DEALER) for every service and the manager: ok / accepted / rejected+reason /
   failed, plus timeout / unreachable on the client side; stale commands still rejected (0.5 s; SMU scales with NPLC).
 - HMI: Command Log dock + pop-ups for refused/failed commands; stale telemetry hidden (`---`); arm-then-confirm on
@@ -57,7 +72,7 @@ simulator; none of it has been tried on the real hardware yet (see "Lab PC valid
 - After Josh's first simulator session (Oct 2026):
   - Simulator source model per his description: thermionic at 2500 V with emission from the filament
     (3 mA at 25 A -> 150 mA at 29 A), auto-emission drives the filament; cesium heater -> setpoint, forced
-    cooling -> 20 degC; 50 MOhm bleeds on extraction/target plus SNICS target current (0.1 mA at
+    cooling -> 20 degC; 50 MOhm bleeds on extraction/target plus the sputter target current (0.1 mA at
     200 W / 4 kV / 50 degC -> 1 mA at 250 W / 8 kV / 100 degC), ~10 % extracted; the Faraday-cup peaks scale
     with the extracted beam; einzel load < 1 uA and noisy.
   - Simulated relay needs the gate valve open; closing it trips the relay, latched (request, supply enables
@@ -262,6 +277,126 @@ simulator; none of it has been tried on the real hardware yet (see "Lab PC valid
 8. On the lab PC and a laptop: the new look in both themes (alarm colours, the safety-relay countdown on
    ENABLE SAFETY RELAY), dragging panels into a narrow column, Reset layout, and the CPU use with the
    default layout (the simulator measured here: see the commit message).
+9. Help pages, for Josh: add the Ion Beam Centre's local rules (docs/safety.md, "Local rules") and the
+   caesium safe operating procedure; read the procedures (docs/procedures/) against practice; resolve the
+   remaining "to be confirmed" notes (grep -rn "to be confirmed" docs/).
+
+10. Found while writing the help (October 2026), not fixed - to review (file:line at the time):
+    - Simulator: INITIATE SHUTDOWN trips the relay (no shutdown sequencer; cmd_source_shutdown never
+      cleared), and after a fault reset the relay is refused until service_plc restarts (src/sim/plc.py:205);
+      machine state 2/1 instead of 3/99; stat_gv_close_permissive set once and never updated; caesium "hot"
+      at 50 degC and target minimum 0.5 kV instead of the PLC's 30 degC and 3 kV.
+    - service_plc: the steerer's and SMU's status flags are never written to the PLC although DB10 has
+      Beamline_Steerer_Magnet and word 4 has Str_Magnet_* bits; PLC_DATA publishes those never-written
+      ion_beam.beamline.steerer_magnet.stat_* tags (at 0) under the same names as the steerer service's own,
+      so caches see the two interleaved (service_plc.py:119, 468-546). The '"From_PC" in tag' test at :335
+      never matches (registry tags are lower case).
+    - Spellman: over-temperature and rail collapse (status bits 0x30) are folded into stat_fail ("failed to
+      track setpoint"); the PLC's Unit*_OverTemp / Unit*_Supply_Rail bits can never be set (service_spellman_mpd.py:414).
+    - Alarms panel: probably no start-up grace (a fresh HMI may show ALARM SERVICE NOT RUNNING and sound the
+      critical horn until the first alarm list arrives, alarm_widget.py:214-226); the banner colour counts
+      shelved and suppressed alarms (:233); the shelve dialog's maximum is fixed at 480 min whatever
+      shelve_max_minutes says (:46, :199); a cleared-unacknowledged alarm is drawn steady, although the README
+      and alarms/model.py say it flashes (:305).
+    - Recipe builder: a new VERIFIED_ACTION gets "verify_target": "", which overrides the engine's default and
+      makes the step always time out (recipe_builder_dialog.py:318); default parameter gv_cmd_open vs the
+      routine's cmd_gv_open (recipe_builder_defaults.py:21, routines.py:203); hv_conditioning's default
+      max_val 30 is above extraction's 20 kV limit; EDIT and save of master_implant.json writes a new file named
+      from the recipe name.
+    - Recipes: test_faults_and_prompts.json's fault policy has no "type": "BIT_FAULT", so it is ignored
+      (recipe_job.py:147); a middle parent's fault policy is ignored in nested sub-recipes (:142); the
+      mass_scan routine accepts loop but never stops looping (routines.py:96-112); LOAD RECIPE does nothing
+      on a step value that isn't a number (ValueError not caught, recipe_widget.py:171); the status chip keeps
+      SEQUENCER OFFLINE after the sequencer is back, until a recipe is loaded (:253-264).
+    - Mass scan: Calculate fit writes the calibration into the last loaded trace file even when the plot shows
+      a live scan (widget.py:130, 558-563); loading a trace during a scan mixes the live points into it (:431);
+      peaks come back sorted by index, not mass (peaks.py:50).
+    - Optimiser: choosing a new parameter relabels the old map's axes, and a box drag then sweeps the new
+      parameter in the old map's coordinates (optimiser_widget.py:176-185); the picker offers the GRAPHIX relay
+      set points, which can never be swept (optimiser_tag_dialog.py:33); transient status texts are overwritten
+      within 100 ms (also mass_scan/widget.py:494-497).
+    - Take control: a scan's or sweep's clean-up commands are then refused, so the SMU stays at the scan's
+      NPLC and the optimiser's setpoints stay at the last point; tests/test_sequencer_mass_scan.py takes only
+      the magnet, the Automation bar takes every subsystem.
+    - Source panel: AUTO EMISSION: ON text can go stale; the HEATING badge shows while the PLC holds the oven at
+      20 degC during a shutdown; the CASCADED tooltip names the target.
+    - Config: fault_config.json's VG6_Not_Found description says VG1, PC_Watchdog_Timeout says "1Hz heartbeat";
+      plc_config.json says its limits mirror the PLC's, but filament 33 A and caesium 0-150 degC differ from the
+      PLC's 0-40 A and 20-200 degC; after a change that rebuilds the registry the config editor restarts only
+      the file's own service (the HMI and service_sequencer keep the old limits until restarted).
+    - HMI texts: the Vacuum panel's OPEN tooltip says "Ensure turbo pump is at speed", which isn't part of the
+      PLC's open permissive (vacuum_widget.py:274-275); the RECIPE badge ("Control yielded to active Recipe.",
+      PLC mode 2 - recipes use leases, and the PLC ignores mode 2) and the mode-1 tooltip ("automated
+      sequencer" - it is the PLC's shutdown sequence) mislead (source_widget.py:442-446); the services word
+      "relay off" refusals differently (service_plc.py:695, service_spellman_mpd.py:168/255,
+      service_magnet_psu.py:255, service_smu.py:138, device_service.py:171/275).
+    - Spellman: the arc over-current threshold in mpd_config.json (500 uA) is above the source einzel's 330 uA
+      rating, so that test can never fire for the only configured supply (mpd_config.json:9, :23).
+    - Beamline Optics: rows for the beamline einzel and both neutral traps, which mpd_config.json doesn't
+      configure, so every command to them is refused (optics_widget.py:280-282).
+    - PLC (to confirm on the machine): every shutdown that reaches step 2 closes the gate valve, which latches
+      Safety_Relay_Tripped, so a planned or automatic shutdown also raises the critical "Hardware safety loop
+      broken" alarm; which way the Faraday cup moves on a latched fault (FB20 sets Cmd_Insert_FC FALSE, OB100 and
+      the shutdown sequences insert it); a relay trip doesn't start a shutdown sequence (facts report 12.2).
+    - The config editor's password is written in the source (control_main.py, _show_config_editor).
+    - Stale values shown as live (found by the help reviewers, reproduced offscreen): a gauge whose pressure the
+      vacuum service withdraws (no good read for 3 s, controller not answering) keeps its last pressure and its
+      HEALTHY chip (vacuum_widget.py:149-173; stat_error_code and the relay flags are never nulled,
+      service_vac_gauge_controllers.py:490-500); with the turbo pump not answering, the last speed and current
+      stay, the status reads IDLE and START PUMP is enabled (vacuum_widget.py:184-213); the Faraday cup button
+      keeps its last text and colour when PLC data is lost (faraday_smu_widget.py:283-305). The panel shows
+      AT SPEED / RUNNING whenever the TURBOVAC's status bit 0 is set, even at 0 Hz (vacuum_widget.py:202) -
+      check what bit 0 means on the real pump (the simulator sets it whenever there is no error, src/sim/turbo.py).
+    - A vacuum-service restart (by hand, or by the config editor after a vac_gauges_config.json change) makes
+      service_plc report the GRAPHIX controllers lost after 2 s (service_plc.py:587-590), which withdraws the
+      gate valve's open permissive: with the source on, the PLC closes the valve and the relay drops. Consider
+      a grace period, or a warning in the services panel and the config editor.
+    - PLC (to confirm on the machine): as the program reads, a PC watchdog timeout withdraws the gate valve's
+      open permissive at once (PC_Watchdog_Timeout), so the valve closes and the relay drops straight away, and
+      the 75 % extraction hold of GRACE PERIOD acts on supplies without power.
+    - service_plc: permit() leaves out the caesium-hot hold (HELD_WHILE_CS_HOT), so the target, filament and
+      thermionic switches aren't greyed out while the caesium is hot - the operator gets a refusal pop-up
+      instead (service_plc.py:632); that refusal credits the PLC with the hold (:727), which the PC applies.
+    - Current Monitoring reads "system.facilities.adam.stat_comms_fail", but the cache stores it under
+      "ADAM_DATA/system...", so every card would stay OFFLINE even with the ADAM working (current_monitor_widget.py:91).
+    - Data viewer: the export and F12 folders are fixed to data/exports, ignoring SINDIE_DATA_DIR and --sim, so
+      simulator exports land in the machine's folder (backed up to OneDrive) (viewer_main.py:290,
+      figure_capture.py:46; paths.EXPORTS_DIR exists); an unknown value shows as "nan" in Values and the
+      Inspector (viewer_lanes.py:340); Delete removes the "Default" profile (viewer_profiles.py:118 - the
+      protecting context menu at :104 is never connected); the follow-live tooltip says zooming stops
+      following (only a drag does); config_manager.py's plot_settings.json functions are dead code.
+    - Recipe assistant prompt (ai_assistant.py): tells the model to set the read-only stat_thermionic_auto_emission
+      (the command is ion_beam.source.thermionic.cmd_auto_emission, :97, :131); its "critical operating
+      ranges" (einzel 8-15 kV, thermionic 50-130 mA, caesium 40-90 degC, :102-107) disagree with the typical
+      values (8-16 kV, 100-150 mA, 100-150 degC); filament ramp 0.8 A/s (the PLC ramps at 1 A/s).
+    - Small: the SHUTDOWN SEQ chip keeps old text with src_auto_sdown on at step 0 or an unknown step
+      (system_health_widget.py:140-153, possible); "finishing: restoring the SMU integration time" never reaches
+      the job status (jobs.py:206-215); the alarm reads "<service> is crashed" (rules.py:41); FAULT events carry
+      the numeric fault severity in the severity field (event_helper.py:64).
+    - Small: tests/conftest.py uses setdefault, so a SINDIE_DATA_DIR or port offset set in the shell is used by
+      the tests; the ADAM service hard-codes its address; VG4 is left out of rapid-rise detection
+      (service_vac_gauge_controllers.py:554); the Service Manager's Start button keeps the Stop tooltip; the
+      recipe assistant says "missing API key" when it is the google-genai package that is missing.
+
+11. Caesium oven cooling air (agreed with Josh, October 2026). As the PLC program reads, it opens the cooling
+    air whenever the safety relay is open, however cold the oven is, so after a shutdown it stays on until the
+    relay closes again. The HMI now shows this honestly: FORCED COOLING shows only the operator's own request
+    (FORCED COOLING: ON), and the oven's second line says "cooling air on" with the reason in its tooltip
+    (source_widget.py _show_cooling; the simulator now opens the air with the relay off too). Proposed PLC
+    change (FB3/FB20 cooling demand), so the air stops by itself once the oven is cold:
+    - replace the plain "relay open" term with "relay open AND (Cs_Is_Hot OR the cool-down isn't finished)";
+    - a cool-down is finished when the PLC's caesium estimate has read cold (<= 30 degC) for 10 min AND the
+      automatic cooling has run for at least 30 min in all (Josh's practice), so a hot oven always gets its
+      30 minutes and the run-on covers the model's error;
+    - keep the PC's force-cooling request as a plain on/off override, and the over-temperature, cool-fail and
+      shutdown-sequence cooling as they are;
+    - optionally a To_PC bit saying the cooling is the PLC's own (the HMI infers it now).
+    First check that the cooler's solenoid can be driven with the relay open: the output is SOV_Stop
+    (energised = air off), so if it is powered from the source deck through the relay, the air flows whenever
+    the relay is open whatever the PLC does, and the automatic stop would need it powered from the ground side.
+    The PLC is the right place (not the PC): it owns the oven, the valve and the thermal model, and keeps working
+    when the PC doesn't. Update docs/procedures/beam-shut-down.md ("After the shutdown") and
+    docs/panels/ion-source.md when it's done.
 
 ## Notes
 - If the ADAM module is repaired: its manager key must be `service_adam_monitor` (matches its heartbeat name).

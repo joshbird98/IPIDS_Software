@@ -29,7 +29,7 @@ Modelled behaviour (from Josh's description of the machine, Oct 2026)
     ASSUMED from Josh's description (Oct 2026): the threshold (CS_HOT_C) and exactly what the
     real PLC holds are guesses - check against the PLC program.
   * extraction / target: 50 MOhm bleed resistors (current proportional to voltage) plus,
-    SNICS-style, a target (sputter) current once thermionic > 200 W, target > 4 kV and
+    as in the TESS, a target (sputter) current once thermionic > 200 W, target > 4 kV and
     cesium > 50 degC: ~0.1 mA there, ~1 mA at 250 W / 8 kV / 100 degC. The extracted beam is
     ~10 % of it and shows in the extraction current (the simulated Faraday cup scales with it).
   * steering, gate valve (only opens with the vacuum permissive), Faraday cup.
@@ -308,7 +308,7 @@ class SimulatedPLC:
 
         cesium_c = self._cesium(relay, dt)
 
-        # extraction and target: bleed + (SNICS) target current; extracted beam ~10 % of it
+        # extraction and target: bleed + (sputter) target current; extracted beam ~10 % of it
         kv = {}
         for name in ("extraction", "target"):
             base = f"{SRC}.{name}"
@@ -333,7 +333,9 @@ class SimulatedPLC:
     def _cesium(self, relay, dt):
         base = f"{SRC}.cesium"
         heating = int(self.get(f"{base}.cmd_ctrl_mode", 0.0)) == 1 and relay
-        cooling = bool(self.get(f"{base}.cmd_force_cooling"))
+        # The PLC opens the cooling air for forced cooling and, as its program reads, whenever the
+        # relay is off (FB3/FB20's cooling demand)
+        cooling = bool(self.get(f"{base}.cmd_force_cooling")) or not relay
         self.set(f"{base}.ctrl_mode", self.get(f"{base}.cmd_ctrl_mode", 0.0))
         self.set(f"{base}.stat_enabled", heating)
         sp = self.get(f"{base}.sp_requested_temp", 0.0)

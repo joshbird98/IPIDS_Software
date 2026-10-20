@@ -6,8 +6,10 @@ if __package__ in (None, ""):
     sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 if "--sim" in sys.argv[1:]:
-    # Simulation mode (fake devices, data in data_sim/): must be set before src.* is imported
-    os.environ["SINDIE_SIMULATE"] = "1"
+    # Simulation mode (fake devices, data in data_sim/, the simulator's ports): must be set
+    # before anything else from src is imported
+    from src.core.env import use_simulator
+    use_simulator()
 
 os.environ["QT_API"] = "PyQt6"
 

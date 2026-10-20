@@ -25,7 +25,8 @@ import sys
 import time
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
-SIM_PORT_OFFSET = 10000
+sys.path.insert(0, ROOT)
+from src.core.env import SIM_PORT_OFFSET  # noqa: E402  (also what `--sim` on the HMI or viewer uses)
 
 
 def prepare_registry(data_dir, seed=os.path.join(ROOT, "config", "system_tags.json")):

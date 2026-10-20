@@ -1,8 +1,9 @@
 # SINDIE software
 
-Control and data system for the SINDIE ion implanter (Surrey Ion Beam Centre):
-hardware services that talk to the PLC and the supplies, the operator HMI, and the
-data viewer for the logged telemetry.
+Control and data system for SINDIE, the Surrey Implanter for Negative-ions, Defect Implantation,
+and Enrichment (Surrey Ion Beam Centre): hardware services that talk to the PLC and the supplies,
+the operator HMI, and the data viewer for the logged telemetry. The operator help is in `docs/`
+(Help in the HMI and the viewer, F1 over a panel).
 
 (The machine used to be called IPIDS. The old `IPIDS_*` environment variables still work, and
 the HMI and viewer pick up their saved layouts and export settings from the old name once.)
@@ -20,10 +21,22 @@ src/core/           shared code: device service base, commands, leases, telemetr
                     logging, recipe steps, config checking
 src/sim/            simulated devices (see below)
 config/             configuration files (JSON)
+docs/               the operator help (Markdown pages and screenshots), shown by Help in the HMI and viewer
 plc/                PLC interface definition (PLC_PC_Interface.scl)
 tests/              automated tests (pytest)
 testing/            hand-run scripts and tools
 ```
+
+## Help
+
+The operator help is in `docs/`, as Markdown pages that link to each other: start at
+[docs/README.md](docs/README.md). **Help** in the HMI and the data viewer opens them in a help
+window (contents, search, back and forward, the current theme, print or save as PDF), and **F1**
+opens the page of the panel under the mouse pointer (`src/gui/help/`). The pages read the same on
+GitHub. How to add or change a page, and the house style: `docs/engineering/writing-help-pages.md`.
+The screenshots in `docs/images/` are taken from the simulator by
+`python src/utils/make_help_screenshots.py`; `tests/test_help.py` checks every page, link,
+section link and screenshot.
 
 ## Running on the lab PC
 
@@ -66,6 +79,16 @@ practice: normal states are grey, green means an output is switched on, blue an 
 the main action, violet a sequence holding the control, amber something that needs attention and
 red a fault (`src/gui/theme.py`; widgets set a "tone" rather than colours of their own,
 `src/gui/style.py`).
+
+### Help
+
+**Help** in the HMI and the data viewer opens the help window: the Markdown pages in `docs/`, with
+their contents on the left, a search box, back and forward, and printing or saving as PDF. **F1**
+opens the page of the panel under the mouse pointer. The pages also read as a linked wiki on GitHub
+(start at `docs/README.md`). How to write a page, and the house style, are in
+`docs/engineering/writing-help-pages.md`; the screenshots are taken from the simulator by
+`python src/utils/make_help_screenshots.py`; `tests/test_help.py` checks every page, link,
+screenshot and panel page (`src/gui/help/`).
 
 The manager restarts a crashed service with increasing delays (2 s ... 5 min) and shows
 BACKOFF / STOPPED in the HMI's services panel, where services can also be stopped and started.
@@ -127,7 +150,8 @@ config files at every start. The window it runs in has a menu for injecting faul
 safety relay trip, Spellman arc, magnet 10 % low, ...). As on the real machine, open the gate
 valve and energise the safety relay before the supplies accept commands.
 
-The simulated source behaves roughly like the real SNICS source (details in `src/sim/plc.py`):
+The simulated source behaves roughly like the real TESS (Thermionic Emission Sputter Source;
+details in `src/sim/plc.py`):
 closing the gate valve trips the safety relay (latched: supplies off, fault reset and enable the
 relay again); the thermionic supply sits at 2500 V and its current comes from the filament
 (~3 mA at 25 A, ~150 mA at 29 A), with auto-emission driving the filament; the cesium oven heats
@@ -136,7 +160,9 @@ through their bleed resistors, and beam (target current, ~10 % of it extracted, 
 Faraday cup) appears once thermionic > 200 W, target > 4 kV and cesium > 50 °C. The einzel draws
 under 1 µA, noisily.
 
-Each program also takes `--sim` on its own, e.g. `python src/hmi.py --sim`.
+Each program also takes `--sim` on its own, e.g. `python src/hmi.py --sim`: simulated devices, `data_sim/`
+and the simulator's ports (offset 10000, unless `SINDIE_PORT_OFFSET` is set), so a program started that
+way on the lab PC joins the simulator, never the real system.
 
 ## Tests
 
@@ -191,8 +217,7 @@ start-up and on every command. Raising a cap is a code change.
   picked up while running.
 - `alarm_config.json`: alarm rules and overrides (priority, delays, disabling one alarm or a
   pattern such as `plc.*_Comms_Fail`).
-- `workspace_profiles.json`, `plot_settings.json`: the data viewer's saved layouts and settings
-  (per machine, not in git).
+- `workspace_profiles.json`: the data viewer's saved profiles (per machine, not in git).
 
 ## Logs and records
 

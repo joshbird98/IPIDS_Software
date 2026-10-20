@@ -12,8 +12,10 @@ if __name__ == "__main__":
         # Started as a script (python src/services/service_manager.py): make 'src' importable
         sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")))
     if "--sim" in sys.argv[1:]:
-        # Must be set before src.core.paths is imported (it decides the data folder at import)
-        os.environ["SINDIE_SIMULATE"] = "1"
+        # Simulated devices, data_sim/ and the simulator's ports: set before src.core.paths and
+        # the network map are imported (they decide the data folder and the ports at import)
+        from src.core.env import use_simulator
+        use_simulator()
 
 import psutil
 import zmq
@@ -412,7 +414,8 @@ class SindieServiceManager:
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="SINDIE service manager")
     parser.add_argument("--sim", action="store_true",
-                        help="simulation mode: fake devices, data in data_sim/ (sets SINDIE_SIMULATE=1)")
+                        help="simulation mode: fake devices, data in data_sim/, the simulator's ports "
+                             "(SINDIE_SIMULATE=1 and, unless already set, SINDIE_PORT_OFFSET=10000)")
     parser.parse_args()
 
     setup_logging("service_manager")

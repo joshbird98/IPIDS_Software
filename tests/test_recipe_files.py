@@ -38,3 +38,33 @@ def test_migration_copies_without_overwriting(tmp_path):
 
 def test_no_old_folder_is_fine(tmp_path):
     assert migrate_legacy_recipes(str(tmp_path / "missing"), str(tmp_path / "new")) == []
+
+
+def _tags_named(node):
+    """Every 'ion_beam...' tag a recipe names, however deeply (PARALLEL steps, conditions...)."""
+    if isinstance(node, dict):
+        for value in node.values():
+            yield from _tags_named(value)
+    elif isinstance(node, list):
+        for value in node:
+            yield from _tags_named(value)
+    elif isinstance(node, str) and node.startswith("ion_beam."):
+        yield node
+
+
+def test_the_recipes_name_only_tags_that_exist():
+    """Found while writing the help (October 2026): two recipes still used an old tag path
+    (ion_beam.beamline_diagnostics...), which the PLC service refuses as an unknown tag."""
+    import glob
+    import json
+    with open(paths.REGISTRY_PATH, "r", encoding="utf-8") as f:
+        registry = json.load(f)
+    folder = os.path.join(paths.PROJECT_ROOT, "config", "recipes")
+    files = sorted(glob.glob(os.path.join(folder, "*.json")))
+    assert files
+    unknown = []
+    for name in files:
+        with open(name, "r", encoding="utf-8") as f:
+            recipe = json.load(f)
+        unknown += [f"{os.path.basename(name)}: {tag}" for tag in _tags_named(recipe) if tag not in registry]
+    assert not unknown, unknown

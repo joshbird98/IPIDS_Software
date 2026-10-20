@@ -16,6 +16,7 @@ from src.gui.style import chip, reserve_width, set_prop, set_role, set_tone
 
 log = logging.getLogger("hmi.source")
 
+BODY_TRIP_TEXT = "PLC trips above 40 °C"
 TOLERANCE_TIP = ("Readback has been outside its tolerance of the setpoint (not a fault).\n"
                  "Rules and tolerances: config/readback_tolerance.json; events are in events.db (TOLERANCE).")
 
@@ -102,7 +103,8 @@ class IonSourceWidget(QWidget):
         self._build_psu_row(13, "Thermionic", "ion_beam.source.thermionic", "mA", "V", 0.0, 1000.0, is_voltage=False,
                             decimals=2)
         self._build_cs_row(16)
-        for gap_row in (3, 6, 9, 12, 15):
+        self._build_body_row(19)
+        for gap_row in (3, 6, 9, 12, 15, 18):
             self.psu_layout.setRowMinimumHeight(gap_row, 10)
         # The mode column keeps its width when no badge shows, so the buttons don't move
         probe = chip("ARC QUENCH", "warn")
@@ -180,10 +182,26 @@ class IonSourceWidget(QWidget):
         self.psu_layout.addWidget(lbl_badge, row, 3, middle)
         self.psu_layout.addWidget(btn_enable, row, 4)
 
+    def _build_body_row(self, row):
+        """The source body's temperature, read only: the start-up checks look for it between 10 degC
+        and room temperature once the relay is on, and the PLC trips the source above 40 degC."""
+        lbl_name = QLabel("Source body")
+        set_role(lbl_name, "title")
+        lbl_rb, lbl_rb2 = _readback_labels("~000.0 °C [?]", BODY_TRIP_TEXT)
+        lbl_rb.setText("--- °C")
+        lbl_rb2.setText(BODY_TRIP_TEXT)
+        lbl_rb.setToolTip("Source body temperature, read by the PLC. The source deck's readings are live only "
+                          "while the safety relay is on, so it shows --- while the relay is off.")
+        middle = Qt.AlignmentFlag.AlignVCenter
+        self.psu_layout.addWidget(lbl_name, row, 0, middle)
+        self.psu_layout.addWidget(lbl_rb, row, 1, middle)
+        self.psu_layout.addWidget(lbl_rb2, row + 1, 1, Qt.AlignmentFlag.AlignTop)
+        self.lbl_body = lbl_rb
+
     def _build_cs_row(self, row):
         lbl_name = QLabel("Cesium oven")
         set_role(lbl_name, "title")
-        lbl_rb, lbl_rb2 = _readback_labels("~000.0 °C [?]", "heater 100 %")
+        lbl_rb, lbl_rb2 = _readback_labels("~000.0 °C [?]", "heater 100 % | cooling air on")
         lbl_rb.setText("--- °C")
         lbl_rb2.setText("heater --- %")
 
@@ -216,6 +234,47 @@ class IonSourceWidget(QWidget):
             "base_tag": "ion_beam.source.cesium", "is_voltage": False
         }
 
+    def _show_cooling(self, ctrl, data, base_tag, comms_lost, relay_active, auto_sdown):
+        """FORCED COOLING shows YOUR request (the PC's cmd_force_cooling, as the PLC holds it); whether
+        the cooling air is actually on is on the oven's second line ("cooling air on"), with why.
+        The button used to show the air valve: with the relay off the PLC always opens it, so
+        switching forced cooling off seemed to do nothing (it read COOLING ACTIVE again)."""
+        btn = ctrl["btn_cool"]
+        air_on = bool(data.get(f"{base_tag}.stat_cooling_active", False))
+        resting = bool(data.get(f"{base_tag}.stat_cooling_wait", False))
+        asked = data.get(f"{base_tag}.cmd_force_cooling")
+        asked = btn.isChecked() if asked is None else bool(asked)
+        btn.setEnabled(not comms_lost)
+        btn.setChecked(asked)
+        if asked and resting:
+            btn.setText("COMPRESSOR RESTING")
+            set_tone(btn, "warn")
+        elif asked:
+            btn.setText("FORCED COOLING: ON")
+            set_tone(btn, "info")
+        else:
+            btn.setText("FORCED COOLING")
+            set_tone(btn, None)
+        if not air_on:
+            why = "The cooling air is off."
+        elif asked:
+            why = "The cooling air is on: you asked for forced cooling."
+        elif not relay_active:
+            why = ("The cooling air is on because the safety relay is off: the PLC opens it whenever the relay "
+                   "is off, whatever is asked here.")
+        elif auto_sdown:
+            why = "The cooling air is on: a shutdown sequence is cooling the oven."
+        else:
+            why = ("The cooling air is on: the PLC is cooling the oven itself (an over-temperature, a cooling "
+                   "fault, or the relay or the heating lost while the oven was hot).")
+        ctrl["lbl_rb2"].setToolTip(why)
+        if comms_lost:
+            btn.setToolTip("Disabled: GUI to PLC communications are offline.")
+        elif asked:
+            btn.setToolTip(f"Forced cooling is on at your request: click to stop asking for it. {why}")
+        else:
+            btn.setToolTip(f"Click to ask the PLC to open the oven's cooling air (forced cooling). {why}")
+
     def update_telemetry(self, data: dict):
         try:
             # Recompute lockout conditions based on raw telemetry
@@ -239,6 +298,11 @@ class IonSourceWidget(QWidget):
 
             self._update_power_supplies(data, relay_active, remote_lost, auto_sdown, active_step, master_comms_lost,
                                         spellman_comms_lost)
+            body = data.get("ion_beam.source.chamber.rb_body_temp")
+            if body is None or not relay_active or remote_lost:
+                self.lbl_body.setText("--- °C")
+            else:
+                self.lbl_body.setText(f"{body:.1f} °C" + (" [?]" if master_comms_lost else ""))
 
         except Exception:  # never let one bad value freeze the whole panel; the cause goes to the log
             log.exception("Ion source panel update failed")
@@ -278,8 +342,9 @@ class IonSourceWidget(QWidget):
                     else:
                         temp_str = f"{rb_val:.1f}" if rb_val is not None else "---"
 
+                    air = " | cooling air on" if data.get(f"{base_tag}.stat_cooling_active") else ""
                     ctrl["lbl_rb"].setText(f"{temp_str} °C{stale_str}")
-                    ctrl["lbl_rb2"].setText(f"heater {duty_cycle:.0f} %")
+                    ctrl["lbl_rb2"].setText(f"heater {duty_cycle:.0f} %{air}")
                 else:
                     ctrl["lbl_rb"].setText("--- °C")
                     ctrl["lbl_rb2"].setText("heater --- %")
@@ -324,24 +389,7 @@ class IonSourceWidget(QWidget):
                 ctrl["btn_enable"].setToolTip(
                     f"Disabled: {comp_lock_reason}" if comp_lockout else "Click to toggle Cesium Heater PID control.")
 
-                stat_cool = bool(data.get(f"{base_tag}.stat_cooling_active", False))
-                stat_wait = bool(data.get(f"{base_tag}.stat_cooling_wait", False))
-                ctrl["btn_cool"].setEnabled(not master_comms_lost)
-                ctrl["btn_cool"].setToolTip(
-                    "Disabled: GUI to PLC communications are offline." if master_comms_lost else "Click to manually force the cooling air solenoid open.")
-
-                if stat_cool:
-                    ctrl["btn_cool"].setChecked(True)
-                    ctrl["btn_cool"].setText("COOLING ACTIVE")
-                    set_tone(ctrl["btn_cool"], "info")
-                elif stat_wait:
-                    ctrl["btn_cool"].setChecked(True)
-                    ctrl["btn_cool"].setText("COMPRESSOR RESTING")
-                    set_tone(ctrl["btn_cool"], "warn")
-                else:
-                    ctrl["btn_cool"].setChecked(False)
-                    ctrl["btn_cool"].setText("FORCED COOLING")
-                    set_tone(ctrl["btn_cool"], None)
+                self._show_cooling(ctrl, data, base_tag, master_comms_lost, relay_active, auto_sdown)
 
             else:
                 if "btn_enable" in ctrl:

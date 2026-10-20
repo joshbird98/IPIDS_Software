@@ -148,7 +148,7 @@ def test_cesium_heats_to_setpoint_and_forced_cooling_goes_to_20(plc):
     assert plc.get(S + "cesium.rb_temp") == pytest.approx(20.0, abs=0.5)
 
 
-def test_bleed_and_snics_currents(plc):
+def test_bleed_and_sputter_currents(plc):
     energise(plc)
     for tag, v in (("extraction.sp_requested_voltage", 15.0), ("extraction.cmd_enable", 1),
                    ("target.sp_requested_voltage", 8.0), ("target.cmd_enable", 1)):

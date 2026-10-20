@@ -19,3 +19,19 @@ def getenv(name: str, default: str = "", environ=None) -> str:
 
 def flag(name: str, environ=None) -> bool:
     return getenv(name, environ=environ).strip().lower() in {"1", "true", "yes", "on"}
+
+
+# The simulator's ports are the real ones shifted by this much (run_simulation.py), so it can run
+# on the lab PC beside the real system.
+SIM_PORT_OFFSET = 10000
+
+
+def use_simulator(environ=None):
+    """`--sim` on the HMI or the data viewer: simulated devices (data in data_sim/) AND the
+    simulator's ports. Call it before anything from src is imported (they read these at import).
+    Without the port offset, a `--sim` HMI on the lab PC would talk to the real services while
+    its title said SIMULATION. An offset already set (a test, run_simulation.py) is kept."""
+    env = os.environ if environ is None else environ
+    env[PREFIX + "SIMULATE"] = "1"
+    if not getenv("PORT_OFFSET", environ=env).strip():
+        env[PREFIX + "PORT_OFFSET"] = str(SIM_PORT_OFFSET)

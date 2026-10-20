@@ -134,3 +134,39 @@ def test_a_typed_setpoint_is_sent_alone(panel):
         app.processEvents()
         assert panel.cmd_thread.sent[-1] == expected, name
     assert len(panel.cmd_thread.sent) == 3
+
+
+def test_source_body_temperature_shown_only_with_the_relay_on(panel):
+    """The start-up checks read it (between 10 degC and room temperature once the relay is on);
+    the source deck's readings aren't live with the relay off."""
+    panel.update_telemetry({**LIVE, "ion_beam.source.chamber.rb_body_temp": 21.4})
+    assert panel.lbl_body.text() == "21.4 °C"
+    panel.update_telemetry({**LIVE, "ion_beam.facilities.safety_relay_active": 0.0,
+                            "ion_beam.source.chamber.rb_body_temp": 0.0})
+    assert panel.lbl_body.text() == "--- °C"
+    panel.update_telemetry({**LIVE, "ion_beam.source.chamber.rb_body_temp": None})
+    assert panel.lbl_body.text() == "--- °C"
+
+
+def test_forced_cooling_shows_the_request_and_the_air_separately(panel):
+    """Found while writing the help (October 2026): the button showed the air valve, which the PLC
+    opens whenever the relay is off, so switching forced cooling off seemed to do nothing."""
+    btn = panel.psu_controls["Cesium"]["btn_cool"]
+    line2 = panel.psu_controls["Cesium"]["lbl_rb2"]
+    off = {**LIVE, "ion_beam.facilities.safety_relay_active": 0.0, "ion_beam.source.cesium.out_cv_heating": 0.0,
+           "ion_beam.source.cesium.estimated_temp": 25.0, "ion_beam.source.cesium.stat_cooling_active": 1.0,
+           "ion_beam.source.cesium.cmd_force_cooling": 0.0}
+    panel.update_telemetry(off)
+    assert btn.text() == "FORCED COOLING" and not btn.isChecked()        # not asked for ...
+    assert line2.text().endswith("| cooling air on")                     # ... but the PLC has the air on
+    assert "safety relay is off" in line2.toolTip()
+    btn.click()                                                          # asking for it sends True
+    assert panel.cmd_thread.sent[-1] == ("plc", "ion_beam.source.cesium.cmd_force_cooling", True)
+    panel.update_telemetry({**off, "ion_beam.source.cesium.cmd_force_cooling": 1.0})
+    assert btn.text() == "FORCED COOLING: ON" and btn.isChecked()
+    btn.click()                                                          # and one click stops asking
+    assert panel.cmd_thread.sent[-1] == ("plc", "ion_beam.source.cesium.cmd_force_cooling", False)
+    panel.update_telemetry({**LIVE, "ion_beam.source.cesium.out_cv_heating": 0.0,
+                            "ion_beam.source.cesium.rb_temp": 21.0, "ion_beam.source.cesium.stat_cooling_active": 0.0,
+                            "ion_beam.source.cesium.cmd_force_cooling": 0.0})
+    assert btn.text() == "FORCED COOLING" and "cooling air" not in line2.text()

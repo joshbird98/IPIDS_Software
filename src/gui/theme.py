@@ -211,7 +211,28 @@ _ICONS = {
           'stroke-linecap="round" stroke-linejoin="round"/>',
     "down": '<path d="M3.5 6 L8 10.5 L12.5 6" fill="none" stroke="{c}" stroke-width="2" '
             'stroke-linecap="round" stroke-linejoin="round"/>',
+    # (the help window's tool bar and search box)
+    "back": '<path d="M10 3 L5 8 L10 13" fill="none" stroke="{c}" stroke-width="2" '
+            'stroke-linecap="round" stroke-linejoin="round"/>',
+    "forward": '<path d="M6 3 L11 8 L6 13" fill="none" stroke="{c}" stroke-width="2" '
+               'stroke-linecap="round" stroke-linejoin="round"/>',
+    "home": '<path d="M2.5 8 L8 3 L13.5 8 M4.5 6.5 V13 H11.5 V6.5" fill="none" stroke="{c}" '
+            'stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>',
+    "search": '<circle cx="7" cy="7" r="4.3" fill="none" stroke="{c}" stroke-width="1.8"/>'
+              '<path d="M10.3 10.3 L13.6 13.6" stroke="{c}" stroke-width="2" stroke-linecap="round"/>',
 }
+
+
+def icon(name: str, token: str = "text_muted"):
+    """One of the small line icons above as a QIcon in a theme colour (make it again after a
+    theme switch)."""
+    from PyQt6.QtGui import QIcon
+    return QIcon(icon_file(name, token))
+
+
+def icon_file(name: str, token: str = "text_muted") -> str:
+    """The same icon as a file path, for url(...) in a widget's own stylesheet."""
+    return _icon_path(name, tokens()[token])
 
 
 def _icon_path(name: str, colour: str) -> str:

@@ -214,10 +214,17 @@ class ControlMainWindow(QMainWindow):
         self._settings_action.triggered.connect(self._show_config_editor)
         menubar.addAction(self._settings_action)
 
-        # 3. HELP DOCUMENTATION
-        self._help_action = QAction("Help", self)
-        self._help_action.triggered.connect(self._open_help_docs)
-        menubar.addAction(self._help_action)
+        # 3. HELP: the pages in docs/; F1 opens the page of the panel under the mouse pointer
+        from src.gui.help import add_help_menu, pages as help_pages
+        self.help_menu = add_help_menu(self, menubar, default=help_pages.HOME, entries=[
+            ("Safety rules", help_pages.SAFETY),
+            ("Bringing up a beam", help_pages.START_UP),
+            ("Shutting down", "procedures/beam-shut-down.md"),
+            ("Alarms and faults", "procedures/alarms-and-faults.md"),
+            (None, None),
+            ("Troubleshooting", "troubleshooting.md"),
+            ("Messages and what they mean", "messages.md"),
+        ])
 
 
     # --- Layout: the panels' arrangement and the window's place on the screen ------------------
@@ -345,10 +352,6 @@ class ControlMainWindow(QMainWindow):
             editor.exec()
         elif ok:
             QMessageBox.warning(self, "Access Denied", "Incorrect password.")
-
-    def _open_help_docs(self):
-        QMessageBox.information(self, "Documentation",
-                                "SINDIE Documentation Library coming soon...\n\nOr more likely 10 years time.")
 
     def _panel(self, title: str, object_name: str, widget):
         """A dockable panel. Its contents scroll when the panel is made smaller than they are, so a

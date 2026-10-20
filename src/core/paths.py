@@ -23,6 +23,7 @@ from src.core.env import flag, getenv
 
 PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 CONFIG_DIR = os.path.join(PROJECT_ROOT, "config")
+DOCS_DIR = os.path.join(PROJECT_ROOT, "docs")          # the help pages (Markdown), shown by src/gui/help
 
 
 def simulation_enabled() -> bool:

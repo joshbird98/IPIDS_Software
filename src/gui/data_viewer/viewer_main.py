@@ -6,8 +6,10 @@ if __name__ == "__main__":
         # Started as a script: make 'src' importable from any working directory
         sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "..")))
     if "--sim" in sys.argv[1:]:
-        # Simulation mode: read data_sim/ (must be set before src.core.paths is imported)
-        os.environ["SINDIE_SIMULATE"] = "1"
+        # Simulation mode: data_sim/ and the simulator's ports (set before src.core.paths and
+        # the network map are imported)
+        from src.core.env import use_simulator
+        use_simulator()
 
 """SINDIE Data Viewer: live and historical telemetry in plot lanes, event markers, exports.
 
@@ -155,6 +157,16 @@ class DataViewerApp(LanesMixin, InspectorMixin, MarkersMixin, ExportMixin, Profi
         self.sidebar_action.toggled.connect(lambda on: self.sidebar_scroll.setVisible(on))
         view_menu.addSeparator()
         theme.add_theme_menu(view_menu, self)
+
+        # Help: the pages in docs/ (shared with the HMI); F1 opens the data viewer's page
+        from src.gui.help import add_help_menu, pages as help_pages
+        self.help_menu = add_help_menu(self, self.menuBar(), default=help_pages.VIEWER,
+                                       label="Using the data viewer", entries=[
+            ("Exporting data and figures", "viewer/exporting.md"),
+            ("Recording an experiment", "procedures/recording-an-experiment.md"),
+            (None, None),
+            ("Safety rules", help_pages.SAFETY),
+        ])
 
         # Sidebar | plots, with a divider to drag (the sidebar used to be a fixed 350 px)
         self.splitter = QSplitter(Qt.Orientation.Horizontal)
