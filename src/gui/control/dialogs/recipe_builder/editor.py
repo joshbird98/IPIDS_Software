@@ -135,6 +135,7 @@ class StepEditor(QScrollArea):
         else:
             build(form, step, layout)
         note = QLineEdit(str(step.get("comment") or ""))
+        note.setCursorPosition(0)  # show a long note from its start, not its end
         note.setObjectName("StepNote")
         note.setPlaceholderText("Optional: what this step is for (shown under it in the list)")
         note.textChanged.connect(self._on_note)
