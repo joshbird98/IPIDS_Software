@@ -1,11 +1,28 @@
 {
   "recipe_name": "Degauss the analyser magnet, with the Faraday cup in",
   "version": "1.0",
-  "description": "A degauss sweeps the magnet current: with the cup in, no other mass reaches the sample meanwhile.",
-  "fault_policy": [],
+  "description": "A degauss sweeps the magnet current: with the cup in, no other mass reaches the sample meanwhile. It needs the safety relay on (the magnet service won't start it without) and takes about 2 minutes.",
+  "fault_policy": [
+    {
+      "type": "BIT_FAULT",
+      "registry_tag": "ion_beam.faults.word_0_system",
+      "bit_str": "0.1",
+      "name": "Safety_Relay_Tripped",
+      "action": "ABORT"
+    }
+  ],
   "steps": [
     {
       "step_id": 1,
+      "type": "WAIT_TELEMETRY",
+      "target": "ion_beam.facilities.safety_relay_active",
+      "condition": "==",
+      "value": 1,
+      "timeout_sec": 10.0,
+      "comment": "The safety relay is on: the magnet service won't degauss without it"
+    },
+    {
+      "step_id": 2,
       "type": "VERIFIED_ACTION",
       "target": "ion_beam.beamline.diagnostics.cmd_insert_fc",
       "value": true,
@@ -16,14 +33,14 @@
       "comment": "Faraday cup in"
     },
     {
-      "step_id": 2,
+      "step_id": 3,
       "type": "ACTION",
       "target": "ion_beam.beamline.magnet.cmd_degauss",
       "value": true,
       "comment": "Start the degauss"
     },
     {
-      "step_id": 3,
+      "step_id": 4,
       "type": "WAIT_TELEMETRY",
       "target": "ion_beam.beamline.magnet.stat_degaussing",
       "condition": "==",
@@ -32,7 +49,7 @@
       "comment": "The degauss has started"
     },
     {
-      "step_id": 4,
+      "step_id": 5,
       "type": "WAIT_TELEMETRY",
       "target": "ion_beam.beamline.magnet.stat_degaussing",
       "condition": "==",

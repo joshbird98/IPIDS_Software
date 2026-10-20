@@ -105,7 +105,7 @@ Closing the gate valve with the safety relay on opens the relay. See [Vacuum Sys
 5. **The hardwired safety loop.** The relay's own loop, which the software doesn't see, can also hold it open. Check each of:
     - the key, turned to **ENABLE** on the **High Voltage Systems Control** box (for the key, ask Dr Luke Antwis, the lab manager);
     - both emergency switch-offs (ESOs), released: on the box, and on the source deck's side panel;
-    - the doors, shut (two door switches);
+    - both source deck doors, shut: the gullwing door over the source body and the mesh door to the source trolley (a switch on each);
     - the vacuum: the gauge controller's set-point relay in the loop opens when the pressure is above its set point;
     - the magnet coolant: its flow meter and thermal cut-off switch.
 
@@ -121,7 +121,7 @@ Likely causes:
 
 1. **The gate valve closed.** Closing the valve opens the relay. The PLC closes it when its vacuum permissive goes (see [The gate valve does not open](#the-gate-valve-does-not-open), step 2), for example when VG1 or VG2 rises above its relay's set point: look for a pressure spike, such as a new filament degassing (see [Typical values](#typical-values)). It also closes it at shutdown step 2, **CESIUM COOLDOWN**: after a hardware abort, or 60 s after losing the remote I/O. Losing the PC watchdog closes it at once, by design: `PC_Watchdog_Timeout` takes away its open permissive, as without the PC the PLC has no vacuum readings. Look at **SHUTDOWN SEQ**, and at the alarm marked first-out (a star in the **Alarms** panel).
 2. **The compressed air, the source coolant or the magnet coolant was lost**, or the caesium oven went over temperature. Their faults are in the **PLC faults** list.
-3. **The hardwired loop opened**, for example because an ESO was pressed or the source-deck door, which is interlocked, was opened.
+3. **The hardwired loop opened**, for example because an ESO was pressed or one of the source deck's doors, which are both interlocked, was opened.
 
 The beacon then shows green, and amber while `Safety_Relay_Tripped` is latched.
 

@@ -5,10 +5,18 @@ with the checks the sequencer makes before it runs one, and save it safely.
 
 Left, the blocks (Set a value, Wait for a reading, Ask the operator, Bring the safety relay on ...);
 middle, the recipe as a list of sentences in the order they run; right, the selected step's form.
-Below: the problems the checks find, the stop conditions, and the whole recipe as text.
+Below: the problems the checks find, the stop conditions, the whole recipe as text, and drafting.
 
 The checks (src/core/recipe_check.py) run as you type. Errors (the sequencer would refuse to start
 the recipe) block saving; warnings (it would run, but probably not as meant) don't.
+
+Drafting (src/core/recipe_ai, drafting.py): the bar above the steps asks a language model for a
+draft of what the operator describes, or for a review. A draft is checked like any recipe (with
+errors it goes back to the model) and shown in the list of steps as changes - added, removed,
+changed - each of which can be left out; Keep makes the ticked ones, as one change Undo takes
+back. The model never acts on the machine, and while a draft runs or is shown the recipe can't be
+edited, so what is kept is exactly what was shown. A review leaves notes beside the steps, and any
+fix it suggests can be drafted.
 
 Saving (src/core/recipe_store.py) writes the file the recipe was opened from - never another
 recipe's - only if nobody has changed it since, after a backup, and commits it to git. The version
@@ -21,6 +29,7 @@ import copy
 import json
 import logging
 import os
+from dataclasses import dataclass
 
 from PyQt6.QtCore import Qt, QTimer, pyqtSignal
 from PyQt6.QtGui import QKeySequence, QShortcut, QTextCursor
@@ -29,16 +38,22 @@ from PyQt6.QtWidgets import (QDialog, QDialogButtonBox, QFormLayout, QGridLayout
                              QSplitter, QTabWidget, QTreeWidget, QTreeWidgetItem, QVBoxLayout, QWidget)
 
 from src.core import paths
+from src.core.recipe_ai import changes as ai_changes
+from src.core.recipe_ai.agent import Session
+from src.core.recipe_ai.settings import Settings, availability
 from src.core.recipe_catalog import shared
 from src.core.recipe_check import ERROR, Problem, check_recipe, errors, warnings
 from src.core.recipe_engine import RecipeError, resolve_sub_recipe
 from src.core.recipe_files import RECIPES_DIR
-from src.core.recipe_store import free_filename, read_recipe, save_recipe
-from src.core.recipe_text import describe_recipe, describe_step
+from src.core.recipe_store import free_filename, read_recipe, renumber, save_recipe
+from src.core.recipe_text import describe_policy_entry, describe_recipe, describe_step
 from src.gui import theme
-from src.gui.control.dialogs.recipe_builder.blocks import BLOCKS, BY_KEY, GROUPS, block_for, next_version, renumber
+from src.gui.control.dialogs.recipe_builder.blocks import BLOCKS, BY_KEY, GROUPS, block_for, next_version
+from src.gui.control.dialogs.recipe_builder.drafting import DraftBar, DraftPanel, Job, ProposalBanner
+from src.gui.control.dialogs.recipe_builder.drafting import start as start_job
 from src.gui.control.dialogs.recipe_builder.editor import StepEditor
-from src.gui.control.dialogs.recipe_builder.outline import LEVEL, MARK, NOTE, TEXT, Outline
+from src.gui.control.dialogs.recipe_builder.outline import (LEVEL, MARK, NOTE, REVIEW, REVIEW_LEVEL, TEXT, Outline,
+                                                             OutlineRow)
 from src.gui.control.dialogs.recipe_builder.policy import PolicyEditor
 from src.gui.style import chip, set_role, set_tone
 
@@ -46,6 +61,9 @@ log = logging.getLogger("hmi.recipe_builder")
 
 TEMPLATES_DIR = os.path.join(paths.CONFIG_DIR, "recipe_templates")
 HISTORY = 200
+SEVERITY_ORDER = ("concern", "suggestion", "question")
+EMPTY_TEXT = ("No steps yet. Add one from the blocks on the left, start from a template (New), or describe the "
+              "recipe in the box above and press Draft.")
 
 
 def empty_recipe() -> dict:
@@ -80,6 +98,33 @@ def _snapshot(data) -> str:
         if not str(data.get("description") or "").strip():
             data.pop("description", None)
     return json.dumps(data, sort_keys=True)
+
+
+def _step_at(data, path):
+    """The step at path in a recipe (None if there is none)."""
+    steps = data.get("steps") if isinstance(data, dict) else None
+    step = None
+    try:
+        for i in path:
+            step = steps[i]
+            steps = step.get("steps") if isinstance(step, dict) else None
+    except (IndexError, KeyError, TypeError):
+        return None
+    return step
+
+
+@dataclass
+class _Draft:
+    """A draft shown in the list of steps, with the changes ticked to keep."""
+    request: str
+    outcome: object
+    base: dict                  # the recipe as it was when the draft was asked for (= the recipe: it is locked)
+    proposed: dict
+    changes: list
+    kept: set
+    rows: list                  # changes.Row, one per top-level step in the list
+    result: dict = None         # the base with the kept changes
+    numbers: list = None        # each row's step number in the result (None: not in it)
 
 
 class SaveDetails(QDialog):
@@ -132,7 +177,7 @@ class RecipeBuilderDialog(QDialog):
                             Qt.WindowType.WindowCloseButtonHint)
         self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
         self.setModal(False)
-        self.resize(1320, 840)
+        self.resize(1320, 900)
         self.recipes_dir = os.path.realpath(config_dir or RECIPES_DIR)
         self.catalog = catalog if catalog is not None else shared()
         self.filename = None            # the file it was opened from (or last saved to)
@@ -146,6 +191,15 @@ class RecipeBuilderDialog(QDialog):
         self._selected = None
         self._closing_ok = False
         self._names = {}                # file -> (mtime, recipe name)
+        # drafting (src/core/recipe_ai)
+        self.ai_settings = Settings.load()
+        self.ai_ok, self.ai_why = availability(self.ai_settings)
+        self.ai_threaded = True         # (the tests run a draft where they are)
+        self._job = None                # the draft or review running
+        self._session = None            # the conversation of the draft shown: a refinement carries it on
+        self._draft = None              # the draft shown (_Draft)
+        self._review = None             # (outcome, the keys of the notes' steps then, request)
+        self._review_stale = None       # the notes whose step has changed since, as last shown
         self._check_timer = QTimer(self)
         self._check_timer.setSingleShot(True)
         self._check_timer.setInterval(150)
@@ -229,6 +283,16 @@ class RecipeBuilderDialog(QDialog):
         head.setColumnStretch(4, 2)
         root.addLayout(head)
 
+        self.draft_bar = DraftBar()
+        self.draft_bar.draft.connect(self.request_draft)
+        self.draft_bar.review.connect(self.request_review)
+        self.draft_bar.cancel.connect(self.cancel_ai)
+        if not self.ai_settings.enabled:
+            self.draft_bar.hide()
+        elif not self.ai_ok:
+            self.draft_bar.set_unavailable(self.ai_why)
+        root.addWidget(self.draft_bar)
+
         # blocks | steps | the selected step
         body = QSplitter(Qt.Orientation.Horizontal)
         body.setChildrenCollapsible(False)
@@ -250,7 +314,7 @@ class RecipeBuilderDialog(QDialog):
         self.list_problems.itemClicked.connect(self._go_to_problem)
         self.tabs.addTab(self.list_problems, "Problems")
         self.policy = PolicyEditor(self.catalog)
-        self.policy.edited.connect(lambda: self._changed(structural=True))
+        self.policy.edited.connect(self._on_policy_edited)
         self.tabs.addTab(self.policy, "Stop conditions")
         text_tab = QWidget()
         text_layout = QVBoxLayout(text_tab)
@@ -267,6 +331,17 @@ class RecipeBuilderDialog(QDialog):
         copy_row.addStretch(1)
         text_layout.addLayout(copy_row)
         self.tabs.addTab(text_tab, "Read as text")
+        self.draft_panel = DraftPanel()
+        self.draft_panel.keep.connect(self.keep_draft)
+        self.draft_panel.discard.connect(self.discard_draft)
+        self.draft_panel.toggled.connect(self.toggle_change)
+        self.draft_panel.fix.connect(self.draft_fix)
+        self.draft_panel.go.connect(self._go_to_note)
+        self.draft_panel.dismiss.connect(self.clear_review)
+        self.draft_panel.show_idle(self._idle_text())
+        self.tabs.addTab(self.draft_panel, "Draft")
+        if not self.ai_settings.enabled:
+            self.tabs.setTabVisible(self.tabs.indexOf(self.draft_panel), False)
 
         split = QSplitter(Qt.Orientation.Vertical)
         split.setChildrenCollapsible(False)
@@ -274,7 +349,7 @@ class RecipeBuilderDialog(QDialog):
         split.addWidget(self.tabs)
         split.setStretchFactor(0, 3)
         split.setStretchFactor(1, 1)
-        split.setSizes([620, 170])
+        split.setSizes([600, 190])
         root.addWidget(split, 1)
         self.lbl_status = QLabel()
         self.lbl_status.setObjectName("BuilderStatus")
@@ -341,9 +416,16 @@ class RecipeBuilderDialog(QDialog):
         title = QLabel("Steps")
         set_role(title, "heading")
         layout.addWidget(title)
+        self.banner = ProposalBanner()
+        self.banner.keep.connect(self.keep_draft)
+        self.banner.discard.connect(self.discard_draft)
+        layout.addWidget(self.banner)
         self.outline = Outline()
+        self.outline.empty_text = EMPTY_TEXT
         self.outline.itemSelectionChanged.connect(self._on_select)
         self.outline.moved.connect(self.move_to)
+        self.outline.change_clicked.connect(lambda cid: self.toggle_change(
+            cid, self._draft is not None and cid not in self._draft.kept))
         layout.addWidget(self.outline, 1)
         row = QHBoxLayout()
         self.btn_up = QPushButton("Move up")
@@ -366,7 +448,7 @@ class RecipeBuilderDialog(QDialog):
 
     def _show_block_help(self, item, _previous=None):
         key = item.data(0, Qt.ItemDataRole.UserRole) if item is not None else None
-        self.btn_add.setEnabled(bool(key))
+        self.btn_add.setEnabled(bool(key) and not self._busy())
         if key:
             self.lbl_block.setText(BY_KEY[key].help)
 
@@ -400,7 +482,9 @@ class RecipeBuilderDialog(QDialog):
         self._record()
         self._closing_ok = False
         self._selected = None
+        self._review = self._review_stale = None
         self._refresh_all(select=(0,) if self.data["steps"] else None)
+        self.draft_panel.show_idle(self._idle_text())
         if cleared:
             self._status(f"Opened, but {' and '.join(cleared)}: they were left out here. Saving writes the recipe "
                          "as shown.")
@@ -427,6 +511,8 @@ class RecipeBuilderDialog(QDialog):
         return True
 
     def _set_top(self, key, text, drop_empty=False):
+        if self._busy():
+            return
         if drop_empty and not text.strip():
             self.data.pop(key, None)
         else:
@@ -524,10 +610,13 @@ class RecipeBuilderDialog(QDialog):
         self._update_history_buttons()
 
     def _update_history_buttons(self):
-        self.btn_undo.setEnabled(self._pos > 0)
-        self.btn_redo.setEnabled(self._pos < len(self._history) - 1)
+        busy = self._busy()
+        self.btn_undo.setEnabled(self._pos > 0 and not busy)
+        self.btn_redo.setEnabled(self._pos < len(self._history) - 1 and not busy)
 
     def undo(self):
+        if self._busy():
+            return
         if self._record_timer.isActive():
             self._record()
         if self._pos > 0:
@@ -535,6 +624,8 @@ class RecipeBuilderDialog(QDialog):
             self._restore(self._history[self._pos])
 
     def redo(self):
+        if self._busy():
+            return
         if self._record_timer.isActive():
             self._record()                   # an edit since the undo: it stays (and there is nothing to redo)
         if self._pos < len(self._history) - 1:
@@ -577,26 +668,53 @@ class RecipeBuilderDialog(QDialog):
         self._check(render=False)
         self._render_outline(select)
         self._update_title()
+        self._update_lock()
+
+    def _review_marks(self) -> dict:
+        """{path: (text, level)} of the review's notes on steps that haven't changed since."""
+        if self._review is None:
+            return {}
+        outcome, keys, _request = self._review
+        out = {}
+        for i, note in enumerate(outcome.review.notes):
+            if not note.path or note.path == ("policy",):
+                continue
+            step = _step_at(self.data, note.path)
+            if step is None or keys.get(i) != ai_changes.key(step):
+                continue
+            text, level = out.get(note.path, ("", ""))
+            text = f"{text} / {note.text}" if text else note.text
+            if not level or SEVERITY_ORDER.index(note.severity) < SEVERITY_ORDER.index(level):
+                level = note.severity
+            out[note.path] = (text, level)
+        return out
+
+    @staticmethod
+    def _marks(found) -> tuple:
+        n_err = sum(p.level == ERROR for p in found)
+        n_warn = len(found) - n_err
+        marks = [f"{n} {w}{'s' if n != 1 else ''}" for n, w in ((n_err, "error"), (n_warn, "warning")) if n]
+        return "error" if n_err else "warning" if n_warn else "", ", ".join(marks)
 
     def _rows(self):
+        if self._draft is not None:
+            return self._draft_rows()
         rows = []
         names = self._recipe_names()
+        reviewed = self._review_marks()
 
         def walk(steps, base, prefix):
             for i, s in enumerate(steps):
                 path = base + (i,)
-                number_text = f"{prefix}{i + 1}"
-                found = self._by_path.get(path, [])
-                n_err = sum(p.level == ERROR for p in found)
-                n_warn = len(found) - n_err
-                marks = [f"{n} {w}{'s' if n != 1 else ''}" for n, w in ((n_err, "error"), (n_warn, "warning")) if n]
+                level, mark = self._marks(self._by_path.get(path, []))
                 text = describe_step(s, self.catalog, names) if isinstance(s, dict) else "(not a step)"
                 note = str(s.get("comment") or "") if isinstance(s, dict) else ""
-                rows.append((path, number_text, text, note if note != "No description" else "",
-                             "error" if n_err else "warning" if n_warn else "", ", ".join(marks),
-                             s.get("type") if isinstance(s, dict) else ""))
+                review, review_level = reviewed.get(path, ("", ""))
+                rows.append(OutlineRow(path, f"{prefix}{i + 1}", text, note if note != "No description" else "",
+                                       level, mark, s.get("type") if isinstance(s, dict) else "", review=review,
+                                       review_level=review_level))
                 if isinstance(s, dict) and isinstance(s.get("steps"), list):
-                    walk(s["steps"], path, number_text + ".")
+                    walk(s["steps"], path, f"{prefix}{i + 1}.")
         walk(self._steps(), (), "")
         return rows
 
@@ -612,22 +730,26 @@ class RecipeBuilderDialog(QDialog):
         if path == self._selected and not force:
             return
         self._selected = path
-        step = None
-        if path is not None:
-            try:
-                step = self._get(path)
-            except (IndexError, KeyError, TypeError, AttributeError):
-                path = self._selected = None
-        if path is None:
-            self.editor.clear()
+        if self._draft is not None:
+            self._show_draft_step(path)
         else:
-            self.editor.show_step(step, path)
-            self.editor.show_problems(self._by_path.get(path, []))
-        has = path is not None
-        for b in (self.btn_up, self.btn_down, self.btn_duplicate, self.btn_delete):
-            b.setEnabled(has)
+            step = None
+            if path is not None:
+                try:
+                    step = self._get(path)
+                except (IndexError, KeyError, TypeError, AttributeError):
+                    path = self._selected = None
+            if path is None:
+                self.editor.clear()
+            else:
+                self.editor.show_step(step, path)
+                self.editor.show_problems(self._by_path.get(path, []))
+        self._update_lock()
+        self.draft_bar.set_context(self._bar_context())
 
     def _on_step_edited(self):
+        if self._busy():
+            return
         self._changed()
         path = self._selected
         item = self.outline.item_at_path(path)
@@ -637,11 +759,20 @@ class RecipeBuilderDialog(QDialog):
             item.setData(0, NOTE, str(step.get("comment") or ""))
             self.outline.scheduleDelayedItemsLayout()
 
+    def _on_policy_edited(self):
+        if not self._busy():
+            self._changed(structural=True)
+
     # ================================================================== the checks
+    def _checked_data(self) -> dict:
+        """What the checks look at: the recipe, or with a draft shown, what keeping it would make."""
+        return self._draft.result if self._draft is not None else self.data
+
     def _check(self, render: bool = True):
         self._check_timer.stop()
+        data = self._checked_data()
         try:
-            self.problems = check_recipe(self.data, self.catalog, self.recipes_dir, self._path())
+            self.problems = check_recipe(data, self.catalog, self.recipes_dir, self._path())
         except Exception as e:   # a fault in the checks must not stop the builder: shown as an error
             log.exception("The recipe checks failed")
             self.problems = [Problem(ERROR, (), f"the checks failed on this recipe ({type(e).__name__}: {e}) - "
@@ -656,48 +787,60 @@ class RecipeBuilderDialog(QDialog):
                 by_path.setdefault(tuple(p.path), []).append(p)
         changed = by_path != self._by_path
         self._by_path = by_path
-        self.policy.show_problems(policy)
-        self.policy.update_texts()
-        if render and changed:
+        if self._draft is None:
+            self.policy.show_problems(policy)
+            self.policy.update_texts()
+        if render and (changed or self._review is not None):
             self._render_marks()
-        if self._selected is not None:
+        if self._selected is not None and self._draft is None:
             self.editor.show_problems(by_path.get(self._selected, []))
         self._fill_problems()
         n_err, n_warn = len(errors(self.problems)), len(warnings(self.problems))
+        prefix = "With the draft: " if self._draft is not None else ""
         if n_err:
-            self.lbl_state.setText(f"{n_err} error{'s' if n_err != 1 else ''}"
+            self.lbl_state.setText(prefix + f"{n_err} error{'s' if n_err != 1 else ''}"
                                    + (f", {n_warn} warning{'s' if n_warn != 1 else ''}" if n_warn else ""))
             set_tone(self.lbl_state, "fault")
         elif n_warn:
-            self.lbl_state.setText(f"{n_warn} warning{'s' if n_warn != 1 else ''}")
+            self.lbl_state.setText(prefix + f"{n_warn} warning{'s' if n_warn != 1 else ''}")
             set_tone(self.lbl_state, "warn")
         else:
-            self.lbl_state.setText("No problems found")
+            self.lbl_state.setText(prefix + "No problems found")
             set_tone(self.lbl_state, "ok")
         self.tabs.setTabText(0, f"Problems ({len(self.problems)})" if self.problems else "Problems")
-        policy_list = self.data.get("fault_policy")
+        policy_list = data.get("fault_policy")
         n_policy = len(policy_list) if isinstance(policy_list, list) else 0
         self.tabs.setTabText(1, f"Stop conditions ({n_policy})")
         try:
-            text = describe_recipe(self.data, self.catalog, self._recipe_names(), self._load_sub)
+            text = describe_recipe(data, self.catalog, self._recipe_names(), self._load_sub)
         except Exception as e:   # (the text is a view: never let it stop an edit)
             log.exception("No text for the recipe")
             text = f"(The recipe can't be shown as text: {type(e).__name__}: {e})"
+        if self._draft is not None:
+            text = "(As it would be with the draft's ticked changes.)\n\n" + text
         self.txt_recipe.setPlainText(text)
+        if self._review is not None and self._draft is None:
+            self._show_review_panel()
+        self._update_banner()
 
     def _render_marks(self):
-        for path, _number, text, _note, level, mark, _kind in self._rows():
-            item = self.outline.item_at_path(path)
+        if self._draft is not None:
+            self._render_outline(self._selected)
+            return
+        for row in self._rows():
+            item = self.outline.item_at_path(row.path)
             if item is not None:
-                item.setData(0, LEVEL, level)
-                item.setData(0, MARK, mark)
-                item.setData(0, TEXT, text)
+                for role, value in ((TEXT, row.text), (LEVEL, row.level), (MARK, row.mark), (REVIEW, row.review),
+                                    (REVIEW_LEVEL, row.review_level)):
+                    item.setData(0, role, value)
         self.outline.scheduleDelayedItemsLayout()
 
     def _fill_problems(self):
         self.list_problems.clear()
         if not self.problems:
-            item = QListWidgetItem("No problems found: the sequencer would start this recipe.")
+            text = ("No problems found: the sequencer would start this recipe" +
+                    (", with the draft's ticked changes." if self._draft is not None else "."))
+            item = QListWidgetItem(text)
             item.setFlags(Qt.ItemFlag.ItemIsEnabled)
             self.list_problems.addItem(item)
             return
@@ -712,12 +855,18 @@ class RecipeBuilderDialog(QDialog):
         if not path:
             return
         if path[0] == "policy":
-            self.tabs.setCurrentWidget(self.policy)
-            if len(path) > 1:
-                self.policy.list.setCurrentRow(path[1])
+            if self._draft is None:
+                self.tabs.setCurrentWidget(self.policy)
+                if len(path) > 1:
+                    self.policy.list.setCurrentRow(path[1])
             return
-        self.outline.select_path(tuple(path), quiet=False)
-        self._show_selected(tuple(path))
+        path = tuple(path)
+        if self._draft is not None:
+            path = self._row_path(path)
+            if path is None:
+                return
+        self.outline.select_path(path, quiet=False)
+        self._show_selected(path)
 
     # ================================================================== editing the steps
     def _insert_point(self, block):
@@ -735,6 +884,8 @@ class RecipeBuilderDialog(QDialog):
         return (), path[0] + 1
 
     def add_block(self, key: str):
+        if self._busy():
+            return
         block = BY_KEY[key]
         step = block.new_step()
         parent, index = self._insert_point(block)
@@ -748,6 +899,8 @@ class RecipeBuilderDialog(QDialog):
 
     def move_to(self, source: tuple, parent: tuple, index: int):
         """Move a step (dragged in the list) to `parent` (() for the top level) at `index`."""
+        if self._busy():
+            return
         step = self._get(source)
         if parent[:len(source)] == source:
             return                                       # into itself
@@ -779,7 +932,7 @@ class RecipeBuilderDialog(QDialog):
 
     def move_step(self, direction: int):
         path = self._selected
-        if path is None:
+        if path is None or self._busy():
             return
         container = self._container(path)
         j = path[-1] + direction
@@ -794,7 +947,7 @@ class RecipeBuilderDialog(QDialog):
 
     def duplicate_step(self):
         path = self._selected
-        if path is None:
+        if path is None or self._busy():
             return
         container = self._container(path)
         twin = copy.deepcopy(container[path[-1]])
@@ -806,7 +959,7 @@ class RecipeBuilderDialog(QDialog):
 
     def delete_step(self):
         path = self._selected
-        if path is None:
+        if path is None or self._busy():
             return
         container = self._container(path)
         del container[path[-1]]
@@ -818,6 +971,362 @@ class RecipeBuilderDialog(QDialog):
         self._changed(structural=True)
         self._check(render=False)
         self._render_outline(select)
+
+    # ================================================================== drafting: asking
+    def _busy(self) -> bool:
+        """A draft is running or shown: the recipe can't be edited (what is kept must be what was shown)."""
+        return self._job is not None or self._draft is not None
+
+    def _update_lock(self):
+        busy = self._busy()
+        for w in (self.palette, self.btn_new, self.btn_open, self.btn_save, self.btn_save_as, self.policy):
+            w.setEnabled(not busy)
+        self.btn_add.setEnabled(not busy and bool(self._selected_block()))
+        for w in (self.le_name, self.le_version, self.le_description):
+            w.setReadOnly(busy)
+        self.outline.set_draggable(not busy)
+        self.editor.setEnabled(not busy)
+        has = self._selected is not None and not busy
+        for b in (self.btn_up, self.btn_down, self.btn_duplicate, self.btn_delete):
+            b.setEnabled(has)
+        self._update_history_buttons()
+        if self.ai_ok and self.ai_settings.enabled:
+            state = "running" if self._job is not None else "proposal" if self._draft is not None else "idle"
+            if self.draft_bar.state != state:
+                self.draft_bar.set_state(state, can_review=bool(self.data.get("steps")))
+            elif state == "idle":
+                self.draft_bar.btn_review.setEnabled(bool(self.data.get("steps")))
+
+    def _bar_context(self) -> str:
+        if self._draft is not None:
+            return ("Describe what to change in the draft and press Refine - or keep or discard it, above the steps "
+                    "or in the Draft tab.")
+        if self._selected is not None:
+            number = ".".join(str(i + 1) for i in self._selected)
+            return (f"Step {number} is selected: “this step” in your request means it, and new steps go after it. "
+                    "Enter asks; Shift+Enter starts a new line.")
+        return ("The draft is checked, then shown in the steps as changes for you to keep or leave out. Enter asks; "
+                "Shift+Enter starts a new line.")
+
+    def _idle_text(self) -> str:
+        if not self.ai_settings.enabled:
+            return ""
+        how = (f"Drafting uses {self.ai_settings.describe()}." if self.ai_ok else
+               f"Drafting isn't available: {self.ai_why}")
+        return ("Describe a recipe, or a change to this one, in the box above the steps and press Draft. The model "
+                "drafts it from SINDIE's tags, procedures and templates; the draft is checked with the checks the "
+                "sequencer makes (one with errors goes back to the model to fix) and shown in the steps as changes: "
+                "keep them all, or untick the ones you don't want. Review asks the model to read the recipe against "
+                "the procedures and note what looks wrong or missing; it changes nothing.\n\n"
+                "The model never acts on the machine, and nothing is saved or run until you keep a draft and save "
+                "it. It is sent your request, this recipe, the machine's tag list and the help's procedures - "
+                "nothing from the machine itself.\n\n" + how)
+
+    def request_draft(self, request: str):
+        """Draft what the operator describes (or, with a draft shown, change the draft)."""
+        request = str(request or "").strip()
+        if not request or self._job is not None or not self.ai_ok:
+            return
+        self._run_ai("refine" if self._draft is not None else "draft", request)
+
+    def request_review(self, focus: str = ""):
+        if self._busy() or not self.ai_ok or not self.data.get("steps"):
+            return
+        self._run_ai("review", str(focus or "").strip())
+
+    def draft_fix(self, note):
+        """Draft the fix a review's note suggests."""
+        if self._busy() or not self.ai_ok or not note.fix:
+            return
+        request = f"{note.fix} (The review said: {note.text})"
+        self.draft_bar.edit.set_text(request)
+        self.draft_bar.edit.remember(request)
+        self._run_ai("draft", request, selected=note.path if note.path and note.path != ("policy",) else None)
+
+    def _run_ai(self, mode: str, request: str, selected=None):
+        if self._record_timer.isActive():
+            self._record()
+        names = self._recipe_names()
+        if mode == "refine":
+            draft = self._draft
+            unticked = [c.title for c in draft.changes if c.id not in draft.kept]
+            base = draft.base
+            session = self._session
+            if session is not None:
+                def work():
+                    return session.refine(request, unticked)
+            else:                       # (the conversation was dropped: a new one, shown the draft)
+                session = Session("draft", self.catalog, base, self.filename, self.recipes_dir, names,
+                                  self.ai_settings)
+                where = self._draft_selection()
+
+                def work():
+                    return session.draft(request, where, earlier=draft.proposed, unticked=unticked)
+        else:
+            base = copy.deepcopy(self.data)
+            session = Session(mode, self.catalog, base, self.filename, self.recipes_dir, names, self.ai_settings)
+            where = self._selected if selected is None else selected
+            if mode == "review":
+                def work():
+                    return session.review(request)
+            else:
+                def work():
+                    return session.draft(request, where)
+        job = Job(None, mode, request)
+
+        def run(j):
+            session.progress = j.bridge.progress.emit
+            session.cancelled = j.cancelled
+            return work()
+        job.fn = run
+        job.base = base
+        job.session = session
+        job.bridge.progress.connect(lambda text, j=job: self._ai_progress(j, text))
+        job.bridge.done.connect(lambda outcome, j=job: self._ai_done(j, outcome))
+        job.bridge.failed.connect(lambda error, j=job: self._ai_failed(j, error))
+        self._job = job
+        self._update_lock()
+        verb = {"draft": "Drafting", "refine": "Changing the draft", "review": "Reviewing the recipe"}[mode]
+        self._status(f"{verb} with {self.ai_settings.describe()}: the recipe can't be edited until it is done "
+                     "(Cancel, or Escape, stops it).")
+        start_job(job, threaded=self.ai_threaded)
+
+    def cancel_ai(self):
+        job = self._job
+        if job is None:
+            return
+        job.cancel()
+        self._job = None
+        if job.mode == "refine":
+            self._session = None        # (its thread may still be using it: a refinement starts a new one)
+        self._update_lock()
+        self.draft_bar.set_context(self._bar_context())
+        self._status("Cancelled.")
+
+    def _ai_progress(self, job, text: str):
+        if job is self._job:
+            self.draft_bar.progress(text)
+
+    def _ai_failed(self, job, error):
+        if job is not self._job:
+            return
+        self._job = None
+        if job.mode == "refine":
+            self._session = None
+        self._update_lock()
+        message = getattr(error, "message", str(error))
+        self.draft_bar.show_error(message)
+        self._status(("The draft wasn't changed: " if job.mode == "refine" else "Not done: ") + message)
+
+    def _ai_done(self, job, outcome):
+        if job is not self._job:
+            return
+        self._job = None
+        if job.mode == "review":
+            self._show_review(job, outcome)
+        else:
+            self._show_draft(job, outcome)
+        self._update_lock()
+
+    # ================================================================== drafting: a draft shown
+    def _show_draft(self, job, outcome):
+        proposal = outcome.proposal
+        names = self._recipe_names()
+        found = ai_changes.compute(job.base, proposal.recipe,
+                                   lambda s: describe_step(s, self.catalog, names),
+                                   lambda e: describe_policy_entry(e, self.catalog))
+        if not found:
+            self._draft = self._session = None
+            summary = proposal.summary or "the model proposed the recipe as it is."
+            self._refresh_all(select=self._selected if job.mode != "refine" else None)
+            self.draft_panel.show_idle(f"The draft of “{job.request}” changes nothing: {summary}\n\n"
+                                       f"({outcome.cost_text()})")
+            self.tabs.setCurrentWidget(self.draft_panel)
+            self.draft_bar.set_context(f"The draft changes nothing: {summary}")
+            self._status(f"The draft changes nothing: {summary}")
+            return
+        self._session = job.session
+        self._draft = _Draft(job.request, outcome, job.base, proposal.recipe, found, {c.id for c in found},
+                             ai_changes.merged(job.base, proposal.recipe, found))
+        self._apply_kept()
+        self.draft_bar.edit.clear()
+        self.draft_panel.show_draft(job.request, outcome, found, self._draft.kept, outcome.cost_text())
+        self.tabs.setCurrentWidget(self.draft_panel)
+        first = next((k for k, r in enumerate(self._draft.rows) if r.change is not None), None)
+        self._refresh_all(select=(first,) if first is not None else None)
+        errs = len(errors(proposal.problems))
+        self._status(f"Draft ready: {len(found)} change{'s' if len(found) != 1 else ''}"
+                     + (f" - it still has {errs} error{'s' if errs != 1 else ''} (the model couldn't fix them)"
+                        if errs else "") + ". Keep or discard it; Refine changes it.")
+
+    def _apply_kept(self):
+        d = self._draft
+        d.result = ai_changes.apply(d.base, d.proposed, d.changes, d.kept)
+        d.numbers = ai_changes.numbers(d.rows, d.kept)
+
+    def _draft_rows(self):
+        d = self._draft
+        names = self._recipe_names()
+        by_id = {c.id: c for c in d.changes}
+        rows = []
+        for k, (row, number) in enumerate(zip(d.rows, d.numbers)):
+            source = d.base if row.source == "base" else d.proposed
+            step = source["steps"][row.index]
+            kept = row.change is None or row.change in d.kept
+            level, mark = self._marks(self._by_path.get((number - 1,), []) if number else [])
+            was = ""
+            if row.kind == "change":
+                was = describe_step(d.base["steps"][by_id[row.change].base[0]], self.catalog, names)
+            note = str(step.get("comment") or "") if isinstance(step, dict) else ""
+            text = describe_step(step, self.catalog, names) if isinstance(step, dict) else "(not a step)"
+            rows.append(OutlineRow((k,), str(number) if number else "", text, note if note != "No description" else "",
+                                   level, mark, step.get("type") if isinstance(step, dict) else "", row.kind,
+                                   row.change, kept, was))
+            if isinstance(step, dict) and isinstance(step.get("steps"), list):
+                for j, sub in enumerate(step["steps"]):
+                    level, mark = self._marks(self._by_path.get((number - 1, j), []) if number else [])
+                    sub_note = str(sub.get("comment") or "") if isinstance(sub, dict) else ""
+                    rows.append(OutlineRow((k, j), f"{number}.{j + 1}" if number else "",
+                                           describe_step(sub, self.catalog, names) if isinstance(sub, dict)
+                                           else "(not a step)", sub_note, level, mark,
+                                           sub.get("type") if isinstance(sub, dict) else "", row.kind, None, kept))
+        return rows
+
+    def _row_path(self, result_path: tuple):
+        """The list's path of a step of the result (with the draft), or None."""
+        for k, number in enumerate(self._draft.numbers):
+            if number == result_path[0] + 1:
+                return (k,) + tuple(result_path[1:])
+        return None
+
+    def _draft_selection(self):
+        """The selected row as a step of the base (for a new conversation about the draft)."""
+        d = self._draft
+        if d is None or self._selected is None or not 0 <= self._selected[0] < len(d.rows):
+            return None
+        row = d.rows[self._selected[0]]
+        return (row.index,) if row.source == "base" else None
+
+    def _show_draft_step(self, path):
+        """A step of the draft in the form, to read: nothing can be edited while a draft is shown."""
+        d = self._draft
+        if path is None or not 0 <= path[0] < len(d.rows):
+            self.editor.clear()
+            self._selected = None
+            return
+        row = d.rows[path[0]]
+        step = (d.base if row.source == "base" else d.proposed)["steps"][row.index]
+        if len(path) > 1:
+            step = _step_at({"steps": [step]}, (0,) + tuple(path[1:]))
+        number = d.numbers[path[0]]
+        shown = ((number - 1,) if number else (row.index,)) + tuple(path[1:])
+        kept = row.change in d.kept
+        # A step that won't be in the recipe has no number: "Step 11" would name another step.
+        label = "" if number else ("Removed by the draft" if row.kind == "remove" else "Left out of the draft")
+        self.editor.show_step(copy.deepcopy(step), shown, label)
+        result_path = ((number - 1,) + tuple(path[1:])) if number else None
+        notice = {"add": "The draft adds this step." if kept else "The draft would add this step (left out).",
+                  "remove": "The draft removes this step." if kept else "The draft would remove this step (left "
+                                                                         "out: it stays).",
+                  "change": "The draft changes this step (shown as changed)." if kept else
+                            "The draft would change this step (left out: it stays as it was)."}.get(row.kind, "")
+        self.editor.show_problems(self._by_path.get(result_path, []) if result_path else [], notice)
+
+    def toggle_change(self, change_id: int, on: bool):
+        d = self._draft
+        if d is None or self._job is not None:
+            return
+        if on:
+            d.kept.add(change_id)
+        else:
+            d.kept.discard(change_id)
+        self._apply_kept()
+        self.draft_panel.update_kept(d.kept, len(d.changes))
+        self._check(render=False)
+        self._render_outline(self._selected)
+
+    def _update_banner(self):
+        d = self._draft
+        index = self.tabs.indexOf(self.draft_panel)
+        if d is not None:
+            n = len(d.changes)
+            self.tabs.setTabText(index, f"Draft ({n} change{'s' if n != 1 else ''})")
+        elif self._review is not None:
+            n = len(self._review[0].review.notes)
+            self.tabs.setTabText(index, f"Review ({n} note{'s' if n != 1 else ''})")
+        else:
+            self.tabs.setTabText(index, "Draft")
+        if d is None:
+            self.banner.hide()
+            return
+        errs = len(errors(self.problems))
+        problems = f" With them: {errs} error{'s' if errs != 1 else ''}." if errs else ""
+        self.banner.show_counts(len(d.kept), len(d.changes), problems)
+
+    def keep_draft(self):
+        d = self._draft
+        if d is None or self._job is not None or not d.kept:
+            return
+        n, total = len(d.kept), len(d.changes)
+        first = next((d.numbers[k] for k, r in enumerate(d.rows)
+                      if r.change in d.kept and r.kind in ("add", "change") and d.numbers[k]), None)
+        result = ai_changes.apply(d.base, d.proposed, d.changes, d.kept)
+        self._draft = self._session = None
+        self.data = result
+        self._changed(structural=True)
+        self._refresh_all(select=(first - 1,) if first else None)
+        kept = "the change" if n == total == 1 else f"all {total} changes" if n == total else f"{n} of {total} changes"
+        self.draft_panel.show_idle(f"Kept {kept} from the draft of “{d.request}”. Undo (Ctrl+Z) takes them back. "
+                                   "Save when the recipe is as you want it.\n\n" + self._idle_text())
+        self._status(f"Kept {kept} from the draft. Undo takes them back; nothing is saved until you save.")
+
+    def discard_draft(self):
+        d = self._draft
+        if d is None or self._job is not None:
+            return
+        self._draft = self._session = None
+        self._refresh_all(select=None)
+        self.draft_panel.show_idle(f"The draft of “{d.request}” was discarded.\n\n" + self._idle_text())
+        self._status("Draft discarded: the recipe is as it was.")
+
+    # ================================================================== drafting: a review
+    def _show_review(self, job, outcome):
+        keys = {}
+        for i, note in enumerate(outcome.review.notes):
+            step = _step_at(job.base, note.path) if note.path and note.path != ("policy",) else None
+            keys[i] = ai_changes.key(step) if step is not None else None
+        self._review, self._review_stale = (outcome, keys, job.request), None
+        self._render_outline(self._selected)
+        self._show_review_panel()
+        self._update_banner()
+        self.tabs.setCurrentWidget(self.draft_panel)
+        n = len(outcome.review.notes)
+        self._status(f"Review done: {n} note{'s' if n != 1 else ''}" + (" - shown beside the steps, and in the Draft "
+                                                                           "tab." if n else "."))
+
+    def _show_review_panel(self):
+        outcome, keys, request = self._review
+        stale = set()
+        for i, note in enumerate(outcome.review.notes):
+            if note.path and note.path != ("policy",):
+                step = _step_at(self.data, note.path)
+                if step is None or ai_changes.key(step) != keys.get(i):
+                    stale.add(i)
+        if stale == self._review_stale and self.draft_panel.currentWidget() is self.draft_panel.page_review:
+            return
+        self._review_stale = stale
+        self.draft_panel.show_review(request, outcome, stale, outcome.cost_text(), self.draft_fix, self._go_to_note)
+
+    def _go_to_note(self, note):
+        if self._draft is None and note.path and _step_at(self.data, note.path) is not None:
+            self.outline.select_path(note.path, quiet=False)
+            self._show_selected(note.path)
+
+    def clear_review(self):
+        self._review = self._review_stale = None
+        self._render_outline(self._selected)
+        self.draft_panel.show_idle(self._idle_text())
+        self._update_banner()
 
     # ================================================================== menus
     def _fill_new_menu(self):
@@ -864,6 +1373,9 @@ class RecipeBuilderDialog(QDialog):
     # ================================================================== saving
     def save(self, as_new: bool = False, version: str = None, reason: str = None) -> bool:
         """Save (see the module doc). version / reason: as given (no questions asked)."""
+        if self._busy():
+            self._status("Keep or discard the draft first (or wait for it, or cancel it).")
+            return False
         if self._record_timer.isActive():
             self._record()
         self._check()
@@ -918,13 +1430,37 @@ class RecipeBuilderDialog(QDialog):
 
     # ================================================================== closing
     def _may_discard(self) -> bool:
-        """True if there are no unsaved changes, or the author saves or discards them."""
+        """True if there are no unsaved changes, or the author saves or discards them (and a draft
+        shown is kept or discarded first)."""
+        if self._job is not None:
+            self.cancel_ai()
+        if self._draft is not None:
+            choice = self._ask_pending_draft()
+            if choice == "keep":
+                self.keep_draft()
+            elif choice == "discard":
+                self.discard_draft()
+            else:
+                return False
         if not self.is_dirty():
             return True
         choice = self._ask_unsaved()
         if choice == "save":
             return self.save()
         return choice == "discard"
+
+    def _ask_pending_draft(self) -> str:
+        """'keep', 'discard' or 'cancel', for a draft shown when the window closes."""
+        box = QMessageBox(self)
+        box.setIcon(QMessageBox.Icon.Question)
+        box.setWindowTitle("A draft is shown")
+        box.setText("The draft's changes haven't been kept or discarded.")
+        keep = box.addButton("Keep the ticked changes", QMessageBox.ButtonRole.AcceptRole)
+        discard = box.addButton("Discard the draft", QMessageBox.ButtonRole.DestructiveRole)
+        box.addButton("Cancel", QMessageBox.ButtonRole.RejectRole)
+        box.exec()
+        clicked = box.clickedButton()
+        return "keep" if clicked is keep else "discard" if clicked is discard else "cancel"
 
     def _ask_unsaved(self) -> str:
         box = QMessageBox(self)
@@ -944,12 +1480,19 @@ class RecipeBuilderDialog(QDialog):
         return self._closing_ok
 
     def reject(self):
-        """Escape or the close button: unsaved changes are never lost without asking."""
+        """Escape or the close button: a draft running is cancelled first; unsaved changes are never
+        lost without asking."""
+        if self._job is not None:
+            self.cancel_ai()
+            return
         if self._may_close():
             super().reject()
 
     def closeEvent(self, event):
         if self._may_close():
+            if self._job is not None:
+                self._job.cancel()
+                self._job = None
             super().closeEvent(event)
         else:
             event.ignore()

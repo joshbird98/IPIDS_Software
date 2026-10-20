@@ -1,29 +1,74 @@
 """The recipe builder's list of steps: each step as a sentence (what it does), its note under it,
 and a mark for its problems. Steps can be dragged: onto a "Do steps at the same time" step to go
 inside it, between steps to move there. The list never moves anything itself: it says what was
-asked (moved) and the builder changes the recipe and draws the list again."""
+asked (moved) and the builder changes the recipe and draws the list again.
+
+While a draft is shown, the list shows its changes: + a step it adds, − one it removes (struck
+through), ~ one it changes (with what it was under it). A change left out is drawn faint; a click
+on its mark puts it back or leaves it out (change_clicked). A review's note on a step is drawn
+under it."""
+from dataclasses import dataclass
+from typing import Optional
+
 from PyQt6.QtCore import QRect, QSize, Qt, pyqtSignal
-from PyQt6.QtGui import QFontMetrics
+from PyQt6.QtGui import QFont, QFontMetrics
 from PyQt6.QtWidgets import (QAbstractItemView, QStyle, QStyledItemDelegate, QStyleOptionViewItem, QTreeWidget,
                              QTreeWidgetItem)
 
 from src.gui import theme
 
-PATH, NUMBER, TEXT, NOTE, LEVEL, KIND, MARK = (Qt.ItemDataRole.UserRole + i for i in range(7))
+(PATH, NUMBER, TEXT, NOTE, LEVEL, KIND, MARK, CHANGE, CHANGE_ID, KEPT, WAS, REVIEW,
+ REVIEW_LEVEL) = (Qt.ItemDataRole.UserRole + i for i in range(13))
 PAD = 6
+GLYPH_W = 18
+GLYPHS = {"add": "+", "remove": "−", "change": "~"}
+CHANGE_TIPS = {"add": "added by the draft", "remove": "removed by the draft", "change": "changed by the draft"}
+
+
+@dataclass
+class OutlineRow:
+    path: tuple
+    number: str
+    text: str
+    note: str = ""
+    level: str = ""                 # "error", "warning" or ""
+    mark: str = ""                  # "1 error, 2 warnings"
+    kind: str = ""                  # the step type (PARALLEL steps take drops)
+    change: str = ""                # "add", "remove", "change" (a draft's), or ""
+    change_id: Optional[int] = None
+    kept: bool = True               # the change is ticked
+    was: str = ""                   # a changed step: what it was
+    review: str = ""                # a review's note on the step
+    review_level: str = ""          # "concern", "suggestion", "question"
 
 
 class _StepDelegate(QStyledItemDelegate):
-    """Number, sentence (wrapped), note (muted) and a problem mark on the right."""
+    """Change mark, number, sentence (wrapped), note, was, review (muted) and a problem mark."""
 
     def _layout(self, option, index):
         fm = QFontMetrics(option.font)
         rect = option.rect.adjusted(PAD, PAD // 2 + 1, -PAD, -(PAD // 2 + 1))
+        view = self.parent()
+        glyph_w = GLYPH_W if view is not None and getattr(view, "changes_shown", False) else 0
         num_w = fm.horizontalAdvance("00.00") + 6
         mark = index.data(MARK) or ""
         mark_w = fm.horizontalAdvance(mark) + 18 if mark else 0
-        text_w = max(60, rect.width() - num_w - mark_w)
-        return fm, rect, num_w, mark_w, text_w
+        text_w = max(60, rect.width() - glyph_w - num_w - mark_w)
+        return fm, rect, glyph_w, num_w, mark_w, text_w
+
+    @staticmethod
+    def _extra_lines(index):
+        lines = []
+        note = index.data(NOTE) or ""
+        if note:
+            lines.append(("note", note))
+        was = index.data(WAS) or ""
+        if was:
+            lines.append(("was", f"was: {was}"))
+        review = index.data(REVIEW) or ""
+        if review:
+            lines.append(("review", f"Review: {review}"))
+        return lines
 
     def sizeHint(self, option, index):
         view = self.parent()
@@ -36,12 +81,11 @@ class _StepDelegate(QStyledItemDelegate):
         width = max(120, width - depth * (view.indentation() if view is not None else 18))
         option = QStyleOptionViewItem(option)
         option.rect = QRect(0, 0, width, 0)
-        fm, rect, num_w, mark_w, text_w = self._layout(option, index)
+        fm, rect, glyph_w, num_w, mark_w, text_w = self._layout(option, index)
         flags = int(Qt.TextFlag.TextWordWrap)
         h = fm.boundingRect(QRect(0, 0, text_w, 10000), flags, index.data(TEXT) or "").height()
-        note = index.data(NOTE) or ""
-        if note:
-            h += fm.boundingRect(QRect(0, 0, text_w, 10000), flags, note).height() + 2
+        for _kind, line in self._extra_lines(index):
+            h += fm.boundingRect(QRect(0, 0, text_w, 10000), flags, line).height() + 2
         return QSize(width, max(h, fm.height()) + PAD + 2)
 
     def paint(self, painter, option, index):
@@ -49,28 +93,54 @@ class _StepDelegate(QStyledItemDelegate):
         self.initStyleOption(opt, index)
         opt.text = ""
         style = opt.widget.style() if opt.widget is not None else None
+        change, kept = index.data(CHANGE) or "", index.data(KEPT) is not False
+        selected = bool(option.state & QStyle.StateFlag.State_Selected)
+        if change and kept and change != "remove" and not selected:
+            painter.fillRect(option.rect, theme.color("info_bg"))
         if style is not None:
             style.drawPrimitive(QStyle.PrimitiveElement.PE_PanelItemViewItem, opt, painter, opt.widget)
-        fm, rect, num_w, mark_w, text_w = self._layout(option, index)
-        selected = bool(option.state & QStyle.StateFlag.State_Selected)
+        fm, rect, glyph_w, num_w, mark_w, text_w = self._layout(option, index)
         text_colour = option.palette.highlightedText().color() if selected else theme.color("text")
         muted = option.palette.highlightedText().color() if selected else theme.color("text_muted")
+        faint = option.palette.highlightedText().color() if selected else theme.color("text_faint")
+        # a change that won't be made (or a step the draft removes) is drawn faint
+        gone = (change == "remove" and kept) or (change in ("add", "change") and not kept)
         painter.save()
-        painter.setFont(option.font)
+        font = QFont(option.font)
         flags = Qt.TextFlag.TextWordWrap
+        x = rect.left()
+        if glyph_w and change:
+            bold = QFont(option.font)
+            bold.setBold(True)
+            painter.setFont(bold)
+            painter.setPen(theme.color("info") if kept and not selected else
+                           (text_colour if selected else faint))
+            painter.drawText(QRect(x, rect.top(), glyph_w, fm.height()),
+                             int(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop), GLYPHS.get(change, ""))
+        x += glyph_w
+        painter.setFont(font)
         painter.setPen(muted)
-        painter.drawText(QRect(rect.left(), rect.top(), num_w, fm.height()),
+        painter.drawText(QRect(x, rect.top(), num_w, fm.height()),
                          int(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop), index.data(NUMBER) or "")
-        x = rect.left() + num_w
-        painter.setPen(text_colour)
+        x += num_w
         text = index.data(TEXT) or ""
+        struck = QFont(font)
+        struck.setStrikeOut(change == "remove" and kept)
+        painter.setFont(struck)
+        painter.setPen(faint if gone else text_colour)
         box = fm.boundingRect(QRect(0, 0, text_w, 10000), int(flags), text)
         painter.drawText(QRect(x, rect.top(), text_w, box.height()), int(flags | Qt.AlignmentFlag.AlignLeft), text)
-        note = index.data(NOTE) or ""
-        if note:
-            painter.setPen(muted)
-            painter.drawText(QRect(x, rect.top() + box.height() + 2, text_w, rect.height()),
-                             int(flags | Qt.AlignmentFlag.AlignLeft), note)
+        painter.setFont(font)
+        y = rect.top() + box.height() + 2
+        for kind, line in self._extra_lines(index):
+            if kind == "review":
+                level = index.data(REVIEW_LEVEL) or ""
+                painter.setPen(text_colour if selected else theme.color("warn" if level == "concern" else "info"))
+            else:
+                painter.setPen(faint if (gone or kind == "was") else muted)
+            lbox = fm.boundingRect(QRect(0, 0, text_w, 10000), int(flags), line)
+            painter.drawText(QRect(x, y, text_w, lbox.height()), int(flags | Qt.AlignmentFlag.AlignLeft), line)
+            y += lbox.height() + 2
         mark = index.data(MARK) or ""
         if mark:
             level = index.data(LEVEL)
@@ -89,8 +159,9 @@ class _StepDelegate(QStyledItemDelegate):
 
 class Outline(QTreeWidget):
     """moved(from path, to parent path, index): a step was dragged (the builder decides if it may
-    go there)."""
+    go there). change_clicked(change id): the mark of a draft's change was clicked."""
     moved = pyqtSignal(tuple, tuple, int)
+    change_clicked = pyqtSignal(int)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -101,43 +172,57 @@ class Outline(QTreeWidget):
         self.setWordWrap(True)
         self.setItemDelegate(_StepDelegate(self))
         self.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
-        self.setDragDropMode(QAbstractItemView.DragDropMode.InternalMove)
-        self.setDefaultDropAction(Qt.DropAction.MoveAction)
-        self.setDropIndicatorShown(True)
+        self.set_draggable(True)
         self.setExpandsOnDoubleClick(False)
         self.setRootIsDecorated(False)            # (everything is shown expanded: no arrows to take room)
         self.setItemsExpandable(False)
         self.setIndentation(18)
         self.setVerticalScrollMode(QAbstractItemView.ScrollMode.ScrollPerPixel)
+        self.changes_shown = False
+        self.empty_text = ""
         theme.theme_changed().connect(self.viewport().update)
+
+    def set_draggable(self, on: bool):
+        self.setDragDropMode(QAbstractItemView.DragDropMode.InternalMove if on else
+                             QAbstractItemView.DragDropMode.NoDragDrop)
+        self.setDefaultDropAction(Qt.DropAction.MoveAction)
+        self.setDropIndicatorShown(on)
 
     # ------------------------------------------------------------------ items
     def fill(self, rows):
-        """rows: [(path, number, text, note, level, mark, kind)] in order; children after their
-        parent, with paths one longer."""
+        """rows: [OutlineRow] in order; children after their parent, with paths one longer."""
         self.blockSignals(True)
         self.clear()
+        self.changes_shown = any(r.change for r in rows)
         items = {}
-        for path, number_text, text, note, level, mark, kind in rows:
+        for r in rows:
             item = QTreeWidgetItem()
-            for role, value in ((PATH, path), (NUMBER, number_text), (TEXT, text), (NOTE, note), (LEVEL, level),
-                                (MARK, mark), (KIND, kind)):
+            for role, value in ((PATH, r.path), (NUMBER, r.number), (TEXT, r.text), (NOTE, r.note), (LEVEL, r.level),
+                                (MARK, r.mark), (KIND, r.kind), (CHANGE, r.change), (CHANGE_ID, r.change_id),
+                                (KEPT, r.kept), (WAS, r.was), (REVIEW, r.review), (REVIEW_LEVEL, r.review_level)):
                 item.setData(0, role, value)
-            tip = text + (f"\nNote: {note}" if note else "")
+            tip = r.text + (f"\nNote: {r.note}" if r.note else "") + (f"\nWas: {r.was}" if r.was else "")
+            if r.change:
+                tip += (f"\n\n{CHANGE_TIPS[r.change].capitalize()}"
+                        + (" - click the mark on the left to leave it out." if r.kept else
+                           " - left out: click the mark on the left to put it back."))
+            if r.review:
+                tip += f"\n\nReview ({r.review_level}): {r.review}"
             item.setToolTip(0, tip)
             flags = Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable | Qt.ItemFlag.ItemIsDragEnabled
-            if kind == "PARALLEL":
+            if r.kind == "PARALLEL":
                 flags |= Qt.ItemFlag.ItemIsDropEnabled
             item.setFlags(flags)
-            parent = items.get(path[:-1])
+            parent = items.get(r.path[:-1])
             if parent is None:
                 self.addTopLevelItem(item)
             else:
                 parent.addChild(item)
-            items[path] = item
+            items[r.path] = item
         self.expandAll()
         self.blockSignals(False)
         self._items = items
+        self.viewport().update()
 
     def item_at_path(self, path):
         return getattr(self, "_items", {}).get(tuple(path)) if path is not None else None
@@ -163,6 +248,30 @@ class Outline(QTreeWidget):
     def resizeEvent(self, event):
         super().resizeEvent(event)
         self.scheduleDelayedItemsLayout()         # the sentences wrap to the new width
+
+    def paintEvent(self, event):
+        super().paintEvent(event)
+        if self.topLevelItemCount() == 0 and self.empty_text:
+            from PyQt6.QtGui import QPainter
+            painter = QPainter(self.viewport())
+            painter.setPen(theme.color("text_faint"))
+            area = self.viewport().rect().adjusted(24, 24, -24, -24)
+            painter.drawText(area, int(Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignTop
+                                       | Qt.TextFlag.TextWordWrap), self.empty_text)
+            painter.end()
+
+    # ------------------------------------------------------------------ a draft's marks
+    def mousePressEvent(self, event):
+        if self.changes_shown and event.button() == Qt.MouseButton.LeftButton:
+            pos = event.position().toPoint()
+            item = self.itemAt(pos)
+            if item is not None and item.data(0, CHANGE_ID) is not None:
+                rect = self.visualItemRect(item)
+                if rect.left() + PAD - 2 <= pos.x() <= rect.left() + PAD + GLYPH_W:
+                    self.change_clicked.emit(int(item.data(0, CHANGE_ID)))
+                    event.accept()
+                    return
+        super().mousePressEvent(event)
 
     # ------------------------------------------------------------------ dragging
     def dropEvent(self, event):

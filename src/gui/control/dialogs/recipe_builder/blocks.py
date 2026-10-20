@@ -80,16 +80,6 @@ def block_for(step) -> Block:
     return BY_KEY.get(key)
 
 
-def renumber(steps: list):
-    """Steps numbered 1..n in order, and a PARALLEL step's own steps <its number>01, 02 ... (The
-    sequencer refuses a recipe with a number used twice.)"""
-    for i, step in enumerate(s for s in steps if isinstance(s, dict)):
-        step["step_id"] = i + 1
-        if step.get("type") == "PARALLEL" and isinstance(step.get("steps"), list):
-            for j, sub in enumerate(s for s in step["steps"] if isinstance(s, dict)):
-                sub["step_id"] = (i + 1) * 100 + j + 1
-
-
 def next_version(version: str) -> str:
     """'1.1' -> '1.2', '2' -> '3', '1.0.9' -> '1.0.10', 'beta' -> 'beta.1'."""
     text = str(version).strip()

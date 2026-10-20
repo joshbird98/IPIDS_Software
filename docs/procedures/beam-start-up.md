@@ -22,7 +22,7 @@ The values given are SINDIE's typical operating values. They are not limits.
     - The target material is the one you want.
     - It has lifetime left: look back through its previous use in the logs.
     - The target rod is inserted to the position you want.
-5. **Doors.** Close all the doors: the source deck and the source trolley.
+5. **Doors.** Close both of the source deck's doors: the gullwing door over the source body, and the mesh door to the source trolley.
 
 ## In the HMI: faults, vacuum and the safety relay
 

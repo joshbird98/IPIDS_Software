@@ -1,7 +1,7 @@
 {
-  "recipe_name": "Mass scan: magnet on, cup in and biased, scan, then the biggest peak",
+  "recipe_name": "Mass scan: cup in and biased, magnet on, scan, then the biggest peak",
   "version": "1.0",
-  "description": "Everything a scan needs, then the scan: the magnet on, the Faraday cup in and biased above 50 V. Set the range for the beam energy you run at.",
+  "description": "Everything a scan needs, then the scan, in the order of the help's 'Selecting a mass and tuning the beam': the Faraday cup in and biased above 50 V, then the magnet on. Set the range for the beam energy you run at.",
   "fault_policy": [
     {
       "type": "BIT_FAULT",
@@ -14,23 +14,6 @@
   "steps": [
     {
       "step_id": 1,
-      "type": "ROUTINE_CALL",
-      "routine_name": "psu_control",
-      "parameters": {
-        "cmd_enable": "ion_beam.beamline.magnet.cmd_enable",
-        "stat_enabled": "ion_beam.beamline.magnet.stat_enabled",
-        "sp_tag": "ion_beam.beamline.magnet.sp_requested_current",
-        "rb_tag": "ion_beam.beamline.magnet.rb_current",
-        "target_val": 20.0,
-        "wait_for_readback": true,
-        "tolerance": 0.05,
-        "timeout_sec": 60.0,
-        "requires_relay": true
-      },
-      "comment": "Analyser magnet on, at the start of the scan"
-    },
-    {
-      "step_id": 2,
       "type": "VERIFIED_ACTION",
       "target": "ion_beam.beamline.diagnostics.cmd_insert_fc",
       "value": true,
@@ -41,7 +24,7 @@
       "comment": "Faraday cup in"
     },
     {
-      "step_id": 3,
+      "step_id": 2,
       "type": "ROUTINE_CALL",
       "routine_name": "psu_control",
       "parameters": {
@@ -56,6 +39,23 @@
         "requires_relay": true
       },
       "comment": "Cup bias on: above 50 V for a correct beam current"
+    },
+    {
+      "step_id": 3,
+      "type": "ROUTINE_CALL",
+      "routine_name": "psu_control",
+      "parameters": {
+        "cmd_enable": "ion_beam.beamline.magnet.cmd_enable",
+        "stat_enabled": "ion_beam.beamline.magnet.stat_enabled",
+        "sp_tag": "ion_beam.beamline.magnet.sp_requested_current",
+        "rb_tag": "ion_beam.beamline.magnet.rb_current",
+        "target_val": 20.0,
+        "wait_for_readback": true,
+        "tolerance": 0.05,
+        "timeout_sec": 60.0,
+        "requires_relay": true
+      },
+      "comment": "Analyser magnet on, at the start of the scan"
     },
     {
       "step_id": 4,

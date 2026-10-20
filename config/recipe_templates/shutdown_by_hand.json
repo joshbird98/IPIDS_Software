@@ -116,7 +116,7 @@
     {
       "step_id": 16,
       "type": "USER_PROMPT",
-      "prompt_text": "The source is off. Keep the caesium cooling on for at least 30 minutes, then switch it off (FORCED COOLING: ON, once). Add a marker in Experiment Logging saying how you left the machine.",
+      "prompt_text": "The source is off. Keep the caesium cooling on for at least 30 minutes, then switch it off: click FORCED COOLING: ON once. Add a marker in Experiment Logging saying how you left the machine.",
       "verify_conditions": [],
       "comment": "After the shutdown"
     }

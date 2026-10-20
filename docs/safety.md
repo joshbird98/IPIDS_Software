@@ -21,10 +21,10 @@ Before you operate SINDIE:
 ## The high-voltage area
 
 - **The source deck is the high-voltage area.** It is enclosed in mesh and marked with high-voltage signs.
-- **The source deck's door is interlocked.** Opening it opens the safety relay's loop.
+- **Both of the source deck's doors are interlocked:** the gullwing door, which gives access to the source body, and the hinged mesh door, through which the source trolley is taken out. Opening either door opens the safety relay's loop. Each door has a red, dual-channel magnetic switch: one part on the door, the other bolted to the frame.
 - **Switching the safety relay on needs the key**, the **IPIDS HV ENABLE KEY**. For the key, contact Dr Luke Antwis.
 
-![The source deck in its mesh enclosure: the Danger High voltage sign on its front, the emergency switch-off on its side panel, and the beacon on its pole behind (red, amber, green)](images/photo-source-deck.jpg)
+![The source deck in its mesh enclosure, its gullwing door raised over the source body: the Danger High voltage sign on its front, the emergency switch-off on its side panel, and the beacon on its pole behind (red, amber, green)](images/photo-source-deck.jpg)
 
 High voltage can be present only while the safety relay is on. While it is on:
 
@@ -105,7 +105,7 @@ Three layers protect people and the machine. Only the first two are safety syste
 
 The safety relay's hardwired loop holds:
 
-- the two door switches;
+- the two door switches, one on each of the source deck's doors;
 - the two emergency switch-offs;
 - the key switch;
 - the vacuum gauge controller's relay, which opens when the pressure rises above its set point;

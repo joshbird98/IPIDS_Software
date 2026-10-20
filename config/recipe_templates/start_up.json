@@ -15,7 +15,7 @@
     {
       "step_id": 1,
       "type": "USER_PROMPT",
-      "prompt_text": "At the machine: the chiller and the coolant pumps are on, the chiller set below 15 \u00b0C; no coolant leaks or condensation on the source body; the trolley in position; the target material and the rod position the ones you want; every door closed (source deck and trolley). Click OK when they are.",
+      "prompt_text": "At the machine: the chiller and the coolant pumps are on, the chiller set below 15 \u00b0C; no coolant leaks or condensation on the source body; the trolley in position; the target material and the rod position the ones you want; both source deck doors closed (the gullwing door and the trolley door). Click OK when they are.",
       "verify_conditions": [
         {
           "target": "ion_beam.facilities.stat_src_coolant_ok",
@@ -158,7 +158,7 @@
         "timeout_sec": 120.0,
         "requires_relay": true
       },
-      "comment": "Filament on at 15 A (the PLC zeroes the setpoint of a supply that is off)"
+      "comment": "Filament on at 15 A, the degassing current (the PLC zeroes the setpoint of a supply that is off)"
     },
     {
       "step_id": 12,

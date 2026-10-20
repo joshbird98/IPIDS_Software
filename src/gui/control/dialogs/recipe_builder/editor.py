@@ -91,8 +91,9 @@ class StepEditor(QScrollArea):
     def clear(self):
         self._empty()
 
-    def show_step(self, step: dict, path: tuple):
-        """Build the form for `step` (at `path` in the outline)."""
+    def show_step(self, step: dict, path: tuple, label: str = ""):
+        """Build the form for `step` (at `path` in the outline). `label` replaces "Step n" in the heading
+        (for a step of a draft that won't be in the recipe, so has no number)."""
         if not isinstance(step, dict):
             self._empty("This step isn't a JSON object: it can only be deleted.")
             return
@@ -103,7 +104,8 @@ class StepEditor(QScrollArea):
         layout = QVBoxLayout(body)
         layout.setSpacing(8)
         title = block.title if block is not None else f"{step.get('type')} step"
-        layout.addWidget(_label(f"Step {'.'.join(str(i + 1) for i in path)}: {title}", "heading"))
+        label = label or f"Step {'.'.join(str(i + 1) for i in path)}"
+        layout.addWidget(_label(f"{label}: {title}", "heading"))
         if block is not None:
             layout.addWidget(_label(block.help, "hint"))
         self.lbl_problems = QLabel()
@@ -157,17 +159,19 @@ class StepEditor(QScrollArea):
         if self.step is not None and self.lbl_text is not None:
             self.lbl_text.setText(describe_step(self.step, self.catalog, self.recipe_names()))
 
-    def show_problems(self, problems):
-        """This step's problems (src/core/recipe_check.py Problem), shown above its form."""
+    def show_problems(self, problems, notice: str = ""):
+        """This step's problems (src/core/recipe_check.py Problem), shown above its form, after a
+        notice if there is one (what a draft does to the step)."""
         if self.lbl_problems is None:
             return
-        if not problems:
+        if not problems and not notice:
             self.lbl_problems.hide()
             return
         errors = [p for p in problems if p.level == "error"]
-        lines = [("Error: " if p.level == "error" else "Warning: ") + p.message for p in problems]
+        lines = ([notice] if notice else []) + [("Error: " if p.level == "error" else "Warning: ") + p.message
+                                                for p in problems]
         self.lbl_problems.setText("\n".join(lines))
-        set_prop(self.lbl_problems, "level", "fault" if errors else "warn")
+        set_prop(self.lbl_problems, "level", "fault" if errors else "warn" if problems else "info")
         self.lbl_problems.show()
 
     # ------------------------------------------------------------------ helpers

@@ -31,6 +31,17 @@ log = logging.getLogger("recipe_store")
 KEEP_BACKUPS = 50
 
 
+
+def renumber(steps: list):
+    """Steps numbered 1..n in order, and a PARALLEL step's own steps <its number>01, 02 ... (The
+    sequencer refuses a recipe with a number used twice.)"""
+    for i, step in enumerate(s for s in steps if isinstance(s, dict)):
+        step["step_id"] = i + 1
+        if step.get("type") == "PARALLEL" and isinstance(step.get("steps"), list):
+            for j, sub in enumerate(s for s in step["steps"] if isinstance(s, dict)):
+                sub["step_id"] = (i + 1) * 100 + j + 1
+
+
 @dataclass
 class SaveResult:
     saved: bool = False

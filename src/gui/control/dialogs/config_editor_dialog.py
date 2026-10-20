@@ -36,6 +36,7 @@ log = logging.getLogger("hmi.config_editor")
 WHOLE_SYSTEM = "WHOLE SYSTEM (by hand)"
 ALL_SERVICES = "ALL SERVICES"
 HMI = "HMI_GUI"
+BUILDER = "RECIPE BUILDER (nothing to restart)"
 FAULT_READERS = "service_plc + service_alarms"
 SERVICE_GROUPS = {FAULT_READERS: ("service_plc", "service_alarms")}
 CONFIG_TO_SERVICE = {
@@ -54,6 +55,8 @@ CONFIG_TO_SERVICE = {
     "mpd_config.json": "service_spellman_mpd",
     "vac_gauges_config.json": "service_vac_gauge_controllers",
     "plc_config.json": "service_plc",
+    # drafting's settings: read each time a recipe builder window opens
+    "recipe_ai.json": BUILDER,
 }
 HMI_TOO = {"fault_config.json"}          # the HMI reads these at start-up as well
 SERVICE_CHOICES = ["service_events", "service_logger", "service_data_compactor", "service_plc", "service_monitor",
@@ -329,6 +332,8 @@ class ConfigEditorDialog(QDialog):
                     "then everything keeps running with the old settings.")
         if target == HMI:
             return "Restart the operator HMI for the change to take effect."
+        if target == BUILDER:
+            return "Nothing was restarted: the recipe builder reads this file each time it opens."
         states = self._service_states()
         hmi = " Restart the operator HMI too (it reads this file at start-up)." if filename in HMI_TOO else ""
         if target == ALL_SERVICES:

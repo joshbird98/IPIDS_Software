@@ -19,10 +19,28 @@ The configuration files in `config/` and what reads them, the tag registry built
 | `system_tags.json` | the tag registry, generated (below) | the device services, the logger, the sequencer, the HMI, the data viewer |
 | `recipes/` | the recipes (in git) | the HMI's recipe panel and builder, `service_sequencer` |
 | `recipe_templates/` | the recipe builder's templates (in git): start-up, shutdowns, mass scan, degauss, HV conditioning | the recipe builder's **New** |
+| `recipe_ai.json` | the recipe builder's drafting: the model, its time limits (below) | the recipe builder, each time it opens |
 | `appearance.json`, `workspace_profiles.json`, `plot_settings.json` | the theme, and the data viewer's profiles, per machine (nothing reads `plot_settings.json` now) | the HMI and the data viewer |
 | `backups/` | previous versions of files changed in the config editor, and of recipes saved in the recipe builder (`backups/recipes/`) | the config editor's **History...** |
 
 The per-machine files and `backups/` are not in git. The services read their files when they start, so a change made outside the config editor needs the service restarted, except `readback_tolerance.json`.
+
+## Recipe drafting
+
+The recipe builder's drafting (see [Drafting and reviewing with AI](../panels/recipes.md#drafting-and-reviewing-with-ai)) is set in `config/recipe_ai.json`, which is in git, so nothing secret goes in it. The API key goes in the file `.env` in the SINDIE folder, which isn't in git: a line `GEMINI_API_KEY=<key>` (or the `GEMINI_API_KEY` environment variable, which wins). The builder reads both each time it opens: no restart is needed.
+
+| Setting | Default | What it does |
+|---|---|---|
+| `enabled` | `true` | `false` hides drafting in the builder. |
+| `model` | `gemini-flash-latest` | The Gemini model. `gemini-flash-latest` is Google's name for its newest Flash model, so it doesn't stop working when a model is retired; a larger model (a Pro or flagship one) is slower and costs more per draft. |
+| `fallback_models` | `gemini-3.8-flash`, `gemini-2.5-flash` | Tried in turn if the model isn't found. |
+| `max_rounds` | 16 | Answers from the model in one draft before it is given up. |
+| `max_proposals` | 3 | Proposals with errors sent back to the model; after that the last is shown with its errors. |
+| `timeout_s` | 120 | For each answer from the service, in seconds. |
+| `thinking_level` | `""` | `""` leaves it to the model; `low`, `medium` or `high` for Gemini 3 and later. |
+| `temperature` | `null` | `null` leaves it to the model (Google advises leaving it for Gemini 3). |
+
+A setting that isn't valid is logged and its default used. To see exactly what the model is told: `python -m src.core.recipe_ai.cli prompt`; to try a draft from a terminal: `python -m src.core.recipe_ai.cli draft "<request>" --recipe config/recipes/<file>`.
 
 ## The tag registry
 

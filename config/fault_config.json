@@ -132,7 +132,7 @@
         "2.3": {"name": "VG5_Type_Mismatch", "severity": 1, "description": "VG5 has unexpected gauge type."},
         "2.4": {"name": "VG5_Above_SP_Warn", "severity": 1, "description": "VG5 pressure above setpoint."},
         "2.5": {"name": "VG5_Rapid_Rise_Warn", "severity": 1, "description": "VG5 rapid pressure rise."},
-        "2.6": {"name": "VG6_Not_Found", "severity": 1, "description": "VG1 not found by controller."},
+        "2.6": {"name": "VG6_Not_Found", "severity": 1, "description": "VG6 not found by controller."},
         "2.7": {"name": "VG6_Type_Mismatch", "severity": 1, "description": "VG6 has unexpected gauge type."},
         "3.0": {"name": "VG6_Above_SP_Warn", "severity": 1, "description": "VG6 pressure above setpoint."},
         "3.1": {"name": "VG6_Rapid_Rise_Warn", "severity": 1, "description": "VG6 rapid pressure rise."}

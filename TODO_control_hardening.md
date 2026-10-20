@@ -17,10 +17,42 @@ simulator; none of it has been tried on the real hardware yet (see "Lab PC valid
    arrange it and save it under View > Layouts if wanted. Both programs start dark: View > Theme or
    Ctrl+Shift+T for light (remembered in config/appearance.json, per machine).
 6. `pip install -r requirements.txt` - adds the Markdown package the help pages use (Help, F1). Without it
-   the help still opens, plainer (no call-out boxes or table borders). google-genai and python-dotenv are no
-   longer needed (the recipe builder's AI assistant was removed); testing/test_api.py still uses them.
+   the help still opens, plainer (no call-out boxes or table borders). It keeps google-genai (2.8.0) for the
+   recipe builder's drafting; python-dotenv is no longer needed (the key is read from .env directly), but
+   testing/test_api.py still uses it.
+7. Drafting in the recipe builder needs the Gemini key in `.env` in the SINDIE folder (the line
+   GEMINI_API_KEY=..., as the old assistant had it). Try it once: open the builder, type a request, Draft. The
+   model is gemini-flash-latest (config/recipe_ai.json); `python -m src.core.recipe_ai.cli draft "..."` runs a
+   draft from a terminal. Each draft is logged in SystemLogs/recipe_ai/.
 
 ## Done
+- Josh's requests of 20 October 2026, evening:
+  - AI drafting back in the recipe builder, rebuilt (src/core/recipe_ai, the builder's drafting.py). Not a
+    chat: a box above the steps takes a request ("after step 3, wait for VG1 below 5e-6"; the selected step is
+    "this step"); the model (Gemini, through google-genai) works with tools - it searches the tag catalogue,
+    reads the help's procedures and the templates, checks its draft with the checks the sequencer makes, and
+    proposes; a proposal with errors is sent back to it (three times at most). The draft is shown in the list
+    of steps as tracked changes (+ added, - removed, ~ changed, with what it was), each of which can be left
+    out (its tick in the Draft tab, or a click on its mark); Keep makes the ticked ones as one undoable change,
+    Refine changes the draft, Discard drops it. While a draft runs or is shown the recipe can't be edited, so
+    what is kept is what was shown. Review reads the recipe against the procedures and leaves notes under the
+    steps (concern / suggestion / question) with a fix each can draft. The prompt is made from the same
+    catalogue, step fields, routine parameters, supplies, faults and templates as the checks (about 15k tokens
+    with every template, against 42k for the old one's registry dump), with rules and typical values from the
+    procedures; it was tried with stand-in models on eight requests (new recipes, edits, an unsafe request, a
+    review) and corrected where they stumbled. Each run is logged (SystemLogs/recipe_ai/). Settings in
+    config/recipe_ai.json (the config editor saves it without restarting anything); the key from the
+    environment or .env, never logged or shown.
+  - Found on the way, fixed: a degauss needs the safety relay (the magnet service refuses it without), but the
+    checks didn't say so - they now treat a degauss as switching the magnet on (relay needed, and a
+    Safety_Relay_Tripped stop); the degauss template waits for the relay first and stops if it trips;
+    test_sequence.json (1.2) did the same, and gave the 2-minute degauss only 60 s (it always failed); the
+    mass scan template and auto_tune.json (1.3) insert and bias the cup before the magnet comes on, as the
+    tuning procedure does; fault 2.6's description named VG1 for VG6.
+  - Help: both source deck doors are interlocked - the gullwing door over the source body and the hinged mesh
+    door for the source trolley, each with a red dual-channel magnetic switch (Josh) - in the safety rules,
+    the start-up procedure, troubleshooting, the overview and the glossary. The turbo's RUN word stays as it
+    is for now (Josh), in "To check on the machine" below.
 - Josh's requests of 20 October 2026:
   - Help: the page reloaded itself several times a second for as long as it was open (the wait cursor
     flashing): the scrollbar changed the text column, and a new column reloaded the page for its screenshots,
@@ -399,7 +431,8 @@ simulator; none of it has been tried on the real hardware yet (see "Lab PC valid
       the pump spinning at start-up). Check that a stop made at the pump isn't overridden by that word (if the
       pump obeys the serial link while it is the control source, it may start again). If it is, the service
       should stop asserting RUN once the pump slows down without a command from it, or the pump's control
-      source should be set so a local stop wins.
+      source should be set so a local stop wins. Josh (20 October 2026): leave the turbo control as it is for
+      now - a TODO, not to be changed yet.
     - service_plc: permit() leaves out the caesium-hot hold (HELD_WHILE_CS_HOT), so the target, filament and
       thermionic switches aren't greyed out while the caesium is hot - the operator gets a refusal pop-up
       instead (service_plc.py:632); that refusal credits the PLC with the hold (:727), which the PC applies.

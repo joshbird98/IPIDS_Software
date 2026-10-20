@@ -37,7 +37,7 @@ SINDIE, the Surrey Implanter for Negative-ions, Defect Implantation, and Enrichm
 
 The relay's loop holds:
 
-- two door switches;
+- two door switches, on the source deck's gullwing door (over the source body) and its mesh door (to the source trolley): red, dual-channel magnetic switches;
 - the two emergency switch-offs (ESOs): one on the source deck's side panel, one on the **High Voltage Systems Control** box;
 - the key switch, on the same box;
 - the vacuum gauge controller's set-point relay;

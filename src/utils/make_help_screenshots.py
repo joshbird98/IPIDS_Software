@@ -107,6 +107,81 @@ def main():
     os._exit(code)
 
 
+def recipe_builder_shots(parent, recipes_dir, save, spin, unfocus=lambda within=None: None):
+    """The recipe builder: with the mass scan template, and with a draft shown - a canned one (the
+    help's pictures mustn't depend on a model, a key or the network): the start-up template, asked
+    to skip the degassing."""
+    import json
+    from src.core import paths
+    from src.core.recipe_ai import agent
+    from src.core.recipe_ai.provider import Call, Reply
+    from src.gui.control.dialogs.recipe_builder import dialog as builder
+    templates = os.path.join(paths.CONFIG_DIR, "recipe_templates")
+    request = "Skip the degassing: this filament is old and the source hasn't been at air."
+    with open(os.path.join(templates, "start_up.json"), encoding="utf-8") as f:
+        proposed = json.load(f)
+    steps = proposed["steps"]
+    degas = [i for i, s in enumerate(steps) if "degas" in str(s.get("comment", "")).lower()]
+    for i in reversed(degas):
+        del steps[i]
+    for s in steps:
+        s.pop("step_id", None)
+    answer = Reply(calls=[Call("propose_recipe", {
+        "recipe_json": json.dumps(proposed),
+        "summary": "I removed the degassing: the filament step at 15 A and the prompt to let it degas. The filament "
+                   "now goes straight to its 28 A operating point; every other step is as it was.",
+        "assumptions": ["The filament isn't new and the source hasn't been at air, so it needn't degas.",
+                        "The 15 A step was there only for the degassing."],
+        "values_to_check": ["Filament 28 A (typical: 28 to 30 A)"]}, "p")],
+        usage={"input": 38000, "output": 2100}, model="gemini-3.8-flash")
+
+    class _Chat:
+        model = "gemini-3.8-flash"
+
+        def send(self, text=None, results=None):
+            return answer
+
+    class _Provider:
+        def start(self, system, tools):
+            return _Chat()
+    real_provider, real_availability = agent.make_provider, builder.availability
+    agent.make_provider = lambda *a, **k: _Provider()
+    builder.availability = lambda settings=None: (True, "Gemini, gemini-flash-latest")
+    try:
+        dlg = builder.RecipeBuilderDialog(parent, recipes_dir)
+        dlg.new_from_template(os.path.join(templates, "mass_scan.json"))
+        dlg.resize(1320, 860)
+        dlg.show()
+        spin(1.0)
+        dlg.outline.select_path((0,), quiet=False)
+        spin(0.5)
+        unfocus(dlg)
+        save(dlg.grab(), "dialog-recipe-builder")
+        dlg._closing_ok = True              # (a template not saved: close without asking)
+        dlg.close()
+
+        dlg = builder.RecipeBuilderDialog(parent, recipes_dir)
+        dlg.ai_threaded = False
+        dlg.new_from_template(os.path.join(templates, "start_up.json"))
+        dlg.resize(1320, 900)
+        dlg.show()
+        spin(0.5)
+        dlg.outline.select_path((degas[-1],), quiet=False)
+        dlg.draft_bar.edit.set_text(request)
+        dlg.request_draft(request)
+        spin(0.8)
+        dlg.outline.scrollToItem(dlg.outline.topLevelItem(min(degas[-1] + 2, dlg.outline.topLevelItemCount() - 1)))
+        dlg.outline.select_path((degas[0],), quiet=False)
+        spin(0.5)
+        unfocus(dlg)
+        save(dlg.grab(), "dialog-recipe-draft")
+        dlg.discard_draft()
+        dlg._closing_ok = True
+        dlg.close()
+    finally:
+        agent.make_provider, builder.availability = real_provider, real_availability
+
+
 class Shooter:
     def __init__(self, out, mode):
         from PyQt6.QtWidgets import QApplication
@@ -413,19 +488,8 @@ class Shooter:
     def shoot_dialogs(self):
         hmi, v = self.hmi, self.viewer
         try:
-            from src.core import paths
-            from src.gui.control.dialogs.recipe_builder import RecipeBuilderDialog
             w = hmi.recipe_widget
-            dlg = RecipeBuilderDialog(w, w.config_dir)
-            dlg.new_from_template(os.path.join(paths.CONFIG_DIR, "recipe_templates", "mass_scan.json"))
-            dlg.resize(1320, 820)
-            dlg.show()
-            self.spin(1.0)
-            dlg.outline.select_path((0,), quiet=False)
-            self.spin(0.5)
-            self.save(dlg.grab(), "dialog-recipe-builder")
-            dlg._closing_ok = True              # (a template not saved: close without asking)
-            dlg.close()
+            recipe_builder_shots(w, w.config_dir, self.save, self.spin, self.unfocus)
         except Exception as e:
             print("  (recipe builder not taken:", e, ")")
         try:

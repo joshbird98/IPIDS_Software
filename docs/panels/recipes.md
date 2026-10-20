@@ -9,7 +9,7 @@ A recipe is a list of steps that the sequencer carries out in order: commands, w
 Recipes run in the sequencer service (`service_sequencer`), not in the HMI. The panel only sends the sequencer commands and shows what it reports. Closing the HMI does not stop a recipe, and an HMI that is opened again picks it up: its steps, its status and any prompt waiting for an answer.
 
 - **Checked before it starts.** Before the sequencer starts a recipe it reads it, and every recipe it runs as a step, and checks them all against the machine's tags (see [The checks](#the-checks)). A recipe with an error is refused at once, with the first errors in the refusal, so a run never stops half way at a step that could never work. **LOAD RECIPE** in the panel makes the same checks.
-- **Logged.** The start is in the event log with the recipe's version and the SHA-256 checksum of each file it runs, for example `Recipe 'Automated Mass Resolution' version 1.2 started (auto_tune.json, SHA-256 3f9c0a1b2c4d)`. The log says exactly what ran.
+- **Logged.** The start is in the event log with the recipe's version and the SHA-256 checksum of each file it runs, for example `Recipe 'Automated Mass Resolution' version 1.3 started (auto_tune.json, SHA-256 3f9c0a1b2c4d)`. The log says exactly what ran.
 - **One recipe at a time.** A recipe can run alongside a mass scan and an optimiser sweep, but two of them can never drive the same thing at once: a recipe that needs a control another sequence holds fails.
 - **Control leases.** Before its first command to a subsystem (the analyser magnet, a supply, the Faraday cup ...), the recipe claims a control lease on it. While the recipe holds the lease, that subsystem takes commands only from the recipe: its controls in the other panels are greyed out, with the reason in their tooltip, and the [Automation bar](automation-bar.md) shows what the recipe holds, for example **recipe 'Automated Mass Resolution' holds: diagnostics, magnet, smu**. The leases are released when the recipe ends. The safety relay, shutdown, fault reset and gate valve controls are never leased: they stay with the operator.
 - **Steps in order.** The steps run one at a time. A step is done when its purpose is met: a **Set a value** step, for example, when the service confirms it has carried out the command.
@@ -125,12 +125,14 @@ Any recipe that switches on the source, the high voltage or the magnets should s
 | **Undo**, **Redo** | Every change can be undone. |
 | The chip at the top right | What the checks find: **No problems found** (green), the number of warnings (amber) or of errors (red). |
 | **Name**, **Version**, **About** | The recipe's name, its version, and a description (optional). Beside them, the file the recipe is saved to, or the name a new one will get. |
+| The box under them, **Draft**, **Review** | Drafting with AI: see [Drafting and reviewing with AI](#drafting-and-reviewing-with-ai). |
 | **Add a step** | The blocks, by kind (see below). Double-click one, or select it and press **Add**. |
 | **Steps** | The recipe as sentences, in the order they run, each with its note under it and a mark for its problems. Select a step to edit it. **Move up**, **Move down**, **Duplicate**, **Delete** act on the selected step. |
 | The step's form | What the selected step does, in words, its problems, and its fields. |
 | **Problems** | Every error and warning the checks find. Click one to go to the step. |
 | **Stop conditions** | The recipe's stop conditions (see [Setting the stop conditions](#setting-the-stop-conditions)). |
 | **Read as text** | The whole recipe as numbered sentences, with what stops it and how long its timed parts take. **Copy the text** copies it, for a log book or an email. |
+| **Draft** | A draft's summary and changes, or a review's notes (see [Drafting and reviewing with AI](#drafting-and-reviewing-with-ai)). |
 
 ### Blocks
 
@@ -208,9 +210,50 @@ The **Stop conditions** tab lists the recipe's stop conditions as sentences. **A
 | **Start-up: vacuum, safety relay, high voltage, filament and caesium** | [Bringing up a beam](../procedures/beam-start-up.md) as a recipe: the checks at the machine (asked of the operator), the source vacuum, the gate valve and the safety relay, then extraction, target, ioniser, einzel (with its current checked), the filament (at 15 A first, with a stop for degassing when it is needed), and the caesium oven up to temperature. |
 | **Shutdown by hand: cool the caesium, then switch everything off** | [Shutting down](../procedures/beam-shut-down.md) by hand: the caesium oven off and cooled until the PLC says it is no longer hot, the filament to zero, every supply off, the safety relay off. |
 | **Shutdown by the PLC (INITIATE SHUTDOWN)** | Asks first, then hands the shutdown to the PLC and waits for it to finish. |
-| **Mass scan: magnet on, cup in and biased, scan, then the biggest peak** | Everything a scan needs, then the scan. |
-| **Degauss the analyser magnet, with the Faraday cup in** | The degauss with no beam reaching the sample. |
+| **Mass scan: cup in and biased, magnet on, scan, then the biggest peak** | Everything a scan needs, in the order of [Selecting a mass and tuning the beam](../procedures/tuning-the-beam.md), then the scan. |
+| **Degauss the analyser magnet, with the Faraday cup in** | The degauss with no beam reaching the sample. It needs the safety relay on (the magnet service won't start it without), and takes about 2 minutes. |
 | **Condition the extraction up to 20 kV** | The extraction switched on at 5 kV, then ramped by 0.5 kV a minute to 20 kV, holding on pressure and backing off on arcs. |
+
+### Drafting and reviewing with AI
+
+The box under the recipe's name asks a language model (Google's Gemini) for a draft of what you describe - a new recipe, or a change to the one open - or for a review of it. The model never acts on the machine: it can only propose. A draft goes through the same checks as every recipe, and you see it as changes to keep or leave out; nothing is saved or run until you keep it and save.
+
+![The recipe builder with a draft shown: the request in the box, a removed step struck through in the steps, and the Draft tab with the model's summary and the changes](../images/dialog-recipe-draft.png)
+
+**Drafting:**
+
+1. Type what you want, for example *Condition the source einzel to 16 kV in 0.5 kV steps, 2 minutes each, and stop if it arcs*, or *after this step, wait for the source pressure to fall below 5e-6 mbar*. If the request is about a step ("this step", "here"), select it first: new steps go after the selected step unless you say where.
+2. Press **Draft** (or Enter; Shift+Enter starts a new line, and Up brings back an earlier request). The line under the box says what the model is doing - looking up tags, reading the help's procedures, checking its draft - and for how long. **Cancel** (or Escape) stops waiting. The recipe can't be edited until the draft is back.
+3. The draft is checked before you see it. One with errors goes back to the model to put right, up to three times; after that it is shown with its errors, which stop it being saved as they would any recipe.
+4. The draft is shown in the steps as changes:
+
+    | Mark | Meaning |
+    |---|---|
+    | **+** | A step the draft adds. |
+    | **−** | A step it removes, struck through. It has no number: it won't be in the recipe. |
+    | **~** | A step it changes, shown as changed, with **was:** and what it was under it. |
+    | faint | A change you have left out. |
+
+    The chip at the top, the **Problems** tab and **Read as text** show the recipe as it would be with the ticked changes. Select a step to see its form (it can't be edited while a draft is shown).
+5. The **Draft** tab has the model's summary, what it assumed, the values it chose that you should check, and the changes, each with a tick. Untick a change, or click its mark in the steps, to leave it out.
+6. **Keep** (above the steps, or in the tab) makes the ticked changes, all as one change: **Undo** takes them back together. **Discard** leaves the recipe as it was. To change the draft first, type what to change and press **Refine**: the model changes its draft, and you see the new one.
+
+**Reviewing:** **Review** asks the model to read the recipe against SINDIE's procedures and templates, and note what looks wrong or missing - the things the checks can't know, such as a step left out of the start-up, a value unusual for the purpose, or a time limit too short for what it waits for. Type something in the box first to have it look at that especially. Each note shows under the step it is about (amber for a concern, blue for a suggestion or a question), and in the **Draft** tab, where **Draft this fix** drafts the fix it suggests - shown as changes, as any draft. A note whose step has changed since is marked so. **Clear the notes** removes them. A review changes nothing.
+
+**What is sent, and what is kept.** The model is sent your request, the recipe open, the machine's tag list (names, units and ranges), the PLC faults, the steps' and procedures' settings, the templates and, when it asks for them, the help's pages and saved recipes. It is sent nothing from the machine: no readings, no logged data. Each draft and review is logged, one line each, in `SystemLogs/recipe_ai/<year>-<month>.jsonl`: the request, everything the model looked up or checked and the answers it got, what it proposed, the model and the tokens used.
+
+**Setting it up.** Drafting needs the `google-genai` package (`pip install -r requirements.txt`) and a Gemini API key (from [aistudio.google.com](https://aistudio.google.com)), in a line `GEMINI_API_KEY=<your key>` in the file `.env` in the SINDIE folder. The file isn't in git: the repository is public. Without them the box says what is missing, and the rest of the builder works as before. The model and the time limits are in `config/recipe_ai.json` (see [Configuration files](../engineering/configuration.md#recipe-drafting)).
+
+| Message | What it means | What to do |
+|---|---|---|
+| `Drafting isn't available: No API key for Gemini: ...` | No `GEMINI_API_KEY` in the environment or in `.env`. | Add the key to `.env`, then open the builder again. |
+| `Drafting isn't available: The google-genai package isn't installed ...` | | `pip install -r requirements.txt` |
+| `The service refused the API key (...)` | The key is wrong, or has been withdrawn. | Check it in `.env`. |
+| `The model '<name>' isn't available to this key (...)` | The model in `config/recipe_ai.json` (and each one in its fallback list) isn't offered to this key. | Set another model there. |
+| `The service's rate limit or quota for this key is used up (...)` | Too many requests in a minute, or the key's quota is spent. | Try again in a minute. |
+| `Can't reach the service (...): is this PC online?` | No connection to Google. | Check the PC's network. |
+| `The model hadn't finished after <n> answers` | The model kept looking things up without proposing. | Try again, perhaps with a simpler request. |
+| `The draft changes nothing: <the model's reason>` | The model proposed the recipe as it is: for example because the request asked for something a recipe may not do, such as resetting faults. | Read its reason. |
 
 ### Saving a recipe
 
@@ -230,14 +273,15 @@ Closing the builder (or pressing Escape) with changes not saved asks first: **Sa
 
 | Key | What it does |
 |---|---|
+| Enter, Shift+Enter (in the drafting box) | Ask for the draft; start a new line |
+| Up, Down (in the drafting box) | An earlier request, a later one |
+| Escape | Stop waiting for a draft (otherwise: close the builder) |
 | Ctrl+S | Save |
 | Ctrl+Z, Ctrl+Y (or Ctrl+Shift+Z) | Undo, redo (in a text field, they act on the field first) |
 | Delete (in the list of steps) | Delete the selected step |
 | Ctrl+D | Duplicate the selected step |
 | Alt+Up, Alt+Down | Move the selected step |
 
-> [!NOTE]
-> The builder had an AI assistant that drafted recipes. It was removed in October 2026: its drafts weren't checked against the machine, and the checks above now do that for every recipe, however it was made.
 
 ## Steps
 
@@ -283,13 +327,13 @@ Recipes are JSON files in `config/recipes/`, which is in git. The panel's list, 
 ```
 {
   "recipe_name": "Automated Mass Resolution",
-  "version": "1.2",
+  "version": "1.3",
   "fault_policy": [
     {"type": "BIT_FAULT", "registry_tag": "ion_beam.faults.word_0_system", "bit_str": "0.1",
      "name": "Safety_Relay_Tripped", "action": "ABORT"}
   ],
   "steps": [
-    {"step_id": 2, "type": "VERIFIED_ACTION", "target": "ion_beam.beamline.diagnostics.cmd_insert_fc",
+    {"step_id": 1, "type": "VERIFIED_ACTION", "target": "ion_beam.beamline.diagnostics.cmd_insert_fc",
      "value": true, "verify_target": "ion_beam.beamline.diagnostics.stat_fc_inserted",
      "verify_condition": "==", "verify_value": 1, "timeout_sec": 15.0,
      "comment": "Ensure Faraday Cup is inserted"},

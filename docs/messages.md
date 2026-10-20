@@ -373,6 +373,8 @@ Escape drops an entry without a note. If the HMI window loses the focus (another
 | **Not saved**: `<File> could not be written: <error>.` | recipe builder: **Save** | The folder or the file can't be written. | |
 | **Unsaved changes**: `'<name>' has changes that aren't saved.` | recipe builder, closing it or opening another recipe | | **Save**, **Discard the changes** or **Cancel**. |
 | `Saved <file>, version <v>: committed to git (<id>)` or `: not committed to git: <why>` | recipe builder, bottom line | The recipe is saved; whether git has it (not when the folder isn't a git work tree). | |
+| **A draft is shown**: `The draft's changes haven't been kept or discarded.` | recipe builder, closing it | | **Keep the ticked changes**, **Discard the draft** or **Cancel**. |
+| `Drafting isn't available: <why>`, or a failed draft's message under the drafting box | recipe builder | See [Drafting and reviewing with AI](panels/recipes.md#drafting-and-reviewing-with-ai). | |
 | `The tag registry isn't loaded: this tag can't be checked` | recipe builder, under a tag | The tag registry file is missing or can't be read: the builder can't check tags, and offers none to choose. | Ask an engineer to build it (see [Configuration files](engineering/configuration.md#the-tag-registry)). |
 
 ## Recipe messages
@@ -743,7 +745,7 @@ Acknowledging the alarm doesn't reset the fault. Only **RESET FAULTS** does. The
 | `VG5_TYPE_MISMATCH` (bit 2.3) | `VG5 has unexpected gauge type.` | As for VG1. | As for VG1. |
 | `VG5_ABOVE_SP_WARN` (bit 2.4) | `VG5 pressure above setpoint.` | As for VG1. | As for VG1. |
 | `VG5_RAPID_RISE_WARN` (bit 2.5) | `VG5 rapid pressure rise.` | As for VG1. | As for VG1. |
-| `VG6_NOT_FOUND` (bit 2.6) | `VG1 not found by controller.` | VG6, not VG1: the description in `config/fault_config.json` names the wrong gauge. Otherwise as for VG1. | Check VG6, then **RESET FAULTS**. |
+| `VG6_NOT_FOUND` (bit 2.6) | `VG6 not found by controller.` | As for VG1. | Check VG6, then **RESET FAULTS**. |
 | `VG6_TYPE_MISMATCH` (bit 2.7) | `VG6 has unexpected gauge type.` | As for VG1. | As for VG1. |
 | `VG6_ABOVE_SP_WARN` (bit 3.0) | `VG6 pressure above setpoint.` | As for VG1. | As for VG1. |
 | `VG6_RAPID_RISE_WARN` (bit 3.1) | `VG6 rapid pressure rise.` | As for VG1. | As for VG1. |

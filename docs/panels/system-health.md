@@ -61,7 +61,7 @@ Losing any of those conditions while the relay is on opens it. **DISABLE SAFETY 
 While the source is hot or at high voltage, the PLC keeps the relay request on whatever the PC asks, so the relay can't be switched off from the HMI; the button reads **RELAY ENERGIZED (LOCKED)**. Use **INITIATE SHUTDOWN** instead. The PLC can still open the relay itself, through its permissive.
 
 > [!CAUTION]
-> The source deck is the high-voltage area. Its door is interlocked, and switching the safety relay on needs a key. Follow the [Safety rules](../safety.md), and [Bringing up a beam](../procedures/beam-start-up.md) for the checks to make first.
+> The source deck is the high-voltage area. Both of its doors are interlocked, and switching the safety relay on needs a key. Follow the [Safety rules](../safety.md), and [Bringing up a beam](../procedures/beam-start-up.md) for the checks to make first.
 
 ## Shutdown sequences
 

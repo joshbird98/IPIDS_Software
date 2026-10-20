@@ -552,6 +552,8 @@ def _switched_on(step) -> set:
             out.add(sub)
         if sub == CESIUM and leaf == "cmd_ctrl_mode" and v == 1.0:
             out.add(sub)
+        if leaf == "cmd_degauss" and v == 1.0:
+            out.add(sub)            # (the magnet service switches the output on for it, and ends with it on)
     if kind == "ROUTINE_CALL" and step.get("routine_name") == "psu_control":
         tag = _dict(step.get("parameters")).get("cmd_enable")
         if isinstance(tag, str):
