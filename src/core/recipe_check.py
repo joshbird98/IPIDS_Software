@@ -262,7 +262,8 @@ class _Checker:
             drives = {}                                   # subsystem -> the first sub-step that drives it
             for j, sub in enumerate(step["steps"]):
                 sub_path = path + (j,)
-                if isinstance(sub, dict) and sub.get("type") in STEP_TYPES and sub.get("type") not in PARALLEL_TYPES:
+                kind = sub.get("type") if isinstance(sub, dict) else None
+                if isinstance(kind, str) and kind in STEP_TYPES and kind not in PARALLEL_TYPES:
                     self.add(ERROR, sub_path, f"a {sub.get('type')} step can't run inside a PARALLEL step")
                     continue
                 self.step(sub_path, sub, in_parallel=True)

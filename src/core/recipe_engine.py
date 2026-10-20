@@ -83,7 +83,7 @@ def create_step(step_data: dict, in_parallel: bool = False):
     if not isinstance(step_data, dict):
         raise RecipeError(f"a step must be a JSON object, not {type(step_data).__name__}")
     stype = step_data.get("type")
-    cls = STEP_TYPES.get(stype)
+    cls = STEP_TYPES.get(stype) if isinstance(stype, str) else None
     if cls is None:
         raise RecipeError(f"{_where(step_data)}: unknown step type {stype!r} "
                           f"(expected one of {', '.join(sorted(STEP_TYPES))})")
@@ -495,7 +495,7 @@ class RoutineCallStep(RecipeStep):
     def __init__(self, step_data: dict):
         super().__init__(step_data)
         self.routine_name = step_data.get("routine_name", "")
-        routine_class = ROUTINE_REGISTRY.get(self.routine_name)
+        routine_class = ROUTINE_REGISTRY.get(self.routine_name) if isinstance(self.routine_name, str) else None
         if routine_class is None:
             raise RecipeError(f"{_where(step_data)}: unknown routine {self.routine_name!r} "
                               f"(one of {', '.join(sorted(ROUTINE_REGISTRY))})")

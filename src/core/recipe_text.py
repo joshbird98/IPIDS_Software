@@ -233,7 +233,7 @@ def _parallel(s, catalog, names):
 def _routine_call(s, catalog, names):
     name = s.get("routine_name")
     params = s.get("parameters") or {}
-    describe = _ROUTINES.get(name)
+    describe = _ROUTINES.get(name) if isinstance(name, str) else None
     if describe is None:
         return f"Run the routine {name!r}"
     return describe(params, catalog)
@@ -303,7 +303,7 @@ def describe_step(step, catalog=None, recipe_names: dict = None) -> str:
     if not isinstance(step, dict):
         return "(not a step)"
     kind = step.get("type")
-    describe = _DESCRIBE.get(kind)
+    describe = _DESCRIBE.get(kind) if isinstance(kind, str) else None
     if describe is None:
         return f"{kind} step (a step type the sequencer doesn't know)"
     try:
@@ -316,6 +316,8 @@ def describe_step(step, catalog=None, recipe_names: dict = None) -> str:
 def describe_policy_entry(entry: dict, catalog=None) -> str:
     """'the Safety Relay Tripped fault is latched', 'the safety relay is off' ..."""
     catalog = _catalog(catalog)
+    if not isinstance(entry, dict):
+        return f"{entry!r} (not a stop condition: it should be an object)"
     if entry.get("type") == "BIT_FAULT" or ("registry_tag" in entry and "target" not in entry):
         name = str(entry.get("name") or f"{entry.get('registry_tag')} bit {entry.get('bit_str')}")
         fault = catalog.fault(name=name)

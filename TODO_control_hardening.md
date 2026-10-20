@@ -43,6 +43,17 @@ simulator; none of it has been tried on the real hardware yet (see "Lab PC valid
     review) and corrected where they stumbled. Each run is logged (SystemLogs/recipe_ai/). Settings in
     config/recipe_ai.json (the config editor saves it without restarting anything); the key from the
     environment or .env, never logged or shown.
+  - From an independent review of it, fixed: a draft runs in a thread and hands back through one bridge
+    owned by the application (each run had its own Qt object, often deleted in the run's thread, which Qt
+    doesn't allow - the tests crashed once in about 20 runs), with the garbage collector kept to the GUI
+    thread while a run's thread is alive (calibre's way); the Draft tab and its buttons are locked while a
+    refinement runs (a change unticked then was kept anyway); a draft that can't be shown says so and leaves
+    the builder unlocked; a 429 with a short retryDelay was retried for ever, and a model named twice in the
+    fallbacks asked for again and again; a change to a "Do steps at the same time" step left out showed the
+    draft's sub-steps (it shows the step as it stays now); a review note whose step changed offers no fix; the
+    Stop conditions tab shows the draft's list while one is shown; closing the window cancels a draft only if
+    it closes. A step type or stop condition that isn't text or an object (a hand-edited file, or a draft)
+    raised in the checks, the text and the builder: now an error, as any other.
   - Found on the way, fixed: a degauss needs the safety relay (the magnet service refuses it without), but the
     checks didn't say so - they now treat a degauss as switching the magnet on (relay needed, and a
     Safety_Relay_Tripped stop); the degauss template waits for the relay first and stops if it trips;

@@ -223,22 +223,21 @@ The box under the recipe's name asks a language model (Google's Gemini) for a dr
 **Drafting:**
 
 1. Type what you want, for example *Condition the source einzel to 16 kV in 0.5 kV steps, 2 minutes each, and stop if it arcs*, or *after this step, wait for the source pressure to fall below 5e-6 mbar*. If the request is about a step ("this step", "here"), select it first: new steps go after the selected step unless you say where.
-2. Press **Draft** (or Enter; Shift+Enter starts a new line, and Up brings back an earlier request). The line under the box says what the model is doing - looking up tags, reading the help's procedures, checking its draft - and for how long. **Cancel** (or Escape) stops waiting. The recipe can't be edited until the draft is back.
+2. Press **Draft** (or Enter; Shift+Enter starts a new line, and Up brings back an earlier request). The line under the box says what the model is doing - looking up tags, reading the help's procedures, checking its draft - and for how long. **Cancel** (or Escape) stops waiting. The recipe can't be edited until the draft is back. Closing the window cancels the draft only if you go on to close it.
 3. The draft is checked before you see it. One with errors goes back to the model to put right, up to three times; after that it is shown with its errors, which stop it being saved as they would any recipe.
 4. The draft is shown in the steps as changes:
 
     | Mark | Meaning |
     |---|---|
-    | **+** | A step the draft adds. |
-    | **−** | A step it removes, struck through. It has no number: it won't be in the recipe. |
-    | **~** | A step it changes, shown as changed, with **was:** and what it was under it. |
-    | faint | A change you have left out. |
+    | **+** | A step the draft adds. Left out, it is faint and has no number. |
+    | **−** | A step it removes, struck through. It has no number: it won't be in the recipe. Left out, it is shown as usual: it stays. |
+    | **~** | A step it changes, shown as changed, with **was:** and what it was under it. Left out, the step is shown as it stays, with the draft's change under it. |
 
-    The chip at the top, the **Problems** tab and **Read as text** show the recipe as it would be with the ticked changes. Select a step to see its form (it can't be edited while a draft is shown).
+    The chip at the top, the **Problems** and **Stop conditions** tabs and **Read as text** show the recipe as it would be with the ticked changes. Select a step to see its form (it can't be edited while a draft is shown).
 5. The **Draft** tab has the model's summary, what it assumed, the values it chose that you should check, and the changes, each with a tick. Untick a change, or click its mark in the steps, to leave it out.
-6. **Keep** (above the steps, or in the tab) makes the ticked changes, all as one change: **Undo** takes them back together. **Discard** leaves the recipe as it was. To change the draft first, type what to change and press **Refine**: the model changes its draft, and you see the new one.
+6. **Keep** (above the steps, or in the tab) makes the ticked changes, all as one change: **Undo** takes them back together. **Discard** leaves the recipe as it was. To change the draft first, type what to change and press **Refine**: the model changes its draft, and you see the new one. While it does, the draft shown can't be changed, kept or discarded (**Cancel** first, to keep it as it is).
 
-**Reviewing:** **Review** asks the model to read the recipe against SINDIE's procedures and templates, and note what looks wrong or missing - the things the checks can't know, such as a step left out of the start-up, a value unusual for the purpose, or a time limit too short for what it waits for. Type something in the box first to have it look at that especially. Each note shows under the step it is about (amber for a concern, blue for a suggestion or a question), and in the **Draft** tab, where **Draft this fix** drafts the fix it suggests - shown as changes, as any draft. A note whose step has changed since is marked so. **Clear the notes** removes them. A review changes nothing.
+**Reviewing:** **Review** asks the model to read the recipe against SINDIE's procedures and templates, and note what looks wrong or missing - the things the checks can't know, such as a step left out of the start-up, a value unusual for the purpose, or a time limit too short for what it waits for. Type something in the box first to have it look at that especially. Each note shows under the step it is about (amber for a concern, blue for a suggestion or a question), and in the **Draft** tab, where **Draft this fix** drafts the fix it suggests - shown as changes, as any draft; once it is kept or discarded, the notes are back in the tab. A note whose step has changed since is marked so, and offers no fix to draft (it may be about another step now). **Clear the notes** removes them. A review changes nothing.
 
 **What is sent, and what is kept.** The model is sent your request, the recipe open, the machine's tag list (names, units and ranges), the PLC faults, the steps' and procedures' settings, the templates and, when it asks for them, the help's pages and saved recipes. It is sent nothing from the machine: no readings, no logged data. Each draft and review is logged, one line each, in `SystemLogs/recipe_ai/<year>-<month>.jsonl`: the request, everything the model looked up or checked and the answers it got, what it proposed, the model and the tokens used.
 
@@ -250,10 +249,11 @@ The box under the recipe's name asks a language model (Google's Gemini) for a dr
 | `Drafting isn't available: The google-genai package isn't installed ...` | | `pip install -r requirements.txt` |
 | `The service refused the API key (...)` | The key is wrong, or has been withdrawn. | Check it in `.env`. |
 | `The model '<name>' isn't available to this key (...)` | The model in `config/recipe_ai.json` (and each one in its fallback list) isn't offered to this key. | Set another model there. |
-| `The service's rate limit or quota for this key is used up (...)` | Too many requests in a minute, or the key's quota is spent. | Try again in a minute. |
+| `The service's rate limit or quota for this key is used up (...)` | Too many requests in a minute, or the key's quota is spent (a request is tried twice more first, unless the service asks for a wait over 30 s). | Try again in a minute; if it keeps coming, the key's daily quota is spent. |
 | `Can't reach the service (...): is this PC online?` | No connection to Google. | Check the PC's network. |
 | `The model hadn't finished after <n> answers` | The model kept looking things up without proposing. | Try again, perhaps with a simpler request. |
 | `The draft changes nothing: <the model's reason>` | The model proposed the recipe as it is: for example because the request asked for something a recipe may not do, such as resetting faults. | Read its reason. |
+| `The draft couldn't be shown (...): the recipe is as it was.` | A fault in the builder while showing the draft (logged). | Report it, with the log; try the request again. |
 
 ### Saving a recipe
 

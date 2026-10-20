@@ -1,9 +1,10 @@
 """Settings for recipe drafting: config/recipe_ai.json (in git, so nothing secret goes in it), and
 the API key, from the environment or the .env file in the SINDIE folder (not in git)."""
-import importlib
+import importlib.util
 import json
 import logging
 import os
+import re
 from dataclasses import dataclass, fields
 
 from src.core import paths
@@ -68,7 +69,7 @@ def _checked(name, value, default):
         return value.strip() if isinstance(value, str) and (value.strip() or name == "thinking_level") else _BAD
     if name == "fallback_models":
         ok = isinstance(value, list) and all(isinstance(v, str) and v.strip() for v in value)
-        return tuple(v.strip() for v in value) if ok else _BAD
+        return tuple(dict.fromkeys(v.strip() for v in value)) if ok else _BAD      # (each once)
     if name in ("max_rounds", "max_proposals"):
         return int(value) if isinstance(value, int) and not isinstance(value, bool) and 1 <= value <= 100 else _BAD
     if name == "timeout_s":
@@ -101,10 +102,11 @@ def _from_env_file(path: str) -> str:
         if not sep or name.strip() not in KEY_NAMES:
             continue
         value = value.strip()
-        if len(value) >= 2 and value[0] in "\"'" and value[-1] == value[0]:
-            value = value[1:-1]
-        else:
-            value = value.split(" #", 1)[0].strip()
+        if value[:1] in ("'", '"'):         # quoted: up to the closing quote (a comment may follow it)
+            end = value.find(value[0], 1)
+            value = value[1:end] if end > 0 else value[1:]
+        else:                               # unquoted: a comment starts at a # after a space
+            value = re.split(r"\s#", value, maxsplit=1)[0].strip()
         if value:
             return value
     return ""
@@ -133,9 +135,11 @@ def availability(settings: Settings = None) -> tuple:
         return False, f"Drafting is switched off (enabled is false in config/{CONFIG_FILE})."
     if settings.provider != "gemini":
         return False, f"Unknown provider {settings.provider!r} in config/{CONFIG_FILE} (only gemini is supported)."
-    try:
-        importlib.import_module("google.genai")
-    except ImportError:
+    try:            # (only whether it is there: importing it takes a while, and is left to the first draft)
+        found = importlib.util.find_spec("google.genai") is not None
+    except (ImportError, ValueError):
+        found = False
+    if not found:
         return False, "The google-genai package isn't installed: run pip install -r requirements.txt."
     if not api_key()[0]:
         return False, f"No API key for Gemini: {KEY_HELP}."

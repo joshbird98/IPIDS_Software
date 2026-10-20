@@ -33,10 +33,10 @@ The recipe builder's drafting (see [Drafting and reviewing with AI](../panels/re
 |---|---|---|
 | `enabled` | `true` | `false` hides drafting in the builder. |
 | `model` | `gemini-flash-latest` | The Gemini model. `gemini-flash-latest` is Google's name for its newest Flash model, so it doesn't stop working when a model is retired; a larger model (a Pro or flagship one) is slower and costs more per draft. |
-| `fallback_models` | `gemini-3.8-flash`, `gemini-2.5-flash` | Tried in turn if the model isn't found. |
+| `fallback_models` | `gemini-3.8-flash`, `gemini-2.5-flash` | Tried in turn, each once, if the model isn't found. |
 | `max_rounds` | 16 | Answers from the model in one draft before it is given up. |
 | `max_proposals` | 3 | Proposals with errors sent back to the model; after that the last is shown with its errors. |
-| `timeout_s` | 120 | For each answer from the service, in seconds. |
+| `timeout_s` | 120 | For each answer from the service, in seconds. A request the service is too busy for, or that meets the key's rate limit, is tried twice more (after the wait the service asks for, if it is 30 s or less) before its message is shown. |
 | `thinking_level` | `""` | `""` leaves it to the model; `low`, `medium` or `high` for Gemini 3 and later. |
 | `temperature` | `null` | `null` leaves it to the model (Google advises leaving it for Gemini 3). |
 

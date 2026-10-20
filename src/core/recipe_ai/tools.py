@@ -12,6 +12,7 @@ Nothing here can reach the machine, write a file or read outside the help, the r
 templates. A tool never raises: whatever the model sends, it gets an answer it can act on.
 """
 import difflib
+import inspect
 import json
 import os
 import re
@@ -199,12 +200,16 @@ class Toolbox:
         if handler is None or name not in allowed:
             answer = {"error": f"There is no tool {name!r}: use one of {', '.join(sorted(allowed))}."}
         else:
+            kwargs = {k: v for k, v in args.items() if isinstance(k, str)}
             try:
-                answer = handler(**{k: v for k, v in args.items() if isinstance(k, str)})
+                inspect.signature(handler).bind(**kwargs)
             except TypeError as e:
                 answer = {"error": f"Wrong arguments for {name}: {e}"}
-            except Exception as e:      # a tool must answer, whatever the model sends
-                answer = {"error": f"{name} failed: {type(e).__name__}: {e}"}
+            else:
+                try:
+                    answer = handler(**kwargs)
+                except Exception as e:      # a tool must answer, whatever the model sends
+                    answer = {"error": f"{name} failed: {type(e).__name__}: {e}"}
         self.calls.append({"tool": name, "args": _short(args), "answer": _short(answer)})
         return answer
 
@@ -357,10 +362,10 @@ class Toolbox:
                     "what_to_do": f"Not shown to the operator: the sequencer would refuse it. Fix every error and "
                                   f"call propose_recipe again with the whole recipe ({left} more "
                                   f"{'try' if left == 1 else 'tries'})."}
+        changes = compute(self.base, data, lambda s: describe_step(s, self.catalog, self.names),
+                          lambda e: describe_policy_entry(e, self.catalog))       # (before it is accepted)
         self.proposal = Proposal(data, str(summary or "").strip(), _strings(assumptions), _strings(values_to_check),
                                  problems)
-        changes = compute(self.base, data, lambda s: describe_step(s, self.catalog, self.names),
-                          lambda e: describe_policy_entry(e, self.catalog))
         answer = {"accepted": True, "warnings": warnings,
                   "changes (numbered as in the operator's recipe now)": [c.title for c in changes]
                   or ["none: the recipe is unchanged"]}

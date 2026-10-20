@@ -171,7 +171,7 @@ class GeminiSession:
                     self.p.progress(f"Trying the model {self.p.model}")
                     continue
                 if err.kind in ("server", "quota") and delays:
-                    pause = delays.pop(0) if err.retry_after in (None, 0.0) else err.retry_after
+                    pause = max(delays.pop(0), err.retry_after or 0.0)    # (each retry uses one up)
                     if pause <= 30.0:
                         self.p.progress(f"The service is busy: trying again in {pause:.0f} s")
                         wait(pause, self.p.cancelled)
@@ -215,7 +215,8 @@ class GeminiProvider:
         from google import genai
         from google.genai import types
         self.settings = settings
-        self.models = [settings.model] + [m for m in settings.fallback_models if m != settings.model]
+        self.models = list(dict.fromkeys([settings.model, *settings.fallback_models]))     # (each once, in order)
+        self._next = 1
         self.model = self.models[0]
         self.progress = progress or (lambda text: None)
         self.cancelled = cancelled or (lambda: False)
@@ -225,9 +226,10 @@ class GeminiProvider:
         self.client = genai.Client(api_key=key, http_options=types.HttpOptions(**options))
 
     def next_model(self) -> bool:
-        i = self.models.index(self.model)
-        if i + 1 < len(self.models):
-            self.model = self.models[i + 1]
+        """On to the next model of the list (each is tried once); False when there are no more."""
+        if self._next < len(self.models):
+            self.model = self.models[self._next]
+            self._next += 1
             return True
         return False
 

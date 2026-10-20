@@ -187,6 +187,8 @@ class ConfigEditorDialog(QDialog):
             self.btn_save.setText("APPLY CHANGES && RESTART THE RUNNING SERVICES")
         elif svc_name in (HMI, WHOLE_SYSTEM):
             self.btn_save.setText("APPLY CHANGES (THEN RESTART BY HAND)")
+        elif svc_name == BUILDER:
+            self.btn_save.setText("APPLY CHANGES (USED THE NEXT TIME THE RECIPE BUILDER OPENS)")
         else:
             self.btn_save.setText(f"APPLY CHANGES && RESTART {svc_name.upper()}")
 

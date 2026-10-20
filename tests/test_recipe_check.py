@@ -243,6 +243,21 @@ def test_malformed_steps_are_errors_not_exceptions(catalog, tmp_path):
     assert any(m.startswith("step 1: in bad.json:") for m in messages(check_recipe(caller, catalog, str(tmp_path))))
 
 
+def test_a_step_type_or_stop_condition_that_isnt_text_or_an_object_is_an_error_not_an_exception(catalog):
+    """A hand-edited file, or a draft: the checks, the text and the builder must say so, not raise."""
+    from src.core.recipe_text import describe_policy_entry, describe_recipe
+    bad = recipe({"type": ["WAIT_TIME"]}, {"type": "PARALLEL", "steps": [{"type": {"a": 1}}]},
+                 {"type": "ROUTINE_CALL", "routine_name": ["psu_control"], "parameters": {}})
+    bad["fault_policy"] = ["Safety_Relay_Tripped"]
+    found = messages(check_recipe(bad, catalog), ERROR)
+    assert any("unknown step type ['WAIT_TIME']" in m for m in found), found
+    assert any(m.startswith("step 2.1: unknown step type") for m in found), found
+    assert any("unknown routine ['psu_control']" in m for m in found), found
+    assert any(m.startswith("stop conditions:") for m in found), found
+    describe_recipe(bad, catalog)
+    assert "not a stop condition" in describe_policy_entry("Safety_Relay_Tripped", catalog)
+
+
 def test_a_sub_recipe_in_the_windows_code_page_is_read_as_the_sequencer_reads_it(catalog, tmp_path):
     (tmp_path / "ansi.json").write_bytes(json.dumps(recipe(
         {"type": "WAIT_TIME", "duration_sec": 1, "comment": "warm to 40 °C"}), ensure_ascii=False).encode("cp1252"))

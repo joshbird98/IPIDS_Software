@@ -4,9 +4,9 @@ inside it, between steps to move there. The list never moves anything itself: it
 asked (moved) and the builder changes the recipe and draws the list again.
 
 While a draft is shown, the list shows its changes: + a step it adds, − one it removes (struck
-through), ~ one it changes (with what it was under it). A change left out is drawn faint; a click
-on its mark puts it back or leaves it out (change_clicked). A review's note on a step is drawn
-under it."""
+through), ~ one it changes (with what it was under it). A step added but left out is drawn faint,
+and a change left out shows the step as it stays, with the change under it; a click on a mark puts
+the change back or leaves it out (change_clicked). A review's note on a step is drawn under it."""
 from dataclasses import dataclass
 from typing import Optional
 
@@ -37,7 +37,7 @@ class OutlineRow:
     change: str = ""                # "add", "remove", "change" (a draft's), or ""
     change_id: Optional[int] = None
     kept: bool = True               # the change is ticked
-    was: str = ""                   # a changed step: what it was
+    was: str = ""                   # a changed step: what it was ("was: ..."), or the change left out
     review: str = ""                # a review's note on the step
     review_level: str = ""          # "concern", "suggestion", "question"
 
@@ -64,7 +64,7 @@ class _StepDelegate(QStyledItemDelegate):
             lines.append(("note", note))
         was = index.data(WAS) or ""
         if was:
-            lines.append(("was", f"was: {was}"))
+            lines.append(("was", was))
         review = index.data(REVIEW) or ""
         if review:
             lines.append(("review", f"Review: {review}"))
@@ -103,8 +103,9 @@ class _StepDelegate(QStyledItemDelegate):
         text_colour = option.palette.highlightedText().color() if selected else theme.color("text")
         muted = option.palette.highlightedText().color() if selected else theme.color("text_muted")
         faint = option.palette.highlightedText().color() if selected else theme.color("text_faint")
-        # a change that won't be made (or a step the draft removes) is drawn faint
-        gone = (change == "remove" and kept) or (change in ("add", "change") and not kept)
+        # a step that won't be in the recipe is drawn faint: one the draft removes, or adds but is left out
+        # (a change left out shows the step as it stays, and the change under it)
+        gone = (change == "remove" and kept) or (change == "add" and not kept)
         painter.save()
         font = QFont(option.font)
         flags = Qt.TextFlag.TextWordWrap
@@ -201,7 +202,9 @@ class Outline(QTreeWidget):
                                 (MARK, r.mark), (KIND, r.kind), (CHANGE, r.change), (CHANGE_ID, r.change_id),
                                 (KEPT, r.kept), (WAS, r.was), (REVIEW, r.review), (REVIEW_LEVEL, r.review_level)):
                 item.setData(0, role, value)
-            tip = r.text + (f"\nNote: {r.note}" if r.note else "") + (f"\nWas: {r.was}" if r.was else "")
+            tip = r.text + (f"\nNote: {r.note}" if r.note else "")
+            if r.was:
+                tip += f"\n{r.was[:1].upper()}{r.was[1:]}"
             if r.change:
                 tip += (f"\n\n{CHANGE_TIPS[r.change].capitalize()}"
                         + (" - click the mark on the left to leave it out." if r.kept else

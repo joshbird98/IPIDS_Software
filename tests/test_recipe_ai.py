@@ -46,6 +46,8 @@ def test_settings_defaults_and_bad_values_fall_back(tmp_path):
     assert s.timeout_s == settings.Settings().timeout_s            # not a number
     assert s.fallback_models == settings.Settings().fallback_models
     assert settings.Settings.load(str(tmp_path / "missing.json")) == settings.Settings()
+    path.write_text(json.dumps({"fallback_models": ["b", "a", "b"]}))
+    assert settings.Settings.load(str(path)).fallback_models == ("b", "a")
     (tmp_path / "bad.json").write_text("{not json")
     assert settings.Settings.load(str(tmp_path / "bad.json")) == settings.Settings()
 
@@ -60,6 +62,8 @@ def test_the_key_comes_from_the_environment_or_the_env_file(tmp_path, monkeypatc
     assert settings.api_key() == ("abc 123", str(tmp_path / ".env"))
     (tmp_path / ".env").write_text("GEMINI_API_KEY=xyz # a comment\n")
     assert settings.api_key()[0] == "xyz"
+    (tmp_path / ".env").write_text("GEMINI_API_KEY='abc'  # the lab's key\n")
+    assert settings.api_key()[0] == "abc"
     monkeypatch.setenv("GEMINI_API_KEY", "from-env")
     key, where = settings.api_key()
     assert key == "from-env" and "from-env" not in where and "GEMINI_API_KEY" in where
@@ -75,13 +79,11 @@ def test_availability_says_why_not(tmp_path, monkeypatch):
     ok, why = settings.availability(settings.Settings(enabled=False))
     assert not ok and "switched off" in why
     monkeypatch.setenv("GEMINI_API_KEY", "k")
-    real = settings.importlib.import_module
+    real = settings.importlib.util.find_spec
 
     def no_genai(name, *a):
-        if name == "google.genai":
-            raise ImportError("no")
-        return real(name, *a)
-    monkeypatch.setattr(settings.importlib, "import_module", no_genai)
+        return None if name == "google.genai" else real(name, *a)
+    monkeypatch.setattr(settings.importlib.util, "find_spec", no_genai)
     ok, why = settings.availability(settings.Settings())
     assert not ok and "pip install" in why
 
@@ -159,6 +161,27 @@ def test_a_proposal_with_errors_goes_back_then_is_shown_as_it_is(catalog):
     assert answer["accepted"] is True and "out of tries" in answer["note"]
     assert any(p.level == ERROR for p in box.proposal.problems)
     assert box.execute("propose_recipe", {"recipe_json": "{not json"})["error"].startswith("recipe_json isn't")
+
+
+def test_a_proposal_out_of_tries_with_stop_conditions_that_arent_objects_is_shown(catalog):
+    """Found in review: its changes were worked out after it was accepted, and raised on them."""
+    box = Toolbox("draft", catalog, recipe(wait(5)), max_proposals=1)
+    odd = dict(recipe(wait(5)), fault_policy=["Safety_Relay_Tripped"])
+    answer = box.execute("propose_recipe", {"recipe_json": json.dumps(odd), "summary": "x"})
+    assert answer["accepted"] is True and box.proposal is not None
+    assert answer["changes (numbered as in the operator's recipe now)"] == ["Stop conditions: add"]
+
+
+def test_wrong_arguments_and_a_fault_in_a_tool_are_told_apart(catalog, monkeypatch):
+    box = Toolbox("draft", catalog, recipe())
+    assert box.execute("find_tags", {"querry": "x"})["error"].startswith("Wrong arguments for find_tags")
+    from src.core.recipe_ai import tools
+
+    def broken(*a, **k):
+        raise TypeError("inside the checks")
+    monkeypatch.setattr(tools, "check_recipe", broken)
+    answer = box.execute("check_recipe", {"recipe_json": json.dumps(recipe(wait(1)))})
+    assert answer["error"] == "check_recipe failed: TypeError: inside the checks"
 
 
 def test_a_proposal_keeps_the_operators_version_and_is_numbered(catalog):
@@ -407,6 +430,36 @@ def test_gemini_failures_are_said_for_the_operator(monkeypatch, status, body, ki
     with pytest.raises(AIError) as e:
         provider.start("S", TOOLS).send(text="x")
     assert e.value.kind == kind and "test-key-0123" not in e.value.message
+
+
+def test_gemini_retries_a_busy_service_twice_then_says_so(monkeypatch):
+    """Found in review: a short retryDelay was retried for ever."""
+    import httpx
+    seen = []
+
+    def handler(request):
+        seen.append(1)
+        return httpx.Response(429, json={"error": {"code": 429, "message": "quota", "status": "RESOURCE_EXHAUSTED",
+                                                   "details": [{"retryDelay": "17s"}]}})
+    provider, progress = _gemini(handler, monkeypatch, fallback_models=())
+    with pytest.raises(AIError) as e:
+        provider.start("S", TOOLS).send(text="x")
+    assert e.value.kind == "quota" and len(seen) == 3
+    assert [p for p in progress if "busy" in p] == ["The service is busy: trying again in 17 s"] * 2
+
+
+def test_gemini_tries_each_model_once(monkeypatch):
+    """Found in review: a model named twice in the fallbacks was asked for again and again."""
+    import httpx
+    seen = []
+
+    def handler(request):
+        seen.append(str(request.url))
+        return httpx.Response(404, json={"error": {"code": 404, "message": "no model", "status": "NOT_FOUND"}})
+    provider, _ = _gemini(handler, monkeypatch, fallback_models=("gemini-b", "gemini-flash-latest", "gemini-b"))
+    with pytest.raises(AIError) as e:
+        provider.start("S", TOOLS).send(text="x")
+    assert e.value.kind == "model" and len(seen) == 2 and "gemini-b" in seen[1]
 
 
 def test_gemini_network_failure(monkeypatch):

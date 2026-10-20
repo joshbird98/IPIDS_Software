@@ -75,8 +75,10 @@ def block_for(step) -> Block:
     """The block a step is (None for a step type or routine the builder doesn't know)."""
     if not isinstance(step, dict):
         return None
-    kind = step.get("type")
-    key = _ROUTINE_BLOCKS.get(step.get("routine_name")) if kind == "ROUTINE_CALL" else _TYPE_BLOCKS.get(kind)
+    kind, routine = step.get("type"), step.get("routine_name")
+    if not isinstance(kind, str) or (kind == "ROUTINE_CALL" and not isinstance(routine, str)):
+        return None                 # (a hand-edited file: shown as a step type the builder doesn't know)
+    key = _ROUTINE_BLOCKS.get(routine) if kind == "ROUTINE_CALL" else _TYPE_BLOCKS.get(kind)
     return BY_KEY.get(key)
 
 

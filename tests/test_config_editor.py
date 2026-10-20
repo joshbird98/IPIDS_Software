@@ -373,3 +373,13 @@ def test_a_file_already_past_a_cap_is_shown_when_opened(env):
     dlg.cb_files.setCurrentText("magnet_config.json")
     assert not dlg.lbl_problems.isHidden() and "Hard cap: max_current 120 A" in dlg.lbl_problems.text()
     assert widget_at(dlg, "max_current").property("tone") == ced.CAP_TONE
+
+
+def test_the_drafting_settings_restart_nothing(env):
+    """config/recipe_ai.json is read each time a recipe builder opens: nothing to restart."""
+    dlg = open_file(env.make(), "recipe_ai.json")
+    assert "RESTART" not in dlg.btn_save.text() and "RECIPE BUILDER" in dlg.btn_save.text()
+    widget_at(dlg, "max_rounds").setText("12")
+    dlg._save_and_restart()
+    assert cs.read("recipe_ai.json", str(env.cfg))["max_rounds"] == 12
+    assert env.cmds.sent == [] and "recipe builder reads this file each time it opens" in env.boxes[-1][1]

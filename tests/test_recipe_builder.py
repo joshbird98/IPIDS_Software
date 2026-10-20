@@ -427,3 +427,16 @@ def test_redo_from_the_keyboard_and_after_typing(make, app):
     dlg.le_name.setText("Typed after the undo")            # (not recorded yet when Redo comes)
     dlg.redo()
     assert dlg.data["recipe_name"] == "Typed after the undo" and len(dlg.data["steps"]) == 1
+
+
+def test_a_file_with_a_step_type_that_isnt_text_opens_with_its_errors(make, folder):
+    (folder / "odd.json").write_text(json.dumps({"recipe_name": "Odd", "version": "1.0", "fault_policy": ["x"],
+                                                 "steps": [{"type": ["WAIT_TIME"]}, {"type": "WAIT_TIME",
+                                                                                     "duration_sec": 2}]}))
+    dlg = make("odd.json")
+    assert dlg.outline.topLevelItemCount() == 2
+    assert any("unknown step type" in p.text() for p in dlg.problems)
+    dlg.outline.select_path((0,), quiet=False)
+    dlg._show_selected((0,))
+    from PyQt6.QtWidgets import QLabel
+    assert any("doesn't know the step type" in w.text() for w in dlg.editor.findChildren(QLabel))

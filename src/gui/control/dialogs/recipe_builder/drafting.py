@@ -4,13 +4,15 @@ runs in (src/core/recipe_ai: the model never acts on the machine - it only propo
 
     bar = DraftBar()            draft(request), review(request), cancel()
     panel = DraftPanel()        keep(), discard(), toggled(change id, kept), fix(note), go(path)
-    job = Job(fn); start(job)   fn(job) runs in a thread; job.bridge.progress / done / failed
+    job = Job(fn); start(job)   fn(job) runs in a thread; job.on_progress / on_done / on_failed in the GUI's
 """
+import gc
 import logging
 import threading
 import time
 
-from PyQt6.QtCore import QObject, QSize, Qt, QTimer, pyqtSignal
+from PyQt6 import sip
+from PyQt6.QtCore import QCoreApplication, QObject, QSize, Qt, QTimer, pyqtSignal
 from PyQt6.QtWidgets import (QFrame, QHBoxLayout, QLabel, QListWidget, QListWidgetItem, QPlainTextEdit, QPushButton,
                              QScrollArea, QSizePolicy, QStackedWidget, QVBoxLayout, QWidget)
 
@@ -26,20 +28,58 @@ SEVERITY_TEXT = {"concern": "Concern", "suggestion": "Suggestion", "question": "
 
 
 # ============================================================================================ the thread
+# A run's thread hands its progress and outcome to the GUI thread through one bridge, a child of the
+# application, so no Qt object belongs to a run: a QObject deleted outside its own thread can crash
+# Qt, and one made for each run would be deleted wherever its last reference went - often in the
+# run's thread. For the same reason the garbage collector runs only in the GUI thread while a run's
+# thread is alive (_Collector).
 class _Bridge(QObject):
-    progress = pyqtSignal(str)
-    done = pyqtSignal(object)
-    failed = pyqtSignal(object)
+    event = pyqtSignal(object, str, object)     # the job; "progress", "done" or "failed"; the text, outcome or AIError
+
+
+_the_bridge = None
+
+
+def _bridge() -> _Bridge:
+    """(Made in the GUI thread, by start().)"""
+    global _the_bridge
+    if _the_bridge is None or sip.isdeleted(_the_bridge):
+        _the_bridge = _Bridge(QCoreApplication.instance())
+        _the_bridge.event.connect(_deliver)
+    return _the_bridge
+
+
+def _deliver(job, kind: str, payload):
+    """In the GUI thread: hand a run's progress or outcome to whoever started it."""
+    callback = getattr(job, "on_" + kind, None)
+    if kind != "progress":
+        job.on_progress = job.on_done = job.on_failed = None    # (the run is over: let go of the window)
+    if callback is None:
+        return
+    try:
+        callback(payload)
+    except Exception:           # a fault in showing a draft must never end the HMI
+        log.exception("Recipe drafting: showing the %s failed", kind)
+
+
+def _emit(job, kind: str, payload):
+    try:
+        job.bridge.event.emit(job, kind, payload)
+    except RuntimeError:        # (the application has gone)
+        pass
 
 
 class Job:
-    """One drafting or review run. fn(job) is called in a thread; job.cancelled() says when to stop."""
+    """One drafting or review run, plain Python (no Qt object of its own). fn(job) is called in a thread;
+    it reports with job.progress(text) and stops when job.cancelled(). on_progress(text), on_done(outcome)
+    and on_failed(AIError) are called in the GUI thread; set them to None to hear nothing more."""
 
     def __init__(self, fn, mode: str, request: str):
         self.fn = fn
         self.mode = mode                # "draft", "refine" or "review"
         self.request = request
-        self.bridge = _Bridge()         # (no parent: it outlives the window if the window closes first)
+        self.on_progress = self.on_done = self.on_failed = None
+        self.bridge = None              # (set by start)
         self._cancel = threading.Event()
         self.started = time.monotonic()
         self.base = None                # the recipe as it was when the run started
@@ -51,32 +91,70 @@ class Job:
     def cancel(self):
         self._cancel.set()
 
+    def progress(self, text: str):
+        _emit(self, "progress", str(text))
+
+
+class _Collector:
+    """While a run's thread is alive, Python's garbage collector runs in the GUI thread only, from a
+    timer (as calibre does): a collection started by the run's thread would delete whatever Qt objects
+    happened to be garbage, outside the GUI thread. Back to automatic once the last thread has ended."""
+    INTERVAL_MS = 500
+
+    def __init__(self):
+        self.threads = []
+        self.timer = None
+        self.restore = False
+
+    def add(self, thread: threading.Thread):
+        if not self.threads:
+            self.restore = gc.isenabled()
+            gc.disable()
+        self.threads.append(thread)
+        if self.timer is None or sip.isdeleted(self.timer):
+            self.timer = QTimer(QCoreApplication.instance())
+            self.timer.setInterval(self.INTERVAL_MS)
+            self.timer.timeout.connect(self.tick)
+        self.timer.start()
+
+    def tick(self):
+        self.threads = [t for t in self.threads if t.is_alive()]
+        threshold, count = gc.get_threshold(), gc.get_count()
+        for generation in range(3):         # (what the automatic collector would have done by now)
+            if count[generation] <= threshold[generation]:
+                break
+            gc.collect(generation)
+        if not self.threads:
+            self.timer.stop()
+            if self.restore:
+                gc.enable()
+
+
+_collector = _Collector()
+
 
 def start(job: Job, threaded: bool = True):
-    """Run the job (in a thread unless threaded is False: the tests). Its outcome or AIError comes
-    back through job.bridge, in the GUI thread."""
+    """Run the job (in a thread unless threaded is False: the tests). Its progress and its outcome, or
+    an AIError, reach job.on_progress / on_done / on_failed in the GUI thread. Called in the GUI thread."""
+    job.bridge = _bridge()
+
     def work():
         try:
             outcome = job.fn(job)
         except AIError as e:
-            _emit(job.bridge.failed, e)
+            _emit(job, "failed", e)
         except Exception as e:      # a fault in drafting must reach the operator as a message, never end the HMI
             log.exception("Recipe drafting failed")
-            _emit(job.bridge.failed, AIError("bad_reply", f"Drafting failed: {type(e).__name__}: {e}"))
+            _emit(job, "failed", AIError("bad_reply", f"Drafting failed: {type(e).__name__}: {e}"))
         else:
-            _emit(job.bridge.done, outcome)
+            _emit(job, "done", outcome)
 
     if threaded:
-        threading.Thread(target=work, name="recipe-draft", daemon=True).start()
+        thread = threading.Thread(target=work, name="recipe-draft", daemon=True)
+        _collector.add(thread)
+        thread.start()
     else:
         work()
-
-
-def _emit(signal, value):
-    try:
-        signal.emit(value)
-    except RuntimeError:            # (the window has gone)
-        pass
 
 
 # ============================================================================================ the request box
@@ -298,12 +376,13 @@ class _NoteItem(QFrame):
             set_role(go, "link")
             go.clicked.connect(lambda: on_go(note))
             head.addWidget(go)
-        if note.fix:
-            fix = QPushButton("Draft this fix")
-            fix.setObjectName("DraftFix")
-            fix.setToolTip(f"Draft: {note.fix}")
-            fix.clicked.connect(lambda: on_fix(note))
-            head.addWidget(fix)
+        self.btn_fix = None
+        if note.fix and not stale:      # (a step changed since: its fix may now be about another step)
+            self.btn_fix = QPushButton("Draft this fix")
+            self.btn_fix.setObjectName("DraftFix")
+            self.btn_fix.setToolTip(f"Draft: {note.fix}")
+            self.btn_fix.clicked.connect(lambda: on_fix(note))
+            head.addWidget(self.btn_fix)
         layout.addLayout(head)
         layout.addWidget(_label(note.text))
         if note.fix:
@@ -394,6 +473,23 @@ class DraftPanel(QStackedWidget):
         review.addWidget(self.lbl_review_cost)
         self.addWidget(self.page_review)
         self._filling = False
+        self._locked = False
+        self._n_kept = 0
+
+    def set_locked(self, locked: bool):
+        """While a draft or review runs: nothing here can be changed (what is kept must be what is shown)."""
+        self._locked = locked
+        self.list_changes.setEnabled(not locked)
+        self.btn_keep.setEnabled(not locked and self._n_kept > 0)
+        self.btn_discard.setEnabled(not locked)
+        self.btn_dismiss.setEnabled(not locked)
+        self._lock_notes()
+
+    def _lock_notes(self):
+        for i in range(self.list_notes.count()):
+            widget = self.list_notes.itemWidget(self.list_notes.item(i))
+            if widget is not None and widget.btn_fix is not None:
+                widget.btn_fix.setEnabled(not self._locked)
 
     # ------------------------------------------------------------------ idle
     def show_idle(self, text: str):
@@ -433,9 +529,9 @@ class DraftPanel(QStackedWidget):
             if item.checkState() != state:
                 item.setCheckState(state)
         self._filling = False
-        n = len(kept)
+        n = self._n_kept = len(kept)
         self.btn_keep.setText(keep_text(n, total))
-        self.btn_keep.setEnabled(n > 0)
+        self.btn_keep.setEnabled(n > 0 and not self._locked)
 
     def _item_changed(self, item):
         if not self._filling:
@@ -456,6 +552,7 @@ class DraftPanel(QStackedWidget):
             self.list_notes.addItem(item)
             self.list_notes.setItemWidget(item, widget)
             item.setSizeHint(QSize(widget.sizeHint().width(), widget.sizeHint().height() + 4))
+        self._lock_notes()
         self.lbl_review_cost.setText(f"{cost}. The review changes nothing: draft a fix, or edit the recipe yourself.")
         self.setCurrentWidget(self.page_review)
 
@@ -490,12 +587,20 @@ class ProposalBanner(QFrame):
         self.btn_discard.clicked.connect(self.discard.emit)
         layout.addWidget(self.btn_keep)
         layout.addWidget(self.btn_discard)
+        self._locked = False
+        self._n = 0
         self.hide()
+
+    def set_locked(self, locked: bool):
+        self._locked = locked
+        self.btn_keep.setEnabled(self._n > 0 and not locked)
+        self.btn_discard.setEnabled(not locked)
 
     def show_counts(self, n: int, total: int, problems: str):
         one = "its mark" if total == 1 else "a mark"
         self.label.setText(f"Draft: {total} change{'s' if total != 1 else ''}. Click {one} (+ − ~) to leave "
                            f"{'it' if total == 1 else 'one'} out.{problems}")
+        self._n = n
         self.btn_keep.setText(keep_text(n, total))
-        self.btn_keep.setEnabled(n > 0)
+        self.btn_keep.setEnabled(n > 0 and not self._locked)
         self.show()
