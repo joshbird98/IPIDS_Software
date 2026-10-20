@@ -1,0 +1,207 @@
+{
+  "recipe_name": "Start-up: vacuum, safety relay, high voltage, filament and caesium",
+  "version": "1.0",
+  "description": "From a cold, closed source to a hot caesium oven, as in the help's 'Bringing up a beam'. The values are SINDIE's typical operating values: check each one for your run before you save it.",
+  "fault_policy": [
+    {
+      "type": "BIT_FAULT",
+      "registry_tag": "ion_beam.faults.word_0_system",
+      "bit_str": "0.1",
+      "name": "Safety_Relay_Tripped",
+      "action": "ABORT"
+    }
+  ],
+  "steps": [
+    {
+      "step_id": 1,
+      "type": "USER_PROMPT",
+      "prompt_text": "At the machine: the chiller and the coolant pumps are on, the chiller set below 15 \u00b0C; no coolant leaks or condensation on the source body; the trolley in position; the target material and the rod position the ones you want; every door closed (source deck and trolley). Click OK when they are.",
+      "verify_conditions": [
+        {
+          "target": "ion_beam.facilities.stat_src_coolant_ok",
+          "condition": "==",
+          "value": 1
+        },
+        {
+          "target": "ion_beam.facilities.stat_air_press_ok",
+          "condition": "==",
+          "value": 1
+        }
+      ],
+      "comment": "Checks at the machine"
+    },
+    {
+      "step_id": 2,
+      "type": "USER_PROMPT",
+      "prompt_text": "Look for faults: the PLC faults on System Health, the Alarms panel, and any service on the Service Manager that isn't ONLINE. Deal with each one and reset it, then click OK.",
+      "verify_conditions": [],
+      "comment": "No faults left"
+    },
+    {
+      "step_id": 3,
+      "type": "WAIT_TELEMETRY",
+      "target": "ion_beam.source.vacuum_gauge_1.rb_pressure",
+      "condition": "<",
+      "value": 5e-07,
+      "timeout_sec": 3600.0,
+      "comment": "Source vacuum below 5e-7 mbar"
+    },
+    {
+      "step_id": 4,
+      "type": "ROUTINE_CALL",
+      "routine_name": "safety_relay_init",
+      "parameters": {
+        "timeout_sec": 6.0,
+        "gv_timeout_sec": 15.0,
+        "stabilization_sec": 15.0,
+        "vacuum_max": 5e-07,
+        "vacuum_tag": "ion_beam.source.vacuum_gauge_1.rb_pressure",
+        "cmd_gv_open": "ion_beam.source.chamber.cmd_open_gv",
+        "gv_stat_open": "ion_beam.source.chamber.stat_gv_open",
+        "gv_open_perm": "ion_beam.source.chamber.stat_gv_open_permissive",
+        "cmd_virtual": "ion_beam.system.cmd_enable_safety",
+        "rb_relay": "ion_beam.facilities.safety_relay_active"
+      },
+      "comment": "Gate valve open, then the safety relay: key to ENABLE, START on the box"
+    },
+    {
+      "step_id": 5,
+      "type": "USER_PROMPT",
+      "prompt_text": "Check that the beacon is red and the buzzer sounded, that the source body and the caesium oven read between 10 \u00b0C and room temperature, and that every supply reads zero. Then click OK.",
+      "verify_conditions": [],
+      "comment": "Readbacks at rest"
+    },
+    {
+      "step_id": 6,
+      "type": "ROUTINE_CALL",
+      "routine_name": "psu_control",
+      "parameters": {
+        "cmd_enable": "ion_beam.source.extraction.cmd_enable",
+        "stat_enabled": "ion_beam.source.extraction.stat_enabled",
+        "sp_tag": "ion_beam.source.extraction.sp_requested_voltage",
+        "rb_tag": "ion_beam.source.extraction.rb_voltage",
+        "target_val": 15.0,
+        "wait_for_readback": true,
+        "tolerance": 0.3,
+        "timeout_sec": 60.0,
+        "requires_relay": true
+      },
+      "comment": "Extraction: its bleed current is 0.30 mA at 15 kV"
+    },
+    {
+      "step_id": 7,
+      "type": "ROUTINE_CALL",
+      "routine_name": "psu_control",
+      "parameters": {
+        "cmd_enable": "ion_beam.source.target.cmd_enable",
+        "stat_enabled": "ion_beam.source.target.stat_enabled",
+        "sp_tag": "ion_beam.source.target.sp_requested_voltage",
+        "rb_tag": "ion_beam.source.target.rb_voltage",
+        "target_val": 5.0,
+        "wait_for_readback": true,
+        "tolerance": 0.2,
+        "timeout_sec": 60.0,
+        "requires_relay": true
+      },
+      "comment": "Target (cathode): its bleed current is 0.10 mA at 5 kV"
+    },
+    {
+      "step_id": 8,
+      "type": "ROUTINE_CALL",
+      "routine_name": "psu_control",
+      "parameters": {
+        "cmd_enable": "ion_beam.source.thermionic.cmd_enable",
+        "stat_enabled": "ion_beam.source.thermionic.stat_enabled",
+        "wait_for_readback": false,
+        "requires_relay": true
+      },
+      "comment": "Ioniser on: about 2500 V, no current until the filament is hot"
+    },
+    {
+      "step_id": 9,
+      "type": "ROUTINE_CALL",
+      "routine_name": "psu_control",
+      "parameters": {
+        "cmd_enable": "ion_beam.source.einzel.cmd_enable",
+        "stat_enabled": "ion_beam.source.einzel.stat_enabled",
+        "sp_tag": "ion_beam.source.einzel.sp_requested_voltage",
+        "rb_tag": "ion_beam.source.einzel.rb_voltage",
+        "target_val": 12.0,
+        "wait_for_readback": true,
+        "tolerance": 0.3,
+        "timeout_sec": 60.0,
+        "requires_relay": true
+      },
+      "comment": "Source einzel: tune it later, on the beam"
+    },
+    {
+      "step_id": 10,
+      "type": "WAIT_TELEMETRY",
+      "target": "ion_beam.source.einzel.rb_current",
+      "condition": "<",
+      "value": 50.0,
+      "timeout_sec": 30.0,
+      "comment": "Einzel current near zero: above 50 \u00b5A the insulators are failing - switch it off and report it"
+    },
+    {
+      "step_id": 11,
+      "type": "ROUTINE_CALL",
+      "routine_name": "psu_control",
+      "parameters": {
+        "cmd_enable": "ion_beam.source.filament.cmd_enable",
+        "stat_enabled": "ion_beam.source.filament.stat_enabled",
+        "sp_tag": "ion_beam.source.filament.sp_requested_current",
+        "rb_tag": "ion_beam.source.filament.rb_current",
+        "target_val": 28.0,
+        "wait_for_readback": true,
+        "tolerance": 0.5,
+        "timeout_sec": 120.0,
+        "requires_relay": true
+      },
+      "comment": "Filament to its operating point (the PLC raises it at 1 A per second)"
+    },
+    {
+      "step_id": 12,
+      "type": "WAIT_TIME",
+      "duration_sec": 20.0,
+      "comment": "The ioniser current rises as the filament warms"
+    },
+    {
+      "step_id": 13,
+      "type": "ACTION",
+      "target": "ion_beam.source.cesium.cmd_force_cooling",
+      "value": false,
+      "comment": "Caesium forced cooling off"
+    },
+    {
+      "step_id": 14,
+      "type": "ACTION",
+      "target": "ion_beam.source.cesium.cmd_ctrl_mode",
+      "value": 1,
+      "comment": "Caesium oven heater on"
+    },
+    {
+      "step_id": 15,
+      "type": "ACTION",
+      "target": "ion_beam.source.cesium.sp_requested_temp",
+      "value": 140.0,
+      "comment": "Caesium oven setpoint"
+    },
+    {
+      "step_id": 16,
+      "type": "WAIT_TELEMETRY",
+      "target": "ion_beam.source.cesium.rb_temp",
+      "condition": ">=",
+      "value": 135.0,
+      "timeout_sec": 2700.0,
+      "comment": "The caesium heats (about 15 minutes)"
+    },
+    {
+      "step_id": 17,
+      "type": "USER_PROMPT",
+      "prompt_text": "The caesium is hot. To read the beam, insert the Faraday cup and bias it above 50 V: the beam takes 10 to 60 minutes to rise. Then tune it (help: Selecting a mass and tuning the beam).",
+      "verify_conditions": [],
+      "comment": "Ready for the beam"
+    }
+  ]
+}

@@ -349,7 +349,9 @@ Escape drops an entry without a note. If the HMI window loses the focus (another
 | `<VERB> refused: <reason>` | Recipe Execution status line | **START**, **PAUSE**, **RESUME** or **STOP** was refused. | See [Recipe messages](#recipe-messages). |
 | `Not accepted - <reason>` | Recipe Execution, under a prompt | The recipe didn't accept your acknowledgement. | See [Recipe messages](#recipe-messages). |
 | `Status: <verb> refused - <reason>` | Mass Scan, Optimiser status lines | A start or stop was refused. | See [Mass scan messages](#mass-scan-messages) and [Optimiser messages](#optimiser-messages). |
-| **Load Error**: `Failed to parse recipe: <error>` | **LOAD RECIPE** | The recipe file can't be read. | See [Recipe messages](#recipe-messages). |
+| `NOT LOADED: <file> - <reason>` | Recipe Execution status line, after **LOAD RECIPE** | The file can't be read as a recipe. | See [Recipe messages](#recipe-messages); open it with **EDIT** to put it right. |
+| `NOT READY: <name> (version <v>) has errors`, and above the steps `Can't be started - the sequencer would refuse it (<n> errors): ...` | Recipe Execution, after **LOAD RECIPE** | The checks found errors: the sequencer would refuse to start it, so **START** stays off. | Open it with **EDIT**: the builder lists every problem. See [The checks](panels/recipes.md#the-checks). |
+| `<n> warnings (it can still run): ...` | Recipe Execution, above the steps | The checks found something probably not meant. | Read them; **EDIT** shows them all. |
 | **Access Denied**: `Incorrect password.` | **Config** in the menu bar | The engineering password was wrong. | |
 | **Layout**: `The layout '<name>' could not be restored (saved by an older version?).` | **View > Layouts** | A layout saved by an older version of the HMI can't be used. | Arrange the panels and save the layout again. |
 | **No mass calibration**: `The Mass Scan panel's calibration is not available.` | **CALCULATE & SET AMPS** in Beamline Optics | The **Mass Scan** panel's calibration couldn't be read. | Report it. |
@@ -364,13 +366,14 @@ Escape drops an entry without a note. If the HMI window loses the focus (another
 | **Load Error**: `Failed to parse CSV: <error>`; **Missing Data**: `CSV missing voltage columns; peak mass analysis may use defaults.` | Mass Scan: **Load trace...** | The file isn't a mass scan trace, or has no voltages (30 keV is then assumed). | |
 | **No Data**: `No trace data available to save.`; **Save Error**: `Could not save the trace: <error>` | Mass Scan: **Save trace** | | Check the export folder. |
 | **Fit Error**: `<error>` | Mass Scan: **Calculate fit** | The calibration points can't be fitted. | Check the points. |
-| **Load Error**: `Could not load recipe for editing: <error>` | recipe builder | | |
-| **Invalid Name**: `Recipe name cannot be empty.` | recipe builder | | Give the recipe a name. |
-| **Recipe Not Saved**: `The sequencer would refuse this recipe:` and the problems | recipe builder | The same checks the sequencer makes when it loads a recipe. | Fix the steps listed. |
-| **Traceability Warning**: `A recipe named '<name>' already exists with Version <version>.` | recipe builder | Saving would overwrite it without a new version number. | **Cancel** and raise the version, or **Overwrite**. |
-| **Save Error**: `<error>` | recipe builder | The file couldn't be written. | |
-| **AI Offline**: `Please configure the API KEY in the .env file.` | recipe builder: **Generate** | The assistant has no API key. | |
-| **Error**: `Could not find registry at <path>` | tag pickers | The tag registry file is missing. | Ask an engineer to build it. |
+| **Can't open the recipe**: `<file> can't be opened: <error>` | recipe builder | The file isn't a recipe (not valid JSON, or not a JSON object). | |
+| **Not saved**: `The recipe has errors - the sequencer would refuse to start it:` and the errors | recipe builder: **Save** | The same checks the sequencer makes before it starts a recipe. | Put them right: the **Problems** tab lists them. |
+| **Not saved**: `<File> has changed since it was opened here (saved from another recipe builder, edited by hand, or a git pull): open it again and make the change again, so that change isn't undone.` | recipe builder: **Save** | Someone changed the file after you opened it. Nothing was written. | Open the recipe again (**Open**) and make your change again. |
+| **Not saved**: `<File> has been deleted or renamed since it was opened here.` | recipe builder: **Save** | | Use **Save as new recipe**. |
+| **Not saved**: `<File> could not be written: <error>.` | recipe builder: **Save** | The folder or the file can't be written. | |
+| **Unsaved changes**: `'<name>' has changes that aren't saved.` | recipe builder, closing it or opening another recipe | | **Save**, **Discard the changes** or **Cancel**. |
+| `Saved <file>, version <v>: committed to git (<id>)` or `: not committed to git: <why>` | recipe builder, bottom line | The recipe is saved; whether git has it (not when the folder isn't a git work tree). | |
+| `The tag registry isn't loaded: this tag can't be checked` | recipe builder, under a tag | The tag registry file is missing or can't be read: the builder can't check tags, and offers none to choose. | Ask an engineer to build it (see [Configuration files](engineering/configuration.md#the-tag-registry)). |
 
 ## Recipe messages
 
@@ -382,15 +385,20 @@ A refused **START** shows as `START refused: <reason>` on the panel's status lin
 |---|---|---|
 | `no recipe file given` | | Load a recipe. |
 | `<file> is not in the recipes folder`, `no recipe <file> in <folder>` | The file isn't in `config/recipes/`. | Pick the recipe again from the list. |
-| `<path> is not valid JSON: <error>`, `<path>: a recipe must be a JSON object`, `a step must be a JSON object, not <type>` | The file can't be read as a recipe. | Open it with **EDIT** in the recipe builder, correct it and save. |
-| `step <n>: unknown step type '<type>' (expected one of ACTION, PARALLEL, ROUTINE_CALL, SUB_RECIPE, USER_PROMPT, VERIFIED_ACTION, WAIT_TELEMETRY, WAIT_TIME)` | A step the engine doesn't know. | Correct the step. |
-| `step <n>: a SUB_RECIPE can't run inside a PARALLEL step` | | Move the sub-recipe out of the parallel step. |
-| `<file>: step number(s) <n> used more than once - open the recipe in the Recipe Builder and save it to renumber the steps` | | Do as it says. |
+| `<file> can't run: step <n>: <problem>; ...` | The checks found errors (see [The checks](panels/recipes.md#the-checks)): a tag the machine doesn't know or a recipe can't set, a value outside its range or past a hard cap, a fault reset, a stop of the turbo pump ... The first three are given. | Open it with **EDIT**: the builder lists every problem. |
+| `<file> is not valid JSON: <error>`, `<file>: a recipe must be a JSON object`, `a step must be a JSON object, not <type>` | The file can't be read as a recipe. | Open it with **EDIT** in the recipe builder, correct it and save. |
+| `<file>: step <n>: <problem>`, for example `unknown step type '<type>'`, `duration_sec must be a number, not '<value>'`, `unknown condition '<c>'`, `unknown routine '<name>'` | A step the sequencer can't run as it is. | Correct the step in the recipe builder. |
+| `<file>: step <n>: recipes may not reset faults (<tag>): press RESET FAULTS, or RESET & START for the turbo pump, yourself` | | Take the step out. |
+| `<file>: fault policy entry <n>: <problem>` | A stop condition the sequencer can't evaluate (a bad fault bit, no tag, an unknown condition). | Correct or remove it on the builder's **Stop conditions** tab. |
+| `<file> step <n>: <sub-recipe> isn't in the recipes folder`, `... there is no recipe <sub-recipe> in the recipes folder`, `... <sub-recipe> can't be read: <error>` | A sub-recipe is missing. | Correct the step, or put the recipe back. |
+| `<file> step <n>: the recipes call each other in a circle (<a> > <b> > <a>), so it would never end`, `... sub-recipes nested more than 8 deep` | | Correct the recipes. |
+| `<file> step <n>: <sub-recipe>: <problem>` | A sub-recipe has an error of its own. | Correct the sub-recipe. |
+| `<file>: step number(s) <n> used more than once - open the recipe in the recipe builder and save it to renumber the steps` | | Do as it says. |
 | `the sequencer is starting up - try again in a moment`, `recipe '<name>' is already running - stop it first` | See [Sequencer service](#sequencer-service). | |
 | `the recipe is not running`, `the recipe is not paused` | **PAUSE** or **RESUME** with nothing to act on. | None needed. |
 | `the recipe is paused - resume it first` | **ACKNOWLEDGE** while the recipe is paused. | Press **RESUME**. |
 | `no prompt is waiting for an answer`, `that prompt has already been answered`, `bad prompt number <n>` | An acknowledgement that doesn't match the prompt now showing. | None needed. |
-| `not yet: <tag> = <value>, needs <condition> <value>` (shown as `Not accepted - not yet: ...`) | The prompt's conditions don't hold yet. Only live values count: `<value>` reads `no live value` for a tag without one. | Make the conditions hold, then press **ACKNOWLEDGE** again. |
+| `not yet: waiting until <condition> (<tag> = <value>)` (shown as `Not accepted - not yet: ...`), for example `waiting until the source gate valve is closed (ion_beam.source.chamber.stat_gv_closed = 0.0)` | The prompt's conditions don't hold yet. Only live values count: `<value>` reads `no live value` for a tag without one. | Make the conditions hold, then press **ACKNOWLEDGE** again. |
 | `not yet: the step's conditions are not met` | The same, without details. | As above. |
 
 ### Why a recipe stopped
@@ -403,10 +411,10 @@ While a recipe runs the status line reads `<STATE> (<recipe>): <status>`; when i
 | `Stopped by operator at step <n> - outputs left as they were.` | **STOP** was pressed. | Check the outputs. |
 | `Stopped: the sequencer is shutting down at step <n> - outputs left as they were.` | `service_sequencer` was stopped or restarted (by **Service Manager**, the config editor, or the service manager after a hang). A recipe doesn't continue after a restart. | Check the outputs; start the recipe again if needed (it starts from step 1). |
 | `Step <n> failed: <reason>` | A step failed. | See [Step failures](#step-failures). |
-| `Step <n> failed: sub-recipes nested more than 8 deep (does a recipe call itself?)` | | Correct the recipe. |
-| `Step <n> failed: sub-recipe <file> is not in the recipes folder`, `Step <n> failed: sub-recipe <file>: <error>` | The sub-recipe file is missing or can't be read. | Correct the step or the file. |
-| `Stopped: fault <name> is active (fault policy).` | A PLC fault bit listed in the recipe's fault policy is set. The recipe ends as failed. | Deal with the fault: see [PLC faults](#plc-faults). |
-| `Stopped: fault status unknown for 3 s (no live PLC data for <tags>).` | The recipe has a fault policy and the fault words had no live value for 3 s. | See [PLC COMMS shows OFFLINE](troubleshooting.md#plc-comms-shows-offline). |
+| `Step <n> failed: sub-recipe <file>: <error>` | (Sub-recipes are checked before the start: this would be a fault in the sequencer.) | Report it. |
+| `Stopped at step <n>: fault <name> is active.` (`... (a stop condition of '<sub-recipe>').` for a sub-recipe's) | A PLC fault in the recipe's stop conditions is latched. The recipe ends as failed. | Deal with the fault: see [PLC faults](#plc-faults). |
+| `Stopped at step <n>: <message> (<condition>).`, or the condition alone | A condition in the recipe's stop conditions holds, for example `the safety relay is off`. | Deal with the cause. |
+| `Stopped at step <n>: the stop conditions can't be checked - no live value for <tags> for 3 s.` | A reading the stop conditions need had no live value for 3 s (its service is silent). | See [PLC COMMS shows OFFLINE](troubleshooting.md#plc-comms-shows-offline), or the service of the tag named. |
 | `Stopped at step <n>: could not keep control of the <subsystem>: <reason>` | The recipe lost a control lease other than to **TAKE CONTROL**, for example `already controlled by mass scan`. | Stop the other sequence, then start the recipe again. |
 | `Paused: the operator took control of the <subsystem>. Resume to carry on (the current step starts again), or stop.` | **TAKE CONTROL** was used. | **RESUME**: the recipe takes control again and runs the current step again from its start, sending its command again. Or **STOP**. |
 | `Paused by operator at step <n>` | **PAUSE** was pressed. The step's timers are frozen. | **RESUME** or **STOP**. |
@@ -419,12 +427,11 @@ The `<reason>` in `Step <n> failed: <reason>`. A missing live value shows as `No
 | Reason | Step | What it means | What to do |
 |---|---|---|---|
 | `<tag> = <value>: <result> - <reason>` | ACTION, VERIFIED_ACTION, routines | A command was refused, failed or got no answer. The reason is the service's. | See [Why a command was refused](#why-a-command-was-refused). |
-| `automated fault resets are not allowed in recipes` | ACTION, VERIFIED_ACTION | Recipes may not send `cmd_fault_reset`. | Reset faults by hand, and take the step out. |
 | `no live value for <tag> for 10 s` | WAIT_TELEMETRY | The value being waited for has had no live value for 10 s: its service is silent, or it is unknown. | Check the service. |
-| `timed out after <t> s waiting for <tag> <condition> <value> (last: <value>)` | WAIT_TELEMETRY | The condition didn't hold within the step's timeout. | Check why the value didn't get there. |
+| `timed out after <t> s waiting for <tag> <condition> <value> (last: <value>)` (with `± <tolerance>` for within) | WAIT_TELEMETRY | The condition didn't hold within the step's time limit. | Check why the value didn't get there. |
 | `prerequisite <tag> has no live value`, `prerequisite not met: <tag> = <value> (needs <condition> <value>)` | VERIFIED_ACTION | The step's precondition didn't hold, so nothing was sent. | Make it hold, then start again. |
 | `<tag> did not reach <condition> <value> within <t> s (last live value: <value>)` | VERIFIED_ACTION | The command was carried out, but the readback didn't get there within the step's time (5 s unless the step says otherwise, counted from when the command was sent). | Check the device. |
-| `unknown routine '<name>'`, `routine <name> failed` | ROUTINE_CALL | No routine of that name; a routine that failed without a reason. | Correct the step. |
+| `routine <name>: <error>`, `routine <name> failed` | ROUTINE_CALL | Settings the routine can't use (checked before the start, so a fault in the sequencer), or a routine that failed without a reason. | Report it. |
 | `a parallel sub-step failed`, or the sub-steps' own reasons joined by `; ` | PARALLEL | | As for each reason. |
 | `internal error in the <type> step: <error>` | any | | Report it. |
 | `failed/timed out` | any | A failure without a reason. | Report it. |
@@ -433,11 +440,12 @@ The `<reason>` in `Step <n> failed: <reason>`. A missing live value shows as `No
 
 **safety_relay_init** brings up the safety relay from a recipe. Its prompts, in the **Recipe action required** box (where it says OK, press **ACKNOWLEDGE**):
 
+- `The source pressure is <p> mbar: the gate valve should only open below <limit> mbar. Wait for it, then click OK.` (`not known` without a live value; only with the valve closed, and unless **Source pressure needed first** is 0)
 - `Safety Relay requires Gate Valve to be OPEN. Click OK to attempt an automatic Open, or manually open it now.`
 - `Gate Valve cannot be opened: Permissive is FALSE. Resolve vacuum/gauge fault, then click OK to retry.`
 - `Gate Valve failed to open automatically. Please verify vacuum levels manually, open the valve, then click OK.` (after `gv_timeout_sec`, 15 s)
 - `Gate Valve is not fully open. Please remedy this and click OK to re-evaluate.`
-- `Safety Permissives Met. Click OK, then immediately press the physical PANEL START button.`
+- `Safety Permissives Met. Turn the key to ENABLE, click OK, then immediately press START on the High Voltage Systems Control box.`
 
 | Failure | What it means | What to do |
 |---|---|---|
@@ -452,6 +460,8 @@ Once the relay is on, the routine waits `stabilization_sec` (15 s) before the st
 | `no live readback <tag> to start the ramp from` | The readback it starts from has no live value. |
 | `no live value for <tags> for 30 s` | The pressure or arc signal it watches had no live value for 30 s; it held the setpoint meanwhile. |
 | `exceeded the maximum of <n> arcs` | More arcs than `max_arcs` (5 unless the step says otherwise). |
+| `the supply is off (<tag> is 0): switch it on before conditioning it` | The supply's on status reads 0. |
+| `the readback (<value>) didn't follow the setpoint (<setpoint>) within <tolerance>: is the supply on?` | At the end of a hold, the readback wasn't within the tolerance (one step unless the step says otherwise) of the setpoint. |
 
 **psu_control** switches a supply on and sets it.
 
@@ -460,8 +470,9 @@ Once the relay is on, the routine waits `stabilization_sec` (15 s) before the st
 | `safety relay is not active (needed for <tag>)` | The relay was off when the step began. |
 | `<tag> did not report enabled within 5 s of <tag>` | The supply didn't report itself on. |
 | `<tag> did not reach <value> +/- <tolerance> within <t> s (last live value: <value>)` | The readback didn't reach the setpoint in time. |
+| `<tag> = <value>: <result> - <reason>` | The supply refused a command, the setpoint among them (also without **Wait for the readback**). |
 
-**mass_scan** runs a mass scan inside a recipe: see [Mass scan messages](#mass-scan-messages). It adds `mass scan settings: <error>` for settings the scan refuses, and `could not set the magnet on the peak (<I> A): <reason>` when it can't put the magnet on the strongest peak found.
+**mass_scan** runs a mass scan inside a recipe: see [Mass scan messages](#mass-scan-messages). It adds `the analyser magnet is off (or its state isn't known): switch it on first` and `the Faraday cup isn't in (or its position isn't known): insert it first` (it checks both before it scans), `mass scan settings: <error>` for settings the scan refuses, and `could not set the magnet on the peak (<I> A): <reason>` when it can't put the magnet on the strongest peak found.
 
 ## Mass scan messages
 

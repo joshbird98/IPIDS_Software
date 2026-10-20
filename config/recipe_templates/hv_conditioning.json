@@ -1,0 +1,54 @@
+{
+  "recipe_name": "Condition the extraction up to 20 kV",
+  "version": "1.0",
+  "description": "Ramps the extraction up slowly: 0.5 kV a minute, holding while the source pressure is above 5e-6 mbar (the gate valve's interlock drops at 8e-6) and backing off 1 kV after an arc.",
+  "fault_policy": [
+    {
+      "type": "BIT_FAULT",
+      "registry_tag": "ion_beam.faults.word_0_system",
+      "bit_str": "0.1",
+      "name": "Safety_Relay_Tripped",
+      "action": "ABORT"
+    }
+  ],
+  "steps": [
+    {
+      "step_id": 1,
+      "type": "ROUTINE_CALL",
+      "routine_name": "psu_control",
+      "parameters": {
+        "cmd_enable": "ion_beam.source.extraction.cmd_enable",
+        "stat_enabled": "ion_beam.source.extraction.stat_enabled",
+        "sp_tag": "ion_beam.source.extraction.sp_requested_voltage",
+        "rb_tag": "ion_beam.source.extraction.rb_voltage",
+        "target_val": 5.0,
+        "wait_for_readback": true,
+        "tolerance": 0.3,
+        "timeout_sec": 60.0,
+        "requires_relay": true
+      },
+      "comment": "Extraction on at 5 kV"
+    },
+    {
+      "step_id": 2,
+      "type": "ROUTINE_CALL",
+      "routine_name": "hv_conditioning",
+      "parameters": {
+        "cmd_tag": "ion_beam.source.extraction.sp_requested_voltage",
+        "rb_tag": "ion_beam.source.extraction.rb_voltage",
+        "enabled_tag": "ion_beam.source.extraction.stat_enabled",
+        "max_val": 20.0,
+        "step_size": 0.5,
+        "hold_time_sec": 60.0,
+        "pressure_tag": "ion_beam.source.vacuum_gauge_1.rb_pressure",
+        "pressure_max": 5e-06,
+        "pressure_recover": 2e-06,
+        "arc_mode_tag": "ion_beam.internal.ext_is_quenching",
+        "backoff_step": 1.0,
+        "max_arcs": 5,
+        "arc_cooldown_sec": 5.0
+      },
+      "comment": "Ramp to 20 kV"
+    }
+  ]
+}

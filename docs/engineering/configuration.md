@@ -18,8 +18,9 @@ The configuration files in `config/` and what reads them, the tag registry built
 | `alarm_config.json` | the alarm rules and overrides | `service_alarms` |
 | `system_tags.json` | the tag registry, generated (below) | the device services, the logger, the sequencer, the HMI, the data viewer |
 | `recipes/` | the recipes (in git) | the HMI's recipe panel and builder, `service_sequencer` |
+| `recipe_templates/` | the recipe builder's templates (in git): start-up, shutdowns, mass scan, degauss, HV conditioning | the recipe builder's **New** |
 | `appearance.json`, `workspace_profiles.json`, `plot_settings.json` | the theme, and the data viewer's profiles, per machine (nothing reads `plot_settings.json` now) | the HMI and the data viewer |
-| `backups/` | previous versions of files changed in the config editor | the config editor's **History...** |
+| `backups/` | previous versions of files changed in the config editor, and of recipes saved in the recipe builder (`backups/recipes/`) | the config editor's **History...** |
 
 The per-machine files and `backups/` are not in git. The services read their files when they start, so a change made outside the config editor needs the service restarted, except `readback_tolerance.json`.
 

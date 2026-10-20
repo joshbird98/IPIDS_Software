@@ -122,3 +122,25 @@ def test_shutdown_stops_the_recipe_and_releases(rig):
     wait(lambda: seq._closed, what="sequencer closed")
     assert seq.jobs[P.RECIPE].state == P.STOPPED and "shutting down" in seq.jobs[P.RECIPE].message
     wait(lambda: device.state[f"{SUB_A}.lease_holder"] is None, timeout=3, what="lease released at shutdown")
+
+
+def test_a_job_that_raises_fails_alone_and_lets_go_of_its_leases(rig):
+    """An exception outside a step (in the stop conditions, entering a sub-recipe ...) used to
+    end the sequencer's loop, and with it every running job."""
+    seq, device, client, tap = rig
+    wait(lambda: f"{SUB_A}.permit" in seq.telemetry.keys(), what="device telemetry")
+    time.sleep(0.5)
+    assert client.request("sequencer", P.command(P.RECIPE, "start"), {"file": "unit.json"})["status"] == C.OK
+    wait(lambda: device.state[f"{SUB_A}.lease_holder"] is not None, what="lease")
+    job = seq.jobs[P.RECIPE]
+
+    def broken():
+        raise KeyError("bug")
+
+    job.tick = broken
+    wait(lambda: job.state == P.FAILED, what="the job failed")
+    assert job.message == "internal error in the sequencer: KeyError: 'bug'"
+    wait(lambda: device.state[f"{SUB_A}.lease_holder"] is None, timeout=3, what="lease released")
+    r = client.request("sequencer", P.command(P.RECIPE, "start"), {"file": "unit.json"})
+    assert r["status"] == C.OK                     # the sequencer carries on
+    tap.wait(lambda m: m.get(P.key(P.RECIPE, "state")) == P.COMPLETE, what="the next run complete")

@@ -272,10 +272,22 @@ def _run_recipe(hmi, app, steps, stop_after=None, name="hmi_test.json"):
 
 
 def test_recipe_step_fails_with_the_services_reason(hmi, app):
+    # (a bias with the SMU's output off: the service refuses it; nothing in the file says it will)
     ok, msg = _run_recipe(hmi, app, [
-        {"step_id": 1, "type": "ACTION", "target": "ion_beam.source.extraction.sp_requested_voltage", "value": 50.0}])
-    assert not ok and "Step 1 failed" in msg and "outside the allowed range" in msg
+        {"step_id": 1, "type": "ACTION", "target": "ion_beam.beamline.faraday.smu.sp_requested_voltage", "value": 60.0}])
+    assert not ok and "Step 1 failed" in msg and "enable it before setting a voltage" in msg
     assert "Step 1 failed" in hmi.recipe_widget.lbl_status.text()
+
+
+def test_a_recipe_that_could_never_run_is_stopped_at_load(hmi, app):
+    """The panel checks it as the sequencer would: START stays off, and says why."""
+    w = hmi.recipe_widget
+    _write_recipe("hmi_never.json", [
+        {"step_id": 1, "type": "ACTION", "target": "ion_beam.source.extraction.sp_requested_voltage", "value": 50.0}])
+    w.select_recipe("hmi_never.json")
+    w.btn_load.click()
+    pump(app, 0.5)
+    assert not w.btn_start.isEnabled() and "outside the extraction voltage setpoint's range" in w.lbl_check.text()
 
 
 def test_recipe_waits_only_on_live_values_and_routes_by_registry(hmi, app):

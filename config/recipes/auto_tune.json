@@ -1,17 +1,64 @@
 {
   "recipe_name": "Automated Mass Resolution",
-  "version": "1.1",
-  "fault_policy": [],
+  "version": "1.2",
+  "description": "Everything a scan needs, then the scan: the analyser magnet on, the Faraday cup in and biased above 50 V; a scan from 20 A to 30 A; the magnet set on the biggest peak.",
+  "fault_policy": [
+    {
+      "type": "BIT_FAULT",
+      "registry_tag": "ion_beam.faults.word_0_system",
+      "bit_str": "0.1",
+      "name": "Safety_Relay_Tripped",
+      "action": "ABORT"
+    }
+  ],
   "steps": [
     {
       "step_id": 1,
-      "type": "ACTION",
-      "target": "ion_beam.beamline.diagnostics.cmd_insert_fc",
-      "value": true,
-      "comment": "Ensure Faraday Cup is inserted"
+      "type": "ROUTINE_CALL",
+      "routine_name": "psu_control",
+      "parameters": {
+        "cmd_enable": "ion_beam.beamline.magnet.cmd_enable",
+        "stat_enabled": "ion_beam.beamline.magnet.stat_enabled",
+        "sp_tag": "ion_beam.beamline.magnet.sp_requested_current",
+        "rb_tag": "ion_beam.beamline.magnet.rb_current",
+        "target_val": 20.0,
+        "wait_for_readback": true,
+        "tolerance": 0.05,
+        "timeout_sec": 60.0,
+        "requires_relay": true
+      },
+      "comment": "Analyser magnet on, at the start of the scan"
     },
     {
       "step_id": 2,
+      "type": "VERIFIED_ACTION",
+      "target": "ion_beam.beamline.diagnostics.cmd_insert_fc",
+      "value": true,
+      "verify_target": "ion_beam.beamline.diagnostics.stat_fc_inserted",
+      "verify_condition": "==",
+      "verify_value": 1,
+      "timeout_sec": 15.0,
+      "comment": "Ensure Faraday Cup is inserted"
+    },
+    {
+      "step_id": 3,
+      "type": "ROUTINE_CALL",
+      "routine_name": "psu_control",
+      "parameters": {
+        "cmd_enable": "ion_beam.beamline.faraday.smu.cmd_enable",
+        "stat_enabled": "ion_beam.beamline.faraday.smu.stat_enabled",
+        "sp_tag": "ion_beam.beamline.faraday.smu.sp_requested_voltage",
+        "rb_tag": "ion_beam.beamline.faraday.smu.rb_voltage",
+        "target_val": 60.0,
+        "wait_for_readback": true,
+        "tolerance": 1.0,
+        "timeout_sec": 20.0,
+        "requires_relay": true
+      },
+      "comment": "Cup bias on: above 50 V for a correct beam current"
+    },
+    {
+      "step_id": 4,
       "type": "ROUTINE_CALL",
       "routine_name": "mass_scan",
       "parameters": {
@@ -25,7 +72,7 @@
       "comment": "Mass scan 20-30 A, then set the magnet on the strongest peak"
     },
     {
-      "step_id": 3,
+      "step_id": 5,
       "type": "WAIT_TIME",
       "duration_sec": 2.0,
       "comment": "Wait for Magnet to settle on peak"

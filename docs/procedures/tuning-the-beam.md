@@ -41,7 +41,7 @@ Watch the spectrum build up. The peaks are the ions the source is giving. **Expe
 
 ![A mass scan of the simulated silicon target: carbon, oxygen, OH, C2, the three silicon isotopes and Si2](../images/panel-mass-scan.png)
 
-The `auto_tune.json` recipe does a scan in one go: it inserts the cup, scans 20 A to 30 A and sets the magnet on the biggest peak.
+The `auto_tune.json` recipe does a scan in one go: it switches the analyser magnet on, inserts the cup and biases it at 60 V, scans 20 A to 30 A and sets the magnet on the biggest peak. The recipe builder's **Mass scan** template is the same, to start your own from.
 
 See [Mass Scan](../panels/mass-scan.md) for every control.
 

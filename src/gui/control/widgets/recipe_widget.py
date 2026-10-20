@@ -1,21 +1,32 @@
 """Recipe panel. Recipes run in the sequencer service: this panel picks a recipe file, asks the
 sequencer to start / pause / resume / stop it, answers its operator prompts, and shows its
 progress from telemetry - so a recipe keeps running if the HMI is closed, and the panel picks
-it up again when the HMI comes back."""
+it up again when the HMI comes back.
+
+LOAD checks the recipe as the sequencer will before it starts it (src/core/recipe_check.py) and
+shows what it finds: with an error, START stays off (the sequencer would refuse it anyway); a
+warning is shown, and the recipe can still be started. The steps are listed as sentences
+(src/core/recipe_text.py). The recipe builder opens beside the HMI (it isn't modal); a recipe
+saved there is listed, and loaded again here if it is the one loaded."""
+import logging
 import os
 
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QFont
-from PyQt6.QtWidgets import (QComboBox, QFrame, QHBoxLayout, QLabel, QListWidget, QListWidgetItem, QMessageBox,
-                             QPushButton, QVBoxLayout, QWidget)
+from PyQt6.QtWidgets import (QComboBox, QFrame, QHBoxLayout, QLabel, QListWidget, QListWidgetItem, QPushButton,
+                             QVBoxLayout, QWidget)
 
+from src.core.recipe_catalog import shared
+from src.core.recipe_check import check_recipe, errors, summary, warnings
 from src.core.recipe_engine import Recipe, RecipeError
 from src.core.recipe_files import RECIPES_DIR, migrate_legacy_recipes
 from src.gui import theme
-from src.gui.control.dialogs.recipe_builder_dialog import RecipeBuilderDialog
+from src.gui.control.dialogs.recipe_builder import RecipeBuilderDialog
 from src.gui.control.sequencer_link import OFFLINE_TEXT, SequencerSlot
-from src.gui.style import chip, set_role, set_tone
+from src.gui.style import chip, set_prop, set_role, set_tone
 from src.sequencer import protocol as P
+
+log = logging.getLogger("hmi.recipes")
 
 # Step rows: (background, text) theme colours
 STEP_COLOURS = {"DONE": ("ok_bg", "ok"), "FAILED": ("fault_bg", "fault"), "RUNNING": ("seq_bg", "seq"),
@@ -37,6 +48,8 @@ class RecipeExecutionWidget(QWidget):
         self.migrated_recipes = migrate_legacy_recipes()
         self.loaded_file = None           # recipe START runs (picked with LOAD, or the last run seen)
         self.preview = None               # its steps, read here for display before it runs
+        self.load_errors = []             # what the checks found wrong with it (START stays off)
+        self._builders = {}               # file (None: a new recipe) -> the open recipe builder
         self._tickets = {}                # "start" / "pause" / "ack" ... -> ticket of the last click
         self._ack_refusal = None          # (prompt number, reason) of a refused acknowledgement
         self._preview_mode = False        # show the loaded recipe rather than the last run
@@ -48,9 +61,9 @@ class RecipeExecutionWidget(QWidget):
     def _init_ui(self):
         layout = QVBoxLayout(self)
 
-        self.btn_builder = QPushButton("OPEN RECIPE BUILDER")
-        self.btn_builder.setToolTip("Open the interactive visual designer to create or edit recipes.")
-        self.btn_builder.clicked.connect(self._open_builder)
+        self.btn_builder = QPushButton("NEW RECIPE")
+        self.btn_builder.setToolTip("Open the recipe builder on a new recipe: empty, or from a template (New).")
+        self.btn_builder.clicked.connect(lambda: self._open_builder(None))
         layout.addWidget(self.btn_builder)
 
         file_layout = QHBoxLayout()
@@ -61,10 +74,10 @@ class RecipeExecutionWidget(QWidget):
         self.btn_refresh.setToolTip("Rescan folder for new JSON files.")
         self.btn_refresh.clicked.connect(self._populate_recipes)
         self.btn_load = QPushButton("LOAD RECIPE")
-        self.btn_load.setToolTip("Show the selected recipe's steps, ready to start.")
-        self.btn_load.clicked.connect(self._load_recipe)
+        self.btn_load.setToolTip("Check the selected recipe and show its steps, ready to start.")
+        self.btn_load.clicked.connect(lambda: self._load_recipe())
         self.btn_edit = QPushButton("EDIT")
-        self.btn_edit.setToolTip("Open the selected recipe in the Builder for editing.")
+        self.btn_edit.setToolTip("Open the selected recipe in the recipe builder.")
         self.btn_edit.clicked.connect(self._edit_recipe)
         for w, stretch in ((self.cb_recipes, 1), (self.btn_refresh, 0), (self.btn_load, 0), (self.btn_edit, 0)):
             file_layout.addWidget(w, stretch=stretch)
@@ -115,10 +128,19 @@ class RecipeExecutionWidget(QWidget):
         self.prompt_frame.hide()
         layout.addWidget(self.prompt_frame)
 
+        # What the checks found in the loaded recipe
+        self.lbl_check = QLabel()
+        self.lbl_check.setObjectName("RecipeCheck")
+        self.lbl_check.setWordWrap(True)
+        set_role(self.lbl_check, "note")
+        self.lbl_check.hide()
+        layout.addWidget(self.lbl_check)
+
         lbl_steps = QLabel("Steps")
         set_role(lbl_steps, "caption")
         layout.addWidget(lbl_steps)
         self.list_steps = QListWidget()
+        self.list_steps.setWordWrap(True)
         self.list_steps.setSelectionMode(QListWidget.SelectionMode.NoSelection)
         self.list_steps.setMinimumHeight(90)
         font = QFont(self.list_steps.font())
@@ -162,36 +184,105 @@ class RecipeExecutionWidget(QWidget):
         self._populate_recipes()
         self.cb_recipes.setCurrentText(filename)
 
-    def _load_recipe(self):
-        filename = self.cb_recipes.currentText()
+    def _load_recipe(self, filename: str = None):
+        """Check the recipe as the sequencer will before it starts it, and show its steps."""
+        filename = filename or self.cb_recipes.currentText()
         if not filename:
             return
+        path = os.path.join(self.config_dir, filename)
         try:
-            self.preview = Recipe(os.path.join(self.config_dir, filename))
-        except (OSError, RecipeError) as e:
-            QMessageBox.critical(self, "Load Error", f"Failed to parse recipe:\n{e}")
+            preview = Recipe(path)
+        except (OSError, RecipeError) as e:      # (RecipeError covers every fault in the file itself)
+            self.preview, self.loaded_file, self.load_errors = None, None, []
+            self._preview_mode = False
+            self._rendered = None
+            self.list_steps.clear()
+            self._show_check([], f"{filename} can't be run: {e}")
+            self.lbl_status.setText(f"NOT LOADED: {filename} - {e}")
+            set_tone(self.lbl_status, "fault")
             return
+        problems = check_recipe(preview.data, shared(), self.config_dir, path)
+        self.preview = preview
         self.loaded_file = filename
+        self.load_errors = errors(problems)
         self._preview_mode = True
         self._rendered = None
         self._render_preview()
-        self.lbl_status.setText(f"READY: {self.preview.name}")
-        set_tone(self.lbl_status, "off")
+        self._show_check(problems)
+        self._show_ready()
+
+    def _show_ready(self):
+        if self.preview is None:
+            return
+        if self.load_errors:
+            self.lbl_status.setText(f"NOT READY: {self.preview.name} (version {self.preview.version}) has errors")
+            set_tone(self.lbl_status, "fault")
+        else:
+            self.lbl_status.setText(f"READY: {self.preview.name} (version {self.preview.version})")
+            set_tone(self.lbl_status, "off")
+
+    def _show_check(self, problems, failure: str = ""):
+        if failure:
+            text, level = failure, "fault"
+        elif not problems:
+            self.lbl_check.hide()
+            return
+        else:
+            errs, warns = errors(problems), warnings(problems)
+            lines = []
+            if errs:
+                lines.append(f"Can't be started - the sequencer would refuse it ({len(errs)} error"
+                             f"{'s' if len(errs) != 1 else ''}): {summary(errs, 3)}")
+            if warns:
+                lines.append(f"{len(warns)} warning{'s' if len(warns) != 1 else ''} (it can still run): "
+                             f"{summary(warns, 3)}")
+            lines.append("EDIT opens it in the recipe builder, which lists them all.")
+            text, level = "\n".join(lines), "fault" if errs else "warn"
+        self.lbl_check.setText(text)
+        set_prop(self.lbl_check, "level", level)
+        self.lbl_check.show()
 
     def _edit_recipe(self):
         filename = self.cb_recipes.currentText()
-        if not filename:
-            return
-        RecipeBuilderDialog(self, self.config_dir, load_filepath=os.path.join(self.config_dir, filename)).exec()
-        self._populate_recipes()
+        if filename:
+            self._open_builder(filename)
 
-    def _open_builder(self):
-        RecipeBuilderDialog(self, self.config_dir).exec()
+    def _open_builder(self, filename: str = None):
+        """The recipe builder, beside the HMI (one window per recipe: a second EDIT brings it back)."""
+        builder = self._builders.get(filename)
+        if builder is not None:
+            try:
+                builder.showNormal()
+                builder.raise_()
+                builder.activateWindow()
+                return builder
+            except RuntimeError:                  # (it has been closed and deleted)
+                self._builders.pop(filename, None)
+        path = os.path.join(self.config_dir, filename) if filename else None
+        builder = RecipeBuilderDialog(self, self.config_dir, load_filepath=path)
+        self._builders[filename] = builder
+        builder.saved.connect(lambda f, b=builder: self._recipe_saved(f, b))
+        builder.destroyed.connect(lambda *_a, b=builder: self._forget_builder(b))
+        builder.show()
+        return builder
+
+    def _forget_builder(self, builder):
+        for key in [k for k, v in self._builders.items() if v is builder]:
+            del self._builders[key]
+
+    def _recipe_saved(self, filename: str, builder=None):
+        """A recipe was saved in the builder: list it, and load it again if it is the one loaded
+        (its steps here were the old ones)."""
+        if builder is not None:                   # (a new recipe has a file now: EDIT on it finds this window)
+            self._forget_builder(builder)
+            self._builders[filename] = builder
         self._populate_recipes()
+        if filename == self.loaded_file and not self.slot.active:
+            self._load_recipe(filename)
 
     # ------------------------------------------------------------------ commands
     def _start_recipe(self):
-        if not self.loaded_file:
+        if not self.loaded_file or (self._preview_mode and self.load_errors):
             return
         self.btn_start.setEnabled(False)
         self._tickets["start"] = self.slot.send("start", {"file": self.loaded_file})
@@ -235,7 +326,15 @@ class RecipeExecutionWidget(QWidget):
             self.prompt_frame.hide()
             self.lbl_status.setText("SEQUENCER OFFLINE - " + OFFLINE_TEXT)
             set_tone(self.lbl_status, "unknown")
+            self._offline = True
             return
+        if getattr(self, "_offline", False):      # back online: the status line says what it did before
+            self._offline = False
+            if self._preview_mode and self.preview is not None:
+                self._show_ready()
+            else:
+                self.lbl_status.setText("STATUS: IDLE")
+                set_tone(self.lbl_status, "off")
         state = self.slot.state
         if self._awaiting_run is not None and self.slot.get("run") == self._awaiting_run:
             self._awaiting_run = None
@@ -256,8 +355,11 @@ class RecipeExecutionWidget(QWidget):
             elif state in P.FINAL:
                 self.loaded_file = self.loaded_file or self.slot.get("file")
                 self._show_run()
-            can_start = bool(self.loaded_file) and not busy
-            self._set_buttons(start=can_start, pause=False, stop=False)
+            blocked = self._preview_mode and bool(self.load_errors)
+            can_start = bool(self.loaded_file) and not busy and not blocked
+            self._set_buttons(start=can_start, pause=False, stop=False,
+                              start_tip=("The checks found errors in this recipe (above): the sequencer would refuse "
+                                         "it. EDIT opens it in the recipe builder." if blocked else ""))
             if state in P.FINAL and can_start and not self._preview_mode:
                 self.btn_start.setText("↻ RESTART")
             else:
@@ -268,10 +370,13 @@ class RecipeExecutionWidget(QWidget):
         steps = self.slot.get("steps") or []
         current = self.slot.get("step")
         state = self.slot.state
-        self._render([(s.get("id"), s.get("name", ""), s.get("desc", ""), s.get("state", "IDLE")) for s in steps],
-                     current, state)
+        self._render([(s.get("id"), _row_text(s.get("id"), s.get("desc", "")), _note(s.get("name", "")),
+                       s.get("state", "IDLE")) for s in steps], current, state)
         text = self.slot.get("status") or state
         crumb = self.slot.get("breadcrumb") or self.slot.get("name") or ""
+        version = self.slot.get("version")
+        if version and crumb:
+            crumb = f"{crumb}, version {version}"
         if state in P.FINAL:
             self.lbl_status.setText(f"FINISHED ({crumb}): {self.slot.get('message') or text}")
         else:
@@ -279,7 +384,8 @@ class RecipeExecutionWidget(QWidget):
         set_tone(self.lbl_status, STATE_TONES.get(state, "off"))
 
     def _render_preview(self):
-        self._render([(s.step_id, s.get_display_name(), s.get_description(), "IDLE") for s in self.preview.steps],
+        self._render([(s.step_id, _row_text(s.step_id, s.get_description()),
+                       s.comment if s.comment != "No description" else "", "IDLE") for s in self.preview.steps],
                      None, None)
 
     def _repaint_steps(self, *_):
@@ -298,7 +404,7 @@ class RecipeExecutionWidget(QWidget):
         self.list_steps.clear()
         for step_id, name, desc, step_state in rows:
             item = QListWidgetItem(name)
-            item.setToolTip(desc)
+            item.setToolTip(f"Note: {desc}" if desc else name)
             item.setData(Qt.ItemDataRole.UserRole, step_id)
             colour = STEP_COLOURS.get(step_state)
             if step_id == current and state in P.ACTIVE and step_state not in ("DONE", "FAILED"):
@@ -325,3 +431,14 @@ class RecipeExecutionWidget(QWidget):
         self.lbl_prompt_feedback.setVisible(bool(refusal))
         self.btn_ack.setEnabled("ack" not in self._tickets)
         self.prompt_frame.show()
+
+
+def _row_text(step_id, text: str) -> str:
+    """'3. Wait until the Faraday cup is in (fails after 10 s)'"""
+    return f"{step_id}. {text}" if text else f"{step_id}."
+
+
+def _note(display_name: str) -> str:
+    """The author's note from a step's display name ('[3] Verify cup' -> 'Verify cup')."""
+    text = display_name.split("] ", 1)[1] if display_name.startswith("[") and "] " in display_name else display_name
+    return "" if text in ("No description",) or text.endswith(" steps at the same time") else text

@@ -1,0 +1,53 @@
+{
+  "recipe_name": "Shutdown by the PLC (INITIATE SHUTDOWN)",
+  "version": "1.0",
+  "description": "Hands the shutdown to the PLC, as INITIATE SHUTDOWN on System Health does, and waits for it to finish (about 20 minutes). The PLC lets the safety relay drop at the end, so this recipe doesn't stop for that.",
+  "fault_policy": [],
+  "steps": [
+    {
+      "step_id": 1,
+      "type": "USER_PROMPT",
+      "prompt_text": "Hand the shutdown to the PLC? It switches the extraction and the ioniser off, inserts the Faraday cup and cools the caesium; once the caesium has cooled it ramps the filament down, switches the target and the filament off, closes the gate valve and lets the safety relay drop. Click OK to start it.",
+      "verify_conditions": [
+        {
+          "target": "ion_beam.facilities.safety_relay_active",
+          "condition": "==",
+          "value": 1
+        }
+      ],
+      "comment": "Start the PLC's shutdown?"
+    },
+    {
+      "step_id": 2,
+      "type": "ACTION",
+      "target": "ion_beam.system.cmd_source_shutdown",
+      "value": true,
+      "comment": "INITIATE SHUTDOWN"
+    },
+    {
+      "step_id": 3,
+      "type": "WAIT_TELEMETRY",
+      "target": "ion_beam.system.src_auto_sdown",
+      "condition": "==",
+      "value": 1,
+      "timeout_sec": 10.0,
+      "comment": "The PLC has started its shutdown"
+    },
+    {
+      "step_id": 4,
+      "type": "WAIT_TELEMETRY",
+      "target": "ion_beam.system.src_auto_sdown",
+      "condition": "==",
+      "value": 0,
+      "timeout_sec": 5400.0,
+      "comment": "The PLC's shutdown runs (about 20 minutes)"
+    },
+    {
+      "step_id": 5,
+      "type": "USER_PROMPT",
+      "prompt_text": "The shutdown is done. Check that SHUTDOWN SEQ reads INACTIVE, the safety relay is off (beacon green) and the gate valve is shut. Keep the caesium cooling on for at least 30 minutes. Add a marker saying how you left the machine.",
+      "verify_conditions": [],
+      "comment": "After the shutdown"
+    }
+  ]
+}

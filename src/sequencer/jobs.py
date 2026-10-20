@@ -23,7 +23,7 @@ class JobContext:
     """What the service hands to every job."""
 
     def __init__(self, dispatcher, telemetry, subsystems, events=None, clock=time.monotonic, wall=time.time,
-                 instance="", registry=None):
+                 instance="", registry=None, catalog=None):
         self.dispatcher = dispatcher
         self.telemetry = telemetry          # TelemetryCache: get_fresh(tag), snapshot()
         self.subsystems = subsystems        # SubsystemMap
@@ -32,6 +32,7 @@ class JobContext:
         self.wall = wall
         self.instance = instance            # distinguishes this sequencer process in holder ids
         self.registry = registry or {}
+        self.catalog = catalog              # src/core/recipe_catalog.py Catalog, for the recipe checks (or None)
 
 
 def leaf(subsystem: str) -> str:

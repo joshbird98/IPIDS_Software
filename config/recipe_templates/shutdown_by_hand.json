@@ -1,0 +1,124 @@
+{
+  "recipe_name": "Shutdown by hand: cool the caesium, then switch everything off",
+  "version": "1.0",
+  "description": "As in the help's 'Shutting down', by hand. The PLC refuses to switch the target, the filament or the ioniser off while the caesium is hot, so the recipe waits for the PLC to say it has cooled.",
+  "fault_policy": [],
+  "steps": [
+    {
+      "step_id": 1,
+      "type": "ACTION",
+      "target": "ion_beam.source.cesium.cmd_ctrl_mode",
+      "value": 0,
+      "comment": "Caesium oven heater off"
+    },
+    {
+      "step_id": 2,
+      "type": "ACTION",
+      "target": "ion_beam.source.cesium.cmd_force_cooling",
+      "value": true,
+      "comment": "Caesium forced cooling on"
+    },
+    {
+      "step_id": 3,
+      "type": "WAIT_TELEMETRY",
+      "target": "ion_beam.internal.cs_is_hot",
+      "condition": "==",
+      "value": 0,
+      "timeout_sec": 3600.0,
+      "comment": "The caesium cools (about 20 minutes)"
+    },
+    {
+      "step_id": 4,
+      "type": "ACTION",
+      "target": "ion_beam.source.thermionic.cmd_auto_emission",
+      "value": false,
+      "comment": "Auto-emission off, so the filament can be set"
+    },
+    {
+      "step_id": 5,
+      "type": "ACTION",
+      "target": "ion_beam.source.filament.sp_requested_current",
+      "value": 0.0,
+      "comment": "Filament to 0 A"
+    },
+    {
+      "step_id": 6,
+      "type": "WAIT_TELEMETRY",
+      "target": "ion_beam.source.filament.rb_current",
+      "condition": "<",
+      "value": 0.5,
+      "timeout_sec": 120.0,
+      "comment": "The filament ramps down (1 A per second)"
+    },
+    {
+      "step_id": 7,
+      "type": "ACTION",
+      "target": "ion_beam.source.einzel.cmd_enable",
+      "value": false,
+      "comment": "Source einzel off"
+    },
+    {
+      "step_id": 8,
+      "type": "ACTION",
+      "target": "ion_beam.source.extraction.cmd_enable",
+      "value": false,
+      "comment": "Extraction off"
+    },
+    {
+      "step_id": 9,
+      "type": "ACTION",
+      "target": "ion_beam.source.target.cmd_enable",
+      "value": false,
+      "comment": "Target off"
+    },
+    {
+      "step_id": 10,
+      "type": "ACTION",
+      "target": "ion_beam.source.thermionic.cmd_enable",
+      "value": false,
+      "comment": "Ioniser off"
+    },
+    {
+      "step_id": 11,
+      "type": "ACTION",
+      "target": "ion_beam.source.filament.cmd_enable",
+      "value": false,
+      "comment": "Filament off"
+    },
+    {
+      "step_id": 12,
+      "type": "ACTION",
+      "target": "ion_beam.beamline.magnet.cmd_enable",
+      "value": false,
+      "comment": "Analyser magnet off"
+    },
+    {
+      "step_id": 13,
+      "type": "ACTION",
+      "target": "ion_beam.beamline.steering.cmd_enable",
+      "value": false,
+      "comment": "Electrostatic steering off"
+    },
+    {
+      "step_id": 14,
+      "type": "ACTION",
+      "target": "ion_beam.beamline.steerer_magnet.cmd_enable",
+      "value": false,
+      "comment": "X-steerer magnet off"
+    },
+    {
+      "step_id": 15,
+      "type": "ACTION",
+      "target": "ion_beam.system.cmd_enable_safety",
+      "value": false,
+      "comment": "Safety relay off"
+    },
+    {
+      "step_id": 16,
+      "type": "USER_PROMPT",
+      "prompt_text": "The source is off. Keep the caesium cooling on for at least 30 minutes, then switch it off (FORCED COOLING: ON, once). Add a marker in Experiment Logging saying how you left the machine.",
+      "verify_conditions": [],
+      "comment": "After the shutdown"
+    }
+  ]
+}

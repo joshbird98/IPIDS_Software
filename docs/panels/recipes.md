@@ -1,6 +1,6 @@
 # Recipe Execution and the recipe builder
 
-A recipe is a list of steps that the sequencer carries out in order: commands, waits, checks, operator prompts and routines such as a mass scan. The **Recipe Execution** panel starts, pauses and stops recipes and shows their progress. The recipe builder creates and edits them.
+A recipe is a list of steps that the sequencer carries out in order: commands, waits, checks, operator prompts and procedures such as a mass scan. The **Recipe Execution** panel loads, starts, pauses and stops recipes and shows their progress. The recipe builder makes and edits them.
 
 ![The Recipe Execution panel with a recipe loaded](../images/panel-recipe-execution.png)
 
@@ -8,48 +8,62 @@ A recipe is a list of steps that the sequencer carries out in order: commands, w
 
 Recipes run in the sequencer service (`service_sequencer`), not in the HMI. The panel only sends the sequencer commands and shows what it reports. Closing the HMI does not stop a recipe, and an HMI that is opened again picks it up: its steps, its status and any prompt waiting for an answer.
 
+- **Checked before it starts.** Before the sequencer starts a recipe it reads it, and every recipe it runs as a step, and checks them all against the machine's tags (see [The checks](#the-checks)). A recipe with an error is refused at once, with the first errors in the refusal, so a run never stops half way at a step that could never work. **LOAD RECIPE** in the panel makes the same checks.
+- **Logged.** The start is in the event log with the recipe's version and the SHA-256 checksum of each file it runs, for example `Recipe 'Automated Mass Resolution' version 1.2 started (auto_tune.json, SHA-256 3f9c0a1b2c4d)`. The log says exactly what ran.
 - **One recipe at a time.** A recipe can run alongside a mass scan and an optimiser sweep, but two of them can never drive the same thing at once: a recipe that needs a control another sequence holds fails.
-- **Control leases.** Before its first command to a subsystem (the analyser magnet, a supply, the Faraday cup drop-in ...), the recipe claims a control lease on it. While the recipe holds the lease, that subsystem takes commands only from the recipe: its controls in the other panels are greyed out, with the reason in their tooltip, and the [Automation bar](automation-bar.md) shows what the recipe holds, for example **recipe 'Automated Mass Resolution' holds: diagnostics, magnet, smu**. The leases are released when the recipe ends. The safety relay, shutdown, fault reset and gate valve controls are never leased: they stay with the operator.
-- **Steps in order.** The steps run one at a time. A step is done when its purpose is met: an ACTION, for example, when the service confirms it has carried out the command.
+- **Control leases.** Before its first command to a subsystem (the analyser magnet, a supply, the Faraday cup ...), the recipe claims a control lease on it. While the recipe holds the lease, that subsystem takes commands only from the recipe: its controls in the other panels are greyed out, with the reason in their tooltip, and the [Automation bar](automation-bar.md) shows what the recipe holds, for example **recipe 'Automated Mass Resolution' holds: diagnostics, magnet, smu**. The leases are released when the recipe ends. The safety relay, shutdown, fault reset and gate valve controls are never leased: they stay with the operator.
+- **Steps in order.** The steps run one at a time. A step is done when its purpose is met: a **Set a value** step, for example, when the service confirms it has carried out the command.
 - **Any failure ends the recipe.** A step that fails or times out ends the recipe at once. There are no retries and no alternative paths. The status line gives the step and the reason, and the step turns red. A failed recipe also raises a medium-priority alarm on the [Alarms](alarms.md) panel, which clears when the next recipe starts.
-- **No fault resets.** A recipe can't reset faults: a step that sends the fault reset fails (**automated fault resets are not allowed in recipes**), and the builder's tag selector does not offer it. Reset faults yourself with **RESET FAULTS** on the [System Health](system-health.md) panel.
+- **No fault resets, no turbo stop.** A recipe can't reset faults, and can't stop the source turbo pump: the checks refuse such a recipe. Reset faults yourself with **RESET FAULTS** on the [System Health](system-health.md) panel. Trained staff stop the turbo pump by hand, at the pump.
 - **The machine still has the last word.** The services apply the same limits and hard caps to a recipe's commands as to yours, and whatever a recipe asks for, the PLC applies its own interlocks, limits and shutdown sequences.
 
 ## The Recipe Execution panel
 
 | Control | What it does |
 |---|---|
-| **OPEN RECIPE BUILDER** | Opens the recipe builder with a new, empty recipe. |
+| **NEW RECIPE** | Opens the recipe builder with a new, empty recipe. Its **New** button starts one from a template. |
 | Recipe list | The recipe files (`.json`) in `config/recipes`. |
 | **↻** | Reads the recipe folder again, to list files added since. |
-| **LOAD RECIPE** | Reads the selected recipe and lists its steps, ready to start. The status line reads **READY:** and its name. A file the sequencer would refuse (not valid JSON, an unknown step type, a step number used twice) gives a **Load Error** with the reason. |
-| **EDIT** | Opens the selected recipe in the builder. |
-| **START** | Asks the sequencer to run the loaded recipe from step 1: the recipe last loaded, not whatever is selected in the list. After a run has finished the button reads **RESTART** and runs the same recipe again. Greyed out until a recipe is loaded, while a recipe is running, and while the sequencer is not running; the tooltip says which. |
+| **LOAD RECIPE** | Reads the selected recipe, checks it as the sequencer will, and lists its steps. What the checks find shows above the steps (see below). |
+| **EDIT** | Opens the selected recipe in the recipe builder. EDIT again on a recipe that is already open brings its window to the front. |
+| **START** | Asks the sequencer to run the loaded recipe from step 1: the recipe last loaded, not whatever is selected in the list. After a run has finished the button reads **RESTART** and runs the same recipe again. Greyed out until a recipe is loaded, while the loaded recipe has errors, while a recipe is running, and while the sequencer is not running; the tooltip says which. |
 | **PAUSE** | Pauses the recipe. While it is paused the button reads **RESUME**. Available only while a recipe is running. |
 | **STOP** | Stops the recipe. Available only while a recipe is running. |
 | **ACKNOWLEDGE** | In the prompt box: answers the prompt (see [Operator prompts](#operator-prompts)). |
 | **STOP RECIPE** | In the prompt box: stops the recipe, as **STOP** does. |
-| **Steps** | The steps of the recipe loaded or running. Hover over a step to see what it does. |
+| **Steps** | The steps of the recipe loaded or running, each as a sentence saying what it does, for example **3. Wait until the Faraday cup is in (fails after 10 s)**. Hover over a step to see its note. |
+
+After **LOAD RECIPE**, a box above the steps shows what the checks found:
+
+- **Can't be started - the sequencer would refuse it** and the first errors (red). **START** stays greyed out and the status line reads **NOT READY:** with the recipe's name. Open the recipe with **EDIT**: the builder lists every problem.
+- **... warnings (it can still run)** and the first warnings (amber). The recipe can be started, but read them first.
+- Nothing, when the checks find nothing.
+
+A file that can't be read as a recipe at all (not valid JSON, an unknown step type, a value of the wrong kind) isn't loaded: the status line reads **NOT LOADED:** with the file name and the reason.
+
+A recipe saved in the recipe builder while it is loaded here is loaded again, so the steps shown are the ones that will run.
 
 > [!NOTE]
-> The sequencer reads the recipe file when the recipe starts. The steps listed after **LOAD RECIPE** are the file as it was when you loaded it; if someone has changed the file since, the run follows the changed file.
+> The sequencer reads and checks the recipe file again when you press **START**. If someone has changed the file since you loaded it, the run follows the changed file, or the start is refused if the change has an error.
 
 ### The status line
 
-The status line shows the state, the recipe's name in brackets (inside a sub-recipe, the path to it, such as **Silicon Implantation Run > Standard Beamline Startup**) and what is happening.
+The status line shows the state, the recipe's name and version in brackets (inside a sub-recipe, the path to it, such as **Silicon Implantation Run > Standard Beamline Startup**) and what is happening.
 
 | Status line | Colour | Meaning |
 |---|---|---|
 | **STATUS: IDLE** | grey | Nothing loaded or run since the HMI started. |
-| **READY:** and a name | grey | A recipe is loaded and can be started. |
+| **READY:** a name and its version | grey | A recipe is loaded and can be started. |
+| **NOT READY:** a name **has errors** | red | The loaded recipe has errors: the sequencer would refuse it. |
+| **NOT LOADED:** a file and the reason | red | The file can't be read as a recipe. |
 | **RUNNING** | violet | The recipe is running, and holds the controls it has claimed. |
 | **PROMPT** | amber | The recipe is waiting for you. |
 | **PAUSED** | amber | Paused by you, or because you took control of something it drives. |
 | **FINISHED** and **Recipe completed successfully.** | green | Every step is done. |
 | **FINISHED** and **Stopped by operator at step** ... **- outputs left as they were.** | grey | You stopped it. |
-| **FINISHED** and the reason it failed | red | A step failed (**Step 3 failed:** and why), or the fault policy stopped it. |
-| **START refused:** (or another command) and the reason | red | The sequencer refused your command, for example while it is still starting up. |
-| **SEQUENCER OFFLINE** | dashed outline | The sequencer service is not running. Start it from the [Service Manager](service-manager.md) panel. The line can stay after the sequencer is back, until a recipe is loaded or started. |
+| **FINISHED** and the reason it failed | red | A step failed (**Step 3 failed:** and why), or a stop condition stopped it. |
+| **START refused:** (or another command) and the reason | red | The sequencer refused your command: the recipe has an error, or the sequencer is still starting up. |
+| **SEQUENCER OFFLINE** | dashed outline | The sequencer service is not running. Start it from the [Service Manager](service-manager.md) panel. When it is back, the line says again what is loaded. |
 
 In the step list:
 
@@ -61,15 +75,15 @@ In the step list:
 | Green, with a tick (✓) | Done. |
 | Red, with a cross (✗) | Failed. |
 
-Inside a sub-recipe the list shows the sub-recipe's steps. A PARALLEL step is one row.
+Inside a sub-recipe the list shows the sub-recipe's steps. A **Do steps at the same time** step is one row.
 
 ### Operator prompts
 
-When a recipe reaches a prompt (a USER_PROMPT step, or a routine or PARALLEL step that needs you), the box **Recipe action required** appears above the steps, with the step number and what to do. The recipe waits as long as it takes: prompts have no time limit.
+When a recipe reaches a prompt (an **Ask the operator** step, or a procedure that needs you), the box **Recipe action required** appears above the steps, with the step number and what to do. The recipe waits as long as it takes: prompts have no time limit.
 
 1. Do what the prompt asks.
 2. Press **ACKNOWLEDGE**. The sequencer checks the step's conditions, if it has any, against live values.
-3. If a condition is not met, your answer is refused and the box shows **Not accepted - not yet:** and each condition that fails, with its present value (**no live value** if there is none). The prompt stays: press **ACKNOWLEDGE** again once the conditions hold.
+3. If a condition is not met, your answer is refused and the box shows **Not accepted - not yet:** and each condition that doesn't hold, with its present value, for example **waiting until the source gate valve is closed (ion_beam.source.chamber.stat_gv_closed = 0.0)** (**no live value** if there is none). The prompt stays: press **ACKNOWLEDGE** again once the conditions hold.
 
 Each prompt carries a number, so an answer meant for an earlier prompt can't answer a later one. The box is hidden while the recipe is paused and comes back when you resume it. Prompts and answers are recorded in the event log.
 
@@ -77,9 +91,9 @@ Each prompt carries a number, so an answer meant for an earlier prompt can't ans
 
 | You press | What happens |
 |---|---|
-| **PAUSE** | The recipe halts at the step it is on and sends nothing more. The step's timers stop: a wait, a timeout, a verification, a routine's own timers. The recipe keeps the controls it holds. The fault policy is not checked while it is paused. |
+| **PAUSE** | The recipe halts at the step it is on and sends nothing more. The step's timers stop: a wait, a time limit, a check, and the timers of the procedures (a ramp's hold, a scan's settling). The recipe keeps the controls it holds. The stop conditions are not checked while it is paused. |
 | **RESUME** | The step carries on where it was, with its timers moved on by the length of the pause. |
-| **RESUME** after you took control | The step starts again from its beginning: its command is sent again, a wait starts from zero, a routine from its first stage. The recipe claims its controls again. |
+| **RESUME** after you took control | The step starts again from its beginning: its command is sent again, a wait starts from zero, a procedure from its first stage. The recipe claims its controls again. |
 | **STOP** or **STOP RECIPE** | The recipe ends at once (**Stopped by operator at step** ... **- outputs left as they were.**). Nothing is switched off and no setpoint is put back: every output stays as the completed steps left it, and a command already sent is still carried out. The recipe's controls are released. |
 
 > [!WARNING]
@@ -87,150 +101,216 @@ Each prompt carries a number, so an answer meant for an earlier prompt can't ans
 
 If you take control of something a running recipe drives, with **TAKE CONTROL** on the [Automation bar](automation-bar.md), the recipe pauses: **Paused: the operator took control of the** ... **Resume to carry on (the current step starts again), or stop.**
 
-## Fault policy
+## Stop conditions
 
-A recipe's fault policy lists PLC faults that stop it. While the recipe runs, the sequencer checks each listed fault bit in the live PLC data every time it moves the recipe on (about 50 times a second):
+A recipe's stop conditions (its fault policy, in the file) end it as failed as soon as one holds. There are two kinds:
 
-- if a listed fault is active, the recipe ends as failed: **Stopped: fault** name **is active (fault policy).**;
-- if the PLC fault data has not been live for 3 s, the recipe ends as failed too (**fault status unknown for 3 s**).
+- **a PLC fault**: the recipe stops when that fault is latched, for example **Safety Relay Tripped**: **Stopped at step 4: fault Safety_Relay_Tripped is active.**;
+- **a condition** on a live reading, for example the source pressure above 5×10⁻⁶ mbar, with an optional message: **Stopped at step 4:** the message **(the source pressure (VG1) is above 5.0e-06 mbar).**
 
-Ending the recipe is the only action a fault policy can take. Inside a sub-recipe, the top recipe's policy applies together with the running sub-recipe's own. Set the policy with **Fault policy...** in the builder.
+The sequencer checks them every time it moves the recipe on (about 50 times a second), together with the stop conditions of every sub-recipe running (**... (a stop condition of 'Standard Beamline Startup')**). If a reading a stop condition needs has had no live value for 3 s, the recipe stops too: **the stop conditions can't be checked - no live value for** ... **for 3 s.** An entry the sequencer can't evaluate (an unknown condition, a bad fault bit, no tag) refuses the start.
 
-## Steps
-
-| Step type | What it does | Fails when |
-|---|---|---|
-| ACTION | Sends one command: **Target Tag** set to **Command Value**. Done when the service confirms it has carried it out. | The service refuses or fails the command (the reason is given), or the target is the fault reset. |
-| VERIFIED_ACTION | Checks a condition (**Pre-Req**), sends the command, then waits for **Verify Tag** to meet its condition, for up to **Timeout** (5 s by default). With no Pre-Req tag the first check is skipped. | The precondition is not met, or has no live value, when the step starts (it does not wait for it); the command is refused; the verification is not met in time. |
-| WAIT_TIME | Waits **Duration**. | Never. |
-| WAIT_TELEMETRY | Waits until **Target Tag** meets **Condition** and **Target Value**, judged on live values only. A **Timeout** of 0 means none. | The timeout runs out, or the tag has had no live value for 10 s. |
-| USER_PROMPT | Shows **Popup Text** and waits for **ACKNOWLEDGE**. With verify conditions, the answer is refused until they all hold. | Never: it waits for as long as it takes. |
-| SUB_RECIPE | Runs another recipe (**Target File**), then carries on with the next step. | The file is missing, unreadable, outside the recipes folder, or nested more than 8 deep. |
-| ROUTINE_CALL | Runs a routine with its parameters (see [Routines](#routines)). | The routine fails (the reason is given), or its name is unknown. |
-| PARALLEL | Runs its sub-steps together. Done when they are all done. | Any sub-step fails (the reasons are given). |
-
-Fill in **Verify Tag** in a VERIFIED_ACTION: a step whose verify tag is left empty can never be verified, and fails at its timeout.
-
-**Conditions** are `==`, `>`, `<`, `>=` and `<=`. Values are compared as numbers (true is 1, false is 0), and `==` counts values within 1×10⁻⁶ of each other as equal. In the builder, a value typed as `true` or `false` is stored as true or false, a number as a number, and anything else as text.
-
-**Sub-recipes** come from the same recipes folder and are read when the step is reached. A sub-recipe may call others, up to 8 deep: a recipe that calls itself fails there. A SUB_RECIPE can't be inside a PARALLEL step.
-
-**PARALLEL steps** can hold ACTION, VERIFIED_ACTION, WAIT_TIME, WAIT_TELEMETRY and ROUTINE_CALL steps. Their numbers follow from the step's own: step 3's sub-steps are 301, 302 and so on. All the sub-steps start together, and the step fails as soon as one of them fails.
-
-### Routines
-
-A ROUTINE_CALL step runs one of four routines. The builder fills in each routine's parameters with the defaults given here; units are those of the tags.
-
-| Routine | What it does | Parameters and defaults |
-|---|---|---|
-| `mass_scan` | The [Mass Scan](mass-scan.md) panel's scan, as a step. With `goto_peak`, it then sets the magnet to the most prominent peak of the scan (one standing out by at least 10 % of the scan's current range); with no such peak the magnet stays where the scan ended. The SMU goes back to 1 NPLC at the end, also after a failure, but not if you stop the recipe part way through the scan. A bad setting fails the step at once. | `start_a` 20, `stop_a` 30, `step_a` 0.05 (magnet amps), `samples` 5, `nplc` 1, `goto_peak` true. Also accepted: `tolerance`, `settle_time`, `sample_interval`, `export`, `export_path`, as on the panel. |
-| `safety_relay_init` | Brings the safety relay on with the operator, by prompts (below). Done at once if the relay is already on. | `timeout_sec` 6 (for the relay to come on), `gv_timeout_sec` 15 (for the gate valve to open), `stabilization_sec` 15 (wait after the relay comes on), and the tags it reads and sends. |
-| `hv_conditioning` | Ramps a supply that is already on, from its present readback up to `max_val` in steps of `step_size`, holding each step for `hold_time_sec`. While the pressure is above `pressure_max` it holds, until the pressure falls below `pressure_recover`. When the arc flag (`arc_mode_tag`) reads 1, it steps back by `backoff_step` and waits `arc_cooldown_sec`. If the pressure or arc tag has no live value, it holds, and fails after 30 s. It fails when the arcs exceed `max_arcs`. | `cmd_tag` and `rb_tag`: the extraction voltage; `max_val` 30, `step_size` 1, `hold_time_sec` 60, `pressure_tag`: gauge 1, `pressure_max` 5×10⁻⁵, `pressure_recover` 1×10⁻⁵, `arc_mode_tag`: none, `backoff_step` 2, `max_arcs` 5, `arc_cooldown_sec` 5. |
-| `psu_control` | Switches a supply on (unless it is on already), sends its setpoint and, with `wait_for_readback`, waits for the readback to come within `tolerance` of it. It fails if the safety relay is off (with `requires_relay`), if the supply does not report on within 5 s, or if the readback is not within tolerance after `timeout_sec`. | `cmd_enable`, `stat_enabled`, `sp_tag`, `rb_tag`: the filament; `target_val` 5, `tolerance` 0.2, `timeout_sec` 45, `wait_for_readback` 1, `requires_relay` 1. |
-
-Set `max_val` within the supply's range: the default, 30, is above the extraction voltage's 20 kV limit in the tag registry, so the ramp would be refused there and the step would fail.
-
-`safety_relay_init` works through prompts. In them, "Click OK" means **ACKNOWLEDGE**.
-
-1. If the gate valve is not open, it asks you to let it open the valve or to open it by hand. When you acknowledge, it opens the valve itself if the valve's open permissive is there, and waits up to `gv_timeout_sec`. If the permissive is missing, it asks you to clear the vacuum or gauge fault first; if the valve does not open in time, it asks you to open it by hand.
-2. With the valve open, it asks you to acknowledge and then press the physical **PANEL START** button straight away.
-3. When you acknowledge, it switches the safety relay enable on and waits up to `timeout_sec` for the relay. If the relay does not come on, it switches the enable off again and the step fails (**safety relay did not energise: physical PANEL START not pressed in time**).
-4. Once the relay is on, it waits `stabilization_sec` before the step is done.
-
-> [!CAUTION]
-> Acknowledge the last `safety_relay_init` prompt and press **PANEL START** only when it is safe to energise the safety relay. See the [safety rules](../safety.md).
+Any recipe that switches on the source, the high voltage or the magnets should stop if the safety relay trips: the checks warn when it doesn't (**add Safety_Relay_Tripped to its stop conditions**). Stopping the recipe is the only thing a stop condition does: the PLC's interlocks act on the machine anyway.
 
 ## The recipe builder
 
-**OPEN RECIPE BUILDER** opens the builder (**Interactive Recipe Builder**) with a new recipe; **EDIT** opens the selected one. Closing the builder without saving discards your changes.
+**NEW RECIPE** opens the builder with a new recipe, and **EDIT** with the selected one. The builder is a window of its own beside the HMI, not a dialog that blocks it: the panels stay usable while it is open, and several recipes can be open at once, one window each.
 
-![The recipe builder with a recipe open: the AI assistant at the top, then the toolbox, the steps and the step properties](../images/dialog-recipe-builder.png)
+![The recipe builder: the blocks on the left, the steps as sentences in the middle, the selected step's form on the right, and the problems, stop conditions and text below](../images/dialog-recipe-builder.png)
 
-| Control | What it does |
+| Part | What it is |
 |---|---|
-| **Recipe name** | The recipe's name. It also gives the file name (see [Saving a recipe](#saving-a-recipe)). |
-| **Version** | The recipe's version. |
-| **Fault policy...** | Opens the fault policy (below). |
-| **SAVE RECIPE** | Checks the recipe and saves it in `config/recipes`, then closes the builder. |
-| **Toolbox (double-click to add)** | Double-click a step type to add a step of that type at the end. |
-| **Steps (drag to reorder)** | The steps, each as its number and comment. Drag a step to move it; select one to edit it. The steps are renumbered 1, 2, 3 ... after every change. |
-| **Remove selected step** | Deletes the selected step. |
-| **Step properties** | The selected step's fields. |
+| **New**, **Open** | Start a new recipe (empty, or from a template), or open a saved one. |
+| **Save**, **Save as new recipe** | See [Saving a recipe](#saving-a-recipe). |
+| **Undo**, **Redo** | Every change can be undone. |
+| The chip at the top right | What the checks find: **No problems found** (green), the number of warnings (amber) or of errors (red). |
+| **Name**, **Version**, **About** | The recipe's name, its version, and a description (optional). Beside them, the file the recipe is saved to, or the name a new one will get. |
+| **Add a step** | The blocks, by kind (see below). Double-click one, or select it and press **Add**. |
+| **Steps** | The recipe as sentences, in the order they run, each with its note under it and a mark for its problems. Select a step to edit it. **Move up**, **Move down**, **Duplicate**, **Delete** act on the selected step. |
+| The step's form | What the selected step does, in words, its problems, and its fields. |
+| **Problems** | Every error and warning the checks find. Click one to go to the step. |
+| **Stop conditions** | The recipe's stop conditions (see [Setting the stop conditions](#setting-the-stop-conditions)). |
+| **Read as text** | The whole recipe as numbered sentences, with what stops it and how long its timed parts take. **Copy the text** copies it, for a log book or an email. |
 
-Every step has a **Comment/Label:**, the text shown in the step lists. The other fields depend on the type:
+### Blocks
 
-| Step type | Fields |
+| Block | What it does | Step type in the file |
+|---|---|---|
+| **Set a value** | Sends one command or setpoint: a voltage, a current, a switch, the Faraday cup in or out. | `ACTION` |
+| **Set a value and check it** | Sends a command, then waits (up to a time limit) for a reading to show it worked. Optionally checks a condition first. | `VERIFIED_ACTION` |
+| **Switch on a supply and set it** | Switches a supply on if it isn't, sends its setpoint and waits for its readback. | `ROUTINE_CALL` `psu_control` |
+| **Wait a time** | Waits a set time. | `WAIT_TIME` |
+| **Wait for a reading** | Waits until a reading meets a condition, with or without a time limit. | `WAIT_TELEMETRY` |
+| **Ask the operator** | Shows a message and waits for **ACKNOWLEDGE**; can refuse it until conditions hold. | `USER_PROMPT` |
+| **Bring the safety relay on** | With the operator: waits for the source vacuum, opens the gate valve, asks for **START** on the High Voltage Systems Control box. | `ROUTINE_CALL` `safety_relay_init` |
+| **Ramp a supply up slowly** | High-voltage conditioning: steps a supply up, holding while the pressure is high and backing off on arcs. | `ROUTINE_CALL` `hv_conditioning` |
+| **Mass scan, then go to the peak** | The Mass Scan panel's scan as a step, then the magnet on the biggest peak. | `ROUTINE_CALL` `mass_scan` |
+| **Run another recipe** | Runs a saved recipe as one step. | `SUB_RECIPE` |
+| **Do steps at the same time** | The steps inside it run together; it is done when they all are. | `PARALLEL` |
+
+A new step goes after the selected step. With a **Do steps at the same time** step selected, it goes inside it (except **Run another recipe** and another **Do steps at the same time**, which can't, and go after it). With nothing selected, it goes at the end. Drag a step onto a **Do steps at the same time** step to put it inside, or between two steps to move it there. The steps are numbered 1, 2, 3 ... after every change; the steps inside step 3 are 301, 302 and so on.
+
+### Filling in a step
+
+The form of the selected step shows, at the top, **What it does**: the step as a sentence, which changes as you type, and its problems, if it has any. Every step has a **Note** at the bottom: your own words for what it is for, shown under it in the list.
+
+- **Tags.** Type part of what the thing is called, or of its tag, and pick from the list that appears: "extraction volt" finds **extraction voltage setpoint**. **Choose…** lists every tag, grouped by part of the machine, with a search box. Under the field, what the tag is, its unit and its range, or, in red, that the machine doesn't know it or that a recipe can't set it. A field for a command offers only what a recipe may set; a field for a reading offers everything.
+- **Values** follow the tag: **On** or **Off** for a switch (**In (insert)** / **Out (retract)** for the Faraday cup, **Open** / **Closed** for the gate valve); the listed values for a tag that codes something (a current monitor's range: **0: Auto**, **1: 150mV** ...); otherwise a number, with the tag's unit beside it and its range as a hint. What you type is kept as you typed it: text that isn't a number stays text, and the checks say so.
+- **Conditions**: a reading, a comparison and a value. The comparisons are **is**, **is not**, **is above**, **is below**, **is at least**, **is at most** and **is within ±** (with a tolerance). **is** counts values within 1×10⁻⁶ of each other as equal, so for a reading such as a voltage use **is within ±**, **is at least** or **is at most**.
+- **Times** in s, min or h. A wait for a reading can have **No time limit**.
+- **Supplies.** **Switch on a supply and set it** and **Ramp a supply up slowly** start with a **Supply** list: Extraction, Target (cathode), Source einzel, Filament, Thermionic (ioniser), Analyser magnet, X-steerer magnet and Faraday cup bias (SMU). Choosing one fills in its tags, the unit and range of its setpoint, and its usual readback tolerance and time.
+- **More settings** opens the rarer settings of a procedure, and the tags a supply's step uses.
+
+### The checks
+
+The builder checks the recipe as you edit it, with the checks the sequencer makes before it starts one. The chip at the top, the **Problems** tab, a mark beside each step and the step's own form show what they find.
+
+**Errors** stop the recipe from being saved or started:
+
+- what the sequencer can't run: an unknown step type or procedure, a value that isn't a number, an unknown comparison, **is within ±** with no tolerance, a stop condition it can't evaluate, a procedure setting out of its bounds, a **Run another recipe** step inside **Do steps at the same time**, no recipe name;
+- a tag the machine doesn't know, or one a recipe can't set (a reading, a status, the PLC's control modes, the PC watchdog, a test command);
+- a value outside the tag's range in the tag registry, or past a hard cap; a switch set to something other than on or off;
+- a fault reset; a stop of the source turbo pump;
+- a sub-recipe that is missing, outside the recipes folder, has errors of its own, is nested more than 8 deep, or calls back into a recipe that called it (it would never end);
+- mass scan settings the scan refuses, such as more points than it allows.
+
+**Warnings** don't stop it, but say what is probably not meant:
+
+| Warning | Why |
 |---|---|
-| ACTION | **Target Tag:**, **Command Value:** |
-| VERIFIED_ACTION | **Pre-Req Tag:**, **Pre-Req Condition:**, **Pre-Req Value:**, **Command Tag:**, **Command Value:**, **Verify Tag:**, **Verify Condition:**, **Verify Value:**, **Timeout (sec):** (up to 3600) |
-| WAIT_TIME | **Duration (sec):** (up to 36 000) |
-| WAIT_TELEMETRY | **Target Tag:**, **Condition:**, **Target Value:**, **Timeout (sec):** (up to 36 000; 0 for none) |
-| USER_PROMPT | **Popup Text:**. **Add Verify Condition** adds a condition (tag, condition and value); the cross button beside it removes it. |
-| SUB_RECIPE | **Target File:**, one of the recipe files. |
-| ROUTINE_CALL | **Routine:**, then one field per parameter, named after it. Choosing another routine puts in that routine's defaults. |
-| PARALLEL | The type of sub-step to add, **Add Sub-Step**, the list of sub-steps, and the selected sub-step's own fields with **Delete sub-step**. |
+| **this setpoint is sent before a later step switches the** ... **on** | The PLC sets a switched-off supply's request to zero (and the SMU refuses a bias), so the setpoint is lost. Switch it on first, or use **Switch on a supply and set it**. |
+| **this switches on the** ... **which needs the safety relay, but no step before it makes sure the relay is on** | Without the relay the supply can't come on. Put **Bring the safety relay on**, or a wait for the relay, before it. (**Switch on a supply and set it** checks the relay itself.) |
+| **the recipe switches on outputs that need the safety relay, but doesn't stop if the relay trips** | Add **Safety_Relay_Tripped** to its stop conditions (**Add the recommended**). |
+| **the gate valve is opened with no wait for the source vacuum before it** | The start-up procedure waits for VG1 below 5×10⁻⁷ mbar first. |
+| **the degauss sweeps the magnet with the Faraday cup out** | With a beam, every mass reaches the sample during the sweep. Insert the cup first. |
+| **auto-emission is on (an earlier step): the PLC drives the filament itself** | The PLC refuses filament commands while auto-emission is on. |
+| **the scan needs the analyser magnet on, the Faraday cup in and the cup bias on (above 50 V)** | A scan fails at once without the magnet or the cup, and measures nothing useful without the bias. |
+| **no time limit** | A wait for a reading with no time limit waits for ever if the reading never gets there. |
+| **an analogue reading** ... **is rarely exactly** ... | Use **is within ±**, **is at least** or **is at most**. |
+| **it checks the command itself** | A **Set a value and check it** step that checks its own command only shows that the command was received: check the status or reading it changes. |
+| **the thermionic (ioniser) current follows the filament** | Its readback doesn't follow its setpoint: don't wait for it. |
+| **it holds only above** ... **but the gauge's relay drops at** ... | A conditioning ramp that waits too long for the pressure loses the gate valve (and the safety relay) first. Hold below the relay's off point. |
+| **another step at the same time also drives the** ... | Two steps inside **Do steps at the same time** set the same thing: which value wins depends on timing. |
+| **this only asks for the safety relay** | Sending the relay enable by itself: **Bring the safety relay on** checks the vacuum and the gate valve and works with the operator's **START**. |
+| ... **isn't in the tag registry** (a reading) | If nothing reports it, the step fails after 10 s without a live value. |
+| ... **not read by this routine (misspelt?)** | A procedure setting the procedure doesn't have. |
 
-Double-click a tag field (and any routine parameter whose name ends in `_tag`) to pick a tag from the **ISA-95 Tag Selector**: the tag registry as a tree, by area, with descriptions. Double-click a tag, or select it and press **OK**. The selector leaves out the raw fault words and the fault reset. You can also type a tag.
+### Setting the stop conditions
 
-**Fault policy...** opens **Global Fault Policy**. **Add Specific Fault Abort** adds a line (**Trip 1:**, **Trip 2:** ...) with a list of every PLC fault in `config/fault_config.json`, by name and description. A new line starts at the first fault in the list: choose the one you want. The cross button beside a line removes it, and **Done** closes the window. Changes take effect in the builder at once. A fault that is no longer in `fault_config.json` stays in the policy and is marked as such.
+The **Stop conditions** tab lists the recipe's stop conditions as sentences. **Add a fault** adds a PLC fault (choose it from the list, by name and description, on the right); **Add a condition** adds a condition on a reading, with an optional message; **Add the recommended** adds **Safety Relay Tripped**; **Remove** removes the selected one. A fault that is no longer in `config/fault_config.json` stays as it is, marked **not a fault in fault_config.json**: it is never swapped for another fault unless you choose one.
+
+### Templates
+
+**New** offers templates (in `config/recipe_templates/`) as well as an empty recipe. A template opens as a new recipe, not saved yet: check every value for your run, then save it under its own name. The values are SINDIE's typical operating values from the procedures, not limits.
+
+| Template | What it does |
+|---|---|
+| **Start-up: vacuum, safety relay, high voltage, filament and caesium** | [Bringing up a beam](../procedures/beam-start-up.md) as a recipe: the checks at the machine (asked of the operator), the source vacuum, the gate valve and the safety relay, then extraction, target, ioniser, einzel (with its current checked), filament, and the caesium oven up to temperature. |
+| **Shutdown by hand: cool the caesium, then switch everything off** | [Shutting down](../procedures/beam-shut-down.md) by hand: the caesium oven off and cooled until the PLC says it is no longer hot, the filament to zero, every supply off, the safety relay off. |
+| **Shutdown by the PLC (INITIATE SHUTDOWN)** | Asks first, then hands the shutdown to the PLC and waits for it to finish. |
+| **Mass scan: magnet on, cup in and biased, scan, then the biggest peak** | Everything a scan needs, then the scan. |
+| **Degauss the analyser magnet, with the Faraday cup in** | The degauss with no beam reaching the sample. |
+| **Condition the extraction up to 20 kV** | The extraction switched on at 5 kV, then ramped by 0.5 kV a minute to 20 kV, holding on pressure and backing off on arcs. |
 
 ### Saving a recipe
 
-**SAVE RECIPE**:
+**Save** (Ctrl+S) first runs the checks: with an error, nothing is saved (**Not saved**, with the errors). Then it asks for the version and, optionally, what changed (**Save the recipe**). If the recipe has changed since it was opened and its version hasn't, the version offered is one up (1.1 becomes 1.2): the sequencer's log names the version of every recipe it runs, so a changed recipe should never keep the old number.
 
-1. refuses an empty name (**Recipe name cannot be empty.**);
-2. runs the sequencer's own checks on every step. If the sequencer would refuse a step (an unknown step type, a SUB_RECIPE inside a PARALLEL step, a value it can't read as a number), the recipe is not saved, and **Recipe Not Saved** gives the reasons. These checks do not look at tags, values or the order of the steps;
-3. makes the file name from the recipe name: lower case, with anything other than letters, digits, `-` and `_` turned into `_`. **Ramp 1/2** is saved as `ramp_1_2.json`;
-4. if that file exists and has the same version, warns (**Traceability Warning**): press **Overwrite**, or **Cancel** and give the recipe a new version;
-5. writes the file whole and then puts it in place, so a half-written recipe never appears, says so (**Success**) and closes the builder. The panel's list is read again.
+Then the builder:
 
-A recipe opened with **EDIT** is saved under the file name made from its recipe name. If that differs from the file it came from (`master_implant.json` holds the recipe **Silicon Implantation Run**), saving writes a new file and leaves the old one as it was.
+1. saves a recipe that was opened from a file to that same file, even if you have renamed the recipe. A new recipe gets a file named after it: lower case, with anything other than letters, digits, `-` and `_` turned into `_` (**Ramp 1/2** is saved as `ramp_1_2.json`). A new recipe never takes the file of another one: a second **Ramp** is saved as `ramp_2.json`;
+2. refuses to save if the file has changed since the recipe was opened (saved from another builder window, edited by hand, or a git pull): **... has changed since it was opened here ...**. Open the recipe again and make your change again, so the other change isn't undone;
+3. copies the file as it was to `config/backups/recipes/`, named with the date and time (the newest 50 of each recipe are kept; backups are not in git);
+4. writes the new file whole, then puts it in place, so a half-written recipe never appears;
+5. commits the file to git, with what changed in the commit message (best effort: the line at the bottom of the builder says whether it was committed). The control PC then has local commits: pull with `--rebase`.
 
-### The AI assistant
+**Save as new recipe** saves to a new file named after the recipe, and leaves the file it was opened from as it was; the builder then works on the new file. The **Recipe Execution** panel lists a saved recipe at once, and loads it again if it is the one loaded.
 
-The **AI recipe assistant** at the top of the builder drafts a recipe from a description in plain words. Type what the recipe should do and press **Generate**; the button reads **...** while it works.
+Closing the builder (or pressing Escape) with changes not saved asks first: **Save**, **Discard the changes** or **Cancel**.
 
-It sends, to Google's Gemini service over the internet: your request; the recipe now in the builder (its name, steps and fault policy); the tag registry; the PLC fault list; the names of the recipes in `config/recipes`; and the descriptions of the routines. It answers either with a message, shown in the chat (a question, or a warning such as a value outside the usual ranges it has been given), or with a recipe. A recipe replaces the name, version, fault policy and steps in the builder, and the chat says that the sequence was generated and loaded. The builder then runs the sequencer's checks on it and lists any problems under **Check these steps before saving:**. Nothing is saved until you press **SAVE RECIPE**.
-
-The assistant's instructions ask it, among other things, never to use the fault reset, to use `psu_control` rather than plain ACTION steps for supplies, to start source, magnet and high-voltage recipes with `safety_relay_init`, and to put the safety relay trip in the fault policy. These are instructions to the model, not checks: nothing makes sure its answer follows them.
-
-> [!WARNING]
-> The assistant can get tags, values, conditions and the order of steps wrong. Read every step and the fault policy it writes before you save or run the recipe: the builder checks only that each step is one the sequencer can run.
-
-The assistant needs the `google-genai` Python package, an API key in `GEMINI_API_KEY` (in the environment, or in a `.env` file in the SINDIE folder) and internet access from the PC. The label at the top of the assistant reads **Online** when the package is installed and a key is set (it does not test the connection), and **Offline (missing API key)** otherwise; **Generate** then shows **AI Offline**. Errors appear in the chat in red; when the service is overloaded, the assistant tries three times before it gives up.
+| Key | What it does |
+|---|---|
+| Ctrl+S | Save |
+| Ctrl+Z, Ctrl+Y (or Ctrl+Shift+Z) | Undo, redo (in a text field, they act on the field first) |
+| Delete (in the list of steps) | Delete the selected step |
+| Ctrl+D | Duplicate the selected step |
+| Alt+Up, Alt+Down | Move the selected step |
 
 > [!NOTE]
-> Whether the lab PC has an API key and internet access, and whether the lab allows the tag list and requests to be sent to Google, is to be confirmed.
+> The builder had an AI assistant that drafted recipes. It was removed in October 2026: its drafts weren't checked against the machine, and the checks above now do that for every recipe, however it was made.
+
+## Steps
+
+| Step (type) | What it does | Fails when |
+|---|---|---|
+| **Set a value** (`ACTION`) | Sends one command. Done when the service confirms it has carried it out. | The service refuses or fails the command (the reason is given). |
+| **Set a value and check it** (`VERIFIED_ACTION`) | Checks a condition first (optional), sends the command, then waits for a reading to meet a condition, for up to its time limit (5 s unless the step says otherwise, counted from when the command was sent). With the check's tag left empty, it checks the tag it set; with its value left empty, the value it set. | The first condition doesn't hold, or has no live value, when the step starts (it doesn't wait for it); the command is refused; the check doesn't hold in time. |
+| **Wait a time** (`WAIT_TIME`) | Waits. | Never. |
+| **Wait for a reading** (`WAIT_TELEMETRY`) | Waits until a reading meets a condition, judged on live values only. A time limit of 0 means none. | The time limit runs out, or the reading has had no live value for 10 s. |
+| **Ask the operator** (`USER_PROMPT`) | Shows its message and waits for **ACKNOWLEDGE**. With conditions, the answer is refused until they all hold. | Never: it waits for as long as it takes. |
+| **Run another recipe** (`SUB_RECIPE`) | Runs another recipe from the recipes folder, then carries on with the next step. Its stop conditions hold while it runs, as well as this recipe's. | A step in it fails. (A missing or broken sub-recipe is refused before the start.) |
+| procedures (`ROUTINE_CALL`) | Runs a procedure with its settings (see [Procedures](#procedures)). | The procedure fails (the reason is given). |
+| **Do steps at the same time** (`PARALLEL`) | Runs the steps inside it together. Done when they are all done. A prompt inside it reaches the operator as any other. | Any step inside it fails (the reasons are given). |
+
+A **Do steps at the same time** step can hold any step but **Run another recipe** (the sequencer refuses that) and, in the builder, another **Do steps at the same time**.
+
+### Procedures
+
+The procedures (routines, `ROUTINE_CALL` steps in the file) and their settings, with their defaults. Values are in the unit of the tag they go to.
+
+| Procedure | What it does | Settings and defaults |
+|---|---|---|
+| **Switch on a supply and set it** (`psu_control`) | Switches the supply on (unless it is on already), sends its setpoint and, with **Wait for the readback**, waits for the readback to come within the tolerance. Without it, the step is done when the service has accepted the setpoint (a refused setpoint fails the step). | The supply's tags (`cmd_enable`, `stat_enabled`, `sp_tag`, `rb_tag`), **Set it to** (`target_val`), **Wait for the readback** (on), **Readback within** (`tolerance`, 0.5), **For up to** (`timeout_sec`, 10 s), **Needs the safety relay** (on). Choosing a supply in the builder sets its usual tolerance and time, and turns the readback wait off for the thermionic (its current follows the filament). |
+| **Bring the safety relay on** (`safety_relay_init`) | Brings the safety relay on with the operator, by prompts (below). Done at once if the relay is already on. | **Time to press START** (`timeout_sec`, 6 s), **Time for the gate valve to open** (`gv_timeout_sec`, 15 s), **Wait after the relay comes on** (`stabilization_sec`, 15 s), **Source pressure needed first** (`vacuum_max`, 5×10⁻⁷ mbar; 0: not checked). Under **More settings**, the tags it reads and sends. |
+| **Ramp a supply up slowly** (`hv_conditioning`) | Ramps a supply that is already on, from its present readback up to **Up to**, in steps, holding each step. While the pressure is above **Hold above** it holds, until the pressure falls below **Carry on below**. When the arc flag reads 1, it steps back and waits. At the end of each hold the readback must have followed the setpoint. If the pressure, arc or on signal has no live value, it holds, and fails after 30 s. | The supply's tags (`cmd_tag`, `rb_tag`, `enabled_tag`), **Up to** (`max_val`, needed), **Step** (0.5), **Hold each step** (60 s), **Pressure gauge** (VG1), **Hold above** (5×10⁻⁶ mbar), **Carry on below** (2×10⁻⁶ mbar). Under **More settings**: **Arc flag** (none), **Back off by** (1), **Most arcs** (5), **Wait after an arc** (5 s), **Readback must follow within** (one step). |
+| **Mass scan, then go to the peak** (`mass_scan`) | The [Mass Scan](mass-scan.md) panel's scan as a step. It fails at once if the analyser magnet isn't on or the Faraday cup isn't in. With **Go to the biggest peak**, it then sets the magnet on the most prominent peak of the scan (one standing out by at least 10 % of the scan's current range); with no such peak the magnet stays where the scan ended. The SMU goes back to 1 NPLC at the end, also after a failure, but not if you stop the recipe part way through the scan. | **Start** (`start_a`, 20 A), **Stop** (`stop_a`, 30 A), **Step** (`step_a`, 0.05 A), **Samples per point** (5), **SMU integration (NPLC)** (1), **Go to the biggest peak** (on). Under **More settings**: **Settle time** (0.1 s), **Magnet tolerance** (0.05 A), **Sample interval** (0.02 s), **Save the scan as CSV** (off), **CSV file name (start)**. A scan that loops isn't allowed in a recipe (a step has to end). |
+
+**Bring the safety relay on** works through prompts. In them, "click OK" means **ACKNOWLEDGE**.
+
+1. If the gate valve is not open and the source pressure isn't below **Source pressure needed first**, it says the pressure and asks you to wait for it.
+2. It asks you to let it open the valve, or to open it by hand. When you acknowledge, it opens the valve itself if the valve's open permissive is there, and waits up to **Time for the gate valve to open**. If the permissive is missing, it asks you to clear the vacuum or gauge fault first; if the valve does not open in time, it asks you to open it by hand.
+3. With the valve open, it asks you to turn the key to **ENABLE**, acknowledge, then press **START** on the High Voltage Systems Control box straight away.
+4. When you acknowledge, it switches the safety relay enable on and waits up to **Time to press START** for the relay. If the relay does not come on, it switches the enable off again and the step fails (**safety relay did not energise: physical PANEL START not pressed in time**).
+5. Once the relay is on, it waits **Wait after the relay comes on** before the step is done.
+
+> [!CAUTION]
+> Acknowledge the last prompt and press **START** only when it is safe to energise the safety relay. See the [safety rules](../safety.md).
 
 ## Recipe files
 
-Recipes are JSON files in `config/recipes/`, which is in git. The panel's list, the builder and SUB_RECIPE steps all use this folder. A recipe file holds `recipe_name`, `version`, `fault_policy` (a list) and `steps` (a list). Each step has a `step_id`, a `type`, a `comment` and the fields of its type. For example, `auto_tune.json`:
+Recipes are JSON files in `config/recipes/`, which is in git. The panel's list, the builder and **Run another recipe** steps all use this folder. A recipe file holds `recipe_name`, `version`, `description` (optional), `fault_policy` (the stop conditions: a list) and `steps` (a list). Each step has a `step_id`, a `type`, a `comment` (its note) and the fields of its type. For example, from `auto_tune.json`:
 
 ```
 {
   "recipe_name": "Automated Mass Resolution",
-  "version": "1.1",
-  "fault_policy": [],
+  "version": "1.2",
+  "fault_policy": [
+    {"type": "BIT_FAULT", "registry_tag": "ion_beam.faults.word_0_system", "bit_str": "0.1",
+     "name": "Safety_Relay_Tripped", "action": "ABORT"}
+  ],
   "steps": [
-    {"step_id": 1, "type": "ACTION", "target": "ion_beam.beamline.diagnostics.cmd_insert_fc",
-     "value": true, "comment": "Ensure Faraday Cup is inserted"},
-    {"step_id": 2, "type": "ROUTINE_CALL", "routine_name": "mass_scan",
+    {"step_id": 2, "type": "VERIFIED_ACTION", "target": "ion_beam.beamline.diagnostics.cmd_insert_fc",
+     "value": true, "verify_target": "ion_beam.beamline.diagnostics.stat_fc_inserted",
+     "verify_condition": "==", "verify_value": 1, "timeout_sec": 15.0,
+     "comment": "Ensure Faraday Cup is inserted"},
+    {"step_id": 4, "type": "ROUTINE_CALL", "routine_name": "mass_scan",
      "parameters": {"start_a": 20.0, "stop_a": 30.0, "step_a": 0.05, "samples": 5, "nplc": 1.0,
                     "goto_peak": true},
-     "comment": "Mass scan 20-30 A, then set the magnet on the strongest peak"},
-    {"step_id": 3, "type": "WAIT_TIME", "duration_sec": 2.0, "comment": "Wait for Magnet to settle on peak"}
+     "comment": "Mass scan 20-30 A, then set the magnet on the strongest peak"}
   ]
 }
 ```
 
-A fault policy entry, as the builder writes it, names the fault word and the bit (byte.bit) of the fault:
+A stop condition is either a PLC fault, named by its fault word and bit (byte.bit), or a condition on a tag:
 
 ```
 {"type": "BIT_FAULT", "registry_tag": "ion_beam.faults.word_0_system", "bit_str": "0.1",
  "name": "Safety_Relay_Tripped", "action": "ABORT"}
+{"type": "CONDITION", "target": "ion_beam.source.vacuum_gauge_1.rb_pressure", "condition": ">",
+ "value": 5e-6, "message": "The source pressure rose"}
 ```
 
-Only `BIT_FAULT` entries are checked; anything else in the list is ignored.
+The conditions in a file are `==`, `!=`, `>`, `<`, `>=`, `<=` and `within` (with a `tolerance`). An entry without a `type` is read by its keys (`registry_tag` and `bit_str`: a fault; `target`: a condition). An entry the sequencer can't evaluate is an error: the recipe is refused, never run without it.
 
 Recipes saved before October 2026 went to `src/config/recipes/`. When the panel starts, it copies any recipe from there into `config/recipes/`, never overwriting: a recipe whose file name is taken by a different file is copied as `name (from src-config).json`. Check the copies, then delete the old folder.
 
@@ -241,5 +321,6 @@ Recipes saved before October 2026 went to `src/config/recipes/`. When the panel 
 - [System Health](system-health.md): **RESET FAULTS** and **INITIATE SHUTDOWN**
 - [Alarms](alarms.md)
 - [Bringing up a beam](../procedures/beam-start-up.md)
+- [Shutting down](../procedures/beam-shut-down.md)
 - [How the controls behave](../getting-started/controls-and-colours.md)
 - [Services and messaging](../how-it-works/services.md)

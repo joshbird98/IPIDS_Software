@@ -1,5 +1,7 @@
 """HMI panels as clients of the sequencer: the Recipe panel and the Automation bar (offscreen,
 with a fake command thread)."""
+import json
+
 import pytest
 
 from src.gui.control.sequencer_link import slot_values
@@ -122,6 +124,73 @@ def test_offline_sequencer(panel):
     w, _ = panel
     w.update_telemetry({})
     assert not w.btn_start.isEnabled() and "SEQUENCER OFFLINE" in w.lbl_status.text()
+
+
+def test_back_online_the_status_line_says_what_is_loaded_again(panel):
+    """It used to keep saying SEQUENCER OFFLINE after the sequencer came back."""
+    w, _ = panel
+    w.select_recipe("ramp.json")
+    w.btn_load.click()
+    w.update_telemetry({})
+    assert "SEQUENCER OFFLINE" in w.lbl_status.text()
+    w.update_telemetry({"sequencer.recipe.state": "idle", "sequencer.recipe.run": None})
+    assert w.lbl_status.text() == "READY: Ramp (version 1.0)" and w.btn_start.isEnabled()
+
+
+def test_steps_are_listed_as_sentences_with_their_notes(panel):
+    w, _ = panel
+    w.select_recipe("ramp.json")
+    w.btn_load.click()
+    assert [w.list_steps.item(i).text() for i in range(2)] == ["1. Wait 1 s", "2. Ask the operator: “Check it”"]
+    assert w.list_steps.item(0).toolTip() == "Note: settle"
+
+
+def test_load_checks_the_recipe_and_an_error_keeps_start_off(panel, tmp_path):
+    w, cmds = panel
+    (tmp_path / "bad.json").write_text(json.dumps({"recipe_name": "Bad", "steps": [
+        {"step_id": 1, "type": "ACTION", "target": "ion_beam.source.extraction.sp_requested_voltage", "value": 50.0},
+        {"step_id": 2, "type": "WAIT_TELEMETRY", "target": "ion_beam.source.extraction.rb_voltage", "condition": "==",
+         "value": 15.0}]}))
+    w.select_recipe("bad.json")
+    w.btn_load.click()
+    w.update_telemetry({"sequencer.recipe.state": "idle", "sequencer.recipe.run": None})
+    assert not w.btn_start.isEnabled() and "The checks found errors" in w.btn_start.toolTip()
+    assert "NOT READY: Bad" in w.lbl_status.text()
+    text = w.lbl_check.text()
+    assert "Can't be started" in text and "50 kV is outside the extraction voltage setpoint's range" in text
+    assert "2 warnings (it can still run)" in text            # == on an analogue value, and no time limit
+    w._start_recipe()
+    assert not any(c[1].endswith("cmd_start") for c in cmds.sent)
+
+
+@pytest.mark.parametrize("content, why", [
+    ("{ not json", "is not valid JSON"),
+    ('{"recipe_name": "x", "steps": [{"step_id": 1, "type": "WAIT_TIME", "duration_sec": {"a": 1}}]}',
+     "duration_sec must be a number"),
+    ('{"recipe_name": "x", "steps": [{"step_id": 1, "type": "PARALLEL", "steps": 5}]}', "must be a list"),
+    ("[1, 2]", "a recipe must be a JSON object"),
+])
+def test_a_file_that_cant_be_run_is_reported_not_raised(panel, tmp_path, content, why):
+    """A value of the wrong type used to raise out of LOAD (only OSError and RecipeError were caught)."""
+    w, _ = panel
+    (tmp_path / "broken.json").write_text(content)
+    w.select_recipe("broken.json")
+    w.btn_load.click()
+    w.update_telemetry({"sequencer.recipe.state": "idle", "sequencer.recipe.run": None})
+    assert "NOT LOADED: broken.json" in w.lbl_status.text() and why in w.lbl_check.text()
+    assert not w.btn_start.isEnabled()
+
+
+def test_a_recipe_saved_in_the_builder_is_loaded_again(panel, tmp_path):
+    """The panel used to keep showing the steps it had loaded before the edit."""
+    w, _ = panel
+    w.select_recipe("ramp.json")
+    w.btn_load.click()
+    (tmp_path / "ramp.json").write_text(json.dumps({"recipe_name": "Ramp", "version": "1.1", "steps": [
+        {"step_id": 1, "type": "WAIT_TIME", "duration_sec": 5}]}))
+    w._recipe_saved("ramp.json")
+    assert w.list_steps.count() == 1 and w.list_steps.item(0).text() == "1. Wait 5 s"
+    assert w.lbl_status.text() == "READY: Ramp (version 1.1)"
 
 
 def test_automation_bar_lists_holders_and_takes_control(app):

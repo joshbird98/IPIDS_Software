@@ -1,9 +1,18 @@
 """A recipe run by the sequencer (was the HMI's RecipeWorker thread).
 
-Each tick evaluates the current step once (src/core/recipe_engine.py), after checking the
-recipe's fault policy. Sub-recipes are entered and left in the same tick. Operator prompts wait
-for a cmd_ack carrying the prompt's number, so an old click can't answer a newer prompt; the
-step's conditions are checked when the answer arrives and a refusal says which are not met.
+Before anything runs the whole recipe is checked: it and every sub-recipe it runs are loaded
+(src/core/recipe_engine.py load_tree) and checked against the tag registry
+(src/core/recipe_check.py). A recipe with errors is refused, the first of them in the refusal,
+so a run never stops half way at a step that could never work (a missing sub-recipe, a tag that
+doesn't exist, a value outside its limits ...). The start is logged with the recipe's version
+and the SHA-256 of each file, so the log says exactly what ran.
+
+Each tick checks the stop conditions - the fault policies of the recipe and of every sub-recipe
+running, PLC fault bits (BIT_FAULT) and live conditions (CONDITION) - then evaluates the current
+step once (src/core/recipe_engine.py). Sub-recipes are entered and left in the same tick.
+Operator prompts wait for a cmd_ack carrying the prompt's number, so an old click can't answer
+a newer prompt; the step's conditions are checked when the answer arrives and a refusal says
+which are not met.
 
 Pause freezes the step timers. If the operator takes control of something the recipe drives,
 the recipe pauses; resuming claims it again and starts the current step afresh (its command
@@ -11,15 +20,18 @@ is sent again). Stop leaves every output as the completed steps left it.
 """
 import os
 
+from src.core.conditions import holds, number
 from src.core.leases import TAKEN
-from src.core.recipe_engine import Recipe, RecipeError
+from src.core.recipe_catalog import Catalog
+from src.core.recipe_check import check_recipe, errors, summary, warnings
+from src.core.recipe_engine import MAX_DEPTH, Recipe, RecipeError, load_tree, resolve_sub_recipe
 from src.core.recipe_files import RECIPES_DIR
+from src.core.recipe_text import condition_text
 from src.core.telemetry_cache import fresh_value
 from src.sequencer.jobs import Job, leaf
 from src.sequencer.protocol import COMPLETE, FAILED, FINAL, PAUSED, PROMPT, RECIPE, RUNNING, STOPPED, key
 
-FAULT_STALE_S = 3.0     # the recipe stops if its fault policy can't be checked for this long
-MAX_DEPTH = 8           # sub-recipes within sub-recipes (a recipe that calls itself ends here)
+FAULT_STALE_S = 3.0     # the recipe stops if its stop conditions can't be checked for this long
 
 
 def resolve_recipe(name: str, recipes_dir: str = RECIPES_DIR) -> str:
@@ -39,8 +51,15 @@ class RecipeJob(Job):
     KIND = RECIPE
 
     def __init__(self, ctx, run, path: str, recipes_dir: str = RECIPES_DIR):
+        # Everything that can refuse the start comes first (RecipeError / OSError)
         self.recipes_dir = os.path.realpath(recipes_dir)
-        self.root = Recipe(path)          # RecipeError / OSError: the start is refused
+        self.root = Recipe(path)
+        self.tree = load_tree(self.root, self.recipes_dir)
+        self.catalog = getattr(ctx, "catalog", None) or Catalog.for_registry(ctx.registry)
+        problems = check_recipe(self.root.data, self.catalog, self.recipes_dir, path, self.tree)
+        if errors(problems):
+            raise RecipeError(f"{os.path.basename(path)} can't run: {summary(errors(problems), 3)}")
+        self.warnings = warnings(problems)
         super().__init__(ctx, run, f"recipe '{self.root.name}'")
         self.file = os.path.relpath(os.path.realpath(path), self.recipes_dir)
         self.active_recipe = self.root
@@ -54,7 +73,21 @@ class RecipeJob(Job):
         for step in self.root.steps:
             step.reset()
         self.status = "running"
-        self.event(f"Recipe '{self.root.name}' started ({self.file})")
+        self.event(f"Recipe '{self.root.name}' version {self.root.version} started ({self.file}, "
+                   f"SHA-256 {self.root.sha256[:12]}){self._uses()}"
+                   + (f" with {len(self.warnings)} warning(s) from the checks" if self.warnings else ""))
+        for path_, recipe in self.tree.items():
+            self.log.info("Run %d uses %s version %s, SHA-256 %s", run, os.path.relpath(path_, self.recipes_dir),
+                          recipe.version, recipe.sha256)
+        for problem in self.warnings:
+            self.log.info("Run %d: warning: %s", run, problem.text())
+
+    def _uses(self) -> str:
+        if not self.tree:
+            return ""
+        subs = ", ".join(f"{os.path.relpath(p, self.recipes_dir)} version {r.version} (SHA-256 {r.sha256[:12]})"
+                         for p, r in sorted(self.tree.items()))
+        return f"; sub-recipes: {subs}"
 
     # ------------------------------------------------------------------ helpers
     @property
@@ -75,7 +108,7 @@ class RecipeJob(Job):
         if not self._pop_finished_sub_recipes():
             return
         snapshot = self.ctx.telemetry.snapshot()
-        if self._fault_policy_stops(snapshot):
+        if self._stop_condition_met(snapshot):
             return
         step = self.step
         try:
@@ -119,48 +152,57 @@ class RecipeJob(Job):
         return True
 
     def _enter_sub_recipe(self, step):
-        if len(self.stack) >= MAX_DEPTH:
-            self.finish(FAILED, f"Step {step.step_id} failed: sub-recipes nested more than {MAX_DEPTH} deep "
-                                f"(does a recipe call itself?)")
-            return
-        base = os.path.dirname(self.active_recipe.filepath)
-        path = os.path.realpath(os.path.join(base, step.target_file))
-        if os.path.commonpath([self.recipes_dir, path]) != self.recipes_dir:
-            self.finish(FAILED, f"Step {step.step_id} failed: sub-recipe {step.target_file} is not in the recipes folder")
-            return
+        # Checked before the start (load_tree): what fails here is a bug, said as such
         try:
-            sub = Recipe(path)
-        except (OSError, RecipeError) as e:
+            if len(self.stack) >= MAX_DEPTH:
+                raise RecipeError(f"sub-recipes nested more than {MAX_DEPTH} deep")
+            path = resolve_sub_recipe(self.active_recipe.filepath, step.target_file, self.recipes_dir)
+            loaded = self.tree.get(path)
+            if loaded is None:
+                raise RecipeError("it wasn't loaded and checked before the start")
+            sub = Recipe(path, data=loaded.data)      # fresh steps: a sub-recipe can run more than once
+        except RecipeError as e:
             self.finish(FAILED, f"Step {step.step_id} failed: sub-recipe {step.target_file}: {e}")
             return
+        sub.sha256 = loaded.sha256
         self.stack.append((self.active_recipe, self.idx))
         self.active_recipe, self.idx = sub, 0
         self.status = f"Entering sub-recipe '{sub.name}'"
+        self.event(f"Recipe '{self.root.name}' step {step.step_id}: sub-recipe '{sub.name}' version {sub.version} "
+                   f"({os.path.relpath(path, self.recipes_dir)}) started")
 
-    def _fault_policy_stops(self, snapshot) -> bool:
-        policies = []
-        for recipe in ([self.root] if self.active_recipe is self.root else [self.root, self.active_recipe]):
-            if isinstance(recipe.fault_policy, list):
-                policies.extend(recipe.fault_policy)
+    def _stop_conditions(self):
+        """(recipe, entry) for the stop conditions in force: the recipe's own and those of every
+        sub-recipe running (they used to be ignored below the first level)."""
+        out, seen = [], set()
+        for recipe in [r for r, _ in self.stack] + [self.active_recipe]:
+            if id(recipe) not in seen:
+                seen.add(id(recipe))
+                out.extend((recipe, entry) for entry in recipe.fault_policy)
+        return out
+
+    def _stop_condition_met(self, snapshot) -> bool:
         unknown = []
-        for fault in policies:
-            if fault.get("type") != "BIT_FAULT":
-                continue
-            tag = fault.get("registry_tag")
-            word = fresh_value(snapshot, tag)
-            if word is None:
-                unknown.append(str(tag))
-                continue
-            try:
-                x, y = (int(p) for p in fault.get("bit_str", "0.0").split("."))
-                bit = (3 - x) * 8 + y          # Siemens DWORD byte order
-                active = bool(int(word) & (1 << bit))
-            except (TypeError, ValueError) as e:
-                self.log.error("Bad BIT_FAULT entry %r in the fault policy: %s", fault, e)
-                continue
-            if active:
-                self.finish(FAILED, f"Stopped: fault {fault.get('name')} is active (fault policy).")
-                return True
+        for recipe, entry in self._stop_conditions():
+            whose = "" if recipe is self.root else f" (a stop condition of '{recipe.name}')"
+            if entry["type"] == "BIT_FAULT":
+                tag = entry["registry_tag"]
+                word = number(fresh_value(snapshot, tag))
+                if word is None:
+                    unknown.append(tag)
+                elif int(word) & (1 << entry["bit"]):
+                    self.finish(FAILED, f"Stopped{self._at_step()}: fault {entry['name']} is active{whose}.")
+                    return True
+            else:
+                tag = entry["target"]
+                value = fresh_value(snapshot, tag)
+                if value is None:
+                    unknown.append(tag)
+                elif holds(value, entry["condition"], entry["value"], entry["tolerance"]):
+                    said = condition_text(tag, entry["condition"], entry["value"], entry["tolerance"], self.catalog)
+                    why = f"{entry['message']} ({said})" if entry["message"] else said
+                    self.finish(FAILED, f"Stopped{self._at_step()}: {why}{whose}.")
+                    return True
         if not unknown:
             self._fault_unknown_since = None
             return False
@@ -168,8 +210,8 @@ class RecipeJob(Job):
         if self._fault_unknown_since is None:
             self._fault_unknown_since = now
         elif now - self._fault_unknown_since > FAULT_STALE_S:
-            self.finish(FAILED, f"Stopped: fault status unknown for {FAULT_STALE_S:.0f} s "
-                                f"(no live PLC data for {', '.join(sorted(set(unknown)))}).")
+            self.finish(FAILED, f"Stopped{self._at_step()}: the stop conditions can't be checked - no live value for "
+                                f"{', '.join(sorted(set(unknown)))} for {FAULT_STALE_S:.0f} s.")
             return True
         return False
 
@@ -254,7 +296,8 @@ class RecipeJob(Job):
     def telemetry(self) -> dict:
         d = super().telemetry()
         k = self.KIND
-        d.update({key(k, "file"): self.file, key(k, "name"): self.root.name, key(k, "breadcrumb"): self.breadcrumb(),
+        d.update({key(k, "file"): self.file, key(k, "name"): self.root.name, key(k, "version"): self.root.version,
+                  key(k, "breadcrumb"): self.breadcrumb(),
                   key(k, "steps"): [{"id": s.step_id, "name": s.get_display_name(), "desc": s.get_description(),
                                      "type": s.type, "state": s.state} for s in self.active_recipe.steps],
                   key(k, "step"): self.step.step_id if self.step is not None else None,

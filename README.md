@@ -208,7 +208,11 @@ start-up and on every command. Raising a cap is a code change.
   detection (`arc_detection`: an output collapsed below 10 % of its setpoint on two polls in a row
   latches an arc fault until fault reset; not judged below 0.5 kV).
 - `config/recipes/`: the recipes (in git). The HMI's recipe panel and builder read and save
-  here; a sub-recipe is looked up in the same folder.
+  here; a sub-recipe is looked up in the same folder. The builder's templates (start-up,
+  shutdowns, mass scan, degauss, HV conditioning) are in `config/recipe_templates/`. One set of
+  checks (`src/core/recipe_check.py`: tags, limits, hard caps, sub-recipes, the order of steps)
+  runs in the builder, on LOAD RECIPE and in the sequencer before it starts a recipe, which it
+  refuses if they find an error.
 - Mass calibration: the Mass Scan panel fits `AMU = k (I + I_off)^2 / E` to peaks you mark
   (Ctrl+click, then "Calculate Fit"); "Calculate & set amps" in Beamline Optics uses that fit and
   the live beam energy (target + extraction).

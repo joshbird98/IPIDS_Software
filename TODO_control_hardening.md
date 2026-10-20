@@ -17,7 +17,8 @@ simulator; none of it has been tried on the real hardware yet (see "Lab PC valid
    arrange it and save it under View > Layouts if wanted. Both programs start dark: View > Theme or
    Ctrl+Shift+T for light (remembered in config/appearance.json, per machine).
 6. `pip install -r requirements.txt` - adds the Markdown package the help pages use (Help, F1). Without it
-   the help still opens, plainer (no call-out boxes or table borders).
+   the help still opens, plainer (no call-out boxes or table borders). google-genai and python-dotenv are no
+   longer needed (the recipe builder's AI assistant was removed); testing/test_api.py still uses them.
 
 ## Done
 - Josh's requests of 20 October 2026:
@@ -48,6 +49,36 @@ simulator; none of it has been tried on the real hardware yet (see "Lab PC valid
     installed; marker colours; the isotope list; the turbo stopped by hand; only Josh deletes files on the
     lab PC, OneDrive backup); photos of the box (the key blurred: the repository is public) and the source
     deck; the watchdog closing the gate valve is intended.
+  - Recipe builder rebuilt, the AI assistant removed (Josh: "not very practical"; a review found it sent the
+    whole registry - about 42k tokens - with every click, with wrong facts in its prompt, and nothing checked
+    what it wrote). In its place, one set of checks (src/core/recipe_check.py) used by the builder as you
+    type, by LOAD RECIPE, and by the sequencer before it starts a recipe (a recipe with an error is refused,
+    with the reasons): tags known and settable, values within the registry's ranges and the hard caps, fault
+    resets and a turbo stop refused, sub-recipes there and not calling each other, stop conditions the
+    sequencer can evaluate; warnings for what runs but probably isn't meant (a setpoint before its supply is
+    on, relay outputs without a relay step or a Safety_Relay_Tripped stop, the gate valve opened without a
+    vacuum wait, a degauss with the cup out, a mass scan without the magnet on and the cup in, a wait with no
+    time limit, == on an analogue value ...). Recipes are shown as plain sentences (src/core/recipe_text.py)
+    in the builder, the panel and the sequencer's status. The builder (src/gui/control/dialogs/recipe_builder/)
+    has blocks named for what they do, forms made for each step (a tag typed by what it is called and shown
+    with its unit and range; On/Off for switches; a supply chosen from a list), undo/redo, a stop-conditions
+    tab with the recommended preset, Read as text, six templates from the start-up and shutdown procedures
+    (config/recipe_templates/), and saving that keeps the file it opened, never overwrites another recipe or a
+    change made meanwhile, backs up to config/backups/recipes/, offers the next version and commits to git
+    (src/core/recipe_store.py). It isn't modal any more.
+  - Recipe engine and sequencer, bugs fixed on the way: a sub-recipe with a bad value ended the sequencer; a
+    missing or circular sub-recipe failed only when reached (now refused at the start, with the whole tree
+    loaded and checked first); fault policies were ignored without "type", with a bad bit or below the first
+    sub-recipe (now BIT_FAULT and CONDITION entries, the whole stack, an entry that can't be evaluated
+    refuses the start); the mass_scan routine accepted loop (and never ended), didn't save its CSV, and
+    scanned with the magnet off or the cup out; psu_control was done before its setpoint was answered (a
+    refusal went unseen); pause didn't freeze the routines' timers; hv_conditioning ramped a supply that was
+    off; a step raising outside execute() ended every job (the service now fails that job alone); the start is
+    logged with each file's version and SHA-256. Shipped recipes: test_sequence.json degaussed with the cup
+    out (now in); auto_tune.json switches the magnet on and biases the cup; test_faults_and_prompts.json's
+    condition works. The panel: LOAD checks and keeps START off on errors, reports a broken file instead of
+    raising, lists steps as sentences, loads a recipe saved in the builder again, and no longer keeps
+    SEQUENCER OFFLINE after the sequencer is back.
 - Help (October 2026): Help in the HMI and the data viewer opens the help window on the Markdown pages in
   docs/ (contents, search, back/forward, print or save as PDF, follows the theme); F1 opens the page of the
   panel under the mouse pointer; Help > About SINDIE shows the version (git commit) and the folders in use.
@@ -328,16 +359,6 @@ simulator; none of it has been tried on the real hardware yet (see "Lab PC valid
       shelved and suppressed alarms (:233); the shelve dialog's maximum is fixed at 480 min whatever
       shelve_max_minutes says (:46, :199); a cleared-unacknowledged alarm is drawn steady, although the README
       and alarms/model.py say it flashes (:305).
-    - Recipe builder: a new VERIFIED_ACTION gets "verify_target": "", which overrides the engine's default and
-      makes the step always time out (recipe_builder_dialog.py:318); default parameter gv_cmd_open vs the
-      routine's cmd_gv_open (recipe_builder_defaults.py:21, routines.py:203); hv_conditioning's default
-      max_val 30 is above extraction's 20 kV limit; EDIT and save of master_implant.json writes a new file named
-      from the recipe name.
-    - Recipes: test_faults_and_prompts.json's fault policy has no "type": "BIT_FAULT", so it is ignored
-      (recipe_job.py:147); a middle parent's fault policy is ignored in nested sub-recipes (:142); the
-      mass_scan routine accepts loop but never stops looping (routines.py:96-112); LOAD RECIPE does nothing
-      on a step value that isn't a number (ValueError not caught, recipe_widget.py:171); the status chip keeps
-      SEQUENCER OFFLINE after the sequencer is back, until a recipe is loaded (:253-264).
     - Mass scan: Calculate fit writes the calibration into the last loaded trace file even when the plot shows
       a live scan (widget.py:130, 558-563); loading a trace during a scan mixes the live points into it (:431);
       peaks come back sorted by index, not mass (peaks.py:50).
@@ -390,18 +411,13 @@ simulator; none of it has been tried on the real hardware yet (see "Lab PC valid
       Inspector (viewer_lanes.py:340); Delete removes the "Default" profile (viewer_profiles.py:118 - the
       protecting context menu at :104 is never connected); the follow-live tooltip says zooming stops
       following (only a drag does); config_manager.py's plot_settings.json functions are dead code.
-    - Recipe assistant prompt (ai_assistant.py): tells the model to set the read-only stat_thermionic_auto_emission
-      (the command is ion_beam.source.thermionic.cmd_auto_emission, :97, :131); its "critical operating
-      ranges" (einzel 8-15 kV, thermionic 50-130 mA, caesium 40-90 degC, :102-107) disagree with the typical
-      values (8-16 kV, 100-150 mA, 100-150 degC); filament ramp 0.8 A/s (the PLC ramps at 1 A/s).
     - Small: the SHUTDOWN SEQ chip keeps old text with src_auto_sdown on at step 0 or an unknown step
       (system_health_widget.py:140-153, possible); "finishing: restoring the SMU integration time" never reaches
       the job status (jobs.py:206-215); the alarm reads "<service> is crashed" (rules.py:41); FAULT events carry
       the numeric fault severity in the severity field (event_helper.py:64).
     - Small: tests/conftest.py uses setdefault, so a SINDIE_DATA_DIR or port offset set in the shell is used by
       the tests; the ADAM service hard-codes its address; VG4 is left out of rapid-rise detection
-      (service_vac_gauge_controllers.py:554); the Service Manager's Start button keeps the Stop tooltip; the
-      recipe assistant says "missing API key" when it is the google-genai package that is missing.
+      (service_vac_gauge_controllers.py:554); the Service Manager's Start button keeps the Stop tooltip.
 
 11. Caesium oven cooling air (agreed with Josh, October 2026). As the PLC program reads, it opens the cooling
     air whenever the safety relay is open, however cold the oven is, so after a shutdown it stays on until the

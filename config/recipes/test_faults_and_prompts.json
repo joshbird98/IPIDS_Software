@@ -1,8 +1,9 @@
 {
   "recipe_name": "Safety Fault & Prompt Test",
-  "version": "1.1",
+  "version": "1.2",
   "fault_policy": [
     {
+      "type": "CONDITION",
       "target": "ion_beam.facilities.safety_relay_active",
       "condition": "==",
       "value": 0.0,

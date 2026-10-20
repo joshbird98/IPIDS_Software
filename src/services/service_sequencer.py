@@ -32,6 +32,7 @@ from src.core.network_map import (
     ZMQ_PORT_SEQUENCER_CMD, ZMQ_PORT_SEQUENCER_PUB, ZMQ_PORT_SMU_PUB, ZMQ_PORT_SPELLMAN_PUB,
     ZMQ_PORT_SRC_TURBO_PUB, ZMQ_PORT_STEERER_MAGNET_PUB, ZMQ_PORT_VACUUM_PUB, TOPIC_SEQUENCER_DATA)
 from src.core.os_helper import harden_windows_process
+from src.core.recipe_catalog import Catalog
 from src.core.recipe_files import RECIPES_DIR
 from src.core.telemetry_cache import TelemetryCache
 from src.sequencer import protocol as P
@@ -99,7 +100,8 @@ class SequencerService:
         self.telemetry = TelemetryCache()
         self.subsystems = SubsystemMap(self.telemetry.keys, clock=clock)
         self.ctx = JobContext(self.dispatcher, self.telemetry, self.subsystems, events=self.events, clock=clock,
-                              instance=uuid.uuid4().hex[:4], registry=self.registry)
+                              instance=uuid.uuid4().hex[:4], registry=self.registry,
+                              catalog=Catalog.for_registry(self.registry))
         self.jobs = {slot: None for slot in P.SLOTS}
         self._runs = itertools.count(int(time.time()))   # run numbers stay unique across restarts
         self.started_at = clock()
@@ -126,9 +128,27 @@ class SequencerService:
         self._process_commands()
         for job in self.jobs.values():
             if job is not None:
-                job.service_tick()
+                try:
+                    job.service_tick()
+                except Exception as e:   # a bug in one job ends that job, never the sequencer
+                    log.exception("%s: tick failed", job.purpose)
+                    self._fail_job(job, f"internal error in the sequencer: {type(e).__name__}: {e}")
         self._publish()
         self._heartbeat()
+
+    @staticmethod
+    def _fail_job(job, message: str):
+        """End a job that raised, and let go of its leases."""
+        try:
+            if job.state not in P.FINAL:
+                job.finish(P.FAILED, message)
+        except Exception:   # recording it failed too: end it all the same
+            log.exception("%s: could not record the failure", job.purpose)
+            job.state, job.status, job.message = P.FAILED, message, message
+        try:
+            job.release()
+        except Exception:
+            log.exception("%s: releasing its leases failed", job.purpose)
 
     def _receive_telemetry(self, wait_s):
         if not self.sub.poll(int(wait_s * 1000)):
@@ -187,7 +207,7 @@ class SequencerService:
             return
         try:
             job = self._make_job(slot, cmd.value, next(self._runs))
-        except (ValueError, OSError) as e:      # RecipeError is a ValueError
+        except (ValueError, OSError, TypeError) as e:      # RecipeError is a ValueError
             cmd.reject(str(e))
             return
         self.jobs[slot] = job

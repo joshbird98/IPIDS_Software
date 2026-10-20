@@ -154,7 +154,7 @@ While a sequence runs, the source supplies are greyed out with `automated source
 2. **The cause is still there.** A fault whose condition still holds latches again (after its delay). Clear the cause first.
 3. **You acknowledged the alarm.** Acknowledging an alarm doesn't reset the fault. Only **RESET FAULTS** does.
 4. **RESET FAULTS is greyed out**, with `Disabled: GUI to PLC communications are offline.`: see [PLC COMMS shows OFFLINE](#plc-comms-shows-offline).
-5. **From a recipe.** Recipes can't reset faults (`automated fault resets are not allowed in recipes`).
+5. **From a recipe.** Recipes can't reset faults: a recipe that tries is refused before it starts (`recipes may not reset faults ...`).
 
 **RESET FAULTS** also clears the Spellman service's arc latches, and sends a fault clear to the Spellman supplies. See [Alarms and faults](procedures/alarms-and-faults.md).
 
@@ -248,7 +248,7 @@ A command that timed out may still have been carried out: check the readback bef
 2. The usual causes:
     - a step's command was refused: `Step <n> failed: <tag> = <value>: rejected - <reason>`, where the reason is the service's;
     - a wait timed out, or its value had no live data for 10 s;
-    - a PLC fault in the recipe's fault policy (`Stopped: fault <name> is active (fault policy).`), or no live fault data for 3 s;
+    - one of the recipe's stop conditions held (`Stopped at step <n>: fault <name> is active.`, or a condition and its message), or a reading they need had no live value for 3 s;
     - another sequence holds a subsystem the recipe needs;
     - the sequencer was stopped or restarted (`Stopped: the sequencer is shutting down ...`).
 3. A recipe that only paused (`Paused: the operator took control of the ...`) carries on with **RESUME**.

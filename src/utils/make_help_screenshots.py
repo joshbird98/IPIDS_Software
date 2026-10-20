@@ -413,13 +413,18 @@ class Shooter:
     def shoot_dialogs(self):
         hmi, v = self.hmi, self.viewer
         try:
-            from src.gui.control.dialogs.recipe_builder_dialog import RecipeBuilderDialog
+            from src.core import paths
+            from src.gui.control.dialogs.recipe_builder import RecipeBuilderDialog
             w = hmi.recipe_widget
-            dlg = RecipeBuilderDialog(w, w.config_dir, load_filepath=os.path.join(w.config_dir, "test_sequence.json"))
-            dlg.resize(1150, 720)
+            dlg = RecipeBuilderDialog(w, w.config_dir)
+            dlg.new_from_template(os.path.join(paths.CONFIG_DIR, "recipe_templates", "mass_scan.json"))
+            dlg.resize(1320, 820)
             dlg.show()
             self.spin(1.0)
+            dlg.outline.select_path((0,), quiet=False)
+            self.spin(0.5)
             self.save(dlg.grab(), "dialog-recipe-builder")
+            dlg._closing_ok = True              # (a template not saved: close without asking)
             dlg.close()
         except Exception as e:
             print("  (recipe builder not taken:", e, ")")

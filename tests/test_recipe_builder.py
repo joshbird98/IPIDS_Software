@@ -1,22 +1,18 @@
-"""Recipe Builder (src/gui/control/dialogs/recipe_builder_dialog.py and its parts): every step
-type gets a properties form, steps stay numbered 1..n through deletes and drags, USER_PROMPT verify
-conditions can be added and removed, what it saves is what the sequencer loads, and what the
-sequencer would refuse is not saved."""
+"""The recipe builder (src/gui/control/dialogs/recipe_builder/) and recipe saving
+(src/core/recipe_store.py): blocks, forms made for each kind of step, numbering, moving and undo,
+the checks, stop conditions, templates, and saving that never writes over another file or over a
+change made meanwhile."""
 import json
+import os
 
 import pytest
 
-from src.core.recipe_engine import Recipe, RecipeError
+from src.core.recipe_engine import Recipe, create_step
+from src.core.recipe_store import read_recipe, recipe_filename, save_recipe
 
-STEP_TYPES = ["ACTION", "WAIT_TIME", "WAIT_TELEMETRY", "USER_PROMPT", "SUB_RECIPE", "ROUTINE_CALL",
-              "VERIFIED_ACTION", "PARALLEL"]
-
-
-class OfflineAssistant:
-    available = False
-
-    def __init__(self, config_dir):
-        pass
+EXT = "ion_beam.source.extraction"
+MAG_SP = "ion_beam.beamline.magnet.sp_requested_current"
+CUP = "ion_beam.beamline.diagnostics.cmd_insert_fc"
 
 
 @pytest.fixture
@@ -26,207 +22,358 @@ def app():
 
 
 @pytest.fixture
-def builder(app, tmp_path, monkeypatch):
-    from src.gui.control.dialogs import recipe_builder_dialog as rbd
-    monkeypatch.setattr(rbd, "RecipeAIAssistant", OfflineAssistant)       # no API key, no network
-    boxes = []
-    for kind in ("information", "warning", "critical"):
-        monkeypatch.setattr(rbd.QMessageBox, kind, staticmethod(lambda *a, k=kind: boxes.append((k, a[2]))))
-    (tmp_path / "sub_startup.json").write_text("{}")
-    dlg = rbd.RecipeBuilderDialog(config_dir=str(tmp_path))
-    dlg.boxes = boxes
-    yield dlg
-    dlg.deleteLater()
+def folder(tmp_path):
+    recipes = tmp_path / "recipes"
+    recipes.mkdir()
+    (recipes / "sub_startup.json").write_text(json.dumps({"recipe_name": "Standard Startup", "steps": [
+        {"step_id": 1, "type": "WAIT_TIME", "duration_sec": 1}]}))
+    return recipes
+
+
+@pytest.fixture
+def make(app, folder, monkeypatch):
+    """make(load=None) -> a builder on the test folder; its messages are recorded, not shown."""
+    from src.gui.control.dialogs.recipe_builder import dialog as D
+
+    def tell(self, title, text, kind="information"):
+        self.__dict__.setdefault("messages", []).append((kind, title, text))
+
+    def ask_unsaved(self):
+        answers = self.__dict__.setdefault("answers", [])
+        return answers.pop(0) if answers else "cancel"
+
+    # (patched on the class: a message while the window is being made would otherwise wait for a click)
+    monkeypatch.setattr(D.RecipeBuilderDialog, "_tell", tell)
+    monkeypatch.setattr(D.RecipeBuilderDialog, "_ask_unsaved", ask_unsaved)
+    monkeypatch.setattr(D.RecipeBuilderDialog, "_ask_save_details",
+                        lambda self, where, version, suggested, n: (suggested, "test"))
+    made = []
+
+    def build(load=None):
+        dlg = D.RecipeBuilderDialog(None, str(folder), load_filepath=str(folder / load) if load else None)
+        dlg.__dict__.setdefault("messages", [])
+        dlg.__dict__.setdefault("answers", [])
+        made.append(dlg)
+        return dlg
+
+    yield build
+    for dlg in made:
+        try:
+            dlg._closing_ok = True
+            dlg.close()
+        except RuntimeError:
+            pass
     app.processEvents()
 
 
-def add(dlg, step_type):
-    from PyQt6.QtWidgets import QListWidgetItem
-    from src.gui.control.dialogs.recipe_builder_defaults import STEP_ICONS
-    dlg._add_step_from_toolbox(QListWidgetItem(f"{STEP_ICONS[step_type]} {step_type}"))
+def find(dlg, cls, name):
+    from PyQt6.QtCore import Qt
+    return dlg.editor.widget().findChild(cls, name, Qt.FindChildOption.FindChildrenRecursively)
 
 
-def select(dlg, row):
-    dlg.list_sequence.setCurrentRow(row)
-    dlg._on_step_selected()
+def add(dlg, key, select=None):
+    if select is not None:
+        dlg.outline.select_path(select, quiet=False)
+    dlg.add_block(key)
+    return dlg._get(dlg._selected)
 
 
-def form_labels(dlg):
-    from PyQt6.QtWidgets import QFormLayout, QLabel
-    form = dlg.prop_form
-    labels = []
-    for r in range(form.rowCount()):
-        item = form.itemAt(r, QFormLayout.ItemRole.LabelRole)
-        if item is not None and isinstance(item.widget(), QLabel):
-            labels.append(item.widget().text())
-    return labels
+# ============================================================================ blocks and forms
+def test_every_block_adds_a_step_with_its_own_form(make):
+    from PyQt6.QtWidgets import QLabel
+    from src.gui.control.dialogs.recipe_builder.blocks import BLOCKS
+    dlg = make()
+    for block in BLOCKS:
+        dlg.outline.select_path(None, quiet=False)
+        dlg._selected = None
+        step = add(dlg, block.key)
+        assert step["type"] == block.step["type"]
+        heading = dlg.editor.widget().findChildren(QLabel)[0].text()
+        assert heading.endswith(block.title), heading
+    assert [s["step_id"] for s in dlg.data["steps"]] == list(range(1, len(BLOCKS) + 1))
 
 
-def buttons(dlg, text):
-    from PyQt6.QtWidgets import QPushButton
-    return [b for b in dlg.prop_container.findChildren(QPushButton) if text in b.text()]
+def test_typing_part_of_a_name_completes_the_tag_and_the_value_follows_its_type(make):
+    from PyQt6.QtWidgets import QComboBox, QLineEdit
+    dlg = make()
+    step = add(dlg, "set")
+    tag = find(dlg, QLineEdit, "TagEdit")
+    completer = tag.completer()
+    completer.setCompletionPrefix("extraction volt")
+    found = [completer.completionModel().index(i, 0).data() for i in range(completer.completionCount())]
+    assert any("extraction voltage setpoint" in f for f in found)
+    tag.setText(f"{EXT}.sp_requested_voltage")
+    from src.gui.control.dialogs.recipe_builder.fields import NumberField
+    number = find(dlg, NumberField, "ValueNumber")
+    assert number.isVisibleTo(dlg) and number.unit.text() == "kV"
+    number.edit.setText("15")
+    assert step == {"step_id": 1, "type": "ACTION", "target": f"{EXT}.sp_requested_voltage", "value": 15.0}
+    number.edit.setText("15 kV")                        # kept as typed: the check says it isn't a number
+    assert step["value"] == "15 kV"
+    dlg._check()
+    assert any("needs a number, not '15 kV'" in p.message for p in dlg.problems)
+    tag.setText(CUP)                                    # a switch: On/Off becomes In/Out
+    choice = dlg.editor.widget().findChild(QComboBox, "ValueChoice")
+    items = [choice.itemText(i) for i in range(choice.count())]
+    assert items == ["In (insert)", "Out (retract)", "'15 kV' (not on or off)"]     # the odd value stays visible
+    choice.setCurrentIndex(choice.findData(1))
+    assert step["value"] is True and describe(dlg) == "Insert the Faraday cup"
 
 
-def test_file_names_stay_in_the_recipes_folder():
-    from src.gui.control.dialogs.recipe_builder_dialog import recipe_filename
-    assert recipe_filename("Ramp 1/2") == "ramp_1_2.json"
-    assert recipe_filename("../../etc/passwd") == "etc_passwd.json"
+def describe(dlg):
+    from src.core.recipe_text import describe_step
+    return describe_step(dlg._get(dlg._selected), dlg.catalog)
+
+
+def test_a_prompt_message_stays_text(make):
+    """The old builder turned anything typed into a number if it could ('1' -> 1, 'true' -> True)."""
+    from PyQt6.QtWidgets import QPlainTextEdit
+    dlg = make()
+    step = add(dlg, "ask")
+    find(dlg, QPlainTextEdit, "PromptText").setPlainText("1")
+    assert step["prompt_text"] == "1"
+
+
+def test_set_and_check_defaults_to_checking_the_value_it_sets(make):
+    """A new step used to have an empty verify tag, so it always timed out."""
+    from src.gui.control.dialogs.recipe_builder.fields import TagField
+    dlg = make()
+    step = add(dlg, "set_check")
+    find(dlg, TagField, "SetTag").edit.setText(MAG_SP)
+    step["value"] = 5.0
+    engine = create_step(step)
+    assert engine.verify_target == MAG_SP and engine.verify_value == 5.0
+    dlg._check()
+    assert any("checks the command itself" in p.message for p in dlg.problems)
+
+
+def test_choosing_a_supply_fills_in_its_tags_units_and_range(make):
+    from PyQt6.QtWidgets import QComboBox
+    dlg = make()
+    step = add(dlg, "supply")
+    supply = dlg.editor.widget().findChild(QComboBox, "Supply")
+    supply.setCurrentIndex(supply.findText("Extraction"))
+    p = step["parameters"]
+    assert (p["cmd_enable"], p["stat_enabled"], p["sp_tag"], p["rb_tag"]) == (
+        f"{EXT}.cmd_enable", f"{EXT}.stat_enabled", f"{EXT}.sp_requested_voltage", f"{EXT}.rb_voltage")
+    from src.gui.control.dialogs.recipe_builder.fields import NumberField
+    target = find(dlg, NumberField, "param_target_val")
+    assert target.unit.text() == "kV"
+    target.edit.setText("25")
+    dlg._check()
+    assert any("the value to set: 25 kV is outside the extraction voltage setpoint's range" in p.message
+               for p in dlg.problems)
+    supply.setCurrentIndex(supply.findText("Thermionic (ioniser)"))
+    assert step["parameters"]["wait_for_readback"] is False      # its current follows the filament
+
+
+def test_an_unknown_routine_or_step_type_is_shown_as_such(make, folder):
+    """An unknown routine used to be shown (and saved) as a mass scan."""
+    from PyQt6.QtWidgets import QLabel
+    (folder / "odd.json").write_text(json.dumps({"recipe_name": "Odd", "steps": [
+        {"step_id": 1, "type": "ROUTINE_CALL", "routine_name": "teleport", "parameters": {"x": 1}},
+        {"step_id": 2, "type": "BEAM_ME_UP"}]}))
+    dlg = make("odd.json")
+    texts = " ".join(l.text() for l in dlg.editor.widget().findChildren(QLabel))
+    assert "no routine 'teleport'" in texts
+    assert dlg._get((0,))["routine_name"] == "teleport"
+    assert {p.message for p in dlg.problems} >= {"unknown routine 'teleport' (one of hv_conditioning, mass_scan, "
+                                                 "psu_control, safety_relay_init)"}
+
+
+def test_sub_recipe_choices_are_the_other_recipes_by_name(make, folder):
+    from PyQt6.QtWidgets import QComboBox
+    (folder / "main.json").write_text(json.dumps({"recipe_name": "Main", "steps": []}))
+    dlg = make("main.json")
+    add(dlg, "sub")
+    combo = dlg.editor.widget().findChild(QComboBox, "RecipeFile")
+    items = [combo.itemText(i) for i in range(combo.count())]
+    assert "Standard Startup (sub_startup.json)" in items and not any("main.json" in i for i in items)
+
+
+# ============================================================================ the list of steps
+def test_numbering_moving_and_parallel_steps(make):
+    dlg = make()
+    add(dlg, "wait_time")
+    add(dlg, "set")
+    add(dlg, "parallel", select=(0,))                    # after the selected step
+    add(dlg, "wait_for")                                 # the PARALLEL selected: it goes inside
+    add(dlg, "ask")                                      # after the sub-step, still inside
+    add(dlg, "sub")                                      # can't go inside: after the PARALLEL
+    steps = dlg.data["steps"]
+    assert [s["type"] for s in steps] == ["WAIT_TIME", "PARALLEL", "SUB_RECIPE", "ACTION"]
+    assert [s["step_id"] for s in steps[1]["steps"]] == [201, 202]
+    dlg.move_to((2,), (1,), 0)                           # a SUB_RECIPE dragged into the PARALLEL: refused
+    assert len(steps[1]["steps"]) == 2 and "can't go inside" in dlg.lbl_status.text()
+    dlg.move_to((0,), (1,), 2)                           # WAIT_TIME dragged into it
+    steps = dlg.data["steps"]
+    assert [s["type"] for s in steps] == ["PARALLEL", "SUB_RECIPE", "ACTION"]
+    assert [s["step_id"] for s in steps[0]["steps"]] == [101, 102, 103] and dlg._selected == (0, 2)
+    dlg.move_to((0, 0), (), 3)                           # out again, to the end
+    assert dlg.data["steps"][-1]["type"] == "WAIT_TELEMETRY" and dlg.data["steps"][-1]["step_id"] == 4
+    dlg.outline.select_path((1,), quiet=False)
+    dlg.move_step(1)
+    assert [s["type"] for s in dlg.data["steps"]] == ["PARALLEL", "ACTION", "SUB_RECIPE", "WAIT_TELEMETRY"]
+    dlg.duplicate_step()
+    assert [s["step_id"] for s in dlg.data["steps"]] == [1, 2, 3, 4, 5] and dlg._selected == (3,)
+    dlg.delete_step()
+    assert len(dlg.data["steps"]) == 4 and dlg._selected == (3,)
+
+
+def test_undo_and_redo(make):
+    from PyQt6.QtWidgets import QLineEdit
+    dlg = make()
+    add(dlg, "wait_time")
+    add(dlg, "ask")
+    dlg.le_name.setText("Ramp")
+    dlg._record()
+    dlg.undo()
+    assert dlg.data["recipe_name"] == "New recipe" and dlg.le_name.text() == "New recipe"
+    dlg.undo()
+    assert [s["type"] for s in dlg.data["steps"]] == ["WAIT_TIME"]
+    dlg.redo()
+    dlg.redo()
+    assert [s["type"] for s in dlg.data["steps"]] == ["WAIT_TIME", "USER_PROMPT"] and dlg.data["recipe_name"] == "Ramp"
+    assert isinstance(dlg.le_name, QLineEdit)
+
+
+def test_old_files_with_repeated_numbers_are_renumbered(make, folder):
+    (folder / "old.json").write_text(json.dumps({"recipe_name": "Old", "version": 2, "steps": [
+        {"step_id": 1, "type": "WAIT_TIME", "duration_sec": 1}, {"step_id": 1, "type": "WAIT_TIME", "duration_sec": 2}]}))
+    dlg = make("old.json")
+    assert [s["step_id"] for s in dlg.data["steps"]] == [1, 2] and dlg.is_dirty()
+    assert "renumbered" in dlg.lbl_status.text() and dlg.le_version.text() == "2"
+
+
+def test_a_file_that_cant_be_read_is_reported(make, folder):
+    (folder / "bad.json").write_text("[1, 2]")
+    dlg = make("bad.json")
+    assert dlg.messages[-1][0] == "critical" and dlg.data["steps"] == [] and dlg.filename is None
+
+
+# ============================================================================ stop conditions
+def test_stop_conditions_keep_a_fault_the_config_doesnt_have(make, folder):
+    """The old fault policy window swapped such a fault for another one, unseen."""
+    retired = {"type": "BIT_FAULT", "registry_tag": "ion_beam.faults.word_9", "bit_str": "0.1",
+               "name": "Retired_Fault", "action": "ABORT"}
+    (folder / "p.json").write_text(json.dumps({"recipe_name": "P", "fault_policy": [retired], "steps": []}))
+    dlg = make("p.json")
+    from PyQt6.QtWidgets import QComboBox
+    combo = dlg.policy.host.findChild(QComboBox, "Fault")
+    assert "Retired_Fault" in combo.currentText() and "not a fault in fault_config.json" in combo.currentText()
+    assert dlg.data["fault_policy"][0] == retired
+    dlg.policy._add_recommended()
+    assert [e["name"] for e in dlg.data["fault_policy"]] == ["Retired_Fault", "Safety_Relay_Tripped"]
+    dlg.policy._add_recommended()                            # not twice
+    assert len(dlg.data["fault_policy"]) == 2
+    dlg.policy._add_condition()
+    assert dlg.data["fault_policy"][-1]["type"] == "CONDITION"
+
+
+def test_relay_outputs_without_the_relay_trip_stop_are_flagged(make):
+    dlg = make()
+    step = add(dlg, "set")
+    step.update({"target": f"{EXT}.cmd_enable", "value": True})
+    dlg._check()
+    assert any(p.path == ("policy",) and "Safety_Relay_Tripped" in p.message for p in dlg.problems)
+
+
+# ============================================================================ saving
+def test_edit_then_save_writes_the_file_it_came_from(make, folder):
+    """Saving after a rename used to write <new name>.json, a second copy, and leave the file alone."""
+    (folder / "ramp.json").write_text(json.dumps({"recipe_name": "Ramp", "version": "1.1", "steps": [
+        {"step_id": 1, "type": "WAIT_TIME", "duration_sec": 1}]}, indent=2))
+    dlg = make("ramp.json")
+    saved = []
+    dlg.saved.connect(saved.append)
+    dlg.le_name.setText("Ramp to 15 kV")
+    assert dlg.save()
+    data, _ = read_recipe(str(folder / "ramp.json"))
+    assert data["recipe_name"] == "Ramp to 15 kV" and data["version"] == "1.2"     # changed: one version up
+    assert sorted(os.listdir(folder)) == ["ramp.json", "sub_startup.json"] and saved == ["ramp.json"]
+    assert not dlg.is_dirty() and "ramp.json, version 1.2" in dlg.lbl_status.text()
+    backups = os.listdir(folder.parent / "backups" / "recipes")
+    assert len(backups) == 1 and backups[0].startswith("ramp.")
+    Recipe(str(folder / "ramp.json"))                        # the sequencer loads it
+
+
+def test_a_new_recipe_never_overwrites_another(make, folder):
+    dlg = make()
+    dlg.le_name.setText("Sub startup")
+    add(dlg, "wait_time")
+    assert dlg.save()
+    assert dlg.filename == "sub_startup_2.json"
+    assert read_recipe(str(folder / "sub_startup.json"))[0]["recipe_name"] == "Standard Startup"
+
+
+def test_a_file_changed_since_it_was_opened_is_not_overwritten(make, folder):
+    (folder / "ramp.json").write_text(json.dumps({"recipe_name": "Ramp", "steps": []}))
+    dlg = make("ramp.json")
+    add(dlg, "wait_time")
+    (folder / "ramp.json").write_text(json.dumps({"recipe_name": "Ramp (edited elsewhere)", "steps": []}))
+    assert not dlg.save()
+    assert "has changed since it was opened here" in dlg.messages[-1][2]
+    assert read_recipe(str(folder / "ramp.json"))[0]["recipe_name"] == "Ramp (edited elsewhere)"
+
+
+def test_a_recipe_with_errors_is_not_saved(make, folder):
+    dlg = make()
+    dlg.le_name.setText("Broken")
+    step = add(dlg, "set")
+    step.update({"target": "ion_beam.nope.cmd_x", "value": 1})
+    assert not dlg.save()
+    assert dlg.messages[-1][1] == "Not saved" and "isn't a tag the machine knows" in dlg.messages[-1][2]
+    assert not (folder / "broken.json").exists()
+
+
+def test_save_as_new_keeps_the_original(make, folder):
+    (folder / "ramp.json").write_text(json.dumps({"recipe_name": "Ramp", "steps": []}))
+    dlg = make("ramp.json")
+    add(dlg, "wait_time")
+    assert dlg.save(as_new=True)
+    assert dlg.filename == "ramp_2.json" and read_recipe(str(folder / "ramp.json"))[0]["steps"] == []
+
+
+def test_store_rules_without_the_window(folder):
+    data = {"recipe_name": "Ramp 1/2", "version": "1", "steps": [{"step_id": 1, "type": "WAIT_TIME", "duration_sec": 1}]}
+    r = save_recipe(data, str(folder), commit=False)
+    assert r.saved and r.filename == "ramp_1_2.json" and r.backup is None
+    r = save_recipe(data, str(folder), filename="ramp_1_2.json", commit=False)
+    assert not r.saved and "there is a recipe ramp_1_2.json already" in r.refused
+    r = save_recipe(data, str(folder), filename="../x.json", commit=False)
+    assert not r.saved and "isn't a recipe file name" in r.refused
+    assert recipe_filename("Ramp 1/2") == "ramp_1_2.json" and recipe_filename("../../etc/passwd") == "etc_passwd.json"
     assert recipe_filename("  ") == "recipe.json"
-    assert recipe_filename("Auto-Tune v2") == "auto-tune_v2.json"
 
 
-def test_every_step_type_gets_a_form(builder):
-    for st in STEP_TYPES:
-        add(builder, st)
-    assert [s["step_id"] for s in builder.current_steps] == list(range(1, len(STEP_TYPES) + 1))
-    expected = {"ACTION": "Target Tag:", "WAIT_TIME": "Duration (sec):", "WAIT_TELEMETRY": "Condition:",
-                "USER_PROMPT": "Popup Text:", "SUB_RECIPE": "Target File:", "ROUTINE_CALL": "Routine:",
-                "VERIFIED_ACTION": "Verify Tag:"}
-    for row, st in enumerate(STEP_TYPES):
-        select(builder, row)
-        labels = form_labels(builder)
-        assert "Comment/Label:" in labels, st
-        if st in expected:
-            assert expected[st] in labels, (st, labels)
+# ============================================================================ the window
+def test_closing_with_unsaved_changes_asks_first(make, app):
+    """Escape used to throw the whole recipe away without a word."""
+    dlg = make()
+    dlg.show()
+    add(dlg, "wait_time")
+    dlg.answers = ["cancel"]
+    dlg.reject()                                             # Escape
+    assert dlg.isVisible()
+    dlg.answers = ["discard"]
+    dlg.close()
+    app.processEvents()
+    from PyQt6 import sip
+    assert sip.isdeleted(dlg) or not dlg.isVisible()
 
 
-def test_verify_conditions_can_be_added_and_removed(builder):
-    add(builder, "USER_PROMPT")
-    select(builder, 0)
-    buttons(builder, "Add Verify Condition")[0].click()       # used to crash (missing arguments)
-    buttons(builder, "Add Verify Condition")[0].click()
-    conds = builder.current_steps[0]["verify_conditions"]
-    assert len(conds) == 2 and "Condition 2:" in form_labels(builder)
-    conds[0]["target"] = "a"
-    conds[1]["target"] = "b"
-    buttons(builder, "❌")[0].click()                          # used to crash (_del_verify_cond missing)
-    assert [c["target"] for c in builder.current_steps[0]["verify_conditions"]] == ["b"]
-    assert "Condition 2:" not in form_labels(builder)
+def test_the_window_isnt_modal_and_is_deleted_when_closed(make, app):
+    from PyQt6.QtCore import Qt
+    dlg = make()
+    assert not dlg.isModal() and dlg.testAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
 
 
-def test_parallel_sub_steps(builder):
-    from PyQt6.QtWidgets import QComboBox
-    add(builder, "ACTION")
-    add(builder, "PARALLEL")
-    select(builder, 1)
-    kinds = [c for c in builder.prop_container.findChildren(QComboBox) if c.findText("ROUTINE_CALL") >= 0][0]
-    add_btn = buttons(builder, "Add Sub-Step")[0]
-    for i in range(kinds.count()):
-        kinds.setCurrentIndex(i)
-        add_btn.click()
-    subs = builder.current_steps[1]["steps"]
-    assert [s["type"] for s in subs] == [kinds.itemText(i) for i in range(kinds.count())]
-    assert [s["step_id"] for s in subs] == [201, 202, 203, 204, 205]
-    assert "SUB_RECIPE" not in [kinds.itemText(i) for i in range(kinds.count())]   # not allowed in PARALLEL
-    select(builder, 0)
-    builder._remove_selected_step()                            # the PARALLEL step becomes step 1 ...
-    assert [s["step_id"] for s in builder.current_steps[0]["steps"]] == [101, 102, 103, 104, 105]   # ... and its subs
-
-
-def test_numbering_survives_delete_add_and_drag(builder):
-    for st in ("ACTION", "WAIT_TIME", "WAIT_TELEMETRY"):
-        add(builder, st)
-    first, second, third = builder.current_steps
-    select(builder, 0)
-    builder._remove_selected_step()
-    add(builder, "USER_PROMPT")                                # used to reuse number 3
-    fourth = builder.current_steps[-1]
-    assert [s["step_id"] for s in builder.current_steps] == [1, 2, 3]
-    # drag the last row to the top: the list widget reorders its items, then order_changed fires
-    lw = builder.list_sequence
-    lw.insertItem(0, lw.takeItem(2))
-    builder._sync_list_order()
-    assert [id(s) for s in builder.current_steps] == [id(fourth), id(second), id(third)]   # none lost or doubled
-    assert [s["step_id"] for s in builder.current_steps] == [1, 2, 3]
-    assert lw.item(0).text().startswith("[1] 🙋")
-
-
-def test_saved_recipe_loads_in_the_sequencer(builder, tmp_path):
-    add(builder, "ACTION")
-    add(builder, "WAIT_TIME")
-    add(builder, "PARALLEL")
-    builder.current_steps[0].update({"target": "ion_beam.beamline.magnet.sp_requested_current", "value": 5.0})
-    builder.le_recipe_name.setText("Ramp 1/2")
-    builder._save_recipe()
-    assert builder.boxes[-1][0] == "information"
-    path = tmp_path / "ramp_1_2.json"
-    recipe = Recipe(str(path))
-    assert recipe.name == "Ramp 1/2" and [s.step_id for s in recipe.steps] == [1, 2, 3]
-    assert not list(tmp_path.glob("*.tmp"))
-
-
-def test_what_the_sequencer_refuses_is_not_saved(builder, tmp_path):
-    add(builder, "ACTION")
-    builder.current_steps.append({"step_id": 2, "type": "BOGUS", "comment": "?"})
-    builder.le_recipe_name.setText("Broken")
-    builder._save_recipe()
-    kind, text = builder.boxes[-1]
-    assert kind == "warning" and "BOGUS" in text
-    assert not (tmp_path / "broken.json").exists()
-
-
-def test_old_files_with_repeated_numbers_are_renumbered_on_load(builder, tmp_path):
-    path = tmp_path / "old.json"
-    path.write_text(json.dumps({"recipe_name": "Old", "version": 2, "steps": [
-        {"step_id": 1, "type": "WAIT_TIME", "duration_sec": 1, "comment": "a"},
-        {"step_id": 1, "type": "WAIT_TIME", "duration_sec": 2, "comment": "b"}]}))
-    with pytest.raises(RecipeError, match="used more than once"):
-        Recipe(str(path))                                      # the sequencer refuses it...
-    builder._load_existing_recipe(str(path))                   # ...the builder fixes it
-    assert [s["step_id"] for s in builder.current_steps] == [1, 2]
-    assert builder.le_recipe_version.text() == "2"
-
-
-def test_load_errors_are_reported_not_raised(builder, tmp_path):
-    bad = tmp_path / "bad.json"
-    bad.write_text("[1, 2]")
-    builder._load_existing_recipe(str(bad))
-    assert builder.boxes[-1][0] == "critical" and builder.current_steps == []
-
-
-def test_ai_worker_always_answers():
-    from src.gui.control.dialogs.recipe_builder_dialog import AIWorker
-
-    class Broken:
-        def __init__(self, result=None, exc=None):
-            self.result, self.exc = result, exc
-
-        def generate(self, prompt):
-            if self.exc:
-                raise self.exc
-            return self.result
-
-    for assistant, words in ((Broken(exc=ConnectionError("offline")), "offline"),
-                             (Broken(result=None), "no usable answer"),
-                             (Broken(result=["x"]), "no usable answer")):
-        got = []
-        w = AIWorker(assistant, "make a recipe", {})
-        w.sig_finished.connect(got.append)
-        w.run()                                                # synchronously: same code as the thread
-        assert got and got[0]["status"] == "error" and words in got[0]["message"]
-
-
-def test_ai_recipe_is_renumbered_and_checked(builder):
-    builder._on_ai_finished({"status": "success", "recipe": {"recipe_name": "AI", "version": 1.1, "steps": [
-        {"step_id": 5, "type": "WAIT_TIME", "duration_sec": 1, "comment": "w"},
-        {"step_id": 5, "type": "TELEPORT", "comment": "?"}, "junk"]}})
-    assert [s["step_id"] for s in builder.current_steps] == [1, 2]
-    assert builder.le_recipe_version.text() == "1.1"
-    assert "TELEPORT" in builder.txt_ai_history.toPlainText()
-    builder._on_ai_finished({"status": "success", "recipe": "nonsense"})
-    assert builder.current_steps == []
-
-
-def test_fault_policy_dialog_keeps_unknown_faults_visible(app, tmp_path):
-    from src.gui.control.dialogs.fault_policy_dialog import FaultPolicyDialog
-    policy = [{"type": "BIT_FAULT", "registry_tag": "ion_beam.faults.word_9", "bit_str": "0.1",
-               "name": "Retired_Fault", "action": "ABORT"}]
-    d = FaultPolicyDialog(policy)
-    from PyQt6.QtWidgets import QComboBox
-    combo = d.container.findChildren(QComboBox)[0]
-    assert "Retired_Fault" in combo.currentText() and "ion_beam.faults.word_9 bit 0.1" in combo.currentText()
-    assert policy[0]["name"] == "Retired_Fault"                # not silently swapped for another fault
-    d._add_fault()
-    assert len(policy) == 2 and policy[1]["registry_tag"]       # a new trip starts on a real fault
-    assert FaultPolicyDialog._load_fault_config(str(tmp_path / "missing.json")) == []
-    d.deleteLater()
+def test_every_template_loads_with_no_problems(make):
+    from src.gui.control.dialogs.recipe_builder import templates
+    found = templates()
+    assert len(found) >= 6
+    for path, name, _description in found:
+        dlg = make()
+        assert dlg.new_from_template(path)
+        assert dlg.problems == [], (name, [p.text() for p in dlg.problems])
+        assert dlg.is_dirty() and dlg.filename is None

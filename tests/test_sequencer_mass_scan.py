@@ -116,11 +116,12 @@ def test_strongest_peak_and_export(tmp_path):
     assert rows[0][1] == "Requested_Magnet_A" and len(rows) == 4 and float(rows[1][1]) == 20.0
 
 
-def test_mass_scan_routine_in_a_recipe_scans_and_sets_the_magnet_on_the_peak(tmp_path, monkeypatch):
-    import json
+CUP_IN = "ion_beam.beamline.diagnostics.stat_fc_inserted"
+
+
+def _routine_world(monkeypatch):
     import src.core.recipe_engine as engine
     import src.core.routines as routines
-    from src.sequencer.recipe_job import RecipeJob
 
     class FakeTime:
         def __init__(self, clock):
@@ -130,11 +131,68 @@ def test_mass_scan_routine_in_a_recipe_scans_and_sets_the_magnet_on_the_peak(tmp
     monkeypatch.setattr(engine, "time", FakeTime(world.clock))
     monkeypatch.setattr(routines, "time", FakeTime(world.clock))
     monkeypatch.setattr(routines, "_magnet_limits", lambda: LIMITS)
+    return world
+
+
+def _scan_recipe(world, tmp_path, **params):
+    import json
+    from src.sequencer.recipe_job import RecipeJob
+    settings = {"start_a": 23.0, "stop_a": 27.0, "step_a": 0.25, "samples": 2, "settle_time": 0.0}
+    settings.update(params)
     (tmp_path / "tune.json").write_text(json.dumps({"recipe_name": "tune", "steps": [
-        {"step_id": 1, "type": "ROUTINE_CALL", "routine_name": "mass_scan",
-         "parameters": {"start_a": 23.0, "stop_a": 27.0, "step_a": 0.25, "samples": 2, "settle_time": 0.0}}]}))
-    job = RecipeJob(world.ctx, 1, str(tmp_path / "tune.json"), recipes_dir=str(tmp_path))
+        {"step_id": 1, "type": "ROUTINE_CALL", "routine_name": "mass_scan", "parameters": settings}]}))
+    return RecipeJob(world.ctx, 1, str(tmp_path / "tune.json"), recipes_dir=str(tmp_path))
+
+
+def test_mass_scan_routine_in_a_recipe_scans_and_sets_the_magnet_on_the_peak(tmp_path, monkeypatch):
+    world = _routine_world(monkeypatch)
+    world.set("MAGNET_DATA", f"{MAGNET}.stat_enabled", 1.0)
+    world.set("PLC_DATA", CUP_IN, 1.0)
+    job = _scan_recipe(world, tmp_path)
     world.run_until(job, lambda: job.state in (COMPLETE, FAILED), timeout=120)
     assert job.state == COMPLETE, job.message
     assert world.devices["magnet"].values[SP_TAG] == pytest.approx(25.0)
     assert nplc_commands(world) == [1.0, 1.0]
+
+
+@pytest.mark.parametrize("magnet, cup, why", [
+    (0.0, 1.0, "the analyser magnet is off"),
+    (1.0, 0.0, "the Faraday cup isn't in"),
+    (None, 1.0, "the analyser magnet is off (or its state isn't known)"),
+])
+def test_mass_scan_routine_needs_the_magnet_on_and_the_cup_in(tmp_path, monkeypatch, magnet, cup, why):
+    """It used to scan noise for minutes, then set the magnet on a 'peak' in it."""
+    world = _routine_world(monkeypatch)
+    if magnet is not None:
+        world.set("MAGNET_DATA", f"{MAGNET}.stat_enabled", magnet)
+    world.set("PLC_DATA", CUP_IN, cup)
+    job = _scan_recipe(world, tmp_path)
+    world.run_until(job, lambda: job.state == FAILED, timeout=2)
+    assert why in job.message
+    assert SP_TAG not in world.devices["magnet"].values
+
+
+def test_mass_scan_routine_saves_each_scan_as_csv_when_asked(tmp_path, monkeypatch):
+    world = _routine_world(monkeypatch)
+    world.set("MAGNET_DATA", f"{MAGNET}.stat_enabled", 1.0)
+    world.set("PLC_DATA", CUP_IN, 1.0)
+    job = _scan_recipe(world, tmp_path, start_a=24.0, stop_a=25.0, step_a=0.5, export=True,
+                       export_path=str(tmp_path / "scans" / "Tune"))
+    world.run_until(job, lambda: job.state in (COMPLETE, FAILED), timeout=120)
+    assert job.state == COMPLETE, job.message
+    files = list((tmp_path / "scans").glob("Tune*.csv"))
+    assert len(files) == 1 and len(list(csv.reader(open(files[0])))) == 4      # header and 3 points
+
+
+@pytest.mark.parametrize("params, why", [
+    ({"loop": True}, "loop isn't allowed in a recipe"),
+    ({"stop_a": 23.0}, "start and stop currents are the same"),
+    ({"step_a": 0.0}, "step_a can't be below"),
+    ({"samples": 2.5}, "samples must be a whole number"),
+    ({"colour": "red"}, "unknown setting"),
+])
+def test_mass_scan_routine_settings_are_checked_when_the_recipe_loads(tmp_path, monkeypatch, params, why):
+    from src.core.recipe_engine import RecipeError
+    world = _routine_world(monkeypatch)
+    with pytest.raises(RecipeError, match=why):
+        _scan_recipe(world, tmp_path, **params)

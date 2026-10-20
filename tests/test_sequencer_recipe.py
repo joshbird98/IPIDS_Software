@@ -81,7 +81,7 @@ def test_prompt_needs_its_conditions_and_the_current_number(world, tmp_path):
     world.set("PLC_DATA", "ion_beam.beamline.diagnostics.stat_fc_inserted", 0.0)
     world.step(job)
     ok, reason, _ = job.handle("ack", {"seq": prompt["seq"]})
-    assert not ok and "= 0.0, needs == 1.0" in reason
+    assert not ok and "waiting until the Faraday cup is in" in reason and "stat_fc_inserted = 0.0" in reason
     world.set("PLC_DATA", "ion_beam.beamline.diagnostics.stat_fc_inserted", 1.0)
     world.step(job)
     assert not job.handle("ack", {"seq": prompt["seq"] + 1})[0]        # not the prompt on screen
@@ -151,7 +151,50 @@ def test_fault_policy_unverifiable_stops_the_recipe(world, tmp_path):
     policy = [{"type": "BIT_FAULT", "registry_tag": FAULT_WORD, "bit_str": "0.3", "name": "Cs overtemp"}]
     job = start(world, tmp_path, [{"step_id": 1, "type": "WAIT_TIME", "duration_sec": 30}], fault_policy=policy)
     world.run_until(job, lambda: job.state == FAILED, timeout=5)
-    assert "fault status unknown" in job.message and FAULT_WORD in job.message
+    assert "the stop conditions can't be checked" in job.message and FAULT_WORD in job.message
+
+
+def test_a_condition_stop_and_an_entry_without_a_type_are_checked(world, tmp_path):
+    """A CONDITION entry stops the recipe when it holds. One without a type (as older files have
+    it, and the shipped test_faults_and_prompts.json) used to be skipped silently."""
+    relay = "ion_beam.facilities.safety_relay_active"
+    policy = [{"target": relay, "condition": "==", "value": 0.0, "message": "The relay was lost"}]
+    world.set("PLC_DATA", relay, 1.0)
+    job = start(world, tmp_path, [{"step_id": 1, "type": "WAIT_TIME", "duration_sec": 30}], fault_policy=policy)
+    world.step(job, n=5)
+    assert job.state == RUNNING
+    world.set("PLC_DATA", relay, 0.0)
+    world.step(job)
+    assert job.state == FAILED
+    assert job.message == "Stopped at step 1: The relay was lost (the safety relay is off)."
+
+
+@pytest.mark.parametrize("policy, why", [
+    ([{"type": "BIT_FAULT", "registry_tag": FAULT_WORD, "bit_str": "4.0", "name": "x"}], "bad bit '4.0'"),
+    ([{"type": "BIT_FAULT", "bit_str": "0.1", "name": "x"}], "no fault word"),
+    ([{"name": "x"}], "unknown type None"),
+    ([{"type": "CONDITION", "target": "a.b", "condition": "~", "value": 1}], "unknown condition '~'"),
+    ([{"type": "CONDITION", "target": "a.b", "condition": "within", "value": 1}], "needs a tolerance"),
+    ({"type": "BIT_FAULT"}, "must be a list"),
+])
+def test_a_stop_condition_the_sequencer_cant_evaluate_refuses_the_start(world, tmp_path, policy, why):
+    with pytest.raises(RecipeError, match=why):
+        start(world, tmp_path, [{"step_id": 1, "type": "WAIT_TIME", "duration_sec": 1}], fault_policy=policy)
+
+
+def test_a_sub_recipes_stop_conditions_hold_while_it_runs(world, tmp_path):
+    """They used to be ignored below the first level of sub-recipes."""
+    policy = [{"type": "BIT_FAULT", "registry_tag": FAULT_WORD, "bit_str": "0.3", "name": "Cs overtemp"}]
+    world.set("PLC_DATA", FAULT_WORD, 0)
+    write(tmp_path, "inner.json", [{"step_id": 1, "type": "WAIT_TIME", "duration_sec": 30}], fault_policy=policy)
+    write(tmp_path, "middle.json", [{"step_id": 1, "type": "SUB_RECIPE", "target_file": "inner.json"}])
+    job = start(world, tmp_path, [{"step_id": 1, "type": "SUB_RECIPE", "target_file": "middle.json"}])
+    world.run_until(job, lambda: job.breadcrumb() == "r > middle > inner")
+    world.step(job, n=5)
+    assert job.state == RUNNING
+    world.set("PLC_DATA", FAULT_WORD, 1 << 27)
+    world.step(job)
+    assert job.state == FAILED and "fault Cs overtemp is active (a stop condition of 'inner')" in job.message
 
 
 def test_sub_recipes(world, tmp_path):
@@ -164,13 +207,68 @@ def test_sub_recipes(world, tmp_path):
     assert 30.0 in [v for t, v, _, s in world.devices["magnet"].log if t == SP]
 
 
-def test_sub_recipe_outside_the_folder_and_endless_recursion_fail(world, tmp_path):
-    job = start(world, tmp_path, [{"step_id": 1, "type": "SUB_RECIPE", "target_file": "../evil.json"}])
-    world.run_until(job, lambda: job.state == FAILED)
-    assert "not in the recipes folder" in job.message
-    job = start(world, tmp_path, [{"step_id": 1, "type": "SUB_RECIPE", "target_file": "loop.json"}], name="loop.json")
-    world.run_until(job, lambda: job.state == FAILED)
-    assert "nested more than" in job.message
+def test_a_sub_recipe_runs_afresh_each_time_it_is_called(world, tmp_path):
+    write(tmp_path, "sub.json", [{"step_id": 1, "type": "WAIT_TIME", "duration_sec": 0.1}, action(2, SP, 30.0)])
+    job = start(world, tmp_path, [{"step_id": 1, "type": "SUB_RECIPE", "target_file": "sub.json"}, action(2, SP, 1.0),
+                                  {"step_id": 3, "type": "SUB_RECIPE", "target_file": "sub.json"}])
+    world.run_until(job, lambda: job.state == COMPLETE)
+    assert [v for t, v, _, s in world.devices["magnet"].log if t == SP] == [30.0, 1.0, 30.0]
+
+
+def test_sub_recipe_problems_refuse_the_start_before_anything_runs(world, tmp_path):
+    """A missing or broken sub-recipe, one outside the folder, or recipes calling each other used
+    to fail only when the step was reached, half way through a run - or, for a sub-recipe with a
+    value that isn't a number, end the sequencer itself."""
+    cases = [
+        ("../evil.json", "isn't in the recipes folder"),
+        ("missing.json", "there is no recipe missing.json"),
+        ("broken.json", "broken.json: step 1: duration_sec must be a number, not 'soon'"),
+        ("notjson.json", "notjson.json is not valid JSON"),
+        ("loop.json", r"call each other in a circle \(r.json > loop.json > loop.json\)"),
+        ("back.json", r"call each other in a circle \(r.json > back.json > r.json\)"),
+    ]
+    write(tmp_path, "broken.json", [{"step_id": 1, "type": "WAIT_TIME", "duration_sec": "soon"}])
+    (tmp_path / "notjson.json").write_text("{ nope")
+    write(tmp_path, "loop.json", [{"step_id": 1, "type": "SUB_RECIPE", "target_file": "loop.json"}])
+    write(tmp_path, "back.json", [{"step_id": 1, "type": "SUB_RECIPE", "target_file": "r.json"}])
+    for target, why in cases:
+        with pytest.raises(RecipeError, match=why):
+            start(world, tmp_path, [action(1, SP, 20.0), {"step_id": 2, "type": "SUB_RECIPE", "target_file": target}])
+    assert world.devices["magnet"].log == []            # nothing was sent
+
+
+def test_the_start_is_logged_with_the_version_and_checksums(world, tmp_path):
+    import hashlib
+    sub = write(tmp_path, "sub.json", [action(1, SP, 30.0)], version="2.3")
+    job = start(world, tmp_path, [{"step_id": 1, "type": "SUB_RECIPE", "target_file": "sub.json"}], version="1.4")
+    started = [m for _, _, m in world.events if "started" in m][0]
+    root_sha = hashlib.sha256((tmp_path / "r.json").read_bytes()).hexdigest()
+    sub_sha = hashlib.sha256(sub.read_bytes()).hexdigest()
+    assert started == (f"Recipe 'r' version 1.4 started (r.json, SHA-256 {root_sha[:12]}); sub-recipes: sub.json "
+                       f"version 2.3 (SHA-256 {sub_sha[:12]})")
+    assert job.telemetry()[key("recipe", "version")] == "1.4"
+    world.run_until(job, lambda: job.state == COMPLETE)
+    assert any("sub-recipe 'sub' version 2.3 (sub.json) started" in m for _, _, m in world.events)
+
+
+def test_with_the_registry_a_recipe_that_could_never_run_is_refused(tmp_path, monkeypatch):
+    """The sequencer checks the recipe against the tag registry before it starts it."""
+    import src.core.recipe_engine as engine
+    from src.core import paths
+    from src.core.recipe_catalog import read_json
+    world = World(registry=read_json(paths.REGISTRY_PATH))
+    monkeypatch.setattr(engine, "time", _FakeTime(world.clock))
+    for steps, why in [
+        ([action(1, "ion_beam.beamline.magnet.sp_nonsense", 1.0)], "isn't a tag the machine knows"),
+        ([action(1, SP, 500.0)], "Hard cap: the analyser magnet current setpoint 500 A is above the 95 A cap"),
+        ([action(1, "ion_beam.system.cmd_fault_reset", True)], "recipes may not reset faults"),
+        ([action(1, "ion_beam.source.turbo_pump.cmd_enable", False)], "never stopped from the software"),
+        ([action(1, "ion_beam.source.extraction.rb_voltage", 3.0)], "can't be set by a recipe"),
+    ]:
+        with pytest.raises(RecipeError, match=why):
+            start(world, tmp_path, steps)
+    job = start(world, tmp_path, [action(1, SP, 20.0)])           # a good one starts
+    world.run_until(job, lambda: job.state == COMPLETE)
 
 
 def test_prompt_inside_parallel_reaches_the_operator(world, tmp_path):
