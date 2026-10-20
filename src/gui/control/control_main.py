@@ -1,12 +1,13 @@
 import logging
 import os
 import time
-from PyQt6.QtWidgets import QApplication, QMainWindow, QDockWidget, QMessageBox, QInputDialog, QLineEdit
-from PyQt6.QtCore import Qt, QTimer
-from PyQt6.QtGui import QAction
+from PyQt6.QtWidgets import (QApplication, QMainWindow, QDockWidget, QMessageBox, QInputDialog, QLineEdit,
+                             QScrollArea, QFrame, QTabWidget)
+from PyQt6.QtCore import Qt, QTimer, QPoint, QByteArray
+from PyQt6.QtGui import QAction, QGuiApplication
 
-from qfluentwidgets import FluentIcon as FIF, Theme, InfoBar, InfoBarPosition
-from src.core.theme import is_dark_mode
+from qfluentwidgets import InfoBar, InfoBarPosition
+from src.gui import theme
 from src.gui.settings import gui_settings
 
 from src.core.network_map import (
@@ -57,8 +58,11 @@ class ControlMainWindow(QMainWindow):
         super().__init__()
         self.setWindowTitle("SINDIE Operator HMI" + ("  [SIMULATION - fake devices]" if simulation_enabled() else ""))
         self.setObjectName("ControlMainWindow")
-        self.resize(1600, 900)
-        self.setDockOptions(QMainWindow.DockOption.AllowNestedDocks | QMainWindow.DockOption.AllowTabbedDocks)
+        # Panels can be tabbed together, nested side by side, and dragged as a whole tab group
+        # (drag a tab group's title bar; drag one tab to take that panel out of the group)
+        self.setDockOptions(QMainWindow.DockOption.AllowNestedDocks | QMainWindow.DockOption.AllowTabbedDocks
+                            | QMainWindow.DockOption.AnimatedDocks | QMainWindow.DockOption.GroupedDragging)
+        self.setTabPosition(Qt.DockWidgetArea.AllDockWidgetAreas, QTabWidget.TabPosition.North)
 
         self.settings = gui_settings("SurreyIonBeam", "SINDIE_HMI")
         # The mouse wheel must not change setpoint boxes (they send on focus-out): wheel_guard.py
@@ -101,11 +105,7 @@ class ControlMainWindow(QMainWindow):
 
         self._init_docks()
         self._setup_menus()
-
-        if self.settings.value("geometry"):
-            self.restoreGeometry(self.settings.value("geometry"))
-        if self.settings.value("windowState"):
-            self.restoreState(self.settings.value("windowState"))
+        self._restore_layout()
 
         self.watchdog_timer = QTimer(self)
         self.watchdog_timer.timeout.connect(self._ui_update_loop)
@@ -121,7 +121,8 @@ class ControlMainWindow(QMainWindow):
         self._focus_choice = None
         QApplication.instance().focusChanged.connect(self._keep_focus_here)
         for dock in self.findChildren(QDockWidget):
-            dock.visibilityChanged.connect(lambda visible, d=dock: visible or self._panel_gone(d))
+            dock.visibilityChanged.connect(lambda visible, d=dock: self._panel_shown(d) if visible
+                                           else self._panel_gone(d))
         # Setpoint entries that were not sent, and why (setpoint_box.py)
         for box in self.findChildren(SetpointBox):
             box.notice.connect(self._show_notice)
@@ -162,6 +163,18 @@ class ControlMainWindow(QMainWindow):
         if focused is not None and dock.isAncestorOf(focused):
             self._park_focus()
 
+    def _panel_shown(self, dock):
+        """A panel came into view (opened, or its tab chosen): bring it up to date at once - hidden
+        panels aren't refreshed (see _ui_update_loop)."""
+        widget = self._panel_widgets.get(dock)
+        if not self.master_telemetry_cache:
+            return              # no telemetry yet: nothing to bring it up to (the next refresh does)
+        if widget is not None and widget not in self._always_refresh:
+            try:
+                widget.update_telemetry(self.master_telemetry_cache)
+            except Exception:
+                log.exception("%s.update_telemetry failed", type(widget).__name__)
+
     def _show_notice(self, message: str):
         log.info("Setpoint not sent: %s", message)
         try:
@@ -173,32 +186,22 @@ class ControlMainWindow(QMainWindow):
     def _setup_menus(self):
         menubar = self.menuBar()
 
-        # Explicitly cast the icon theme based on the config file
-        icon_theme = Theme.DARK if is_dark_mode else Theme.LIGHT
+        # 1. VIEW MENU: panels, layouts, theme
+        self.view_menu = view_menu = menubar.addMenu("View")
+        panels = view_menu.addMenu("Panels")
+        for dock in sorted(self._docks, key=lambda d: d.windowTitle().replace("&&", "&")):
+            panels.addAction(dock.toggleViewAction())
 
-        # 1. VIEW MENU
-        view_menu = menubar.addMenu("View")
-        view_menu.setIcon(FIF.LAYOUT.icon(icon_theme))
-
-        view_menu.addAction(self.vac_dock.toggleViewAction())
-        view_menu.addAction(self.src_dock.toggleViewAction())
-        view_menu.addAction(self.optics_dock.toggleViewAction())
-        view_menu.addAction(self.smu_dock.toggleViewAction())
-        view_menu.addAction(self.optimiser_dock.toggleViewAction())
-        view_menu.addAction(self.log_dock.toggleViewAction())
-        view_menu.addAction(self.recipe_dock.toggleViewAction())
-        view_menu.addAction(self.health_dock.toggleViewAction())
-        view_menu.addAction(self.service_dock.toggleViewAction())
-        view_menu.addAction(self.current_mon_dock.toggleViewAction())
-        view_menu.addAction(self.mass_scan_dock.toggleViewAction())
-        view_menu.addAction(self.cmd_log_dock.toggleViewAction())
-        view_menu.addAction(self.alarm_dock.toggleViewAction())
-
-        view_menu.addSeparator()
-
-        reset_action = QAction(FIF.SYNC.icon(icon_theme), "Reset Default Layout", self)
+        self.layouts_menu = view_menu.addMenu("Layouts")
+        self._rebuild_layouts_menu()
+        reset_action = QAction("Reset layout", self)
+        reset_action.setToolTip("Put every panel back where it starts, sized for this screen")
         reset_action.triggered.connect(self._reset_layout)
         view_menu.addAction(reset_action)
+        self._reset_action = reset_action
+
+        view_menu.addSeparator()
+        theme.add_theme_menu(view_menu, self)
 
         # Thesis/report figures of the GUI itself: vector PDF/SVG + high-DPI PNG (also F12)
         from src.gui.figure_capture import add_capture_action, install_figure_capture
@@ -207,25 +210,130 @@ class ControlMainWindow(QMainWindow):
         install_figure_capture(self)
 
         # 2. CONFIG EDITOR
-        settings_action = QAction(FIF.SETTING.icon(icon_theme), "Config", self)
-        settings_action.triggered.connect(self._show_config_editor)
-        menubar.addAction(settings_action)
+        self._settings_action = QAction("Config", self)
+        self._settings_action.triggered.connect(self._show_config_editor)
+        menubar.addAction(self._settings_action)
 
         # 3. HELP DOCUMENTATION
-        help_action = QAction(FIF.HELP.icon(icon_theme), "Help", self)
-        help_action.triggered.connect(self._open_help_docs)
-        menubar.addAction(help_action)
+        self._help_action = QAction("Help", self)
+        self._help_action.triggered.connect(self._open_help_docs)
+        menubar.addAction(self._help_action)
+
+
+    # --- Layout: the panels' arrangement and the window's place on the screen ------------------
+    # Saved arrangements from before this version (every panel open, the window too big for a
+    # laptop screen) are not restored: the default below is used once instead.
+    LAYOUT_VERSION = 2
+
+    def _arrange_default(self):
+        """Four panels in view - Vacuum over System Health on the left; the source tab group over
+        the Alarms tab group on the right - and every other panel a tab behind them."""
+        for dock in self._docks:
+            dock.setFloating(False)
+            self.removeDockWidget(dock)
+        L, R = Qt.DockWidgetArea.LeftDockWidgetArea, Qt.DockWidgetArea.RightDockWidgetArea
+        self.addDockWidget(L, self.vac_dock)
+        self.addDockWidget(L, self.health_dock)
+        self.splitDockWidget(self.vac_dock, self.health_dock, Qt.Orientation.Vertical)
+        self.addDockWidget(R, self.src_dock)
+        self.addDockWidget(R, self.alarm_dock)
+        self.splitDockWidget(self.src_dock, self.alarm_dock, Qt.Orientation.Vertical)
+        previous = self.src_dock
+        for dock in (self.optics_dock, self.smu_dock, self.mass_scan_dock, self.optimiser_dock,
+                     self.current_mon_dock):
+            self.tabifyDockWidget(previous, dock)
+            previous = dock
+        previous = self.alarm_dock
+        for dock in (self.recipe_dock, self.log_dock, self.cmd_log_dock, self.service_dock):
+            self.tabifyDockWidget(previous, dock)
+            previous = dock
+        for dock in self._docks:
+            dock.show()
+        self.src_dock.raise_()
+        self.alarm_dock.raise_()
+        QTimer.singleShot(0, self._size_default_docks)
+
+    def _size_default_docks(self):
+        w, h = max(self.width(), 800), max(self.height(), 500)
+        self.resizeDocks([self.vac_dock, self.src_dock], [int(w * 0.4), int(w * 0.6)], Qt.Orientation.Horizontal)
+        self.resizeDocks([self.vac_dock, self.health_dock], [int(h * 0.52), int(h * 0.48)], Qt.Orientation.Vertical)
+        self.resizeDocks([self.src_dock, self.alarm_dock], [int(h * 0.62), int(h * 0.38)], Qt.Orientation.Vertical)
+
+    def _restore_layout(self):
+        geometry = self.settings.value("geometry")
+        if isinstance(geometry, QByteArray) and not geometry.isEmpty():
+            self.restoreGeometry(geometry)
+        else:
+            self._fit_to_screen(force=True)
+        state = self.settings.value("windowState")
+        if not (isinstance(state, QByteArray) and not state.isEmpty()
+                and self.restoreState(state, self.LAYOUT_VERSION)):
+            self._arrange_default()
+        self._fit_to_screen()
+
+    def _fit_to_screen(self, force: bool = False):
+        """Keep the window on a screen that exists and no bigger than it (a layout saved on a big
+        monitor, or a monitor since unplugged). force: size it for this screen afresh."""
+        if self.isMaximized() and not force:
+            return
+        frame = self.frameGeometry()
+        screen = QGuiApplication.screenAt(frame.center()) or self.screen() or QGuiApplication.primaryScreen()
+        if screen is None:
+            return
+        avail = screen.availableGeometry()
+        fits = (avail.contains(frame.center()) and frame.width() <= avail.width()
+                and frame.height() <= avail.height())
+        if fits and not force:
+            return
+        w = min(int(avail.width() * 0.94), 1680)
+        h = min(int(avail.height() * 0.92), 1050)
+        self.resize(w, h)
+        self.move(avail.center() - QPoint(w // 2, h // 2))
 
     def _reset_layout(self):
-        reply = QMessageBox.question(
-            self, 'Reset Layout',
-            'Are you sure you want to reset the UI layout? The application will close and you must restart it.',
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            QMessageBox.StandardButton.No
-        )
-        if reply == QMessageBox.StandardButton.Yes:
-            self.settings.clear()
-            self.close()
+        self._fit_to_screen(force=True)
+        self._arrange_default()
+
+    def _saved_layouts(self) -> list:
+        self.settings.beginGroup("layouts")
+        names = sorted(self.settings.childKeys(), key=str.lower)
+        self.settings.endGroup()
+        return names
+
+    def _rebuild_layouts_menu(self):
+        menu = self.layouts_menu
+        menu.clear()
+        save = menu.addAction("Save layout as...")
+        save.triggered.connect(self._save_layout_as)
+        names = self._saved_layouts()
+        if names:
+            menu.addSeparator()
+            for name in names:
+                act = menu.addAction(name)
+                act.triggered.connect(lambda _=False, n=name: self._load_layout(n))
+            delete = menu.addMenu("Delete layout")
+            for name in names:
+                act = delete.addAction(name)
+                act.triggered.connect(lambda _=False, n=name: self._delete_layout(n))
+
+    def _save_layout_as(self):
+        name, ok = QInputDialog.getText(self, "Save layout", "Name for this arrangement of panels:")
+        name = (name or "").strip().replace("/", "-").replace("\\", "-")
+        if not ok or not name:
+            return
+        self.settings.setValue(f"layouts/{name}", self.saveState(self.LAYOUT_VERSION))
+        self._rebuild_layouts_menu()
+
+    def _load_layout(self, name: str):
+        state = self.settings.value(f"layouts/{name}")
+        if not (isinstance(state, QByteArray) and self.restoreState(state, self.LAYOUT_VERSION)):
+            QMessageBox.warning(self, "Layout", f"The layout '{name}' could not be restored "
+                                                f"(saved by an older version?).")
+        self._fit_to_screen()
+
+    def _delete_layout(self, name: str):
+        self.settings.remove(f"layouts/{name}")
+        self._rebuild_layouts_menu()
 
     def _show_config_editor(self):
         pwd, ok = QInputDialog.getText(self, "Authentication Required", "Enter Engineering Password:",
@@ -242,114 +350,88 @@ class ControlMainWindow(QMainWindow):
         QMessageBox.information(self, "Documentation",
                                 "SINDIE Documentation Library coming soon...\n\nOr more likely 10 years time.")
 
+    def _panel(self, title: str, object_name: str, widget):
+        """A dockable panel. Its contents scroll when the panel is made smaller than they are, so a
+        panel fits wherever it is dropped and the window fits a laptop screen."""
+        scroll = QScrollArea()
+        scroll.setObjectName("PanelScroll")
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        scroll.setWidget(widget)
+        dock = QDockWidget(title, self)
+        dock.setObjectName(object_name)
+        dock.setWidget(scroll)
+        self._docks.append(dock)
+        self._panel_widgets[dock] = widget
+        return dock
+
     def _init_docks(self):
-        # 1. Left Area Docks
-        self.vac_dock = QDockWidget("Vacuum System", self)
-        self.vac_dock.setObjectName("VacuumDock")
+        self._docks = []
+        self._panel_widgets = {}
+
         self.vac_widget = VacuumControlWidget(self.cmd_thread, self.fault_engine)
-        self.vac_dock.setWidget(self.vac_widget)
-        self.addDockWidget(Qt.DockWidgetArea.LeftDockWidgetArea, self.vac_dock)
+        self.vac_dock = self._panel("Vacuum System", "VacuumDock", self.vac_widget)
         self.subsystems["vacuum"] = self.vac_widget
 
-        self.log_dock = QDockWidget("Experiment Logging", self)
-        self.log_dock.setObjectName("LogDock")
         self.log_widget = ExperimentLoggerWidget(self.event_helper)
-        self.log_dock.setWidget(self.log_widget)
-        self.addDockWidget(Qt.DockWidgetArea.LeftDockWidgetArea, self.log_dock)
+        self.log_dock = self._panel("Experiment Logging", "LogDock", self.log_widget)
         self.subsystems["logging"] = self.log_widget
 
-        self.recipe_dock = QDockWidget("Recipe Execution", self)
-        self.recipe_dock.setObjectName("RecipeDock")
         self.recipe_widget = RecipeExecutionWidget(self.cmd_thread)
-        self.recipe_dock.setWidget(self.recipe_widget)
-        self.addDockWidget(Qt.DockWidgetArea.LeftDockWidgetArea, self.recipe_dock)
+        self.recipe_dock = self._panel("Recipe Execution", "RecipeDock", self.recipe_widget)
         self.subsystems["recipe"] = self.recipe_widget
 
-        self.optimiser_dock = QDockWidget("Optimiser", self)
-        self.optimiser_dock.setObjectName("OptimiserDock")
         self.optimiser_widget = ParameterOptimizerWidget(self.cmd_thread, self.event_helper)
-        self.optimiser_dock.setWidget(self.optimiser_widget)
-        self.addDockWidget(Qt.DockWidgetArea.LeftDockWidgetArea, self.optimiser_dock)
+        self.optimiser_dock = self._panel("Optimiser", "OptimiserDock", self.optimiser_widget)
         self.subsystems["optimiser"] = self.optimiser_widget
 
-        self.tabifyDockWidget(self.vac_dock, self.log_dock)
-        self.tabifyDockWidget(self.log_dock, self.recipe_dock)
-        self.tabifyDockWidget(self.recipe_dock, self.optimiser_dock)
-        self.vac_dock.raise_()
-
-        # 2. Right Area Docks
-        self.src_dock = QDockWidget("TESS Ion Source Control", self)
-        self.src_dock.setObjectName("SourceDock")
         self.src_widget = IonSourceWidget(self.cmd_thread, self.fault_engine)
-        self.src_dock.setWidget(self.src_widget)
-        self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self.src_dock)
+        self.src_dock = self._panel("TESS Ion Source Control", "SourceDock", self.src_widget)
         self.subsystems["source"] = self.src_widget
 
-        self.optics_dock = QDockWidget("Beamline Optics", self)
-        self.optics_dock.setObjectName("OpticsDock")
         self.optics_widget = BeamlineOpticsWidget(self.cmd_thread, self.event_helper)
-        self.optics_dock.setWidget(self.optics_widget)
-        self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self.optics_dock)
+        self.optics_dock = self._panel("Beamline Optics", "OpticsDock", self.optics_widget)
         self.subsystems["optics"] = self.optics_widget
 
-        self.smu_dock = QDockWidget("Faraday Cup && SMU", self)
-        self.smu_dock.setObjectName("FaradaySmuDock")
         self.smu_widget = FaradaySMUWidget(self.cmd_thread)
-        self.smu_dock.setWidget(self.smu_widget)
-        self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self.smu_dock)
+        self.smu_dock = self._panel("Faraday Cup && SMU", "FaradaySmuDock", self.smu_widget)
         self.subsystems["faraday_smu"] = self.smu_widget
 
-        self.current_mon_dock = QDockWidget("Current Monitoring", self)
-        self.current_mon_dock.setObjectName("CurrentMonDock")
         self.current_mon_widget = AdamMonitorWidget(self.cmd_thread)
-        self.current_mon_dock.setWidget(self.current_mon_widget)
-        self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self.current_mon_dock)
+        self.current_mon_dock = self._panel("Current Monitoring", "CurrentMonDock", self.current_mon_widget)
         self.subsystems["current_mon"] = self.current_mon_widget
 
-        self.mass_scan_dock = QDockWidget("Mass Scan", self)
-        self.mass_scan_dock.setObjectName("MassScanDock")
         self.mass_scan_widget = PrecisionMassScannerWidget(self.cmd_thread, self.event_helper)
         # "Calculate & set amps" in the optics panel uses the mass scan's calibration
         self.optics_widget.mass_calibration = self.mass_scan_widget.current_calibration
-        self.mass_scan_dock.setWidget(self.mass_scan_widget)
-        self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self.mass_scan_dock)
+        self.mass_scan_dock = self._panel("Mass Scan", "MassScanDock", self.mass_scan_widget)
         self.subsystems["mass_scan"] = self.mass_scan_widget
 
-        self.tabifyDockWidget(self.src_dock, self.optics_dock)
-        self.src_dock.raise_()
-
-        # 3. Bottom Area Dock
-        self.health_dock = QDockWidget("System Health", self)
-        self.health_dock.setObjectName("HealthDock")
         self.health_widget = SystemHealthWidget(self.cmd_thread, self.fault_engine)
-        self.health_dock.setWidget(self.health_widget)
-        self.addDockWidget(Qt.DockWidgetArea.BottomDockWidgetArea, self.health_dock)
+        self.health_dock = self._panel("System Health", "HealthDock", self.health_widget)
         self.subsystems["health"] = self.health_widget
 
-
-        self.service_dock = QDockWidget("Service Manager", self)
-        self.service_dock.setObjectName("ServicesDock")
         self.service_widget = ServicesWidget(self.cmd_thread)
-        self.service_dock.setWidget(self.service_widget)
-        self.addDockWidget(Qt.DockWidgetArea.BottomDockWidgetArea, self.service_dock)
+        self.service_dock = self._panel("Service Manager", "ServicesDock", self.service_widget)
         self.subsystems["services"] = self.service_widget
 
         # Alarms (service_alarms): list, acknowledge / shelve, and the horn
-        self.alarm_dock = QDockWidget("Alarms", self)
-        self.alarm_dock.setObjectName("AlarmDock")
         self.alarm_widget = AlarmPanel(self.cmd_thread)
-        self.alarm_dock.setWidget(self.alarm_widget)
-        self.addDockWidget(Qt.DockWidgetArea.BottomDockWidgetArea, self.alarm_dock)
-        self.splitDockWidget(self.health_dock, self.alarm_dock, Qt.Orientation.Horizontal)
+        self.alarm_dock = self._panel("Alarms", "AlarmDock", self.alarm_widget)
         self.subsystems["alarms"] = self.alarm_widget
 
-        self.cmd_log_dock = QDockWidget("Command Log", self)
-        self.cmd_log_dock.setObjectName("CommandLogDock")
         self.cmd_log_widget = CommandLogWidget()
-        self.cmd_log_dock.setWidget(self.cmd_log_widget)
-        self.addDockWidget(Qt.DockWidgetArea.BottomDockWidgetArea, self.cmd_log_dock)
-        self.tabifyDockWidget(self.service_dock, self.cmd_log_dock)
-        self.service_dock.raise_()
+        self.cmd_log_dock = self._panel("Command Log", "CommandLogDock", self.cmd_log_widget)
+
+        # Refreshed even while hidden: the alarm horn, the automation bar, and the panels that
+        # follow a running sequence (operator prompts, scan points fetched as they come)
+        self._always_refresh = {self.automation_bar, self.alarm_widget, self.recipe_widget,
+                                self.mass_scan_widget, self.optimiser_widget}
+        self._refreshed = [self.vac_widget, self.src_widget, self.optics_widget, self.health_widget,
+                           self.service_widget, self.log_widget, self.smu_widget, self.current_mon_widget,
+                           self.optimiser_widget, self.mass_scan_widget, self.recipe_widget,
+                           self.automation_bar, self.alarm_widget]
+        self._dock_of = {w: d for d, w in self._panel_widgets.items()}
 
     def _route_telemetry(self, topic: str, fresh_data: dict):
         self.telemetry.ingest(topic, fresh_data)
@@ -386,19 +468,29 @@ class ControlMainWindow(QMainWindow):
         self.master_telemetry_cache.clear()
         self.master_telemetry_cache.update(view)
 
-        for widget in (self.vac_widget, self.src_widget, self.optics_widget, self.health_widget,
-                       self.service_widget, self.log_widget, self.smu_widget, self.current_mon_widget,
-                       self.optimiser_widget, self.mass_scan_widget, self.recipe_widget, self.automation_bar,
-                       self.alarm_widget):
+        minimised = self.isMinimized()
+        for widget in self._refreshed:
+            if widget not in self._always_refresh:
+                # A closed panel, or one behind another tab, isn't redrawn 10 times a second for
+                # nobody: it catches up the moment it is shown (_panel_shown)
+                dock = self._dock_of.get(widget)
+                if minimised or (dock is not None and not self.on_screen(dock)):
+                    continue
             try:
                 widget.update_telemetry(self.master_telemetry_cache)
             except Exception:  # one widget's bug must not freeze every other panel
                 log.exception("%s.update_telemetry failed", type(widget).__name__)
 
 
+    @staticmethod
+    def on_screen(dock) -> bool:
+        """Whether a panel can be seen: open, and not behind another panel's tab. (Qt leaves a tab
+        that isn't chosen 'visible', just with nothing of it showing.)"""
+        return dock.isVisible() and not dock.visibleRegion().isEmpty()
+
     def closeEvent(self, event):
         self.settings.setValue("geometry", self.saveGeometry())
-        self.settings.setValue("windowState", self.saveState())
+        self.settings.setValue("windowState", self.saveState(self.LAYOUT_VERSION))
         self.telemetry_thread.stop()
         self.cmd_thread.stop()
         super().closeEvent(event)

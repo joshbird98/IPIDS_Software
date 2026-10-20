@@ -1,8 +1,8 @@
 """Recipe builder: the properties form of the selected step (recursively, for PARALLEL sub-steps)."""
 import os
 
-from PyQt6.QtWidgets import (QComboBox, QDoubleSpinBox, QFormLayout, QHBoxLayout, QLabel, QLineEdit, QListWidget,
-                             QPushButton, QTextEdit, QVBoxLayout, QWidget)
+from PyQt6.QtWidgets import (QComboBox, QDoubleSpinBox, QFormLayout, QFrame, QHBoxLayout, QLabel, QLineEdit,
+                             QListWidget, QPushButton, QTextEdit, QVBoxLayout, QWidget)
 
 from src.gui.control.dialogs.recipe_builder_defaults import ROUTINE_DEFAULTS, STEP_ICONS
 from src.gui.control.dialogs.tag_selector_dialog import TagSelectorDialog
@@ -186,18 +186,16 @@ class StepFormMixin:
             def _on_sub_sel():
                 if sub_state["container"]:
                     sub_state["container"].deleteLater()
-                sub_state["container"] = QWidget()
-                # Scope the stylesheet to ONLY the parent container so QLineEdits stay native and clickable!
+                sub_state["container"] = QFrame()
                 sub_state["container"].setObjectName("SubBox")
-                sub_state["container"].setStyleSheet(
-                    "QWidget#SubBox { background-color: #E3F2FD; border-radius: 4px; border: 1px solid #BBDEFB; }")
+                sub_state["container"].setProperty("role", "card")       # (theme: a card around the sub-step)
                 sub_form_layout = QFormLayout(sub_state["container"])
                 sub_form_layout.setContentsMargins(8, 8, 8, 8)  # Use layout margins instead of CSS padding
                 sub_host_layout.addWidget(sub_state["container"])
                 r = sub_list.currentRow()
                 if r >= 0:
-                    btn_del = QPushButton("❌ Delete Sub-Step")
-                    btn_del.setStyleSheet("background-color: #FFEBEE; color: #D32F2F; border: 1px solid #D32F2F;")
+                    btn_del = QPushButton("Delete sub-step")
+                    btn_del.setProperty("tone", "danger")
                     btn_del.clicked.connect(lambda: _del_sub(r))
                     sub_form_layout.addRow(btn_del)
                     self._build_properties_form(sub_form_layout, sub_steps[r], _redraw_sub)

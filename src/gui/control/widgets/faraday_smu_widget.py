@@ -4,14 +4,15 @@ from PyQt6.QtWidgets import (
     QPushButton, QGroupBox, QComboBox, QStackedWidget
 )
 from PyQt6.QtCore import Qt, QRectF, QPointF
-from PyQt6.QtGui import QPainter, QPen, QColor, QFont
+from PyQt6.QtGui import QPainter, QPen, QFont
 
+from src.gui import theme
 from src.gui.control.permits import permit_reason
 from src.gui.control.setpoint_box import SetpointBox
-from src.core.theme import (
-    COLOR_OK, COLOR_FAULT, COLOR_INACTIVE, COLOR_WARNING, COLOR_BUTTON_STANDARD
-)
-from src.gui.control.widgets.source_widget import TOLERANCE_STYLE, TOLERANCE_TIP, tolerance_flagged
+from src.gui.control.widgets.source_widget import show_tolerance, tolerance_flagged
+from src.gui.style import chip, reserve_width, set_ink, set_role, set_tone
+
+BIAS_RB_TIP = "Live readback of the actual voltage currently being applied by the SMU."
 
 
 class SpeedoWidget(QWidget):
@@ -19,10 +20,14 @@ class SpeedoWidget(QWidget):
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setMinimumSize(250, 150)
+        self.setMinimumSize(200, 120)
         self.raw_val = 0.0
         self.max_val = 1e-6
         self.setToolTip("Analog visualization of the live beam current. Color and sign indicate polarity.")
+        theme.theme_changed().connect(self._repaint)      # (a method: disconnected when the dial goes)
+
+    def _repaint(self, *_):
+        self.update()
 
     def update_gauge(self, value, scale_max):
         self.raw_val = value
@@ -41,7 +46,7 @@ class SpeedoWidget(QWidget):
 
         # --- 1. Draw Background Arc ---
         rect = QRectF(center_x - radius, center_y - radius, radius * 2, radius * 2)
-        pen_bg = QPen(QColor("#333333"), 8, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap)
+        pen_bg = QPen(theme.color("border"), 8, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap)
         painter.setPen(pen_bg)
         painter.drawArc(rect, 180 * 16, -180 * 16)  # Start at left (180 deg), span full half-circle
 
@@ -53,11 +58,11 @@ class SpeedoWidget(QWidget):
 
         # --- 3. Determine Color by Polarity & Saturation ---
         if ratio > 0.95:
-            arc_color = QColor("#FF9800")  # Warning: Pegged at limits
+            arc_color = theme.color("warn")    # pegged at the end of the scale
         elif self.raw_val < 0:
-            arc_color = QColor("#2196F3")  # Blue for Negative Current
+            arc_color = theme.color("info")    # negative current
         else:
-            arc_color = QColor("#4CAF50")  # Green for Positive Current
+            arc_color = theme.color("ok")      # positive current
 
         # Draw Active Value Arc
         pen_fg = QPen(arc_color, 8, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap)
@@ -69,7 +74,8 @@ class SpeedoWidget(QWidget):
         painter.setPen(arc_color)
 
         # Create a massive bold font for the sign
-        font = QFont("Monospace", 48, QFont.Weight.Bold)
+        font = theme.mono_font(min(40.0, max(16.0, radius / 2.2)))
+        font.setWeight(QFont.Weight.Bold)
         painter.setFont(font)
 
         # Center the text directly above the needle pivot
@@ -82,11 +88,11 @@ class SpeedoWidget(QWidget):
         end_x = center_x + needle_length * math.cos(angle_rad)
         end_y = center_y - needle_length * math.sin(angle_rad)
 
-        painter.setPen(QPen(QColor("#F44336"), 3, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap))
+        painter.setPen(QPen(theme.color("text"), 3, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap))
         painter.drawLine(QPointF(center_x, center_y), QPointF(end_x, end_y))
 
         # --- 6. Draw Base Pivot ---
-        painter.setBrush(QColor("#E0E0E0"))
+        painter.setBrush(theme.color("text_muted"))
         painter.setPen(Qt.PenStyle.NoPen)
         painter.drawEllipse(QPointF(center_x, center_y), 8, 8)
 
@@ -109,12 +115,11 @@ class FaradaySMUWidget(QWidget):
         self.cmd_thread.send_command("plc", tag, value)
 
     def _init_actuator_ui(self):
-        group = QGroupBox("1. Faraday Cup Pneumatics")
+        group = QGroupBox("1. Faraday cup")
         layout = QVBoxLayout()
 
         self.btn_fc = QPushButton("FARADAY CUP: UNKNOWN")
         self.btn_fc.setCheckable(True)
-        self.btn_fc.setStyleSheet(COLOR_BUTTON_STANDARD)
         self.btn_fc.setToolTip("Click to physically insert or retract the Faraday Cup into the beam path.")
         self.btn_fc.clicked.connect(
             lambda *args, b=self.btn_fc: self._dispatch_plc(
@@ -126,15 +131,17 @@ class FaradaySMUWidget(QWidget):
         self.main_layout.addWidget(group)
 
     def _init_bias_ui(self):
-        group = QGroupBox("2. SMU Bias Voltage")
+        group = QGroupBox("2. SMU bias voltage")
         layout = QGridLayout()
+        layout.setHorizontalSpacing(10)
+        layout.setColumnStretch(2, 1)
 
-        self.lbl_bias_status = QLabel("STATUS: OFFLINE")
-        self.lbl_bias_status.setStyleSheet(COLOR_INACTIVE)
+        self.lbl_bias_status = chip("STATUS: OFFLINE", "unknown")
         self.lbl_bias_status.setToolTip("Indicates whether the Source-Measure Unit is actively applying bias voltage.")
-        layout.addWidget(self.lbl_bias_status, 0, 0, 1, 2)
+        layout.addWidget(self.lbl_bias_status, 0, 0, 1, 4)
 
-        lbl_sp = QLabel("<b>Bias Setpoint:</b>")
+        lbl_sp = QLabel("Bias setpoint")
+        set_role(lbl_sp, "title")
         lbl_sp.setToolTip(
             "Target bias voltage. Positive bias suppresses secondary electron emission; negative bias repels ambient electrons.")
         layout.addWidget(lbl_sp, 1, 0)
@@ -152,13 +159,13 @@ class FaradaySMUWidget(QWidget):
         layout.addWidget(self.sp_bias, 1, 1)
 
         self.lbl_bias_rb = QLabel("RB: --- V")
-        self.lbl_bias_rb.setMinimumWidth(80)
-        self.lbl_bias_rb.setToolTip("Live readback of the actual voltage currently being applied by the SMU.")
+        set_role(self.lbl_bias_rb, "readout-sm")
+        reserve_width(self.lbl_bias_rb, "RB: -000.0 V")
+        self.lbl_bias_rb.setToolTip(BIAS_RB_TIP)
         layout.addWidget(self.lbl_bias_rb, 1, 2)
 
         self.btn_enable_bias = QPushButton("ENABLE BIAS")
         self.btn_enable_bias.setCheckable(True)
-        self.btn_enable_bias.setStyleSheet(COLOR_BUTTON_STANDARD)
         self.btn_enable_bias.setToolTip(
             "Click to enable or disable the SMU bias voltage output. Requires Master Safety Relay.")
         self.btn_enable_bias.clicked.connect(
@@ -171,11 +178,12 @@ class FaradaySMUWidget(QWidget):
         self.main_layout.addWidget(group)
 
     def _init_measurement_ui(self):
-        group = QGroupBox("3. Beam Current Measurement")
+        group = QGroupBox("3. Beam current")
         layout = QVBoxLayout()
 
         ctrl_row = QHBoxLayout()
-        lbl_mode = QLabel("<b>View Mode:</b>")
+        lbl_mode = QLabel("View")
+        set_role(lbl_mode, "caption")
         lbl_mode.setToolTip("Switch between a high-precision digital readout and an analog speedometer gauge.")
         ctrl_row.addWidget(lbl_mode)
 
@@ -185,7 +193,9 @@ class FaradaySMUWidget(QWidget):
         self.cb_view_mode.currentIndexChanged.connect(self._toggle_view_mode)
         ctrl_row.addWidget(self.cb_view_mode)
 
-        lbl_scale = QLabel("<b>Gauge Scale:</b>")
+        lbl_scale = QLabel("Dial scale")
+        set_role(lbl_scale, "caption")
+        self.lbl_gauge_scale = lbl_scale
         lbl_scale.setToolTip("Select the maximum scale for the analog gauge to optimize visual resolution.")
         ctrl_row.addWidget(lbl_scale)
 
@@ -205,9 +215,7 @@ class FaradaySMUWidget(QWidget):
         dig_layout = QVBoxLayout(self.page_digital)
         self.lbl_digital_current = QLabel("--- µA")
         self.lbl_digital_current.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        # SCOPED TO QLabel TO PREVENT TOOLTIP CASCADING
-        self.lbl_digital_current.setStyleSheet(
-            "QLabel { font-family: monospace; font-size: 32pt; font-weight: bold; color: #4CAF50; }")
+        set_role(self.lbl_digital_current, "readout-hero")
         self.lbl_digital_current.setToolTip(
             "Live beam current measured by the Source-Measure Unit. Valid only when Safety Relay is active.")
         dig_layout.addWidget(self.lbl_digital_current)
@@ -219,8 +227,7 @@ class FaradaySMUWidget(QWidget):
         self.speedo = SpeedoWidget()
         self.lbl_speedo_text = QLabel("--- µA")
         self.lbl_speedo_text.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        # SCOPED TO QLabel TO PREVENT TOOLTIP CASCADING
-        self.lbl_speedo_text.setStyleSheet("QLabel { font-family: monospace; font-size: 14pt; font-weight: bold; }")
+        set_role(self.lbl_speedo_text, "readout-lg")
         self.lbl_speedo_text.setToolTip(
             "Live beam current measured by the Source-Measure Unit. Valid only when Safety Relay is active.")
         ana_layout.addWidget(self.speedo)
@@ -230,10 +237,19 @@ class FaradaySMUWidget(QWidget):
         layout.addWidget(self.display_stack)
         group.setLayout(layout)
         self.main_layout.addWidget(group)
+        self._toggle_view_mode(0)                 # the dial scale only matters for the dial
 
     def _toggle_view_mode(self, index):
         self.display_stack.setCurrentIndex(index)
         self.cb_gauge_scale.setVisible(index == 1)
+        self.lbl_gauge_scale.setVisible(index == 1)
+
+    def _no_measurement(self, ink: str):
+        """The readouts when there is no valid current: a message, smaller, in the given colour."""
+        for lbl in (self.lbl_digital_current, self.lbl_speedo_text):
+            lbl.setText("NO MEASUREMENT")
+            set_ink(lbl, ink)
+        set_role(self.lbl_digital_current, "readout-lg")
 
     def _format_current(self, amps: float) -> str:
         abs_amps = abs(amps)
@@ -269,21 +285,20 @@ class FaradaySMUWidget(QWidget):
                 fc_state_string = "INSERTED"
                 self.btn_fc.setChecked(True)
                 self.btn_fc.setText("FARADAY CUP: INSERTED")
-                self.btn_fc.setStyleSheet(
-                    """background-color: #FF9800; color: black; font-weight: bold; padding: 6px; border-radius: 4px;""")
+                set_tone(self.btn_fc, "info")               # in the beam path
             elif not bool(fc_in) and bool(fc_out):
                 fc_state_string = "RETRACTED"
                 self.btn_fc.setChecked(False)
                 self.btn_fc.setText("FARADAY CUP: RETRACTED")
-                self.btn_fc.setStyleSheet(COLOR_BUTTON_STANDARD)
+                set_tone(self.btn_fc, None)
             elif not bool(fc_in) and not bool(fc_out):
                 fc_state_string = "UNPOWERED / TRAVELLING"
                 self.btn_fc.setText("FARADAY CUP: TRAVELLING")
-                self.btn_fc.setStyleSheet(COLOR_WARNING)
+                set_tone(self.btn_fc, "warn")
             else:
                 fc_state_string = "SENSOR ERROR"
                 self.btn_fc.setText("FARADAY CUP: LOGIC ERROR")
-                self.btn_fc.setStyleSheet(COLOR_FAULT)
+                set_tone(self.btn_fc, "fault")
 
         if master_comms_lost:
             self.btn_fc.setEnabled(False)
@@ -309,13 +324,10 @@ class FaradaySMUWidget(QWidget):
         # SCENARIO A: Total Comms Failure
         if smu_comms_fail or master_comms_lost:
             self.lbl_bias_status.setText("STATUS: SMU OFFLINE")
-            self.lbl_bias_status.setStyleSheet(COLOR_FAULT)
+            set_tone(self.lbl_bias_status, "fault")
             self.lbl_bias_rb.setText("RB: --- V")
 
-            self.lbl_digital_current.setText("NO MEASUREMENT")
-            self.lbl_digital_current.setStyleSheet(
-                "QLabel { font-family: monospace; font-size: 18pt; font-weight: bold; color: #F44336; }")
-            self.lbl_speedo_text.setText("NO MEASUREMENT")
+            self._no_measurement("fault")
             self.speedo.update_gauge(0.0, 1e-6)
 
             offline_msg = "Disabled: SMU Microservice or PLC telemetry is offline."
@@ -332,13 +344,10 @@ class FaradaySMUWidget(QWidget):
         # SCENARIO B: Safety Relay is De-energized
         if not relay_active:
             self.lbl_bias_status.setText("STATUS: SAFETY LOCK")
-            self.lbl_bias_status.setStyleSheet(COLOR_INACTIVE)
+            set_tone(self.lbl_bias_status, "off")
             self.lbl_bias_rb.setText("RB: 0.0 V")
 
-            self.lbl_digital_current.setText("NO MEASUREMENT")
-            self.lbl_digital_current.setStyleSheet(
-                "QLabel { font-family: monospace; font-size: 18pt; font-weight: bold; color: #FF9800; }")
-            self.lbl_speedo_text.setText("NO MEASUREMENT")
+            self._no_measurement("warn")
             self.speedo.update_gauge(0.0, self.scale_map.get(self.cb_gauge_scale.currentText(), 1e-6))
 
             lockout_msg = "Measurement invalid: Master Safety Relay is OPEN."
@@ -348,7 +357,7 @@ class FaradaySMUWidget(QWidget):
 
             self.btn_enable_bias.setEnabled(False)
             self.btn_enable_bias.setChecked(False)
-            self.btn_enable_bias.setStyleSheet(COLOR_BUTTON_STANDARD)
+            set_tone(self.btn_enable_bias, None)
             self.btn_enable_bias.setToolTip("Disabled: Bias requires Safety Relay to be closed.")
 
             self.sp_bias.setEnabled(False)
@@ -372,25 +381,26 @@ class FaradaySMUWidget(QWidget):
         self.lbl_speedo_text.setToolTip(live_msg)
         self.speedo.setToolTip(live_msg)
 
-        self.lbl_digital_current.setStyleSheet(
-            "QLabel { font-family: monospace; font-size: 32pt; font-weight: bold; color: #4CAF50; }")
+        set_role(self.lbl_digital_current, "readout-hero")
+        set_ink(self.lbl_digital_current, None)
+        set_ink(self.lbl_speedo_text, None)
 
         smu_en = bool(data.get("ion_beam.beamline.faraday.smu.stat_enabled", False))
         if smu_en:
             self.lbl_bias_status.setText("STATUS: BIAS LIVE")
-            self.lbl_bias_status.setStyleSheet(COLOR_WARNING)
+            set_tone(self.lbl_bias_status, "warn")
 
             self.btn_enable_bias.blockSignals(True)
             self.btn_enable_bias.setChecked(True)
-            self.btn_enable_bias.setStyleSheet(COLOR_OK)
+            set_tone(self.btn_enable_bias, "on")
             self.btn_enable_bias.blockSignals(False)
         else:
             self.lbl_bias_status.setText("STATUS: BIAS DISABLED")
-            self.lbl_bias_status.setStyleSheet(COLOR_OK)
+            set_tone(self.lbl_bias_status, "off")
 
             self.btn_enable_bias.blockSignals(True)
             self.btn_enable_bias.setChecked(False)
-            self.btn_enable_bias.setStyleSheet(COLOR_BUTTON_STANDARD)
+            set_tone(self.btn_enable_bias, None)
             self.btn_enable_bias.blockSignals(False)
 
         v_rb = data.get("ion_beam.beamline.faraday.smu.rb_voltage")
@@ -399,12 +409,8 @@ class FaradaySMUWidget(QWidget):
 
         self.lbl_bias_rb.setText(f"RB: {v_rb:.1f} V" if v_rb is not None else "RB: --- V")
         # Readback-vs-setpoint tolerance flag from service_monitor (information, not a fault)
-        if tolerance_flagged(data, ("ion_beam.beamline.faraday.smu.rb_voltage",)):
-            self.lbl_bias_rb.setStyleSheet(TOLERANCE_STYLE)
-            self.lbl_bias_rb.setToolTip(TOLERANCE_TIP)
-        elif self.lbl_bias_rb.styleSheet():
-            self.lbl_bias_rb.setStyleSheet("")
-            self.lbl_bias_rb.setToolTip("Live readback of the actual voltage currently being applied by the SMU.")
+        show_tolerance(self.lbl_bias_rb, tolerance_flagged(data, ("ion_beam.beamline.faraday.smu.rb_voltage",)),
+                       BIAS_RB_TIP)
         self.sp_bias.show_setpoint(v_sp)
 
         if i_rb is not None:

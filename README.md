@@ -41,8 +41,31 @@ of each other are drawn as one line ("12 events"), and labels that don't fit (or
 the legend) are left off but the line can still be clicked. Zooming and panning stop 10 % (at least an hour) beyond the
 logged data, so a quick zoom-out can't run on to decades of empty axis. A marker that doesn't reach the event database
 within a few seconds (events service not running for that viewer) is taken off with a warning.
-The export dialog starts from the Export Settings folder/name in the sidebar and writes its
-choice back there.
+The export dialog starts from the folder/name in the sidebar's Export section and writes its
+choice back there. The sidebar is resizable (drag its edge) and can be hidden (View > Sidebar).
+Each lane's channels take the eight line colours in turn (checked for colour-blind readers); a
+channel keeps its colour while it stays in its lane, and a ninth line in one lane is dashed.
+
+### Panels, layouts and the theme
+
+The HMI's panels can be docked anywhere: drag a panel by its title bar (or its tab) to the edge or
+the middle of another panel to place it beside it or as a tab with it. A panel that is made
+smaller than its contents scrolls, and cards (gauges, current monitors, buttons) fold into fewer
+columns when a panel is narrow, so a panel fits wherever it is dropped. View > Panels opens and
+closes them; View > Layouts saves the current arrangement under a name and brings it back; View >
+Reset layout puts the default back (Vacuum and System Health on the left, the source panels over
+the Alarms on the right), sized for the screen. The window is always kept on a screen and no
+bigger than it (a layout saved on a big monitor used to open a laptop-sized screen's worth
+off-screen). Panels that are closed or behind another tab aren't refreshed; they catch up the
+moment they are shown.
+
+Both programs share one look, dark (the default) or light: View > Theme, or Ctrl+Shift+T,
+switches it while they run, and the other program follows within a second. The choice is kept per
+machine in `config/appearance.json` (not in git). The colours follow high-performance HMI
+practice: normal states are grey, green means an output is switched on, blue an automatic mode or
+the main action, violet a sequence holding the control, amber something that needs attention and
+red a fault (`src/gui/theme.py`; widgets set a "tone" rather than colours of their own,
+`src/gui/style.py`).
 
 The manager restarts a crashed service with increasing delays (2 s ... 5 min) and shows
 BACKOFF / STOPPED in the HMI's services panel, where services can also be stopped and started.
@@ -54,7 +77,7 @@ restarting the HMI doesn't stop them, and the HMI panels only start, pause, stop
 A sequence claims a **control lease** on each subsystem it drives (the analyser magnet, the
 einzel, ...); while it holds one, that subsystem's service takes commands for it only from the
 sequence. The Automation bar at the top of the HMI shows which sequence holds what, and the
-source panel marks a leased supply "🤖 SEQUENCE". Leases are renewed every second and lapse after
+source panel marks a leased supply SEQUENCE (violet). Leases are renewed every second and lapse after
 5 s, so a sequencer that dies gives control back by itself. The operator can always take control
 (the Automation bar's Take control button, clicked twice): a recipe then pauses (Resume repeats
 the step it was on), a scan or optimiser run stops.

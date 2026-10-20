@@ -127,14 +127,15 @@ def test_gate_valve_and_relay_through_the_gui(hmi, app, stack):
 
 
 def test_einzel_needs_two_clicks_to_enable_one_to_disable(hmi, app):
-    from src.gui.control.arming import ARMED_STYLE
+    from src.gui.control.arming import ARMED_TONE
+    from src.gui.style import tone
     ctrl = hmi.src_widget.psu_controls["Source Einzel"]
     btn = ctrl["btn_enable"]
     wait_for(app, btn.isEnabled, 15, "einzel enable button available (Spellman sees the relay)")
     n_before = len(log_rows(hmi))
     btn.click()
     pump(app, 0.5)
-    assert btn.text().startswith("CONFIRM") and btn.styleSheet() == ARMED_STYLE
+    assert btn.text().startswith("CONFIRM") and tone(btn) == ARMED_TONE
     assert not btn.isChecked()
     assert len(log_rows(hmi)) == n_before                 # nothing sent yet
     hmi.src_dock.raise_()
@@ -202,13 +203,14 @@ def test_rejection_is_shown_to_the_operator(hmi, app):
 
 
 def test_stopped_service_shows_unknown_not_last_value(hmi, app, stack):
-    from src.gui.control.arming import UNKNOWN_STYLE
+    from src.gui.control.arming import UNKNOWN_TONE
+    from src.gui.style import tone
     ctrl = hmi.src_widget.psu_controls["Source Einzel"]
     wait_for(app, lambda: "---" not in ctrl["lbl_rb"].text(), 10, "einzel readback present")
     r = stack.cmd("manager", "manager_cmd", {"command": "stop", "service": "service_spellman_mpd"})
     assert r["status"] == C.OK
     try:
-        wait_for(app, lambda: ctrl["btn_enable"].styleSheet() == UNKNOWN_STYLE, 8, "unknown enable state")
+        wait_for(app, lambda: tone(ctrl["btn_enable"]) == UNKNOWN_TONE, 8, "unknown enable state")
         assert "---" in ctrl["lbl_rb"].text()
         assert "ion_beam.source.einzel.rb_voltage" not in hmi.master_telemetry_cache
         assert hmi.telemetry.get("ion_beam.source.einzel.rb_voltage") is not None   # raw value still kept
@@ -339,7 +341,6 @@ def test_operator_takes_control_from_a_recipe(hmi, app, stack):
 
 def test_tolerance_colours_the_readback(hmi, app, stack):
     import src.sim as sim
-    from src.gui.control.widgets.source_widget import TOLERANCE_STYLE
     sim.FAULTS_FILE = str(stack.data_dir / "sim_faults.txt")
     assert stack.cmd("magnet", "ion_beam.beamline.magnet.sp_requested_current", 25.0)["status"] == C.OK
     assert stack.cmd("magnet", "ion_beam.beamline.magnet.cmd_enable", True)["status"] == C.OK
@@ -347,13 +348,13 @@ def test_tolerance_colours_the_readback(hmi, app, stack):
              "magnet at 25 A")
     sim.set_faults({"magnet_sag"})
     try:
-        wait_for(app, lambda: hmi.optics_widget.lbl_mag_rb.styleSheet() == TOLERANCE_STYLE, 20, "amber readback")
+        wait_for(app, lambda: hmi.optics_widget.lbl_mag_rb.property("tolerance") == "out", 20, "amber readback")
         hmi.optics_dock.raise_()
         pump(app, 0.3)
         shot(hmi, "4_magnet_out_of_tolerance")
     finally:
         sim.set_faults(set())
-    wait_for(app, lambda: hmi.optics_widget.lbl_mag_rb.styleSheet() == "", 20, "colour cleared")
+    wait_for(app, lambda: not hmi.optics_widget.lbl_mag_rb.property("tolerance"), 20, "colour cleared")
 
 
 def test_calculate_and_set_amps_puts_the_mass_on_the_cup(hmi, app, stack):

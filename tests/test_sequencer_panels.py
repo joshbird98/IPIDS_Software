@@ -137,7 +137,7 @@ def test_automation_bar_lists_holders_and_takes_control(app):
     assert bar.groups == {"mass scan": ["ion_beam.beamline.magnet", "ion_beam.beamline.faraday.smu"]}
     assert not bar.idle_action.isVisible()
     label, button = bar.rows["mass scan"][1:3]
-    assert label.text() == "🤖 mass scan holds: magnet, smu"
+    assert label.text() == "mass scan holds: magnet, smu"
     button.click()
     assert cmds.sent == []                                  # armed only
     button.click()

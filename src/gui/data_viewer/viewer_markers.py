@@ -8,6 +8,7 @@ import pyqtgraph as pg
 from PyQt6.QtWidgets import QApplication
 from PyQt6.QtCore import Qt, QTimer
 from src.core import paths
+from src.gui.data_viewer.event_overlay import event_colour
 from src.gui.data_viewer.viewer_widgets import MarkerDialog
 
 
@@ -135,9 +136,8 @@ class MarkersMixin:
 
             for ts, e_type, msg, meta in cursor.fetchall():
                 key = f"{ts:.3f}"
-
-                # 3. Dynamic Filtering & Color Assignment
-                color = "#FFFFFF"
+                kind = None
+                color = ""
 
                 if e_type == "FAULT":
                     # Extract the active state from the metadata payload
@@ -151,31 +151,25 @@ class MarkersMixin:
                         continue
                     if not is_active and "FAULT_CLEARED" not in active_types:
                         continue
-
-                    # Red for Activated, Blue for Cleared
-                    color = "#F44336" if is_active else "#2196F3"
+                    kind = "fault" if is_active else "cleared"
 
                 elif e_type == "USER_MARKER":
+                    # The colour it was given (drawn adjusted for the theme: event_overlay.event_colour)
                     try:
                         color = json.loads(meta).get("color", "#00E5FF") if meta else "#00E5FF"
                     except (ValueError, TypeError, AttributeError):
                         color = "#00E5FF"
 
-                elif "WATCHDOG" in e_type:
-                    color = "#FF9800"  # Orange
-                elif e_type == "PHASE_CHANGE":
-                    color = "#4CAF50"  # Green
-                elif e_type == "TOLERANCE":
-                    color = "#FFC107"  # Amber
-                elif e_type == "COMMAND":
-                    color = "#9E9E9E"  # Grey - high volume, off by default
-
-                markers[key] = {
+                event = {
                     "text": msg,
-                    "color": color,
                     "type": e_type,
                     "meta": meta,          # shown in full in the event details window
                 }
+                if kind:
+                    event["kind"] = kind
+                # (a system event's colour: the theme's for its kind - also what an export records)
+                event["color"] = color or event_colour(event).name()
+                markers[key] = event
         except sqlite3.Error as e:
             logging.getLogger("viewer.markers").error("Event markers not readable from events.db: %s", e)
             self._ev_conn = None  # reconnect next time

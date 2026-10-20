@@ -1,33 +1,33 @@
 import json
 import logging
 
+from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QGridLayout, QLabel,
     QPushButton, QGroupBox
 )
-from PyQt6.QtCore import Qt
 
 from src.core import hard_caps, paths
-from src.core.theme import (
-    COLOR_OK,
-    COLOR_FAULT,
-    COLOR_WARNING,
-    COLOR_BUTTON_STANDARD
-)
 from src.core.tolerance import FLAG_PREFIX
 from src.gui.control.permits import permit_reason
 from src.gui.control.arming import ArmedToggle
 from src.gui.control.setpoint_box import SetpointBox
+from src.gui.style import chip, reserve_width, set_prop, set_role, set_tone
 
 log = logging.getLogger("hmi.source")
 
-TOLERANCE_STYLE = "border: 2px solid #FFB300; border-radius: 3px; padding: 1px;"
 TOLERANCE_TIP = ("Readback has been outside its tolerance of the setpoint (not a fault).\n"
                  "Rules and tolerances: config/readback_tolerance.json; events are in events.db (TOLERANCE).")
 
 
 def tolerance_flagged(data: dict, tags) -> bool:
     return any(data.get(FLAG_PREFIX + t) == 1.0 for t in tags)
+
+
+def show_tolerance(label, flagged: bool, normal_tip: str = ""):
+    """An amber outline on a readback that has been outside its tolerance (information, not a fault)."""
+    if set_prop(label, "tolerance", "out" if flagged else None):
+        label.setToolTip(TOLERANCE_TIP if flagged else normal_tip)
 
 
 def setpoint_limits() -> dict:
@@ -41,6 +41,17 @@ def setpoint_limits() -> dict:
         return {}
     return {t: (float(m["min_val"]), float(m["max_val"])) for t, m in reg.items()
             if m.get("min_val") is not None and m.get("max_val") is not None}
+
+
+def _readback_labels(primary_sample: str, secondary_sample: str):
+    """The main readback (what the setpoint controls) and a smaller second line (the other values)."""
+    lbl_rb = QLabel()
+    set_role(lbl_rb, "readout")
+    reserve_width(lbl_rb, primary_sample)
+    lbl_rb2 = QLabel()
+    set_role(lbl_rb2, "readout-sub")
+    reserve_width(lbl_rb2, secondary_sample)
+    return lbl_rb, lbl_rb2
 
 
 # --- Ion Source Subsystem Component ---
@@ -69,43 +80,56 @@ class IonSourceWidget(QWidget):
         sp_box.setToolTip(hard_caps.note(tag))
 
     def _init_psu_ui(self):
-        psu_group = QGroupBox("Source Power Supplies")
+        psu_group = QGroupBox("Source power supplies")
         self.psu_layout = QGridLayout()
+        self.psu_layout.setHorizontalSpacing(10)
+        self.psu_layout.setVerticalSpacing(2)
         self.psu_controls = {}
+        for col, text in enumerate(("Supply", "Readback", "Setpoint", "Mode", "Output")):
+            head = QLabel(text)
+            set_role(head, "caption")
+            self.psu_layout.addWidget(head, 0, col)
 
-        self._build_psu_row(0, "Source Einzel", "ion_beam.source.einzel", "kV", "µA", 0.0, 30.0, is_voltage=True,
+        # Each supply takes three grid rows: the main readback with the controls, the readback's
+        # second line (and a supply's second button), then a gap before the next supply
+        self._build_psu_row(1, "Source Einzel", "ion_beam.source.einzel", "kV", "µA", 0.0, 30.0, is_voltage=True,
                             decimals=3)
-        self._build_psu_row(1, "Extraction", "ion_beam.source.extraction", "kV", "mA", 0.0, 20.0, is_voltage=True,
+        self._build_psu_row(4, "Extraction", "ion_beam.source.extraction", "kV", "mA", 0.0, 20.0, is_voltage=True,
                             decimals=3)
-        self._build_psu_row(2, "Target", "ion_beam.source.target", "kV", "mA", 0.0, 10.0, is_voltage=True, decimals=3)
-        self._build_psu_row(3, "Filament", "ion_beam.source.filament", "A", "V", 0.0, 38.0, is_voltage=False,
+        self._build_psu_row(7, "Target", "ion_beam.source.target", "kV", "mA", 0.0, 10.0, is_voltage=True, decimals=3)
+        self._build_psu_row(10, "Filament", "ion_beam.source.filament", "A", "V", 0.0, 38.0, is_voltage=False,
                             decimals=3)
-        self._build_psu_row(4, "Thermionic", "ion_beam.source.thermionic", "mA", "V", 0.0, 1000.0, is_voltage=False,
+        self._build_psu_row(13, "Thermionic", "ion_beam.source.thermionic", "mA", "V", 0.0, 1000.0, is_voltage=False,
                             decimals=2)
-        self._build_cs_row(5)
+        self._build_cs_row(16)
+        for gap_row in (3, 6, 9, 12, 15):
+            self.psu_layout.setRowMinimumHeight(gap_row, 10)
+        # The mode column keeps its width when no badge shows, so the buttons don't move
+        probe = chip("ARC QUENCH", "warn")
+        probe.ensurePolished()
+        self.psu_layout.setColumnMinimumWidth(3, probe.sizeHint().width())
+        probe.deleteLater()
+        self.psu_layout.setColumnStretch(5, 1)          # spare width goes to the right
 
         psu_group.setLayout(self.psu_layout)
         self.main_layout.addWidget(psu_group)
         self.main_layout.addStretch()
 
     def _build_psu_row(self, row, name, base_tag, pri_unit, sec_unit, min_v, max_v, is_voltage, decimals):
-        lbl_name = QLabel(f"<b>{name}</b>")
+        lbl_name = QLabel(name)
+        set_role(lbl_name, "title")
 
-        if name in ["Extraction", "Target", "Filament", "Thermionic"]:
-            lbl_rb = QLabel(f"RB: --- {pri_unit} | --- {sec_unit} | --- W")
-            lbl_rb.setMinimumWidth(250)
-        else:
-            lbl_rb = QLabel(f"RB: --- {pri_unit} | --- {sec_unit}")
-            lbl_rb.setMinimumWidth(180)
+        has_power = name in ["Extraction", "Target", "Filament", "Thermionic"]
+        lbl_rb, lbl_rb2 = _readback_labels(f"0000.000 {pri_unit} [?]",
+                                           f"0000.00 {sec_unit} | 0000.0 W" if has_power else f"0000.0 {sec_unit}")
+        lbl_rb.setText(f"--- {pri_unit}")
+        lbl_rb2.setText(f"--- {sec_unit} | --- W" if has_power else f"--- {sec_unit}")
 
-        lbl_badge = QLabel("")
-        lbl_badge.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        lbl_badge.setFixedWidth(100)
+        lbl_badge = chip("", "info")
         lbl_badge.hide()
 
         btn_enable = QPushButton("ENABLE")
         btn_enable.setCheckable(True)
-        btn_enable.setStyleSheet(COLOR_BUTTON_STANDARD)
         # Switching ON needs a confirming second click; OFF is immediate
         arm = ArmedToggle(btn_enable, lambda on, t=base_tag: self._dispatch_command(f"{t}.cmd_enable", on),
                           what=name.upper())
@@ -131,47 +155,48 @@ class IonSourceWidget(QWidget):
         # supply holds none, whoever sets the voltage - this panel used to send 50 uA with each.)
         sp_box.committed.connect(lambda value, t=sp_tag: self._dispatch_command(t, value))
 
-        self.psu_layout.addWidget(lbl_name, row, 0)
-        self.psu_layout.addWidget(lbl_rb, row, 1)
-        self.psu_layout.addWidget(sp_box, row, 2)
-        self.psu_layout.addWidget(lbl_badge, row, 3)
-        self.psu_layout.addWidget(btn_enable, row, 4)
-
         self.psu_controls[name] = {
-            "lbl_rb": lbl_rb, "sp_box": sp_box, "btn_enable": btn_enable, "arm": arm,
+            "lbl_rb": lbl_rb, "lbl_rb2": lbl_rb2, "sp_box": sp_box, "btn_enable": btn_enable, "arm": arm,
             "lbl_badge": lbl_badge, "base_tag": base_tag,
             "pri_unit": pri_unit, "sec_unit": sec_unit, "is_voltage": is_voltage,
             "decimals": decimals
         }
 
+        self._place(row, lbl_name, lbl_rb, lbl_rb2, sp_box, lbl_badge, btn_enable)
         if name == "Thermionic":
             btn_auto = QPushButton("AUTO EMISSION")
             btn_auto.setCheckable(True)
-            btn_auto.setStyleSheet(COLOR_BUTTON_STANDARD)
             btn_auto.clicked.connect(
                 lambda *args, b=btn_auto, t=base_tag: self._dispatch_command(f"{t}.cmd_auto_emission", b.isChecked()))
-            self.psu_layout.addWidget(btn_auto, row, 5)
+            self.psu_layout.addWidget(btn_auto, row + 1, 4)
             self.psu_controls[name]["btn_auto"] = btn_auto
 
-    def _build_cs_row(self, row):
-        lbl_name = QLabel("<b>Cesium Oven</b>")
-        lbl_rb = QLabel("RB: --- °C")
-        lbl_rb.setMinimumWidth(180)
+    def _place(self, row, lbl_name, lbl_rb, lbl_rb2, sp_box, lbl_badge, btn_enable):
+        middle = Qt.AlignmentFlag.AlignVCenter
+        self.psu_layout.addWidget(lbl_name, row, 0, middle)
+        self.psu_layout.addWidget(lbl_rb, row, 1, middle)
+        self.psu_layout.addWidget(lbl_rb2, row + 1, 1, Qt.AlignmentFlag.AlignTop)
+        self.psu_layout.addWidget(sp_box, row, 2)
+        self.psu_layout.addWidget(lbl_badge, row, 3, middle)
+        self.psu_layout.addWidget(btn_enable, row, 4)
 
-        lbl_badge = QLabel("")
-        lbl_badge.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        lbl_badge.setFixedWidth(100)
+    def _build_cs_row(self, row):
+        lbl_name = QLabel("Cesium oven")
+        set_role(lbl_name, "title")
+        lbl_rb, lbl_rb2 = _readback_labels("~000.0 °C [?]", "heater 100 %")
+        lbl_rb.setText("--- °C")
+        lbl_rb2.setText("heater --- %")
+
+        lbl_badge = chip("", "info")
         lbl_badge.hide()
 
         btn_enable = QPushButton("HEATER ON")
         btn_enable.setCheckable(True)
-        btn_enable.setStyleSheet(COLOR_BUTTON_STANDARD)
         arm = ArmedToggle(btn_enable, lambda on: self._dispatch_command("ion_beam.source.cesium.cmd_ctrl_mode",
                                                                         1 if on else 0), what="HEATER")
 
         btn_cool = QPushButton("FORCED COOLING")
         btn_cool.setCheckable(True)
-        btn_cool.setStyleSheet(COLOR_BUTTON_STANDARD)
         btn_cool.clicked.connect(
             lambda *args, b=btn_cool: self._dispatch_command("ion_beam.source.cesium.cmd_force_cooling", b.isChecked()))
 
@@ -182,15 +207,11 @@ class IonSourceWidget(QWidget):
         sp_box.setSuffix(" °C")
         sp_box.committed.connect(lambda value: self._dispatch_command("ion_beam.source.cesium.sp_requested_temp", value))
 
-        self.psu_layout.addWidget(lbl_name, row, 0)
-        self.psu_layout.addWidget(lbl_rb, row, 1)
-        self.psu_layout.addWidget(sp_box, row, 2)
-        self.psu_layout.addWidget(lbl_badge, row, 3)
-        self.psu_layout.addWidget(btn_enable, row, 4)
-        self.psu_layout.addWidget(btn_cool, row, 5)
+        self._place(row, lbl_name, lbl_rb, lbl_rb2, sp_box, lbl_badge, btn_enable)
+        self.psu_layout.addWidget(btn_cool, row + 1, 4)
 
         self.psu_controls["Cesium"] = {
-            "lbl_rb": lbl_rb, "sp_box": sp_box, "btn_enable": btn_enable, "arm": arm,
+            "lbl_rb": lbl_rb, "lbl_rb2": lbl_rb2, "sp_box": sp_box, "btn_enable": btn_enable, "arm": arm,
             "btn_cool": btn_cool, "lbl_badge": lbl_badge,
             "base_tag": "ion_beam.source.cesium", "is_voltage": False
         }
@@ -257,9 +278,11 @@ class IonSourceWidget(QWidget):
                     else:
                         temp_str = f"{rb_val:.1f}" if rb_val is not None else "---"
 
-                    ctrl["lbl_rb"].setText(f"RB: {temp_str} °C (H: {duty_cycle:.0f}%){stale_str}")
+                    ctrl["lbl_rb"].setText(f"{temp_str} °C{stale_str}")
+                    ctrl["lbl_rb2"].setText(f"heater {duty_cycle:.0f} %")
                 else:
-                    ctrl["lbl_rb"].setText("RB: --- °C")
+                    ctrl["lbl_rb"].setText("--- °C")
+                    ctrl["lbl_rb2"].setText("heater --- %")
                 rb_tags = (f"{base_tag}.rb_temp",)
             else:
                 rb_v = data.get(f"{base_tag}.rb_voltage")
@@ -273,20 +296,17 @@ class IonSourceWidget(QWidget):
                 if ctrl["is_voltage"]:
                     v_str = f"{rb_v:.{pri_decimals}f}" if rb_v is not None else "---"
                     i_str = f"{rb_i:.{sec_decimals}f}" if rb_i is not None else "---"
-                    ctrl["lbl_rb"].setText(f"RB: {v_str} {pri_unit} | {i_str} {sec_unit}{p_str}{stale_str}")
+                    ctrl["lbl_rb"].setText(f"{v_str} {pri_unit}{stale_str}")
+                    ctrl["lbl_rb2"].setText(f"{i_str} {sec_unit}{p_str}")
                 else:
                     i_str = f"{rb_i:.{pri_decimals}f}" if rb_i is not None else "---"
                     v_str = f"{rb_v:.{sec_decimals}f}" if rb_v is not None else "---"
-                    ctrl["lbl_rb"].setText(f"RB: {i_str} {pri_unit} | {v_str} {sec_unit}{p_str}{stale_str}")
+                    ctrl["lbl_rb"].setText(f"{i_str} {pri_unit}{stale_str}")
+                    ctrl["lbl_rb2"].setText(f"{v_str} {sec_unit}{p_str}")
                 rb_tags = (f"{base_tag}.rb_voltage", f"{base_tag}.rb_current")
 
             # Readback-vs-setpoint tolerance (information only, from service_monitor)
-            if tolerance_flagged(data, rb_tags):
-                ctrl["lbl_rb"].setStyleSheet(TOLERANCE_STYLE)
-                ctrl["lbl_rb"].setToolTip(TOLERANCE_TIP)
-            elif ctrl["lbl_rb"].styleSheet():
-                ctrl["lbl_rb"].setStyleSheet("")
-                ctrl["lbl_rb"].setToolTip("")
+            show_tolerance(ctrl["lbl_rb"], tolerance_flagged(data, rb_tags))
 
             # B. Active Setpoints (shown unless the operator is typing a new one)
             sp_tag = "sp_actual_temp" if name == "Cesium" else (
@@ -299,7 +319,7 @@ class IonSourceWidget(QWidget):
             if name == "Cesium":
                 stat_en = data.get(f"{base_tag}.stat_enabled")
                 ctrl["btn_enable"].setEnabled(not comp_lockout)
-                ctrl["arm"].show_state(None if stat_en is None else bool(stat_en), COLOR_OK, COLOR_BUTTON_STANDARD,
+                ctrl["arm"].show_state(None if stat_en is None else bool(stat_en),
                                        "State unknown: no current data from the PLC.")
                 ctrl["btn_enable"].setToolTip(
                     f"Disabled: {comp_lock_reason}" if comp_lockout else "Click to toggle Cesium Heater PID control.")
@@ -313,15 +333,15 @@ class IonSourceWidget(QWidget):
                 if stat_cool:
                     ctrl["btn_cool"].setChecked(True)
                     ctrl["btn_cool"].setText("COOLING ACTIVE")
-                    ctrl["btn_cool"].setStyleSheet("background-color: #03A9F4; color: white;")
+                    set_tone(ctrl["btn_cool"], "info")
                 elif stat_wait:
                     ctrl["btn_cool"].setChecked(True)
                     ctrl["btn_cool"].setText("COMPRESSOR RESTING")
-                    ctrl["btn_cool"].setStyleSheet("background-color: #FF9800; color: black; font-weight: bold;")
+                    set_tone(ctrl["btn_cool"], "warn")
                 else:
                     ctrl["btn_cool"].setChecked(False)
                     ctrl["btn_cool"].setText("FORCED COOLING")
-                    ctrl["btn_cool"].setStyleSheet(COLOR_BUTTON_STANDARD)
+                    set_tone(ctrl["btn_cool"], None)
 
             else:
                 if "btn_enable" in ctrl:
@@ -335,8 +355,7 @@ class IonSourceWidget(QWidget):
                         ctrl["btn_enable"].blockSignals(False)
 
                         ctrl["btn_enable"].setText("DISARMING...")
-                        ctrl["btn_enable"].setStyleSheet(
-                            "background-color: #FF9800; color: black; font-weight: bold; border-radius: 4px;")
+                        set_tone(ctrl["btn_enable"], "warn")
                         ctrl["btn_enable"].setEnabled(False)
                         ctrl["btn_enable"].setToolTip(
                             "Contactor remains closed while safe step-down ramp drops current to 0A.")
@@ -347,8 +366,7 @@ class IonSourceWidget(QWidget):
                             else f"Click twice to switch {name} ON (confirm); once to switch it OFF.")
                         # None = unknown (service down, supply not answering): shown as unknown,
                         # never as the last known state
-                        ctrl["arm"].show_state(None if stat_en is None else bool(stat_en), COLOR_OK,
-                                               COLOR_BUTTON_STANDARD,
+                        ctrl["arm"].show_state(None if stat_en is None else bool(stat_en),
                                                f"{name} output state unknown - no current data from its service.")
 
                 if name == "Thermionic" and "btn_auto" in ctrl:
@@ -362,11 +380,11 @@ class IonSourceWidget(QWidget):
 
                         if is_auto:
                             ctrl["btn_auto"].setText("AUTO EMISSION: ON")
-                            ctrl["btn_auto"].setStyleSheet(COLOR_OK)
+                            set_tone(ctrl["btn_auto"], "info")
                             tt = f"Disabled: {comp_lock_reason}" if comp_lockout else "Auto-Emission ACTIVE. Click to revert to Manual Filament Control."
                         else:
                             ctrl["btn_auto"].setText("AUTO EMISSION")
-                            ctrl["btn_auto"].setStyleSheet(COLOR_BUTTON_STANDARD)
+                            set_tone(ctrl["btn_auto"], None)
                             tt = f"Disabled: {comp_lock_reason}" if comp_lockout else "Click to engage closed-loop Auto-Emission control (Cascades Filament output)."
 
                         ctrl["btn_auto"].setToolTip(tt)
@@ -380,55 +398,49 @@ class IonSourceWidget(QWidget):
             if hw_lockout:
                 sp_box.setEnabled(False)
                 sp_box.setToolTip("Disabled: Hardware interlock or fault is active.")
-                lbl_badge.setText("🔒 LOCKED")
-                lbl_badge.setStyleSheet(COLOR_FAULT)
-                lbl_badge.show()
+                self._badge(lbl_badge, "LOCKED", "fault")
             elif name == "Filament" and auto_emission:
                 sp_box.setEnabled(False)
                 sp_box.setToolTip("Disabled: auto-emission is on - the PLC sets the filament current to hold "
                                   "the thermionic emission setpoint.")
-                lbl_badge.setText("⚙️ AUTO-EMIS")
-                lbl_badge.setStyleSheet("background-color: #2196F3; color: white; border-radius: 3px;")
-                lbl_badge.show()
+                self._badge(lbl_badge, "AUTO-EMIS", "info")
             elif held_by:
                 sp_box.setEnabled(False)
                 sp_box.setToolTip(f"Disabled: {comp_lock_reason}")
-                lbl_badge.setText("🤖 SEQUENCE")
-                lbl_badge.setToolTip(f"Held by {held_by} (stop it, or take control in the Automation bar)")
-                lbl_badge.setStyleSheet("background-color: #9C27B0; color: white; border-radius: 3px;")
-                lbl_badge.show()
+                self._badge(lbl_badge, "SEQUENCE", "seq",
+                            f"Held by {held_by} (stop it, or take control in the Automation bar)")
             elif ctrl_mode == 1:
                 if name == "Cesium":
                     sp_box.setEnabled(not comp_lockout)
                     sp_box.setToolTip(f"Disabled: {comp_lock_reason}" if comp_lockout else "")
-                    lbl_badge.setText("🔥 HEATING")
-                    lbl_badge.setStyleSheet("background-color: #FF5722; color: white; border-radius: 3px;")
-                    lbl_badge.show()
+                    self._badge(lbl_badge, "HEATING", "on", "The PLC's PID is holding the oven temperature.")
                 else:
                     sp_box.setEnabled(False)
                     sp_box.setToolTip("Disabled: Control yielded to automated sequencer.")
-                    lbl_badge.setText("⚙️ AUTO")
-                    lbl_badge.setStyleSheet("background-color: #2196F3; color: white; border-radius: 3px;")
-                    lbl_badge.show()
+                    self._badge(lbl_badge, "AUTO", "info")
             elif ctrl_mode == 2:
                 sp_box.setEnabled(False)
                 sp_box.setToolTip("Disabled: Control yielded to active Recipe.")
-                lbl_badge.setText("🤖 RECIPE")
-                lbl_badge.setStyleSheet("background-color: #9C27B0; color: white; border-radius: 3px;")
-                lbl_badge.show()
+                self._badge(lbl_badge, "RECIPE", "seq")
             elif ctrl_mode == 3:
                 sp_box.setEnabled(False)
                 sp_box.setToolTip("Disabled: Target is dynamically cascaded from a master PID loop.")
-                lbl_badge.setText("🔗 CASCADED")
-                lbl_badge.setStyleSheet("background-color: #4CAF50; color: white; border-radius: 3px;")
-                lbl_badge.show()
+                self._badge(lbl_badge, "CASCADED", "info")
             elif ctrl_mode == 4:
                 sp_box.setEnabled(False)
                 sp_box.setToolTip("Disabled: Output temporarily held by Arc Quench algorithm.")
-                lbl_badge.setText("⚡ ARC QUENCH")
-                lbl_badge.setStyleSheet(COLOR_WARNING)
-                lbl_badge.show()
+                self._badge(lbl_badge, "ARC QUENCH", "warn")
             else:
                 sp_box.setEnabled(not comp_lockout)
                 sp_box.setToolTip(f"Disabled: {comp_lock_reason}" if comp_lockout else sp_box.property("cap_note") or "")
-                lbl_badge.hide()
+                if not lbl_badge.isHidden():
+                    lbl_badge.hide()
+
+    @staticmethod
+    def _badge(lbl, text: str, tone: str, tip: str = ""):
+        """The control-mode badge beside a supply: who or what is driving it."""
+        lbl.setText(text)
+        set_tone(lbl, tone)
+        lbl.setToolTip(tip)
+        if lbl.isHidden():
+            lbl.show()

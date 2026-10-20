@@ -26,6 +26,7 @@ from PyQt6.QtWidgets import (
 
 from src.core import export_data as ex
 from src.gui.settings import gui_settings
+from src.gui.style import set_role
 
 NICE_BINS = [0.1, 0.2, 0.5, 1, 2, 5, 10, 15, 30, 60, 120, 300, 600, 900, 1800, 3600, 7200, 21600, 86400]
 
@@ -142,7 +143,7 @@ class ExportDialog(QDialog):
         f.addRow("Folder", h)
         self.ed_name = QLineEdit(default_name)
         f.addRow("Name", self.ed_name)
-        self.lbl_out = QLabel(); self.lbl_out.setStyleSheet("color: #666;")
+        self.lbl_out = QLabel(); set_role(self.lbl_out, "caption")
         f.addRow(self.lbl_out)
         self.ed_name.textChanged.connect(self._update_estimate)
         self.ed_dest.textChanged.connect(self._update_estimate)
@@ -192,9 +193,9 @@ class ExportDialog(QDialog):
         if self.rb_exact.isChecked() and rows > 2e6:
             txt += (".  Large export: consider Parquet only, or time-averaging "
                     "(the figure is unaffected either way).")
-            self.lbl_est.setStyleSheet("color: #E65100;")
+            set_role(self.lbl_est, "warning")
         else:
-            self.lbl_est.setStyleSheet("")
+            set_role(self.lbl_est, None)
         self.lbl_est.setText(txt)
         self.lbl_out.setText(f"-> {os.path.join(self.ed_dest.text(), self.ed_name.text() + '_<date>_<time>')}")
 
@@ -202,7 +203,7 @@ class ExportDialog(QDialog):
         t0, t1 = self._range()
         if t1 <= t0:
             self.lbl_est.setText("End must be after start.")
-            self.lbl_est.setStyleSheet("color: #C62828;")
+            set_role(self.lbl_est, "error")
             return
         o = self.options()
         st = gui_settings("SINDIE", "DataViewer")

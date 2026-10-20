@@ -57,8 +57,6 @@ def test_shipped_configs_have_no_problems():
     ("mpd_config.json", lambda d: d["buses"][0]["devices"]["source_einzel"].update(default_current_ua=0),
      "default_current_ua: must be above 0"),
     ("logger_config.json", lambda d: d.update(tick_rate_seconds=0), "tick_rate_seconds: must be at least 0.01"),
-    ("theme_config.json", lambda d: d.update(theme_mode="purple"), "theme_mode"),
-    ("theme_config.json", lambda d: d["dark_palette"].update(accent="blue"), "must be a colour"),
     ("fault_config.json", lambda d: next(iter(d.values()))["bits"].update({"4.0": {"name": "X"}}), "byte 0-3"),
     ("alarm_config.json", lambda d: d["overrides"].update({"x": {"priority": 7}}), "priority: must be at most 4"),
     ("alarm_config.json", lambda d: d.setdefault("rules", []).append({"kind": "telepathy"}), "telepathy"),

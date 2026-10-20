@@ -7,15 +7,20 @@ events.db (event type COMMAND) and each service's log file.
 """
 import time
 
-from PyQt6.QtGui import QColor
 from PyQt6.QtWidgets import (QCheckBox, QHBoxLayout, QHeaderView, QLabel, QPushButton, QTableWidget,
                              QTableWidgetItem, QVBoxLayout, QWidget)
 
 from src.core.commands import SUCCESS
+from src.gui import theme
 
 MAX_ROWS = 500
 COLUMNS = ["Time", "Origin", "Service", "Tag", "Value", "Result", "Reason"]
-_COLOURS = {"rejected": "#C62828", "failed": "#C62828", "timeout": "#EF6C00", "unreachable": "#EF6C00"}
+# Not executed: refused or failed in red, no answer (timeout, service not running) in amber
+_COLOURS = {"rejected": "fault", "failed": "fault", "timeout": "warn", "unreachable": "warn"}
+
+
+def _ink(status: str):
+    return theme.color(_COLOURS.get(status, "fault"))
 
 
 class CommandLogWidget(QWidget):
@@ -48,6 +53,7 @@ class CommandLogWidget(QWidget):
 
         self.total = 0
         self.problems = 0
+        theme.theme_changed().connect(self._recolour)
 
     def add_result(self, result: dict):
         status = result.get("status", "?")
@@ -71,7 +77,7 @@ class CommandLogWidget(QWidget):
             if col == 6:
                 item.setToolTip(str(text))
             if not ok:
-                item.setForeground(QColor(_COLOURS.get(status, "#C62828")))
+                item.setForeground(_ink(status))
             self.table.setItem(0, col, item)
         self.table.setRowHidden(0, self.chk_problems.isChecked() and ok)
         if self.table.rowCount() > MAX_ROWS:
@@ -83,6 +89,22 @@ class CommandLogWidget(QWidget):
             item = self.table.item(row, 5)
             ok = item is not None and item.text().lower() in SUCCESS
             self.table.setRowHidden(row, problems_only and ok)
+
+    def _recolour(self, *_):
+        """After a theme switch: the problem rows in the new theme's red and amber."""
+        try:
+            for row in range(self.table.rowCount()):
+                result = self.table.item(row, 5)
+                status = result.text().lower() if result is not None else ""
+                if not status or status in SUCCESS:
+                    continue
+                ink = _ink(status)
+                for col in range(self.table.columnCount()):
+                    item = self.table.item(row, col)
+                    if item is not None:
+                        item.setForeground(ink)
+        except RuntimeError:            # (the panel has gone)
+            pass
 
     def _clear(self):
         self.table.setRowCount(0)

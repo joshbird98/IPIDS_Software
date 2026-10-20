@@ -1,15 +1,11 @@
 from PyQt6.QtWidgets import (
-    QWidget, QVBoxLayout, QGridLayout, QLabel,
+    QWidget, QVBoxLayout, QLabel,
     QComboBox, QFrame, QGroupBox
 )
-from PyQt6.QtCore import Qt
 
-from src.core.theme import (
-    COLOR_OK,
-    COLOR_FAULT,
-    COLOR_INACTIVE,
-    COLOR_WARNING
-)
+from src.gui.reflow import ReflowGrid
+from src.gui.style import chip, reserve_width, set_ink, set_role, set_tone
+
 
 class AdamMonitorWidget(QWidget):
     def __init__(self, cmd_thread):
@@ -34,20 +30,24 @@ class AdamMonitorWidget(QWidget):
         self._init_ui()
 
     def _init_ui(self):
-        group = QGroupBox("Beamline Current Monitors (ADAM-6017)")
-        grid = QGridLayout()
+        group = QGroupBox("Beamline current monitors (ADAM-6017)")
+        group_layout = QVBoxLayout(group)
+        # Four cards across in a wide panel, fewer (down to one) as it narrows
+        grid = ReflowGrid(max_columns=4)
 
         for i, ch in enumerate(self.channels):
             frame = QFrame()
-            frame.setFrameStyle(QFrame.Shape.StyledPanel | QFrame.Shadow.Raised)
+            set_role(frame, "card")
             fl = QVBoxLayout(frame)
+            fl.setContentsMargins(8, 6, 8, 8)
+            fl.setSpacing(4)
 
-            lbl_title = QLabel(f"<b>{ch['name']}</b>")
-            lbl_title.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            lbl_title = QLabel(ch["name"])
+            set_role(lbl_title, "caption")
 
             lbl_val = QLabel("--- \u03BCA")
-            lbl_val.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            lbl_val.setStyleSheet("font-size: 16pt; font-family: monospace; font-weight: bold;")
+            set_role(lbl_val, "readout-lg")
+            reserve_width(lbl_val, "+000.00 \u03BCA")
 
             cb_range = QComboBox()
             cb_range.addItems(["Auto", "+/- 150 mV", "+/- 500 mV", "+/- 1 V", "+/- 5 V", "+/- 10 V"])
@@ -55,24 +55,21 @@ class AdamMonitorWidget(QWidget):
                 lambda idx, tag=ch['tag']: self.cmd_thread.send_command("adam", f"{tag}.cmd_range", idx)
             )
 
-            lbl_status = QLabel("OFFLINE")
-            lbl_status.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            lbl_status.setStyleSheet(COLOR_INACTIVE)
+            lbl_status = chip("OFFLINE", "unknown")
 
             fl.addWidget(lbl_title)
             fl.addWidget(lbl_val)
             fl.addWidget(cb_range)
             fl.addWidget(lbl_status)
 
-            # Arrange in a 2x4 grid
-            grid.addWidget(frame, i // 4, i % 4)
+            grid.add(frame)
             self.ui_elements.append({
                 "val": lbl_val,
                 "range": cb_range,
                 "status": lbl_status
             })
 
-        group.setLayout(grid)
+        group_layout.addWidget(grid)
         self.main_layout.addWidget(group)
         self.main_layout.addStretch()
 
@@ -96,8 +93,9 @@ class AdamMonitorWidget(QWidget):
         if not sys_connected or not svc_connected or adam_fail:
             for ui in self.ui_elements:
                 ui["val"].setText("---")
+                set_ink(ui["val"], "faint")
                 ui["status"].setText("OFFLINE")
-                ui["status"].setStyleSheet(COLOR_INACTIVE)
+                set_tone(ui["status"], "unknown")
                 ui["range"].setEnabled(False)
             return
 
@@ -112,8 +110,9 @@ class AdamMonitorWidget(QWidget):
 
             # --- MODIFIED SECTION ---
             rb_range_idx = data.get(f"{tag}.rb_range_idx")
-            if isinstance(rb_range_idx, int) and 0 <= rb_range_idx < len(self.range_map):
-                act_range = self.range_map[rb_range_idx]
+            if isinstance(rb_range_idx, (int, float)) and float(rb_range_idx).is_integer() \
+                    and 0 <= int(rb_range_idx) < len(self.range_map):
+                act_range = self.range_map[int(rb_range_idx)]
             else:
                 act_range = "UNKNOWN"
             # ------------------------
@@ -128,14 +127,17 @@ class AdamMonitorWidget(QWidget):
 
             if ranging:
                 ui["val"].setText("RANGING...")
+                set_ink(ui["val"], "muted")
                 ui["status"].setText("RANGING")
-                ui["status"].setStyleSheet(COLOR_WARNING)
+                set_tone(ui["status"], "info")
             elif overrange:
                 ui["val"].setText("OVERRANGE")
+                set_ink(ui["val"], "warn")
                 ui["status"].setText(f"CLIP [{act_range}]")
-                ui["status"].setStyleSheet(COLOR_FAULT)
+                set_tone(ui["status"], "warn")
             else:
                 if rb_current is not None:
                     ui["val"].setText(self._format_current(float(rb_current)))
+                set_ink(ui["val"], None)
                 ui["status"].setText(f"OK [{act_range}]")
-                ui["status"].setStyleSheet(COLOR_OK)
+                set_tone(ui["status"], "ok")

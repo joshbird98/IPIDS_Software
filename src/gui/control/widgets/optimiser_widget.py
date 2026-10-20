@@ -15,17 +15,15 @@ from PyQt6.QtWidgets import (QCheckBox, QDoubleSpinBox, QGridLayout, QGroupBox, 
 
 from src.core import hard_caps, paths
 from src.core.commands import route_for_tag
+from src.gui import theme
 from src.gui.control.dialogs.optimiser_tag_dialog import OptimizerTagSelectorDialog
 from src.gui.control.sequencer_link import OFFLINE_TEXT, SequencerSlot
+from src.gui.style import set_tone
 from src.sequencer import protocol as P
 from src.sequencer.optimiser import DEFAULT_RB_TAG, restore_tags
 
 log = logging.getLogger("hmi.optimiser")
-
-BUTTON_STYLE = """
-    QPushButton {{ background-color: {}; color: white; font-weight: bold; }}
-    QPushButton:disabled {{ background-color: #555555; color: #888888; }}
-"""
+LIVE_MARK = "#00FFFF"       # the live point: drawn on the heat map's colours, so the same in both themes
 
 
 def subsystem_of(tag: str, data: dict):
@@ -68,10 +66,9 @@ class ParameterOptimizerWidget(QWidget):
 
     # ================================================================== UI
     def _create_axis_config_ui(self, axis_label: str):
-        group = QGroupBox(f"{axis_label}-Axis Configuration")
+        group = QGroupBox(f"{axis_label} axis")
         layout = QGridLayout()
-        btn_select = QPushButton(f"Select {axis_label}-Axis Parameter...")
-        btn_select.setStyleSheet("text-align: center; font-style: italic; padding: 6px;")
+        btn_select = QPushButton(f"Select the {axis_label}-axis parameter...")
         layout.addWidget(btn_select, 0, 0, 1, 4)
         boxes = []
         for prefix, decimals in (("Start: ", 3), ("Stop: ", 3), ("Steps: ", 0)):
@@ -111,11 +108,11 @@ class ParameterOptimizerWidget(QWidget):
         self.cb_log_z = QCheckBox("Log Scale (Z)")
         self.cb_log_z.toggled.connect(self._update_image_render)
         self.btn_start = QPushButton("START 2D RASTER SWEEP")
-        self.btn_start.setStyleSheet(BUTTON_STYLE.format("#FF9800"))
+        set_tone(self.btn_start, "primary")
         self.btn_start.setEnabled(False)
         self.btn_start.clicked.connect(self._start_optimization)
         self.btn_stop = QPushButton("ABORT")
-        self.btn_stop.setStyleSheet(BUTTON_STYLE.format("#F44336"))
+        set_tone(self.btn_stop, "danger")
         self.btn_stop.setEnabled(False)
         self.btn_stop.clicked.connect(self._stop_optimization)
         for w in (self.sp_dwell, self.cb_log_z, self.btn_start, self.btn_stop):
@@ -127,8 +124,6 @@ class ParameterOptimizerWidget(QWidget):
         ctrl_layout.addWidget(self.lbl_status)
         self.main_layout.addLayout(ctrl_layout)
 
-        pg.setConfigOption('background', '#1E1E1E')
-        pg.setConfigOption('foreground', 'w')
         self.glw = pg.GraphicsLayoutWidget()
         self.plot_widget = self.glw.addPlot(title="Beam Current Heat Map (A)")
         self.plot_widget.setLabel('bottom', "X-Axis Parameter")
@@ -144,20 +139,29 @@ class ParameterOptimizerWidget(QWidget):
         colormap = pg.colormap.get('plasma')
         self.image_item.setColorMap(colormap)
         self.plot_widget.addItem(self.image_item)
-        self.live_crosshair = pg.ScatterPlotItem(symbol='+', size=16, pen=pg.mkPen('#00FFFF', width=1.0))
+        self.live_crosshair = pg.ScatterPlotItem(symbol='+', size=16, pen=pg.mkPen(LIVE_MARK, width=1.0))
         self.live_crosshair.hide()
         self.plot_widget.addItem(self.live_crosshair)
         self.color_bar = pg.ColorBarItem(interactive=False, colorMap=colormap, width=12)
         self.color_bar.setImageItem(self.image_item)
         self.glw.addItem(self.color_bar)
-        self.hover_text = pg.TextItem(fill=pg.mkBrush(0, 0, 0, 200), color='w', border=pg.mkPen('gray'))
+        self.hover_text = pg.TextItem()
         self.hover_text.setZValue(100)
         self.hover_text.hide()
         self.plot_widget.addItem(self.hover_text)
+        theme.style_plot(self.glw, restyle=self._restyle)
         self.plot_widget.scene().sigMouseMoved.connect(self._on_mouse_moved)
         self.plot_widget.scene().sigMouseClicked.connect(self._on_mouse_clicked)
         self.main_layout.addWidget(self.glw)
         self.glw.installEventFilter(self)
+
+    def _restyle(self, _plot=None):
+        """Theme colours for the hover box (the plot itself is styled by theme.style_plot)."""
+        t = theme.tokens()
+        self.hover_text.fill = pg.mkBrush(theme.qcolor(t["plot_legend_bg"]))
+        self.hover_text.border = pg.mkPen(theme.qcolor(t["border"]))
+        self.hover_text.setColor(theme.qcolor(t["text"]))
+        self.hover_text.update()
 
     def eventFilter(self, obj, event):
         if obj == self.glw and event.type() == QEvent.Type.Leave:
@@ -184,7 +188,6 @@ class ParameterOptimizerWidget(QWidget):
     def _apply_target_constraints(meta, btn, sp_start, sp_stop, axis_label, tag=""):
         unit = meta.get("unit", "")
         btn.setText(f"{axis_label}: {meta.get('default_label', 'Unknown')} [{unit}]")
-        btn.setStyleSheet("text-align: center; font-weight: bold; padding: 6px;")
         lo, hi = float(meta["min_val"]), float(meta["max_val"])
         for box, value in ((sp_start, lo), (sp_stop, hi)):
             box.setRange(lo, hi)
@@ -366,10 +369,11 @@ class ParameterOptimizerWidget(QWidget):
         x_unit = self.registry.get(cfg.get("x_tag"), {}).get("unit", "")
         y_unit = self.registry.get(cfg.get("y_tag"), {}).get("unit", "")
         z_str = "0.0 A" if z == 0.0 else (f"{z:.2e} A" if abs(z) < 0.01 else f"{z:.4f} A")
-        self.hover_text.setHtml(f"<div style='text-align: left;'><b>X:</b> {x_val:.2f} {x_unit}<br>"
-                                f"<b>Y:</b> {y_val:.2f} {y_unit}<br><b>I:</b> <span style='color: #4CAF50;'>{z_str}"
-                                f"</span><br><span style='color: #FF9800; font-size: 8pt;'><i>Double-click to set "
-                                f"point</i></span></div>")
+        t = theme.tokens()
+        self.hover_text.setHtml(f"<div style='text-align: left; color: {t['text']};'><b>X:</b> {x_val:.2f} {x_unit}<br>"
+                                f"<b>Y:</b> {y_val:.2f} {y_unit}<br><b>I: {z_str}</b><br>"
+                                f"<span style='color: {t['text_muted']}; font-size: 8pt;'>Double-click to set "
+                                f"point</span></div>")
         self.hover_text.setAnchor((1.0 if x_val > (xs[0] + xs[-1]) / 2 else 0.0,
                                    0.0 if y_val > (ys[0] + ys[-1]) / 2 else 1.0))
         self.hover_text.setPos(x_val, y_val)

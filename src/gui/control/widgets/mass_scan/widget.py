@@ -14,6 +14,7 @@ from PyQt6.QtWidgets import (QApplication, QFileDialog, QInputDialog, QLabel, QM
 
 from src.core import hard_caps
 from src.core.mass_calibration import current_for_mass, mass_for_current
+from src.gui import theme
 from src.gui.control.sequencer_link import FETCH_ORIGIN, OFFLINE_TEXT, SequencerSlot
 from src.gui.control.widgets.mass_scan import isotopes, peaks, traces, ui
 from src.gui.control.widgets.mass_scan.axis import symlog
@@ -31,6 +32,16 @@ SMU = "ion_beam.beamline.faraday.smu"
 
 def energy_ev(e_kev: float) -> float:
     return e_kev * 1000.0 if e_kev > 0 else DEFAULT_ENERGY_EV
+
+
+def _rgb(token: str) -> tuple:
+    c = theme.color(token)
+    return c.red(), c.green(), c.blue()
+
+
+# A peak's label colour by what it was matched to (isotopes.match): one of the expected elements,
+# something else, or nothing close enough
+MATCH_INK = {"expected": "accent", "other": "warn", "none": "text_faint"}
 
 
 class PrecisionMassScannerWidget(QWidget):
@@ -177,7 +188,6 @@ class PrecisionMassScannerWidget(QWidget):
                 reason = "Magnet PSU must be enabled."
         busy = "start" in self._tickets
         self.btn_start.setEnabled(not reason and not busy)
-        self.btn_start.setStyleSheet(ui.OFF_STYLE if reason or busy else ui.START_STYLE)
         self.btn_start.setToolTip(f"Disabled: {reason}" if reason else "Click to begin the precision mass scan sweep.")
 
     def _lock_ui(self, locked: bool):
@@ -185,9 +195,7 @@ class PrecisionMassScannerWidget(QWidget):
                   self.sp_interval, self.sp_nplc, self.chk_loop, self.chk_export, self.edit_export_path):
             w.setEnabled(not locked)
         self.btn_start.setEnabled(not locked)
-        self.btn_start.setStyleSheet(ui.OFF_STYLE if locked else ui.START_STYLE)
         self.btn_stop.setEnabled(locked)
-        self.btn_stop.setStyleSheet(ui.STOP_STYLE if locked else ui.OFF_STYLE)
         if not locked:
             self.lbl_rem_time.setText("Remaining: --:--")
 
@@ -314,11 +322,13 @@ class PrecisionMassScannerWidget(QWidget):
                      sum(len(v) for v in self.mass_db.values()))
             self._conditional_peak_update()
 
+    def _restyle_plot(self, _plot=None):
+        """After a theme switch: the curves, markers and peak labels in the new colours."""
+        ui.restyle(self)
+        self._conditional_peak_update()
+
     def _on_detect_toggled(self, checked):
-        colour = "#F44336" if checked else "#2196F3"
-        self.btn_detect.setText("⏹ Stop Auto-Detect" if checked else "🔍 Auto-Detect Peaks")
-        self.btn_detect.setStyleSheet(f"background-color: {colour}; color: white; font-weight: bold; padding: 8px; "
-                                      f"border-radius: 4px;")
+        self.btn_detect.setText("Stop auto-detect" if checked else "Auto-detect peaks")
         if checked:
             self._run_peak_detection()
         else:
@@ -353,13 +363,15 @@ class PrecisionMassScannerWidget(QWidget):
             QMessageBox.critical(self, "Analysis Error", f"Peak detection failed:\n{e}")
             return
         if not found:
-            self.lbl_res.setText("<span style='color: #F44336; font-weight: bold;'>No peaks detected.</span>")
+            self.lbl_res.setText(f"<span style='color: {theme.tokens()['fault']}; font-weight: bold;'>"
+                                 f"No peaks detected.</span>")
             return
         self.peak_table.setRowCount(len(found))
         tails_x, tails_y = [], []
         for row, peak in enumerate(found):
             if peak.labelled:
-                label = pg.TextItem(html=f"<div style='text-align: center; color: {peak.colour}; font-size: 10pt; "
+                ink = theme.tokens()[MATCH_INK.get(peak.kind, "text_faint")]
+                label = pg.TextItem(html=f"<div style='text-align: center; color: {ink}; font-size: 10pt; "
                                          f"font-weight: bold;'>{peak.match_html}<br>({peak.amu:.1f})</div>",
                                     anchor=(0.5, 1.2))
                 label.setPos(peak.amu, float(self._ty(peak.current)))
@@ -372,9 +384,10 @@ class PrecisionMassScannerWidget(QWidget):
             self.peak_table.setItem(row, 0, QTableWidgetItem(f"{peak.amu:.2f}"))
             self.peak_table.setCellWidget(row, 1, match)
             tail = QTableWidgetItem(peaks.tail_text(peak.crosstalk_ppm))
-            tail.setForeground(pg.mkColor(*peaks.tail_colour(peak.crosstalk_ppm)))
+            tail.setForeground(pg.mkColor(*peaks.tail_colour(peak.crosstalk_ppm, _rgb("ok"), _rgb("warn"),
+                                                             _rgb("fault"))))
             self.peak_table.setItem(row, 2, tail)
-        self.lbl_res.setText(f"<b>Avg Mass Resolution (M/ΔM):</b> <span style='color: #4CAF50;'>"
+        self.lbl_res.setText(f"<b>Avg Mass Resolution (M/ΔM):</b> <span style='color: {theme.tokens()['ok']};'>"
                              f"{peaks.average_resolution(found):.1f}</span>")
         self.peak_markers.setData([p.amu for p in found], self._ty([p.current for p in found]))
         self.tail_markers.setData(tails_x, self._ty(tails_y))

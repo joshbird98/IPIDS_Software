@@ -5,10 +5,9 @@ from PyQt6.QtWidgets import QHBoxLayout, QLabel, QPushButton, QToolBar, QWidget
 
 from src.gui.control.arming import ArmedAction
 from src.gui.control.permits import leases, take_control
+from src.gui.style import chip, set_role, set_tone
 
 IDLE_TEXT = "Automation: nothing holds any controls"
-HELD_STYLE = "QLabel { color: #CE93D8; font-weight: bold; padding: 0 6px; }"
-TAKE_STYLE = "background-color: #7B1FA2; color: white; font-weight: bold; border-radius: 4px; padding: 3px 8px;"
 
 
 def describe(subsystems) -> str:
@@ -22,7 +21,7 @@ class AutomationBar(QToolBar):
         self.setMovable(False)
         self.cmd_thread = cmd_thread
         self.lbl_idle = QLabel(IDLE_TEXT)
-        self.lbl_idle.setStyleSheet("QLabel { color: #9E9E9E; padding: 0 6px; }")
+        set_role(self.lbl_idle, "hint")
         self.idle_action = self.addWidget(self.lbl_idle)     # a toolbar shows/hides the action, not the widget
         self.groups = {}                  # purpose -> [subsystems]
         self.rows = {}                    # purpose -> (action, label, button, arm)
@@ -43,17 +42,16 @@ class AutomationBar(QToolBar):
         for purpose, subs in groups.items():
             if purpose not in self.rows:
                 self._add_row(purpose)
-            self.rows[purpose][1].setText(f"🤖 {purpose} holds: {describe(subs)}")
+            self.rows[purpose][1].setText(f"{purpose} holds: {describe(subs)}")
         self.idle_action.setVisible(not groups)
 
     def _add_row(self, purpose):
         box = QWidget()
         layout = QHBoxLayout(box)
         layout.setContentsMargins(0, 0, 8, 0)
-        label = QLabel()
-        label.setStyleSheet(HELD_STYLE)
+        label = chip("", "seq")                  # violet: a sequence holds these controls
         button = QPushButton("TAKE CONTROL")
-        button.setStyleSheet(TAKE_STYLE)
+        set_tone(button, "seq")
         button.setToolTip(f"Take these controls back from {purpose} (click twice). It pauses (a recipe) or stops.")
         arm = ArmedAction(button, lambda p=purpose: self.take(p), what="TAKE CONTROL")
         layout.addWidget(label)

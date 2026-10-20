@@ -209,16 +209,19 @@ class DeviceService:
         self.heartbeat()
 
     def _pace(self, next_tick: float) -> float:
-        """Wait for next_tick (sleep, then spin the last 2 ms); after an overrun, skip to the next
-        boundary instead of running a burst of catch-up cycles. Returns the tick after it."""
+        """Sleep until next_tick; after an overrun, skip to the next boundary instead of running a
+        burst of catch-up cycles. Returns the tick after it.
+
+        (It used to sleep to 2 ms before the tick and busy-wait the rest: 2 % of a CPU core per
+        service at 10 Hz, a dozen services, at HIGH priority on the lab PC - for timing nothing
+        needs. A sleep ends within about a millisecond of the tick (Windows' high-resolution timer,
+        Python 3.11+) and the ticks are fixed times, so that never adds up to drift.)"""
         now = time.perf_counter()
         if next_tick <= now:
             next_tick += (int((now - next_tick) / self.POLL_INTERVAL) + 1) * self.POLL_INTERVAL
         remaining = next_tick - time.perf_counter()
-        if remaining > 0.002:
-            time.sleep(remaining - 0.002)
-        while time.perf_counter() < next_tick:
-            pass
+        if remaining > 0:
+            time.sleep(remaining)
         return next_tick + self.POLL_INTERVAL
 
     def stop(self):

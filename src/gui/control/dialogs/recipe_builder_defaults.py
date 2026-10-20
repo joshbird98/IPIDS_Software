@@ -1,6 +1,4 @@
-"""Recipe builder: step icons, colours, and the parameters a new ROUTINE_CALL step starts with."""
-
-COLOR_HEADER = "background-color: #2c3e50; color: white; padding: 4px; font-weight: bold;"
+"""Recipe builder: step icons and the parameters a new ROUTINE_CALL step starts with."""
 
 STEP_ICONS = {
     "ACTION": "⚡", "WAIT_TIME": "⏱️", "WAIT_TELEMETRY": "📡",

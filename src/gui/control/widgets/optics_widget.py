@@ -4,29 +4,44 @@ Spellman lenses. Whether a control is available comes from the services' permits
 import logging
 import time
 
-from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import (QDoubleSpinBox, QGridLayout, QGroupBox, QHBoxLayout, QLabel, QMessageBox, QPushButton,
                              QVBoxLayout, QWidget)
 
 from src.core import hard_caps
 from src.core.commands import route_for_tag
 from src.core.mass_calibration import current_for_mass
-from src.core.theme import COLOR_BUTTON_STANDARD, COLOR_FAULT, COLOR_INACTIVE, COLOR_OK
 from src.gui.control.arming import ArmedAction, ArmedToggle
 from src.gui.control.permits import permit_reason
 from src.gui.control.setpoint_box import SetpointBox
-from src.gui.control.widgets.source_widget import TOLERANCE_STYLE, TOLERANCE_TIP, setpoint_limits, tolerance_flagged
+from src.gui.control.widgets.source_widget import setpoint_limits, show_tolerance, tolerance_flagged
+from src.gui.style import chip, reserve_width, set_role, set_tone
 
 log = logging.getLogger("hmi.optics")
 
 
 def _show_tolerance(label, data, tags):
-    if tolerance_flagged(data, tags):
-        label.setStyleSheet(TOLERANCE_STYLE)
-        label.setToolTip(TOLERANCE_TIP)
-    elif label.styleSheet():
-        label.setStyleSheet("")
-        label.setToolTip("")
+    show_tolerance(label, tolerance_flagged(data, tags))
+
+
+def _name(text: str) -> QLabel:
+    lbl = QLabel(text)
+    set_role(lbl, "title")
+    return lbl
+
+
+def _readback(text: str, sample: str) -> QLabel:
+    lbl = QLabel(text)
+    set_role(lbl, "readout-sm")
+    reserve_width(lbl, sample)
+    return lbl
+
+
+def _grid() -> QGridLayout:
+    """Name | readback | setpoint | button, the same columns in every group (spare width on the right)."""
+    layout = QGridLayout()
+    layout.setHorizontalSpacing(10)
+    layout.setColumnStretch(4, 1)
+    return layout
 
 
 class BeamlineOpticsWidget(QWidget):
@@ -71,14 +86,13 @@ class BeamlineOpticsWidget(QWidget):
         return box
 
     def _init_pre_magnet_ui(self):
-        group = QGroupBox("1. Pre-Magnet Tuning")
-        layout = QGridLayout()
+        group = QGroupBox("1. Pre-magnet tuning")
+        layout = _grid()
 
         # Y-Steerer (Electrostatic)
-        layout.addWidget(QLabel("<b>Y-Steerer Voltage:</b>"), 0, 0)
+        layout.addWidget(_name("Y-steerer voltage"), 0, 0)
 
-        self.lbl_y_rb = QLabel("RB: --- V")
-        self.lbl_y_rb.setMinimumWidth(80)
+        self.lbl_y_rb = _readback("RB: --- V", "RB: -000.0 V")
         layout.addWidget(self.lbl_y_rb, 0, 1)
 
         self.sp_y_steer = self._setpoint_box(
@@ -92,16 +106,14 @@ class BeamlineOpticsWidget(QWidget):
         # Master Steering Enable (Applies to both X and Y)
         self.btn_steer_en = QPushButton("ENABLE STEERING")
         self.btn_steer_en.setCheckable(True)
-        self.btn_steer_en.setStyleSheet(COLOR_BUTTON_STANDARD)
         self.arm_steer = ArmedToggle(self.btn_steer_en, self._toggle_master_steering, what="STEERING")
         # Span the button across rows 0 and 1
         layout.addWidget(self.btn_steer_en, 0, 3, 2, 1)
 
         # X-Steerer (Magnetic)
-        layout.addWidget(QLabel("<b>X-Steerer Current:</b>"), 1, 0)
+        layout.addWidget(_name("X-steerer current"), 1, 0)
 
-        self.lbl_x_rb = QLabel("RB: --- A | --- V")
-        self.lbl_x_rb.setMinimumWidth(120)
+        self.lbl_x_rb = _readback("RB: --- A | --- V", "RB: 00.00 A | 000.0 V")
         layout.addWidget(self.lbl_x_rb, 1, 1)
 
         self.sp_x_steer = self._setpoint_box(
@@ -116,7 +128,7 @@ class BeamlineOpticsWidget(QWidget):
         layout.addWidget(self.sp_x_steer, 1, 2)
 
         # Object Slits
-        layout.addWidget(QLabel("<b>Object Slits (L / R):</b>"), 2, 0)
+        layout.addWidget(_name("Object slits (L / R)"), 2, 0)
         slit_layout = QHBoxLayout()
 
         self.sp_obj_l = self._setpoint_box("Object slit left", lambda v: self._log_manual_slit("Object Slit Left", v),
@@ -135,19 +147,17 @@ class BeamlineOpticsWidget(QWidget):
         self.main_layout.addWidget(group)
 
     def _init_magnet_ui(self):
-        group = QGroupBox("2. Mass Analyzer Magnet")
-        layout = QGridLayout()
+        group = QGroupBox("2. Mass analyser magnet")
+        layout = _grid()
 
         # --- Row 0: Cooling Status ---
-        self.lbl_mag_cooling = QLabel("COOLING: UNKNOWN")
-        self.lbl_mag_cooling.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.lbl_mag_cooling.setStyleSheet(COLOR_INACTIVE)
-        layout.addWidget(self.lbl_mag_cooling, 0, 0, 1, 2)
+        self.lbl_mag_cooling = chip("MAG COOLING: UNKNOWN", "unknown")
+        layout.addWidget(self.lbl_mag_cooling, 0, 0, 1, 3)
 
         # --- Row 1: Main Magnet Controls ---
-        layout.addWidget(QLabel("<b>Magnet Current:</b>"), 1, 0)
+        layout.addWidget(_name("Magnet current"), 1, 0)
 
-        self.lbl_mag_rb = QLabel("RB: --- A | --- V")
+        self.lbl_mag_rb = _readback("RB: --- A | --- V", "RB: 00.00 A | 00.00 V")
         layout.addWidget(self.lbl_mag_rb, 1, 1)
 
         self.sp_mag_current = self._setpoint_box(
@@ -162,22 +172,20 @@ class BeamlineOpticsWidget(QWidget):
 
         self.btn_mag_en = QPushButton("ENABLE MAGNET")
         self.btn_mag_en.setCheckable(True)
-        self.btn_mag_en.setStyleSheet(COLOR_BUTTON_STANDARD)
         self.arm_mag = ArmedToggle(self.btn_mag_en,
                                    lambda on: self._dispatch_command("ion_beam.beamline.magnet.cmd_enable", on),
                                    what="MAGNET")
         layout.addWidget(self.btn_mag_en, 1, 3)
 
         self.btn_mag_deg = QPushButton("DEGAUSS ROUTINE")
-        self.btn_mag_deg.setStyleSheet("background-color: #9C27B0; color: white; font-weight: bold;")
         # Degauss swings the magnet up to the configured amps: confirm first
         self.arm_deg = ArmedAction(self.btn_mag_deg,
                                    lambda: self._dispatch_command("ion_beam.beamline.magnet.cmd_degauss", True),
                                    what="DEGAUSS")
-        layout.addWidget(self.btn_mag_deg, 1, 4)
+        layout.addWidget(self.btn_mag_deg, 0, 3)
 
         # --- Row 2: Auto-Tune Target ---
-        layout.addWidget(QLabel("<b>Auto-Tune Target:</b>"), 2, 0)
+        layout.addWidget(_name("Auto-tune target"), 2, 0)
 
         self.sp_mass = QDoubleSpinBox()
         self.sp_mass.setRange(1.0, 250.0)
@@ -189,9 +197,8 @@ class BeamlineOpticsWidget(QWidget):
         layout.addWidget(self.sp_mass, 2, 2)
 
         self.btn_calc_mass = QPushButton("CALCULATE && SET AMPS")
-        self.btn_calc_mass.setStyleSheet("background-color: #2196F3; color: white; font-weight: bold;")
         self.btn_calc_mass.clicked.connect(self._calculate_mass)
-        layout.addWidget(self.btn_calc_mass, 2, 3, 1, 2)
+        layout.addWidget(self.btn_calc_mass, 2, 3)
 
         group.setLayout(layout)
         self.main_layout.addWidget(group)
@@ -243,11 +250,11 @@ class BeamlineOpticsWidget(QWidget):
                          f"(k = {cal['k']:.2f}, I_off = {cal['i_off']:.3f}; calibration {cal['source']})", "#2196F3")
 
     def _init_post_magnet_ui(self):
-        group = QGroupBox("3. Post-Magnet Tuning")
-        layout = QGridLayout()
+        group = QGroupBox("3. Post-magnet tuning")
+        layout = _grid()
 
         # Image Slits
-        layout.addWidget(QLabel("<b>Image Slits (L / R):</b>"), 0, 0)
+        layout.addWidget(_name("Image slits (L / R)"), 0, 0)
         slit_layout = QHBoxLayout()
 
         self.sp_img_l = self._setpoint_box("Image slit left", lambda v: self._log_manual_slit("Image Slit Left", v),
@@ -266,8 +273,8 @@ class BeamlineOpticsWidget(QWidget):
         self.main_layout.addWidget(group)
 
     def _init_downstream_optics_ui(self):
-        group = QGroupBox("4. Downstream Lenses && Filters")
-        self.optics_layout = QGridLayout()
+        group = QGroupBox("4. Downstream lenses && filters")
+        self.optics_layout = _grid()
         self.psu_controls = {}
 
         self._build_psu_row(0, "Beamline Einzel", "ion_beam.beamline.einzel", "kV", "µA", 0.0, 30.0)
@@ -278,13 +285,11 @@ class BeamlineOpticsWidget(QWidget):
         self.main_layout.addWidget(group)
 
     def _build_psu_row(self, row, name, base_tag, pri_unit, sec_unit, min_v, max_v):
-        lbl_name = QLabel(f"<b>{name}</b>")
-        lbl_rb = QLabel(f"RB: --- {pri_unit} | --- {sec_unit}")
-        lbl_rb.setMinimumWidth(180)
+        lbl_name = _name(name)
+        lbl_rb = _readback(f"RB: --- {pri_unit} | --- {sec_unit}", f"RB: 00.00 {pri_unit} | 000.00 {sec_unit}")
 
         btn_enable = QPushButton("ENABLE")
         btn_enable.setCheckable(True)
-        btn_enable.setStyleSheet(COLOR_BUTTON_STANDARD)
         arm = ArmedToggle(btn_enable, lambda on, t=base_tag: self._dispatch_command(f"{t}.cmd_enable", on),
                           what=name.upper())
 
@@ -320,13 +325,13 @@ class BeamlineOpticsWidget(QWidget):
         mag_cool = data.get("ion_beam.facilities.stat_mag_coolant_ok")
         if not plc_ok:
             self.lbl_mag_cooling.setText("MAG COOLING: UNKNOWN")
-            self.lbl_mag_cooling.setStyleSheet(COLOR_INACTIVE)
+            set_tone(self.lbl_mag_cooling, "unknown")
         elif mag_cool:
             self.lbl_mag_cooling.setText("MAG COOLING: FLOW & TEMP OK")
-            self.lbl_mag_cooling.setStyleSheet(COLOR_OK)
+            set_tone(self.lbl_mag_cooling, "ok")
         else:
             self.lbl_mag_cooling.setText("MAG COOLING: FAULT")
-            self.lbl_mag_cooling.setStyleSheet(COLOR_FAULT)
+            set_tone(self.lbl_mag_cooling, "fault")
 
         # The setpoint the magnet service holds (the box never showed it, so after an HMI restart it
         # read 0.00 A whatever the magnet was at - one arrow-key step from there would have sent ~0 A)
@@ -337,7 +342,7 @@ class BeamlineOpticsWidget(QWidget):
                                 else "RB: --- A | --- V")
         _show_tolerance(self.lbl_mag_rb, data, ("ion_beam.beamline.magnet.rb_current",))
         mag_en = data.get("ion_beam.beamline.magnet.stat_enabled")
-        self.arm_mag.show_state(None if mag_en is None else bool(mag_en), COLOR_OK, COLOR_BUTTON_STANDARD,
+        self.arm_mag.show_state(None if mag_en is None else bool(mag_en),
                                 "Magnet output state unknown - no current data from the magnet service.")
 
         # The magnet service's permit covers its connection, the safety relay and a sequence
@@ -360,10 +365,10 @@ class BeamlineOpticsWidget(QWidget):
             pass  # waiting for the confirming click
         elif data.get("ion_beam.beamline.magnet.stat_degaussing"):
             self.btn_mag_deg.setText("DEGAUSSING...")
-            self.btn_mag_deg.setStyleSheet("background-color: #E91E63; color: white; font-weight: bold;")
+            set_tone(self.btn_mag_deg, "seq")          # a routine holds the magnet
         else:
             self.btn_mag_deg.setText("DEGAUSS ROUTINE")
-            self.btn_mag_deg.setStyleSheet("background-color: #9C27B0; color: white; font-weight: bold;")
+            set_tone(self.btn_mag_deg, None)
 
         # --- 2. Steerers: Y electrostatic (PLC), X magnetic (steerer PSU service) ---
         y_steer_en = bool(data.get("ion_beam.beamline.steering.stat_enabled", False))
@@ -385,8 +390,7 @@ class BeamlineOpticsWidget(QWidget):
         # Master enable button shows OK only if BOTH steerers are verified active
         steer_known = ("ion_beam.beamline.steering.stat_enabled" in data
                        and "ion_beam.beamline.steerer_magnet.stat_enabled" in data)
-        self.arm_steer.show_state(y_steer_en and x_steer_en if steer_known else None, COLOR_OK,
-                                  COLOR_BUTTON_STANDARD,
+        self.arm_steer.show_state(y_steer_en and x_steer_en if steer_known else None,
                                   "Steering state unknown - no current data from the PLC or steerer service.")
         y_reason = permit_reason(data, "ion_beam.beamline.steering", "PLC")
         x_reason = permit_reason(data, "ion_beam.beamline.steerer_magnet", "steerer magnet")
@@ -416,5 +420,5 @@ class BeamlineOpticsWidget(QWidget):
             self._lock([ctrl["btn_enable"]], reason, "Click twice to switch ON (confirm); once to switch OFF")
             self._lock([ctrl["sp_box"]], reason, hard_caps.note(f"{base_tag}.sp_requested_voltage"))
             stat_en = data.get(f"{base_tag}.stat_enabled")
-            ctrl["arm"].show_state(None if stat_en is None else bool(stat_en), COLOR_OK, COLOR_BUTTON_STANDARD,
+            ctrl["arm"].show_state(None if stat_en is None else bool(stat_en),
                                    f"{name} output state unknown - supply not answering or not configured.")

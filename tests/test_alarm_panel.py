@@ -180,7 +180,8 @@ def test_shelved_and_suppressed_rows_are_quiet_and_explained(panel):
     texts = [w.table.item(r, 4).text() for r in range(3)]
     assert "shelved until" in texts[0] and "maintenance" in texts[0] and "suppressed" in texts[1]
     assert w.table.item(2, 0).text() == "⭐" and w.table.item(0, 0).text() == "💤"
-    assert w.table.item(0, 4).background().color().name() == "#9e9e9e"
+    from src.gui import theme
+    assert w.table.item(0, 4).background().color().name() == theme.color("alarm_quiet").name()
 
 
 def test_alarm_service_down_is_an_alarm_itself(panel):

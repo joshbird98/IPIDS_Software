@@ -14,12 +14,30 @@ from PyQt6.QtWidgets import (QDialog, QFormLayout, QGroupBox, QHBoxLayout, QLabe
 
 from src.core.ai_assistant import RecipeAIAssistant
 from src.core.recipe_engine import RecipeError, create_step
-from src.core.theme import is_dark_mode
+from src.gui import theme
 from src.gui.control.dialogs.fault_policy_dialog import FaultPolicyDialog
-from src.gui.control.dialogs.recipe_builder_defaults import COLOR_HEADER, ROUTINE_DEFAULTS, STEP_ICONS
+from src.gui.control.dialogs.recipe_builder_defaults import ROUTINE_DEFAULTS, STEP_ICONS
 from src.gui.control.dialogs.recipe_step_form import StepFormMixin
+from src.gui.style import chip, set_role, set_tone
 
 log = logging.getLogger("hmi.recipe_builder")
+
+# Chat bubbles in the assistant's history: (background, text) theme colours
+BUBBLES = {"assistant": ("card_alt", "text"), "user": ("accent", "on_accent"), "error": ("fault_bg", "fault"),
+           "success": ("ok_bg", "ok"), "check": ("warn_bg", "warn")}
+
+
+def bubble(text: str, kind: str = "assistant", align: str = "left") -> str:
+    """One message in the assistant's chat history, in the current theme's colours."""
+    t = theme.tokens()
+    bg, fg = (t[k] for k in BUBBLES.get(kind, BUBBLES["assistant"]))
+    return f"""
+        <table width="100%" border="0" cellspacing="0" cellpadding="0"><tr><td align="{align}">
+            <table border="0" cellspacing="0" cellpadding="8" style="background-color: {bg}; color: {fg};">
+                <tr><td>{text}</td></tr>
+            </table>
+        </td></tr></table><br>
+        """
 
 
 def recipe_filename(name: str) -> str:
@@ -86,41 +104,23 @@ class RecipeBuilderDialog(StepFormMixin, QDialog):
         main_layout = QVBoxLayout(self)
 
         # 1. AI ASSISTANT BLOCK
-        ai_group = QGroupBox("✨ AI Recipe Assistant")
-        ai_group.setStyleSheet(
-            "QGroupBox { border: 1px solid #ce93d8; border-radius: 6px; margin-top: 10px; font-weight: bold; } QGroupBox::title { subcontrol-origin: margin; left: 10px; padding: 0 3px 0 3px; }"
-        )
+        ai_group = QGroupBox("AI recipe assistant")
         ai_group.setMinimumHeight(220)
 
         ai_layout = QVBoxLayout()
-        ai_layout.setContentsMargins(10, 15, 10, 10)
 
-        # Compact Status Light
-        status_color = "#4CAF50" if self.ai_assistant.available else "#F44336"
-        status_text = "Online" if self.ai_assistant.available else "Offline (Missing API Key)"
-        lbl_status = QLabel(
-            f"<span style='color:{status_color}; font-size: 14px;'>●</span> <span style='color:#555; font-size: 11px;'>{status_text}</span>")
-        lbl_status.setFixedHeight(15)  # Force it to be small
-        ai_layout.addWidget(lbl_status)
+        # Whether the assistant can be used (it needs an API key)
+        available = self.ai_assistant.available
+        lbl_status = chip("Online" if available else "Offline (missing API key)", "ok" if available else "off")
+        status_row = QHBoxLayout()
+        status_row.addWidget(lbl_status)
+        status_row.addStretch()
+        ai_layout.addLayout(status_row)
 
         # Chat History (Read-Only)
         self.txt_ai_history = QTextEdit()
         self.txt_ai_history.setReadOnly(True)
-        self.txt_ai_history.setStyleSheet(
-            "border: 1px solid #ce93d8; border-radius: 4px; padding: 5px;")
-
-        # Dynamically set the welcome bubble colors
-        bg_col = "#2A2A2A" if is_dark_mode else "#E5E5EA"
-        txt_col = "#E0E0E0" if is_dark_mode else "black"
-
-        welcome_html = f"""
-                        <table width="100%" border="0" cellspacing="0" cellpadding="0"><tr><td align="left">
-                            <table border="0" cellspacing="0" cellpadding="8" style="background-color: {bg_col}; color: {txt_col}; border-radius: 6px;">
-                                <tr><td>Hello! Describe the sequence you want to build.</td></tr>
-                            </table>
-                        </td></tr></table><br>
-                        """
-        self.txt_ai_history.setHtml(welcome_html)
+        self.txt_ai_history.setHtml(bubble("Hello! Describe the sequence you want to build."))
 
         ai_layout.addWidget(self.txt_ai_history)
 
@@ -128,14 +128,11 @@ class RecipeBuilderDialog(StepFormMixin, QDialog):
         input_layout = QHBoxLayout()
         self.txt_ai_prompt = QTextEdit()
         self.txt_ai_prompt.setPlaceholderText("Type your instructions here...")
-        self.txt_ai_prompt.setMaximumHeight(45)
-        self.txt_ai_prompt.setStyleSheet(
-            "background-color: #F0F4F8; border: 2px solid #BBDEFB; border-radius: 6px; padding: 4px; font-size: 12px;")
+        self.txt_ai_prompt.setMaximumHeight(52)
 
         self.btn_generate_ai = QPushButton("Generate")
-        self.btn_generate_ai.setFixedSize(80, 45)  # Make button a nice square block
-        self.btn_generate_ai.setStyleSheet(
-            "background-color: #9C27B0; color: white; font-weight: bold; border-radius: 6px;")
+        self.btn_generate_ai.setMinimumSize(90, 40)
+        set_tone(self.btn_generate_ai, "primary")
         self.btn_generate_ai.clicked.connect(self._on_ai_generate)
 
         input_layout.addWidget(self.txt_ai_prompt)
@@ -147,21 +144,27 @@ class RecipeBuilderDialog(StepFormMixin, QDialog):
 
         # 2. METADATA HEADER
         meta_layout = QHBoxLayout()
-        meta_layout.addWidget(QLabel("<b>Recipe Name:</b>"))
+        lbl_name = QLabel("Recipe name")
+        set_role(lbl_name, "caption")
+        meta_layout.addWidget(lbl_name)
         self.le_recipe_name = QLineEdit("New Recipe")
         meta_layout.addWidget(self.le_recipe_name)
-        meta_layout.addWidget(QLabel("<b>Version:</b>"))
+        lbl_version = QLabel("Version")
+        set_role(lbl_version, "caption")
+        meta_layout.addWidget(lbl_version)
         self.le_recipe_version = QLineEdit("1.0")
-        self.le_recipe_version.setFixedWidth(50)
+        self.le_recipe_version.setFixedWidth(60)
         meta_layout.addWidget(self.le_recipe_version)
 
-        self.btn_faults = QPushButton("⚠️ Configure Fault Policy")
+        self.btn_faults = QPushButton("Fault policy...")
+        self.btn_faults.setToolTip("What the recipe does when a fault occurs while it runs.")
         self.btn_faults.clicked.connect(self._open_fault_policy)
         meta_layout.addWidget(self.btn_faults)
         meta_layout.addStretch()
 
-        self.btn_save = QPushButton("💾 SAVE TO JSON")
-        self.btn_save.setStyleSheet("background-color: #4CAF50; color: white; font-weight: bold; padding: 6px;")
+        self.btn_save = QPushButton("SAVE RECIPE")
+        self.btn_save.setToolTip("Save to the recipes folder as JSON.")
+        set_tone(self.btn_save, "primary")
         self.btn_save.clicked.connect(self._save_recipe)
         meta_layout.addWidget(self.btn_save)
         main_layout.addLayout(meta_layout)
@@ -172,8 +175,8 @@ class RecipeBuilderDialog(StepFormMixin, QDialog):
         # PANE A: Toolbox
         pane_toolbox = QWidget()
         layout_tb = QVBoxLayout(pane_toolbox)
-        lbl_tb = QLabel("Toolbox")
-        lbl_tb.setStyleSheet(COLOR_HEADER)
+        lbl_tb = QLabel("Toolbox (double-click to add)")
+        set_role(lbl_tb, "heading")
         layout_tb.addWidget(lbl_tb)
         self.list_toolbox = QListWidget()
         for st, icon in STEP_ICONS.items():
@@ -185,8 +188,8 @@ class RecipeBuilderDialog(StepFormMixin, QDialog):
         # PANE B: Sequence
         pane_seq = QWidget()
         layout_seq = QVBoxLayout(pane_seq)
-        lbl_seq = QLabel("Execution Sequence")
-        lbl_seq.setStyleSheet(COLOR_HEADER)
+        lbl_seq = QLabel("Steps (drag to reorder)")
+        set_role(lbl_seq, "heading")
         layout_seq.addWidget(lbl_seq)
         self.list_sequence = SequenceListWidget()
         self.list_sequence.setAlternatingRowColors(True)
@@ -194,7 +197,7 @@ class RecipeBuilderDialog(StepFormMixin, QDialog):
         self.list_sequence.itemSelectionChanged.connect(self._on_step_selected)
         self.list_sequence.order_changed.connect(self._sync_list_order)
         layout_seq.addWidget(self.list_sequence)
-        self.btn_remove_step = QPushButton("❌ Remove Selected Step")
+        self.btn_remove_step = QPushButton("Remove selected step")
         self.btn_remove_step.clicked.connect(self._remove_selected_step)
         layout_seq.addWidget(self.btn_remove_step)
         splitter.addWidget(pane_seq)
@@ -202,8 +205,8 @@ class RecipeBuilderDialog(StepFormMixin, QDialog):
         # PANE C: Properties
         pane_prop = QWidget()
         self.layout_prop = QVBoxLayout(pane_prop)
-        lbl_prop = QLabel("Step Properties")
-        lbl_prop.setStyleSheet(COLOR_HEADER)
+        lbl_prop = QLabel("Step properties")
+        set_role(lbl_prop, "heading")
         self.layout_prop.addWidget(lbl_prop)
 
         self.scroll_area = QScrollArea()
@@ -234,14 +237,7 @@ class RecipeBuilderDialog(StepFormMixin, QDialog):
             "faults": self.fault_policy
         }
 
-        user_html = f"""
-        <table width="100%" border="0" cellspacing="0" cellpadding="0"><tr><td align="right">
-            <table border="0" cellspacing="0" cellpadding="8" style="background-color: #1976D2; color: #FFFFFF; border-radius: 6px;">
-                <tr><td>{html.escape(prompt)}</td></tr>
-            </table>
-        </td></tr></table><br>
-        """
-        self.txt_ai_history.append(user_html)
+        self.txt_ai_history.append(bubble(html.escape(prompt), "user", "right"))
         self.txt_ai_prompt.clear()
 
         self.btn_generate_ai.setText("...")
@@ -258,33 +254,14 @@ class RecipeBuilderDialog(StepFormMixin, QDialog):
         status = response.get("status")
         msg = response.get("message", "")
 
-        # Helper to generate AI bubbles
-        def make_ai_bubble(text, bg_color, text_color):
-            return f"""
-            <table width="100%" border="0" cellspacing="0" cellpadding="0"><tr><td align="left">
-                <table border="0" cellspacing="0" cellpadding="8" style="background-color: {bg_color}; color: {text_color}; border-radius: 6px;">
-                    <tr><td>{text}</td></tr>
-                </table>
-            </td></tr></table><br>
-            """
-
         if status == "error":
-            # Red error bubble
-            bg = "#4A0000" if is_dark_mode else "#FFCDD2"
-            txt = "#FFB4B4" if is_dark_mode else "#B71C1C"
-            self.txt_ai_history.append(make_ai_bubble(f"<b>Error:</b> {msg}", bg, txt))
+            self.txt_ai_history.append(bubble(f"<b>Error:</b> {msg}", "error"))
 
         elif status == "chat":
-            # Standard AI reply bubble
-            bg = "#2A2A2A" if is_dark_mode else "#E5E5EA"
-            txt = "#E0E0E0" if is_dark_mode else "black"
-            self.txt_ai_history.append(make_ai_bubble(msg, bg, txt))
+            self.txt_ai_history.append(bubble(msg))
 
         elif status == "success":
-            # Green success bubble
-            bg = "#1B5E20" if is_dark_mode else "#C8E6C9"
-            txt = "#A5D6A7" if is_dark_mode else "#1B5E20"
-            self.txt_ai_history.append(make_ai_bubble("Sequence generated and loaded!", bg, txt))
+            self.txt_ai_history.append(bubble("Sequence generated and loaded!", "success"))
 
             recipe_data = response.get("recipe")
             if not isinstance(recipe_data, dict) or not isinstance(recipe_data.get("steps", []), list):
@@ -298,11 +275,11 @@ class RecipeBuilderDialog(StepFormMixin, QDialog):
             self._redraw_sequence()
             problems = recipe_problems(self.current_steps)
             if problems:
-                self.txt_ai_history.append(make_ai_bubble(
+                self.txt_ai_history.append(bubble(
                     "<b>Check these steps before saving:</b><br>" + "<br>".join(html.escape(p) for p in problems),
-                    "#FFF9C4", "black"))
+                    "check"))
         else:
-            self.txt_ai_history.append(make_ai_bubble("Unknown response format.", "#FFF9C4", "black"))
+            self.txt_ai_history.append(bubble("Unknown response format.", "check"))
 
         scrollbar = self.txt_ai_history.verticalScrollBar()
         scrollbar.setValue(scrollbar.maximum())

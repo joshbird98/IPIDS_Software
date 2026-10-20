@@ -13,6 +13,9 @@ simulator; none of it has been tried on the real hardware yet (see "Lab PC valid
    src/gui/control/assets/sounds/, made by src/utils/make_alarm_sounds.py).
 4. The viewer copies workspace profiles from the old src/gui/config/ to config/workspace_profiles.json once
    (its log says which); check them, then delete src/gui/config/.
+5. The HMI opens once with the new default layout (layouts saved by older versions aren't restored);
+   arrange it and save it under View > Layouts if wanted. Both programs start dark: View > Theme or
+   Ctrl+Shift+T for light (remembered in config/appearance.json, per machine).
 
 ## Done
 - Acknowledged commands (ROUTER/DEALER) for every service and the manager: ok / accepted / rejected+reason /
@@ -164,6 +167,26 @@ simulator; none of it has been tried on the real hardware yet (see "Lab PC valid
   HMI no longer fails to start without google-genai; Faraday panel no longer keeps showing the last reading;
   EventHelper used a private ZeroMQ context that could deadlock when garbage-collected together with its socket
   (froze the test run at exit; could have frozen the HMI/viewer if a window holding one was collected).
+- Look and layout (October 2026), after a first run on a laptop took about a minute to become usable,
+  with most panels off-screen:
+  - cause: the first start (no saved layout) opened every panel at once, and the window's minimum size
+    was then 1718 x 2517 px - taller than two laptop screens; every panel refreshed 10 times a second,
+    open or not, re-styling its labels each time (~600 restyles a second), and the services each
+    busy-waited 2 ms per cycle. Later starts restored the operator's four-panel layout, so were fine.
+  - panels scroll when made smaller than their contents and fold their cards into fewer columns
+    (src/gui/reflow.py); the default layout is four panels in view and the rest as tabs, sized for the
+    screen; the window is kept on a screen and no bigger than it; View > Reset layout and named layouts
+    (View > Layouts); a tab group can be dragged as a whole. Panels closed or behind a tab aren't
+    refreshed (they catch up when shown).
+  - one theme module for both programs (src/gui/theme.py; dark default, light), switched live from
+    View > Theme / Ctrl+Shift+T and followed by the other program; widgets set a tone (ok / on / warn /
+    fault / info / seq / unknown...) instead of their own colours (src/gui/style.py), restyled only when
+    it changes. Viewer: resizable sidebar, colour-blind-checked line colours kept per channel per lane,
+    event colours by kind (a user's white marker is drawn darker on the light theme). Emoji taken off
+    buttons (they don't survive the F12 PDF/SVG figure capture). src/core/theme.py and
+    config/theme_config.json are gone.
+  - services sleep to their tick instead of spinning the last 2 ms (device_service, logger, ADAM).
+  - the HMI no longer has the services' 200 MB working-set ceiling on the lab PC (it runs at ~200 MB).
 
 ## To do
 1. Lab PC validation (real hardware):
@@ -236,6 +259,9 @@ simulator; none of it has been tried on the real hardware yet (see "Lab PC valid
      scans, the optimiser and "Calculate & set amps" name the cap when they refuse; the HMI's setpoint
      boxes name their cap in the tooltip (a value typed past a box's maximum just doesn't go in).
 7. Future: a one-page interlock overview (every permissive and what is holding it), as discussed.
+8. On the lab PC and a laptop: the new look in both themes (alarm colours, the safety-relay countdown on
+   ENABLE SAFETY RELAY), dragging panels into a narrow column, Reset layout, and the CPU use with the
+   default layout (the simulator measured here: see the commit message).
 
 ## Notes
 - If the ADAM module is repaired: its manager key must be `service_adam_monitor` (matches its heartbeat name).

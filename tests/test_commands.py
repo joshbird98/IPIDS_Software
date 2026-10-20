@@ -37,6 +37,15 @@ def running_server(endpoint, fake_events):
         t.join(2)
 
 
+def _audited(fake_events, timeout=2.0):
+    """The audit rows so far, once there is one: the server writes it just after sending the reply,
+    on its own thread, so the client can have the reply first."""
+    end = time.time() + timeout
+    while not fake_events.commands and time.time() < end:
+        time.sleep(0.005)
+    return fake_events.commands
+
+
 def test_ok_reply_round_trip(running_server, fake_events):
     client = running_server(lambda cmd: cmd.ok())
     reply = client.request("test", "ion_beam.x.cmd_enable", True, origin="hmi")
@@ -45,7 +54,7 @@ def test_ok_reply_round_trip(running_server, fake_events):
     assert reply["subsystem"] == "test"
     assert reply["latency_s"] < 1.0
     # audit row written with the distinct COMMAND type
-    assert fake_events.commands and fake_events.commands[-1]["ok"]
+    assert _audited(fake_events) and fake_events.commands[-1]["ok"]
     assert fake_events.commands[-1]["metadata"]["origin"] == "hmi"
 
 
@@ -54,7 +63,7 @@ def test_rejection_reason_reaches_client(running_server, fake_events):
     reply = client.request("test", "ion_beam.source.einzel.sp_requested_voltage", 30.0)
     assert reply["status"] == C.REJECTED
     assert "above max" in reply["reason"]
-    assert not fake_events.commands[-1]["ok"]
+    assert not _audited(fake_events)[-1]["ok"]
     assert "above max" in C.describe(reply)
 
 

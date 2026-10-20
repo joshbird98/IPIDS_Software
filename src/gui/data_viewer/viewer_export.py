@@ -23,6 +23,9 @@ def export_incomplete_note(folder: str) -> str:
     return next((n for n in notes if isinstance(n, str) and n.startswith("INCOMPLETE")), "")
 
 
+EXPORT_TEXT = "Export snapshot..."
+
+
 class ExportMixin:
     """Exporting data and publication figures for a time range. Mixed into DataViewerApp (viewer_main.py)."""
 
@@ -142,10 +145,10 @@ class ExportMixin:
         svg = self._render_screen_svg() if options.get("screen_svg") else None
 
         self.btn_export.setEnabled(False)
-        self.btn_export.setText("⏳ Exporting...")
+        self.btn_export.setText("Exporting...")
         self.export_worker = ExportWorker(self.cache.engine, self.cache.live, self.PROJECT_ROOT, options,
                                           channels, markers, displayed, svg)
-        self.export_worker.progress.connect(lambda m: self.btn_export.setText(f"⏳ {m}"))
+        self.export_worker.progress.connect(lambda m: self.btn_export.setText(m))
         self.export_worker.done.connect(self._on_export_finished)
         self.export_worker.failed.connect(self._on_export_error)
         self.export_worker.start()
@@ -154,8 +157,8 @@ class ExportMixin:
         log.info("Export complete: %s", folder)
         self.last_export_folder = folder
         self.btn_export.setEnabled(True)
-        self.btn_export.setText("✅ Exported")
-        QTimer.singleShot(3000, lambda: self.btn_export.setText("📸 Export Snapshot"))
+        self.btn_export.setText("Exported")
+        QTimer.singleShot(3000, lambda: self.btn_export.setText(EXPORT_TEXT))
         if getattr(self, '_export_quiet', False):
             return
         from PyQt6.QtWidgets import QMessageBox
@@ -177,8 +180,8 @@ class ExportMixin:
     def _on_export_error(self, err):
         log.error("Export failed: %s", err)
         self.btn_export.setEnabled(True)
-        self.btn_export.setText("❌ Export failed")
-        QTimer.singleShot(3000, lambda: self.btn_export.setText("📸 Export Snapshot"))
+        self.btn_export.setText("Export failed")
+        QTimer.singleShot(3000, lambda: self.btn_export.setText(EXPORT_TEXT))
         if not getattr(self, '_export_quiet', False):
             from PyQt6.QtWidgets import QMessageBox
             box = QMessageBox(QMessageBox.Icon.Warning, "Export failed", str(err), parent=self)

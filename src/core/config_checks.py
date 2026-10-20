@@ -347,15 +347,6 @@ def _check_logger(c: _Checker, d):
     c.num(d, "buffer_overhead_multiplier", ge=1, le=3, optional=True)
 
 
-def _check_theme(c: _Checker, d):
-    if d.get("theme_mode") not in ("dark", "light"):
-        c.bad("theme_mode: must be 'dark' or 'light'")
-    for palette in ("dark_palette", "light_palette"):
-        for key, v in (d.get(palette) or {}).items():
-            if not (isinstance(v, str) and re.fullmatch(r"#[0-9A-Fa-f]{6}([0-9A-Fa-f]{2})?", v)):
-                c.bad(f"{palette}.{key}: must be a colour like #1E1E1E")
-
-
 def _check_tolerance(c: _Checker, d):
     defaults = d.get("defaults", {})
     for key in ("delay_s", "abs_tol", "rel_tol", "min_setpoint"):
@@ -432,7 +423,6 @@ CHECKS = {
     "vac_gauges_config.json": _check_vacuum,
     "network_config.json": _check_network,
     "logger_config.json": _check_logger,
-    "theme_config.json": _check_theme,
     "readback_tolerance.json": _check_tolerance,
     "fault_config.json": _check_faults,
     "alarm_config.json": _check_alarms,

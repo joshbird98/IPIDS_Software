@@ -670,13 +670,12 @@ class TelemetryLoggerService:
                 if self.cmd_socket in socks and socks[self.cmd_socket] == zmq.POLLIN:
                     self._handle_ui_command()
 
-                # 3. Precision Sleep & Spin-Wait
+                # 3. Sleep to the tick (no busy-wait for the last 2 ms any more: the ticks are fixed
+                # times 50 ms apart, so a sleep ending ~1 ms late never adds up; the rows carry
+                # their own timestamps)
                 sleep_time = self.next_tick - time.perf_counter()
-                if sleep_time > 0.002:
-                    time.sleep(sleep_time - 0.002)
-
-                while time.perf_counter() < self.next_tick:
-                    pass
+                if sleep_time > 0:
+                    time.sleep(sleep_time)
 
                 current_time = time.perf_counter()
 

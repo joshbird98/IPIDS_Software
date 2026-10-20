@@ -20,7 +20,7 @@ class Peak:
     tail_left: float
     tail_right: float
     match_html: str = ""
-    colour: str = "#AAAAAA"
+    kind: str = "none"          # what match() made of it: expected / other / none
     labelled: bool = False      # gets a label on the plot (the biggest of a cluster)
 
     @property
@@ -59,7 +59,7 @@ def find(amu, current, sensitivity_pct: float, max_peaks: int, mass_db: dict) ->
              for i, w in zip(chosen, fwhm)]
     placed = []
     for peak in sorted(peaks, key=lambda p: p.current, reverse=True):
-        peak.match_html, peak.colour = match(mass_db, peak.amu)
+        peak.match_html, peak.kind = match(mass_db, peak.amu)
         if peak.match_html and not any(abs(peak.amu - px) < LABEL_SPACING_AMU for px in placed):
             placed.append(peak.amu)
             peak.labelled = True
@@ -79,9 +79,10 @@ def tail_text(ppm: float) -> str:
     return f"{ppm:,.0f} ppm"
 
 
-def tail_colour(ppm: float) -> tuple:
-    """Green up to 100 ppm, through amber at 1000 ppm, to red from 10 000 ppm."""
-    green, amber, red = np.array([46, 125, 50]), np.array([255, 143, 0]), np.array([198, 40, 40])
+def tail_colour(ppm: float, green=(46, 125, 50), amber=(255, 143, 0), red=(198, 40, 40)) -> tuple:
+    """Green up to 100 ppm, through amber at 1000 ppm, to red from 10 000 ppm (RGB tuples; the
+    panel passes its theme's colours)."""
+    green, amber, red = np.array(green), np.array(amber), np.array(red)
     v = math.log10(max(1.0, ppm))
     if v <= 2.0:
         c = green

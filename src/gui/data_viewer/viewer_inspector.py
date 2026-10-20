@@ -116,12 +116,10 @@ class InspectorMixin:
         self._ensure_inspector_items()
 
         if checked:
-            self.btn_inspector.setText("🔍 Inspector: ON")
-            self.btn_inspector.setStyleSheet("background-color: #2196F3; color: white; font-weight: bold;")
+            self.btn_inspector.setText("Inspector on: values under the cursor")
             self.layout_widget.setCursor(Qt.CursorShape.CrossCursor)
         else:
-            self.btn_inspector.setText("🔍 Enable Inspector")
-            self.btn_inspector.setStyleSheet("")
+            self.btn_inspector.setText("Inspector")
             self.layout_widget.setCursor(Qt.CursorShape.ArrowCursor)
 
     def _format_delta_time(self, seconds):

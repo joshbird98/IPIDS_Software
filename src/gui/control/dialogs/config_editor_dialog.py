@@ -22,12 +22,13 @@ import logging
 import math
 
 from PyQt6.QtCore import Qt
-from PyQt6.QtGui import QColor
 from PyQt6.QtWidgets import (QCheckBox, QComboBox, QDialog, QDialogButtonBox, QHBoxLayout, QInputDialog, QLabel,
                              QLineEdit, QListWidget, QMessageBox, QPushButton, QTreeWidget, QTreeWidgetItem,
                              QVBoxLayout)
 
 from src.core import config_store, hard_caps, paths
+from src.gui import theme
+from src.gui.style import set_prop, set_role, set_tone
 from src.core.config_store import REGISTRY_INPUTS, ConfigError
 
 log = logging.getLogger("hmi.config_editor")
@@ -53,7 +54,6 @@ CONFIG_TO_SERVICE = {
     "mpd_config.json": "service_spellman_mpd",
     "vac_gauges_config.json": "service_vac_gauge_controllers",
     "plc_config.json": "service_plc",
-    "theme_config.json": HMI,
 }
 HMI_TOO = {"fault_config.json"}          # the HMI reads these at start-up as well
 SERVICE_CHOICES = ["service_events", "service_logger", "service_data_compactor", "service_plc", "service_monitor",
@@ -61,7 +61,7 @@ SERVICE_CHOICES = ["service_events", "service_logger", "service_data_compactor",
                    "service_steerer_magnet_psu", "service_spellman_mpd", "service_smu", "service_sequencer"]
 
 
-CAP_STYLE = "background-color: #FFCDD2; border: 2px solid #C62828; color: #B71C1C; font-weight: bold;"
+CAP_TONE = "fault"          # a field past a hard cap: red outline (theme), the reason in its tooltip
 
 
 def format_float(value: float) -> str:
@@ -95,8 +95,8 @@ class ConfirmChangesDialog(QDialog):
         if large:
             warn = QLabel("<b>Large changes - check these are meant:</b><br>"
                           + "<br>".join(html.escape(x) for x in large))
-            warn.setStyleSheet("background-color: #FFF3E0; color: #BF360C; border: 1px solid #FFB74D; "
-                               "border-radius: 4px; padding: 6px;")
+            set_role(warn, "note")
+            set_prop(warn, "level", "warn")
             warn.setWordWrap(True)
             layout.addWidget(warn)
             self.large = QCheckBox("I have checked the large changes")
@@ -139,7 +139,9 @@ class ConfigEditorDialog(QDialog):
         self.cb_files.addItems(config_store.config_files(self.config_dir))
         self.cb_files.currentTextChanged.connect(self._load_file)
         top.addWidget(self.cb_files)
-        top.addWidget(QLabel("<b>Restart:</b>"))
+        lbl_restart = QLabel("Restart")
+        set_role(lbl_restart, "caption")
+        top.addWidget(lbl_restart)
         self.cb_service = QComboBox()
         self.cb_service.addItems([ALL_SERVICES] + SERVICE_CHOICES)
         self.cb_service.currentTextChanged.connect(self._update_button_text)
@@ -149,8 +151,8 @@ class ConfigEditorDialog(QDialog):
         self.lbl_problems = QLabel()
         self.lbl_problems.setWordWrap(True)
         self.lbl_problems.setTextFormat(Qt.TextFormat.PlainText)
-        self.lbl_problems.setStyleSheet("background-color: #FFEBEE; color: #B71C1C; border: 1px solid #E57373; "
-                                        "border-radius: 4px; padding: 6px;")
+        set_role(self.lbl_problems, "note")
+        set_prop(self.lbl_problems, "level", "fault")
         self.lbl_problems.hide()
         layout.addWidget(self.lbl_problems)
 
@@ -161,13 +163,13 @@ class ConfigEditorDialog(QDialog):
         layout.addWidget(self.tree)
 
         bottom = QHBoxLayout()
-        self.btn_history = QPushButton("🕘 History...")
+        self.btn_history = QPushButton("History...")
         self.btn_history.setToolTip("Put back a previous version of this file (every save keeps one).")
         self.btn_history.clicked.connect(self._show_history)
         bottom.addWidget(self.btn_history)
-        self.btn_save = QPushButton("💾 APPLY CHANGES && RESTART SERVICE")
-        self.btn_save.setStyleSheet("background-color: #2196F3; color: white; font-weight: bold; padding: 10px; "
-                                    "font-size: 11pt;")
+        self.btn_save = QPushButton("APPLY CHANGES && RESTART SERVICE")
+        set_tone(self.btn_save, "primary")
+        self.btn_save.setMinimumHeight(34)
         self.btn_save.clicked.connect(self._save_and_restart)
         bottom.addWidget(self.btn_save, stretch=1)
         layout.addLayout(bottom)
@@ -179,11 +181,11 @@ class ConfigEditorDialog(QDialog):
     def _update_button_text(self, svc_name=None):
         svc_name = svc_name or self.cb_service.currentText()
         if svc_name == ALL_SERVICES:
-            self.btn_save.setText("💾 APPLY CHANGES && RESTART THE RUNNING SERVICES")
+            self.btn_save.setText("APPLY CHANGES && RESTART THE RUNNING SERVICES")
         elif svc_name in (HMI, WHOLE_SYSTEM):
-            self.btn_save.setText("💾 APPLY CHANGES (THEN RESTART BY HAND)")
+            self.btn_save.setText("APPLY CHANGES (THEN RESTART BY HAND)")
         else:
-            self.btn_save.setText(f"💾 APPLY CHANGES && RESTART {svc_name.upper()}")
+            self.btn_save.setText(f"APPLY CHANGES && RESTART {svc_name.upper()}")
 
     def _show_problems(self, problems, heading):
         if not problems:
@@ -229,7 +231,7 @@ class ConfigEditorDialog(QDialog):
                 self._populate_tree(item, value, path + (key,))
             elif isinstance(value, (dict, list)):
                 item.setText(1, "(empty)")
-                item.setForeground(1, QColor("#9E9E9E"))
+                item.setForeground(1, theme.color("text_faint"))
             else:
                 self._add_edit_widget(item, key, value, path + (key,))
 
@@ -261,11 +263,11 @@ class ConfigEditorDialog(QDialog):
         for item, path, _ in self._leaves:
             w = self.tree.itemWidget(item, 1)
             if path in breaches:
-                w.setStyleSheet(CAP_STYLE)
+                set_tone(w, CAP_TONE)
                 w.setToolTip(breaches[path])
                 first = first or item
-            elif w.styleSheet() == CAP_STYLE:
-                w.setStyleSheet("")
+            elif w.property("tone") == CAP_TONE:
+                set_tone(w, None)
                 w.setToolTip(w.property("plain_tip") or "")
         if first is not None:
             self.tree.scrollToItem(first)

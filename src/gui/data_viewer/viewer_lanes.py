@@ -1,15 +1,24 @@
-"""Plot lanes (one pyqtgraph plot per lane), their axes and the curves drawn on them."""
+"""Plot lanes (one pyqtgraph plot per lane), their axes and the curves drawn on them.
+
+Line colours: each lane's channels take the theme's eight series colours in turn (theme.py,
+checked for colour-blind readers); a channel keeps its colour while it stays in its lane, so
+adding or removing another channel doesn't repaint it. A ninth channel in one lane repeats the
+colours dashed (then dotted), so no two lines in a lane look the same.
+"""
 import time
 
 import numpy as np
-import zlib
 import pyqtgraph as pg
 
-from PyQt6.QtWidgets import QLabel
+from PyQt6.QtWidgets import QHBoxLayout, QLabel, QWidget
 from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import QSizePolicy
 from src.core.live_buffer import break_gaps
+from src.gui import theme
 from src.gui.data_viewer.viewer_widgets import LogAxisItem, TimeAxisItem
+from src.gui.style import reserve_width, set_role, swatch
+
+SERIES_STYLES = (Qt.PenStyle.SolidLine, Qt.PenStyle.DashLine, Qt.PenStyle.DotLine)
 
 
 class LanesMixin:
@@ -46,9 +55,8 @@ class LanesMixin:
         self.time_axes = []
         self._legend_tags = set()
 
-        # Attempt to free up colours for next set of channels?
-        self._assigned_colors = {}
-        self._used_colors = set()
+        # Line colours: kept per channel while it stays in its lane (see the module docstring)
+        self._assign_series_slots()
 
         # Identify which lanes actually have selected tags
         active_lanes = set()
@@ -60,12 +68,13 @@ class LanesMixin:
 
         if not sorted_lanes:
             # Add a centered prompt to the layout
+            t = theme.tokens()
             prompt_text = (
                 "<div style='text-align: center;'>"
-                "<span style='color: #888; font-size: 18pt; font-weight: bold;'>"
-                "No Channels Selected</span><br>"
-                "<span style='color: #666; font-size: 12pt;'>"
-                "Click 'Configure Channels' in the sidebar to begin.</span>"
+                f"<span style='color: {t['text_muted']}; font-size: 18pt; font-weight: bold;'>"
+                "No channels selected</span><br>"
+                f"<span style='color: {t['text_faint']}; font-size: 12pt;'>"
+                "Choose some with Configure channels in the sidebar.</span>"
                 "</div>"
             )
             self.layout_widget.addLabel(prompt_text, row=0, col=0)
@@ -91,7 +100,7 @@ class LanesMixin:
             # and the log axis was never displayed.
             log_axis = LogAxisItem(orientation='right')
             p = self.layout_widget.addPlot(row=i, col=0, axisItems={'bottom': time_axis, 'right': log_axis})
-            p.showGrid(x=True, y=True, alpha=0.5)
+            p.showGrid(x=True, y=True, alpha=0.35)
             # Grid lines dominate redraw cost (measured at 1080p: 3 tick levels
             # = 56 ms/redraw, 2 levels = 25 ms, major only = 11 ms, no grid = 10 ms).
             for _ax in ("bottom", "left"):
@@ -135,26 +144,25 @@ class LanesMixin:
                 # Chain all other lanes to the first one
                 p.setXLink(base_plot)
 
-            # G. Add Legend
+            # G. Add Legend (theme colours: _restyle_plots)
             legend = p.addLegend(offset=(10, 10))
-            legend.setBrush(pg.mkBrush(0, 0, 0, 150))
             self.lane_legends[lane_name] = legend
 
             # H. Sync Geometry (Ensures the log axis overlay aligns with the plot)
             p.vb.sigResized.connect(lambda _, vb=right_vb, plot=p: self._sync_specific_viewbox(plot, vb))
 
-            # I. Initialize Inspector Items (Crosshairs & Pins)
-            v_line = pg.InfiniteLine(angle=90, movable=False, pen=pg.mkPen('y', width=1, style=Qt.PenStyle.DashLine))
+            # I. Initialize Inspector Items (Crosshairs & Pins; colours: _restyle_plots)
+            v_line = pg.InfiniteLine(angle=90, movable=False)
             v_line.hide()
             p.addItem(v_line, ignoreBounds=True)
             self.v_lines.append(v_line)
 
-            pin_line = pg.InfiniteLine(angle=90, movable=False, pen=pg.mkPen('#FF5722', width=1.0))
+            pin_line = pg.InfiniteLine(angle=90, movable=False)
             pin_line.hide()
             p.addItem(pin_line, ignoreBounds=True)
             self.pin_lines.append(pin_line)
 
-            delta_label = pg.TextItem(anchor=(0, 0), color='#FF5722', fill=(0, 0, 0, 150))
+            delta_label = pg.TextItem(anchor=(0, 0))
             delta_label.hide()
             p.addItem(delta_label, ignoreBounds=True)
             self.delta_labels.append(delta_label)
@@ -168,32 +176,107 @@ class LanesMixin:
             item = self.value_display_layout.takeAt(0)
             if item.widget(): item.widget().deleteLater()
         self.sidebar_value_labels.clear()
+        self.sidebar_swatches = {}
 
-        # Generate new static labels
+        # Generate new static labels: the channel's line colour, its name, its value
         for tag in sorted_lanes:
             for t, cfg in self.plot_config.items():
                 if cfg.get('selected') and cfg.get('lane') == tag:
-                    # 1. Right Column (Value): Swap to MinimumExpanding so it doesn't clip
                     val_lbl = QLabel("---")
-                    val_lbl.setStyleSheet("font-family: monospace; font-size: 14px; color: #2196F3; font-weight: bold;")
-                    val_lbl.setMinimumWidth(130)  # Safe width for scientific notation & deltas
+                    set_role(val_lbl, "readout-sm")
+                    reserve_width(val_lbl, "-0.00e-00 mB")       # scientific notation and units fit
                     val_lbl.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
                     val_lbl.setSizePolicy(QSizePolicy.Policy.MinimumExpanding, QSizePolicy.Policy.Preferred)
 
-                    # 2. Left Column (Name): Swap to Minimum so it only takes up necessary space
-                    label_text = str(cfg.get('label', t))
+                    name = QWidget()
+                    row = QHBoxLayout(name)
+                    row.setContentsMargins(0, 0, 0, 0)
+                    row.setSpacing(6)
+                    mark = QLabel()
+                    name_lbl = QLabel(str(cfg.get('label', t)))
+                    set_role(name_lbl, "caption")
+                    name_lbl.setWordWrap(True)
+                    row.addWidget(mark)
+                    row.addWidget(name_lbl, stretch=1)
+                    name.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Preferred)
 
-                    # Note: The static [{unit}] was removed here because we moved the unit to the right side!
-                    name_lbl = QLabel(f"{label_text}:")
-                    name_lbl.setStyleSheet("font-size: 11px; color: #555;")
-                    name_lbl.setSizePolicy(QSizePolicy.Policy.Minimum, QSizePolicy.Policy.Preferred)
-
-                    self.value_display_layout.addRow(name_lbl, val_lbl)
+                    self.value_display_layout.addRow(name, val_lbl)
                     self.sidebar_value_labels[t] = val_lbl
+                    self.sidebar_swatches[t] = mark
 
         self._apply_lane_axis_styles()
+        self._restyle_plots()
         self._time_limits = None
         self._apply_time_limits()
+
+    # --- Colours (theme) ---
+    def _assign_series_slots(self):
+        """Each selected channel's colour slot within its lane: kept while the channel stays in
+        that lane; a channel new to a lane takes the lowest free slot."""
+        slots = getattr(self, "_series_slots", None)
+        if slots is None:
+            slots = self._series_slots = {}            # tag -> (lane, slot)
+        lanes = {}
+        for tag, cfg in self.plot_config.items():
+            if cfg.get('selected'):
+                lanes.setdefault(cfg.get('lane', 'Lane 1'), []).append(tag)
+        kept = {}
+        for lane, tags in lanes.items():
+            taken = set()
+            for tag in tags:
+                old = slots.get(tag)
+                if old is not None and old[0] == lane and old[1] not in taken:
+                    kept[tag] = old
+                    taken.add(old[1])
+            for tag in sorted(t for t in tags if t not in kept):
+                slot = next(i for i in range(len(tags) + len(taken) + 1) if i not in taken)
+                kept[tag] = (lane, slot)
+                taken.add(slot)
+        self._series_slots = kept
+
+    def _series_pen(self, tag: str):
+        """The channel's line: its lane slot's theme colour; past eight in one lane, dashed, then dotted."""
+        _lane, slot = getattr(self, "_series_slots", {}).get(tag, (None, 0))
+        n = len(theme.tokens()["series"])
+        style = SERIES_STYLES[min(slot // n, len(SERIES_STYLES) - 1)]
+        return pg.mkPen(color=theme.series_color(slot), width=1.0, style=style)
+
+    @staticmethod
+    def _style_legend(legend):
+        theme.style_legend(legend)
+
+    def _restyle_plots(self, _plot=None):
+        """The plots in the current theme: curves, legends, crosshair, pins, the sidebar's colour
+        swatches and the event markers. Run after building the lanes and after a theme switch
+        (theme.style_plot does the axes and backgrounds)."""
+        if not getattr(self, "lanes", None):
+            if hasattr(self, "lanes") and hasattr(self, "event_overlay") and _plot is not None:
+                self._build_lanes()                 # the empty-view prompt, in the new colours
+            return
+        t = theme.tokens()
+        for curves in (self.curves, self.hist_curves):
+            for tag, c in curves.items():
+                c.setPen(self._series_pen(tag))
+        for legend in self.lane_legends.values():
+            self._style_legend(legend)
+        cross = pg.mkPen(theme.qcolor(t["plot_crosshair"]), width=1, style=Qt.PenStyle.DashLine)
+        for v_line in self.v_lines:
+            v_line.setPen(cross)
+        pin = theme.qcolor(t["plot_pin"])
+        for pin_line in self.pin_lines:
+            pin_line.setPen(pg.mkPen(pin, width=1.5))
+        for label in self.delta_labels:
+            label.fill = pg.mkBrush(theme.qcolor(t["plot_legend_bg"]))
+            label.setColor(pin)
+        for tag, mark in getattr(self, "sidebar_swatches", {}).items():
+            try:
+                mark.setPixmap(swatch(self._series_pen(tag).color(), 12).pixmap(12, 12))
+            except RuntimeError:            # (a label from before a rebuild)
+                pass
+        overlay = getattr(self, "event_overlay", None)
+        if overlay is not None and _plot is not None:
+            overlay.clear()                 # redrawn in the new colours
+            self._refresh_event_markers(reload=False)
 
     # How far past the logged data the time axis may go: this fraction of the data's span each
     # side, but at least TIME_MARGIN_MIN_S (so a short or fresh record can still be zoomed out a bit)
@@ -293,59 +376,14 @@ class LanesMixin:
     # --- Core Rendering ---
 
     def _get_distinct_color(self, tag: str):
-        """Returns a unique, high-visibility color, resolving hash collisions via linear probing."""
-
-        # 1. Return immediately if this tag already has a permanent color assigned
-        if tag in self._assigned_colors:
-            return pg.mkColor(self._assigned_colors[tag])
-
-        # High-Vibrancy "Neon" Palette (No pastels, maximum saturation)
-        palette = [
-            "#FF1493",  # Deep Pink
-            "#00FFFF",  # Cyan / Aqua
-            "#39FF14",  # Neon Green
-            "#FF4500",  # Orange Red
-            "#9400D3",  # Neon Violet
-            "#FFD700",  # Golden Yellow
-            "#00BFFF",  # Deep Sky Blue
-            "#FF00FF",  # Magenta
-            "#7FFF00",  # Chartreuse
-            "#FF3131",  # Neon Red
-            "#1E90FF",  # Dodger Blue
-            "#FF8C00",  # Dark Orange
-            "#00FA9A",  # Medium Spring Green
-            "#8A2BE2",  # Blue Violet
-            "#F0E68C",  # Khaki (Bright)
-            "#00FF7F"   # Spring Green
-        ]
-
-        # 2. Hash the tag to find a preferred starting index
-        hash_val = zlib.crc32(tag.encode('utf-8'))
-        start_idx = hash_val % len(palette)
-
-        # 3. Collision Resolution (Linear Probing)
-        # Scan the palette starting from our hash index to find an empty slot
-        for offset in range(len(palette)):
-            idx = (start_idx + offset) % len(palette)
-            candidate_color = palette[idx]
-
-            if candidate_color not in self._used_colors:
-                self._assigned_colors[tag] = candidate_color
-                self._used_colors.add(candidate_color)
-                return pg.mkColor(candidate_color)
-
-        # 4. Palette Exhaustion Fallback
-        # If you plot more than 20 lines simultaneously, all colors are taken.
-        # Fallback to the raw hash index and accept the visual collision.
-        fallback_color = palette[start_idx]
-        self._assigned_colors[tag] = fallback_color
-        return pg.mkColor(fallback_color)
+        """The channel's line colour (its lane slot in the theme's series colours)."""
+        return self._series_pen(tag).color()
 
     def _curve_for(self, target_dict, tag, cfg, lane):
         """Get (or create, add to its lane and legend) the curve for a channel."""
         c = target_dict.get(tag)
         if c is None:
-            pen = pg.mkPen(color=self._get_distinct_color(tag), width=1.0)
+            pen = self._series_pen(tag)
             # clipToView/autoDownsample are off: the viewer already slices to the
             # view and min/max-downsamples, and with them on pyqtgraph re-ran
             # setData on every view change (part of the double-repaint cascade).

@@ -16,6 +16,9 @@
 * Right-click a line for a menu to delete one of its user markers (system events are
   read-only), or open the details. Deleting is only ever from that menu, so clicking about
   while zoomed out can't open a stream of "Delete marker?" questions.
+* Colours come from the theme by the kind of event (src/gui/theme.py: ev_fault, ev_cleared...);
+  a user marker keeps the colour it was given, made darker or lighter if needed to stand out on
+  the plot background (a white marker on the light theme's white plot).
 """
 import html
 import json
@@ -25,6 +28,8 @@ import pyqtgraph as pg
 from PyQt6.QtCore import QPointF, Qt
 from PyQt6.QtGui import QFontMetricsF
 from PyQt6.QtWidgets import QApplication, QDialog, QDialogButtonBox, QMenu, QTextBrowser, QVBoxLayout
+
+from src.gui import theme
 
 GROUP_PX = 6            # events closer than this (pixels) are drawn as one line
 ROW_PITCH_PX = 24       # label rows (a label is ~23 px high)
@@ -36,15 +41,48 @@ MAX_LABEL_CHARS = 26
 TOOLTIP_LINES = 15
 
 # Lower = more important: decides a group's colour and which text a group shows first
-_PRIORITY = {"FAULT_ACTIVE": 0, "WATCHDOG_TRIP": 1, "WATCHDOG_CLEAR": 3, "TOLERANCE": 2, "USER_MARKER": 2,
-             "PHASE_CHANGE": 4, "FAULT_CLEARED": 5, "COMMAND": 7}
+_PRIORITY = {"fault": 0, "watchdog": 1, "watchdog_clear": 3, "tolerance": 2, "marker": 2,
+             "phase": 4, "cleared": 5, "command": 7}
+# Theme colour of each kind (a user marker has its own)
+_COLOUR = {"fault": "ev_fault", "cleared": "ev_cleared", "watchdog": "ev_watchdog", "watchdog_clear": "ev_watchdog",
+           "phase": "ev_phase", "tolerance": "ev_tolerance", "command": "ev_command"}
+LEGACY_FAULT_RED = "#F44336"     # (events read before "kind" existed carried this for an active fault)
+
+
+def kind_of(ev: dict) -> str:
+    """What an event is: fault (activated), cleared, watchdog, watchdog_clear, tolerance, marker,
+    phase, command - or other."""
+    if ev.get("kind"):
+        return ev["kind"]
+    t = ev.get("type", "")
+    if t == "FAULT":
+        active = None
+        meta = ev.get("meta")
+        if meta:
+            try:
+                active = json.loads(meta).get("is_active") if isinstance(meta, str) else meta.get("is_active")
+            except (ValueError, TypeError, AttributeError):
+                active = None
+        if active is None:
+            active = str(ev.get("color", "")).upper() == LEGACY_FAULT_RED
+        return "fault" if active else "cleared"
+    if t == "USER_MARKER":
+        return "marker"
+    if t.startswith("WATCHDOG"):
+        return "watchdog_clear" if "CLEAR" in t else "watchdog"
+    return {"PHASE_CHANGE": "phase", "TOLERANCE": "tolerance", "COMMAND": "command"}.get(t, "other")
 
 
 def priority(ev: dict) -> int:
-    t = ev.get("type", "")
-    if t == "FAULT":
-        t = "FAULT_ACTIVE" if ev.get("color", "").upper() == "#F44336" else "FAULT_CLEARED"
-    return _PRIORITY.get(t, 6)
+    return _PRIORITY.get(kind_of(ev), 6)
+
+
+def event_colour(ev: dict):
+    """The colour an event is drawn in, in the current theme (a QColor)."""
+    kind = kind_of(ev)
+    if kind in _COLOUR:
+        return theme.color(_COLOUR[kind])
+    return theme.readable(ev.get("color") or theme.tokens()["ev_marker"])
 
 
 def shorten(text: str, n: int = MAX_LABEL_CHARS) -> str:
@@ -130,14 +168,14 @@ def details_html(members, t0) -> str:
     for x, _key, ev in sorted(members, key=lambda p: p[0]):
         when = datetime.fromtimestamp(x + t0)
         stamp = when.strftime("%Y-%m-%d %H:%M:%S.") + f"{when.microsecond // 1000:03d}"
-        color = html.escape(str(ev.get("color", "#FFFFFF")))
+        color = event_colour(ev).name()
         kind = html.escape(str(ev.get("type", "")))
         text = html.escape(str(ev.get("text", ""))).replace("\n", "<br>")
         meta = _metadata_text(ev.get("meta"))
         block = (f"<p><span style='color:{color}'>&#9632;</span> <b>{stamp}</b> &nbsp;<i>{kind}</i><br>"
                  f"{text}")
         if meta:
-            block += ("<br><span style='color:#9E9E9E; font-family:monospace'>"
+            block += (f"<br><span style='color:{theme.tokens()['text_muted']}; font-family:monospace'>"
                       + html.escape(meta).replace("\n", "<br>") + "</span>")
         parts.append(block + "</p>")
     return "<hr>".join(parts)
@@ -234,7 +272,8 @@ class EventOverlay:
 
     def _make(self, dkey, members, lanes):
         top = min(members, key=lambda p: priority(p[2]))
-        color = top[2].get("color", "#FFFFFF")
+        color = event_colour(top[2])
+        ink = theme.readable(color, minimum=4.5)          # the label's text: readable as text
         x = members[len(members) // 2][0] if len(members) > 1 else members[0][0]
         text = group_text(members)
         tip = group_tooltip(members, self._t0)
@@ -244,17 +283,18 @@ class EventOverlay:
                 line = pg.InfiniteLine(pos=x, angle=90, movable=False,
                                        pen=pg.mkPen(color, width=2 if len(members) > 1 else 1.5,
                                                     style=Qt.PenStyle.DashLine),
-                                       label=text, labelOpts={"position": 0.95, "color": color,
+                                       label=text, labelOpts={"position": 0.95, "color": ink,
                                                               "anchors": [(0.5, 0.5), (0.5, 0.5)],   # centred: see _place_labels
-                                                              "fill": (0, 0, 0, 200)})
+                                                              "fill": theme.color("plot_legend_bg")})
                 line.label.setToolTip(tip)
                 line.label.setZValue(1000)          # above the legend if they ever meet
                 # (a fixed label ignores clicks; this makes clicking it show the details)
                 line.label.mouseClickEvent = lambda ev, k=dkey: self._clicked(k, ev)
             else:
+                faint = pg.mkColor(color)
+                faint.setAlpha(150)             # the same line, quieter, through the other lanes
                 line = pg.InfiniteLine(pos=x, angle=90, movable=False,
-                                       pen=pg.mkPen(pg.mkColor(color).darker(130), width=1,
-                                                    style=Qt.PenStyle.DashLine))
+                                       pen=pg.mkPen(faint, width=1, style=Qt.PenStyle.DashLine))
             line.setToolTip(tip)
             line.sigClicked.connect(lambda _l, ev, k=dkey: self._clicked(k, ev))
             lane.addItem(line, ignoreBounds=True)

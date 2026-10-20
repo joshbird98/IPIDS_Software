@@ -4,9 +4,18 @@ from PyQt6.QtWidgets import (
     QLabel, QComboBox
 )
 from PyQt6.QtCore import Qt
-from PyQt6.QtGui import QBrush, QColor
+from PyQt6.QtGui import QBrush
 import logging
 import zlib
+
+from src.gui import theme
+from src.gui.style import set_prop, set_role
+
+
+def _star(button, on: bool):
+    """The favourite star: filled and amber when it is one."""
+    button.setText("★" if on else "☆")
+    set_prop(button, "on", "true" if on else None)
 
 
 class ChannelSelectorDialog(QDialog):
@@ -40,7 +49,7 @@ class ChannelSelectorDialog(QDialog):
 
         self.selected_label = QLabel("Active Traces: None")
         self.selected_label.setWordWrap(True)
-        self.selected_label.setStyleSheet("font-weight: bold; color: #F44336; padding: 5px;")
+        set_role(self.selected_label, "note")
         layout.addWidget(self.selected_label)
 
         # 2. Tree
@@ -108,7 +117,7 @@ class ChannelSelectorDialog(QDialog):
             if tag in self.item_map:
                 for dup in self.item_map[tag]:
                     dup.setText(4, "★" if is_now_fav else "☆")
-                    dup.setForeground(4, QBrush(QColor("orange" if is_now_fav else "gray")))
+                    dup.setForeground(4, QBrush(theme.color("warn_fill" if is_now_fav else "text_faint")))
 
             if is_now_fav:
                 self._add_to_favorites_view(tag, item)
@@ -154,7 +163,7 @@ class ChannelSelectorDialog(QDialog):
 
         # Create the persistent Favorites Root at the very top
         self.fav_root = QTreeWidgetItem(self.tree)
-        self.fav_root.setText(0, "⭐ Favorites")
+        self.fav_root.setText(0, "★ Favourites")
         # Make the text bold so it stands out
         font = self.fav_root.font(0)
         font.setBold(True)
@@ -162,7 +171,7 @@ class ChannelSelectorDialog(QDialog):
 
         # 2. Create the All Channels Root
         all_root = QTreeWidgetItem(self.tree)
-        all_root.setText(0, "📁 All Channels")
+        all_root.setText(0, "All channels")
 
         for full_tag, metadata in registry.items():
             is_fav = self.config.get(full_tag, {}).get("favorite", False)
@@ -232,18 +241,15 @@ class ChannelSelectorDialog(QDialog):
         combo.addItems(["Linear", "Log"])
         scale = user_cfg.get('scale', metadata.get('default_scale', 'linear'))
         combo.setCurrentText(scale.title())
-        combo.setStyleSheet("""
-            QComboBox { background-color: white; color: black; border: 1px solid #ccc; padding: 1px; }
-            QComboBox QAbstractItemView { background-color: white; color: black; selection-background-color: #e0e0e0; }
-        """)
         combo.currentTextChanged.connect(lambda txt: self._on_scale_changed(item, full_tag, txt))
         self.tree.setItemWidget(item, 3, combo)
 
         # Col 4: Fav Star Button
         is_fav = user_cfg.get('favorite', False)
-        btn_fav = QPushButton("⭐" if is_fav else "☆")
-        color = "#FFD700" if is_fav else "#888888"
-        btn_fav.setStyleSheet(f"font-size: 16px; color: {color}; border: none; background: transparent;")
+        btn_fav = QPushButton()
+        set_role(btn_fav, "star")
+        _star(btn_fav, is_fav)
+        btn_fav.setToolTip("Favourite: listed under Favourites at the top")
         btn_fav.clicked.connect(lambda: self._on_fav_clicked(full_tag))
         self.tree.setItemWidget(item, 4, btn_fav)
 
@@ -252,10 +258,6 @@ class ChannelSelectorDialog(QDialog):
         lane_combo.addItems(["Lane 1", "Lane 2", "Lane 3", "Lane 4"])
         current_lane = user_cfg.get('lane', 'Lane 1')
         lane_combo.setCurrentText(current_lane)
-        lane_combo.setStyleSheet("""
-            QComboBox { background-color: white; color: black; border: 1px solid #ccc; padding: 1px; }
-            QComboBox QAbstractItemView { background-color: white; color: black; selection-background-color: #e0e0e0; }
-        """)
         lane_combo.currentTextChanged.connect(lambda txt: self._on_lane_changed(item, full_tag, txt))
         self.tree.setItemWidget(item, 5, lane_combo)
 
@@ -359,14 +361,10 @@ class ChannelSelectorDialog(QDialog):
             self.config[full_tag]['favorite'] = is_now_fav
 
             # 2. Update all existing Star Buttons (visuals)
-            new_text = "⭐" if is_now_fav else "☆"
-            new_color = "#FFD700" if is_now_fav else "#888888"
-
             for item in self.item_map.get(full_tag, []):
                 btn = self.tree.itemWidget(item, 4)
                 if btn:
-                    btn.setText(new_text)
-                    btn.setStyleSheet(f"font-size: 16px; color: {new_color}; border: none; background: transparent;")
+                    _star(btn, is_now_fav)
 
             # 3. Handle the Favorites Folder
             if is_now_fav:
@@ -421,11 +419,11 @@ class ChannelSelectorDialog(QDialog):
         if selected_names:
             # Join them with a bullet point
             text = " • ".join(selected_names)
-            self.selected_label.setText(f"Active Traces: {text}")
-            self.selected_label.setStyleSheet("font-weight: bold; color: #4CAF50; padding: 5px;")  # Green
+            self.selected_label.setText(f"Active traces: {text}")
+            set_prop(self.selected_label, "level", None)
         else:
-            self.selected_label.setText("Active Traces: None")
-            self.selected_label.setStyleSheet("font-weight: bold; color: #F44336; padding: 5px;")  # Red
+            self.selected_label.setText("Active traces: none - tick channels below to plot them")
+            set_prop(self.selected_label, "level", "warn")
 
     def _select_all_favourites(self):
         self.tree.blockSignals(True)

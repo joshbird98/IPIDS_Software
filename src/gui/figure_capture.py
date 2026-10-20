@@ -39,6 +39,9 @@ from PyQt6.QtWidgets import (QApplication, QCheckBox, QComboBox, QDialog, QDialo
                              QHBoxLayout, QLabel, QLineEdit, QMainWindow, QPushButton, QRubberBand,
                              QSpinBox, QTabWidget, QVBoxLayout, QWidget)
 
+from src.gui import theme
+from src.gui.style import set_role
+
 PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "../.."))
 DEFAULT_DIR = os.path.join(PROJECT_ROOT, "data", "exports", "figures")
 SCREEN_DPI = 96.0           # Qt logical pixels per inch
@@ -250,7 +253,7 @@ class FigureCaptureDialog(QDialog):
         f.addRow("Window size", self.cmb_size)
         self.lbl_size = QLabel()
         self.lbl_size.setWordWrap(True)
-        self.lbl_size.setStyleSheet("color: #E65100;")
+        set_role(self.lbl_size, "warning")
         f.addRow("", self.lbl_size)
 
         self.sp_width = QDoubleSpinBox()
@@ -269,7 +272,7 @@ class FigureCaptureDialog(QDialog):
         f.addRow("UI text prints at", self.lbl_text)
         self.lbl_emoji = QLabel()
         self.lbl_emoji.setWordWrap(True)
-        self.lbl_emoji.setStyleSheet("color: #E65100;")
+        set_role(self.lbl_emoji, "warning")
         f.addRow("", self.lbl_emoji)
 
         h = QHBoxLayout()
@@ -301,7 +304,7 @@ class FigureCaptureDialog(QDialog):
         tip = QLabel("Tip: for legible text on A4, capture single panels rather than the whole window, "
                      "or let the window re-lay out at a smaller size. Aim for UI text of at least ~6-7 pt.")
         tip.setWordWrap(True)
-        tip.setStyleSheet("color: #666;")
+        set_role(tip, "caption")
         lay.addWidget(tip)
 
         bb = QDialogButtonBox(QDialogButtonBox.StandardButton.Cancel)
@@ -362,7 +365,8 @@ class FigureCaptureDialog(QDialog):
         w_px = content_rect(wd).width() if self.cb_trim.isChecked() else wd.width()
         font_pt = wd.font().pointSizeF() if wd.font().pointSizeF() > 0 else wd.font().pixelSize() * 0.75
         pt = font_pt * self.sp_width.value() / (w_px / SCREEN_DPI * 2.54)
-        col = "#2E7D32" if pt >= 7 else ("#E65100" if pt >= 5 else "#C62828")
+        t = theme.tokens()
+        col = t["ok"] if pt >= 7 else (t["warn"] if pt >= 5 else t["fault"])
         msg = f"<b style='color:{col}'>about {pt:.1f} pt</b> (body text is usually 10-12 pt, captions 8-10 pt)"
         if pt < 5:
             msg += " - too small: capture a smaller panel or a smaller window size"

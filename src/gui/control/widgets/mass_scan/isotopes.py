@@ -113,15 +113,16 @@ def build_mass_db(isotopes: list, selected: set) -> dict:
 
 
 def match(mass_db: dict, amu: float):
-    """(html, colour) naming a peak at `amu`: up to two of the expected elements' compounds
-    (yellow), else the likeliest other (orange); ("", grey) if nothing is close enough."""
+    """(html, kind) naming a peak at `amu`: up to two of the expected elements' compounds
+    ("expected"), else the likeliest other ("other"); ("", "none") if nothing is close enough.
+    (The panel draws each kind in its theme colour.)"""
     nearest = int(round(amu))
     if abs(amu - nearest) > MATCH_TOLERANCE:
-        return "", "#AAAAAA"
+        return "", "none"
     candidates = sorted(mass_db.get(nearest, []), key=lambda c: c["prob"], reverse=True)
     expected = [c for c in candidates if c["is_selected"]]
     if expected:
-        return "<br>".join(c["html"] for c in expected[:2]), "#FFEB3B"
+        return "<br>".join(c["html"] for c in expected[:2]), "expected"
     if candidates:
-        return candidates[0]["html"], "#FF9800"
-    return "", "#AAAAAA"
+        return candidates[0]["html"], "other"
+    return "", "none"

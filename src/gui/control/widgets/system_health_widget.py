@@ -1,15 +1,11 @@
 from PyQt6.QtWidgets import (
-    QWidget, QVBoxLayout, QGridLayout, QLabel, QPushButton,
-    QGroupBox, QListWidget, QListWidgetItem
+    QWidget, QVBoxLayout, QLabel, QPushButton,
+    QGroupBox, QListWidget
 )
 
-from src.core.theme import (
-    COLOR_OK,
-    COLOR_FAULT,
-    COLOR_INACTIVE,
-    COLOR_WARNING,
-    COLOR_BUTTON_STANDARD
-)
+from src.gui import theme
+from src.gui.reflow import ReflowGrid
+from src.gui.style import chip, set_role, set_tone
 
 
 class SystemHealthWidget(QWidget):
@@ -25,8 +21,6 @@ class SystemHealthWidget(QWidget):
         self._init_safety_ui()
         self._init_faults_ui()
 
-        self.main_layout.addStretch()
-
     def _dispatch_command(self, tag: str, value):
         self.cmd_thread.send_command("plc", tag, value)
 
@@ -37,70 +31,61 @@ class SystemHealthWidget(QWidget):
         self.cmd_thread.send_command("spellman", "ion_beam.system.cmd_fault_reset", True)
 
     def _init_safety_ui(self):
-        safety_group = QGroupBox("Master Safety && Sequence Control")
-        sl = QGridLayout()
+        safety_group = QGroupBox("Master safety && sequence control")
+        sl = QVBoxLayout(safety_group)
 
-        self.lbl_comms = QLabel("PLC COMMS: WAITING FOR DATA...")
-        self.lbl_comms.setStyleSheet(COLOR_WARNING)
-        self.lbl_safety_state = QLabel("SAFETY RELAY: WAITING FOR DATA...")
-        self.lbl_safety_state.setStyleSheet(COLOR_WARNING)
-        self.lbl_shutdown_state = QLabel("SHUTDOWN SEQ: WAITING FOR DATA...")
-        self.lbl_shutdown_state.setStyleSheet(COLOR_WARNING)
+        self.lbl_comms = chip("PLC COMMS: WAITING FOR DATA...", "unknown")
+        self.lbl_safety_state = chip("SAFETY RELAY: WAITING FOR DATA...", "unknown")
+        self.lbl_shutdown_state = chip("SHUTDOWN SEQ: WAITING FOR DATA...", "unknown")
+        for lbl in (self.lbl_comms, self.lbl_safety_state, self.lbl_shutdown_state):
+            lbl.setWordWrap(True)           # a long state wraps rather than widening the panel
 
         self.btn_enable_safety = QPushButton("ENABLE SAFETY RELAY")
         self.btn_enable_safety.setCheckable(True)
-        self.btn_enable_safety.setStyleSheet("""
-            QPushButton { background-color: #2196F3; color: white; font-weight: bold; border-radius: 4px; padding: 6px; }
-            QPushButton:checked { background-color: #F44336; color: white; }
-            QPushButton:disabled { background-color: #757575; color: #B0B0B0; font-weight: bold; }
-        """)
+        set_tone(self.btn_enable_safety, "primary")
+        self._countdown_styled = False
         self.btn_enable_safety.clicked.connect(
             lambda *args, b=self.btn_enable_safety: self._dispatch_command("ion_beam.system.cmd_enable_safety",
                                                                            b.isChecked()))
 
         self.btn_reset_faults = QPushButton("RESET FAULTS")
-        self.btn_reset_faults.setStyleSheet(COLOR_BUTTON_STANDARD)
         self.btn_reset_faults.clicked.connect(self._reset_faults)
 
         self.btn_shutdown = QPushButton("INITIATE SHUTDOWN")
-        self.btn_shutdown.setStyleSheet("""
-            QPushButton { background-color: #F44336; color: white; font-weight: bold; border-radius: 4px; padding: 6px; }
-            QPushButton:disabled { background-color: #757575; color: #E0E0E0; font-weight: bold; }
-        """)
+        set_tone(self.btn_shutdown, "danger")
         self.btn_shutdown.clicked.connect(
             lambda *args: self._dispatch_command("ion_beam.system.cmd_source_shutdown", True))
 
         self.btn_cancel_shutdown = QPushButton("ABORT SHUTDOWN")
-        self.btn_cancel_shutdown.setStyleSheet("""
-            QPushButton { background-color: #FF9800; color: black; font-weight: bold; border-radius: 4px; padding: 6px; }
-            QPushButton:disabled { background-color: #757575; color: #E0E0E0; font-weight: bold; }
-        """)
+        set_tone(self.btn_cancel_shutdown, "warn")
         self.btn_cancel_shutdown.clicked.connect(
             lambda *args: self._dispatch_command("ion_beam.system.cmd_cancel_shutdown", True))
 
-        sl.addWidget(self.lbl_comms, 0, 0)
-        sl.addWidget(self.lbl_safety_state, 0, 1)
-        sl.addWidget(self.lbl_shutdown_state, 0, 2)
-        sl.addWidget(self.btn_enable_safety, 1, 0)
-        sl.addWidget(self.btn_reset_faults, 1, 1)
-        sl.addWidget(self.btn_shutdown, 1, 2)
-        sl.addWidget(self.btn_cancel_shutdown, 1, 3)
-
-        safety_group.setLayout(sl)
+        # In a row when the panel is wide; two by two (or one above another) when it is narrow
+        states = ReflowGrid(max_columns=3)
+        for w in (self.lbl_comms, self.lbl_safety_state, self.lbl_shutdown_state):
+            states.add(w)
+        buttons = ReflowGrid(max_columns=4)
+        for w in (self.btn_enable_safety, self.btn_reset_faults, self.btn_shutdown, self.btn_cancel_shutdown):
+            buttons.add(w)
+        sl.addWidget(states)
+        sl.addWidget(buttons)
         self.main_layout.addWidget(safety_group)
 
     def _init_faults_ui(self):
-        fault_group = QGroupBox("PLC Faults (latched until RESET FAULTS - see the Alarms panel)")
+        fault_group = QGroupBox("PLC faults")
         fault_layout = QVBoxLayout()
-
-        fault_layout.addWidget(QLabel("<b>ACTIVE FAULTS:</b>"))
+        hint = QLabel("Latched until RESET FAULTS. Acknowledge and shelve them in the Alarms panel.")
+        set_role(hint, "caption")
+        hint.setWordWrap(True)
+        fault_layout.addWidget(hint)
         self.active_faults_list = QListWidget()
-        self.active_faults_list.setStyleSheet("background-color: #ffebee; color: #b71c1c; font-weight: bold;")
-        self.active_faults_list.setMinimumHeight(150)
+        self.active_faults_list.setMinimumHeight(90)
+        self._fault_lines = None
 
         fault_layout.addWidget(self.active_faults_list)
         fault_group.setLayout(fault_layout)
-        self.main_layout.addWidget(fault_group)
+        self.main_layout.addWidget(fault_group, stretch=1)
 
     def update_telemetry(self, data: dict):
         master_comms_lost = not bool(data.get("system.connected", False)) or bool(
@@ -119,13 +104,13 @@ class SystemHealthWidget(QWidget):
     def _update_comms_and_safety_state(self, data: dict, master_comms_lost: bool, relay_active: bool):
         if master_comms_lost:
             self.lbl_comms.setText("PLC COMMS: OFFLINE")
-            self.lbl_comms.setStyleSheet(COLOR_FAULT)
+            set_tone(self.lbl_comms, "fault")
             self.lbl_safety_state.setText("SAFETY: UNKNOWN")
-            self.lbl_safety_state.setStyleSheet(COLOR_INACTIVE)
+            set_tone(self.lbl_safety_state, "unknown")
             return
 
         self.lbl_comms.setText("PLC COMMS: OK")
-        self.lbl_comms.setStyleSheet(COLOR_OK)
+        set_tone(self.lbl_comms, "ok")
 
         w0_raw = data.get("ion_beam.faults.word_0_system")
         w0_faults = self.fault_engine.get_active_faults("UDT_Fault_Word_0_System", int(w0_raw)) if w0_raw else []
@@ -137,21 +122,21 @@ class SystemHealthWidget(QWidget):
 
         if relay_active:
             self.lbl_safety_state.setText("SAFETY: LIVE")
-            self.lbl_safety_state.setStyleSheet(COLOR_WARNING)
+            set_tone(self.lbl_safety_state, "warn")
         elif sr_tripped or sr_refused:
             self.lbl_safety_state.setText("SAFETY: TRIPPED/REFUSED")
-            self.lbl_safety_state.setStyleSheet(COLOR_FAULT)
+            set_tone(self.lbl_safety_state, "fault")
         elif remote_lost:
             self.lbl_safety_state.setText("SAFETY: NO REMOTE IO")
-            self.lbl_safety_state.setStyleSheet(COLOR_FAULT)
+            set_tone(self.lbl_safety_state, "fault")
         else:
             self.lbl_safety_state.setText("SAFETY: DE-ENERGIZED")
-            self.lbl_safety_state.setStyleSheet(COLOR_OK)
+            set_tone(self.lbl_safety_state, "ok")
 
     def _update_shutdown_labels(self, active_step: int, auto_sdown: bool, master_comms_lost: bool):
         if master_comms_lost:
             self.lbl_shutdown_state.setText("SHUTDOWN SEQ: UNKNOWN")
-            self.lbl_shutdown_state.setStyleSheet(COLOR_INACTIVE)
+            set_tone(self.lbl_shutdown_state, "unknown")
         elif auto_sdown or active_step > 0:
             if active_step == 1:
                 self.lbl_shutdown_state.setText("SHUTDOWN SEQ: GRACE PERIOD (75% EXTR)")
@@ -165,10 +150,10 @@ class SystemHealthWidget(QWidget):
                 self.lbl_shutdown_state.setText("SHUTDOWN SEQ: FILAMENT RAMP DOWN")
             elif active_step == 99:
                 self.lbl_shutdown_state.setText("SHUTDOWN SEQ: LATCHED SAFE (RESET REQ)")
-            self.lbl_shutdown_state.setStyleSheet(COLOR_WARNING if active_step in [1, 2, 10, 11] else COLOR_FAULT)
+            set_tone(self.lbl_shutdown_state, "warn" if active_step in [1, 2, 10, 11] else "fault")
         else:
             self.lbl_shutdown_state.setText("SHUTDOWN SEQ: INACTIVE")
-            self.lbl_shutdown_state.setStyleSheet(COLOR_OK)
+            set_tone(self.lbl_shutdown_state, "off")
 
     def _update_safety_controls(self, data: dict, relay_active: bool, active_step: int, master_comms_lost: bool):
         gv_is_open = bool(data.get("ion_beam.source.chamber.stat_gv_open", False))
@@ -199,21 +184,20 @@ class SystemHealthWidget(QWidget):
             total_sec = timer_total_ms / 1000.0
             fill_ratio = max(0.0, min(1.0, remaining_sec / total_sec))
 
-            sweep_style = f"""
-                QPushButton {{
-                    background: qlineargradient(x1:1, y1:0, x2:0, y2:0, 
-                                                stop:0 #F44336, 
-                                                stop:{fill_ratio:.3f} #F44336, 
-                                                stop:{min(1.0, fill_ratio + 0.001):.3f} #2196F3);
-                    color: white; font-weight: bold; border-radius: 4px; padding: 6px;
-                }}
-            """
+            # The time left to press the panel's START button, as a bar draining across the button
+            t = theme.tokens()
+            left = theme.rgba(t["warn_fill"], 0.5)
+            sweep_style = (f"QPushButton {{ background: qlineargradient(x1:1, y1:0, x2:0, y2:0, "
+                           f"stop:0 {left}, stop:{fill_ratio:.3f} {left}, "
+                           f"stop:{min(1.0, fill_ratio + 0.001):.3f} {t['raised']}); "
+                           f"color: {t['text']}; font-weight: 700; border: 2px solid {t['warn_fill']}; }}")
             self.btn_enable_safety.blockSignals(True)
             self.btn_enable_safety.setChecked(True)
             self.btn_enable_safety.blockSignals(False)
 
             self.btn_enable_safety.setText(f"PRESS PANEL START ({int(remaining_sec) + 1}s)")
             self.btn_enable_safety.setStyleSheet(sweep_style)
+            self._countdown_styled = True
             self.btn_enable_safety.setEnabled(True)
             self.btn_enable_safety.setToolTip(f"Awaiting physical panel button press... ({total_sec}s timeout)")
 
@@ -222,11 +206,11 @@ class SystemHealthWidget(QWidget):
             self.btn_enable_safety.setChecked(relay_active)
             self.btn_enable_safety.blockSignals(False)
 
-            self.btn_enable_safety.setStyleSheet("""
-                QPushButton { background-color: #2196F3; color: white; font-weight: bold; border-radius: 4px; padding: 6px; }
-                QPushButton:checked { background-color: #F44336; color: white; }
-                QPushButton:disabled { background-color: #757575; color: #B0B0B0; font-weight: bold; }
-            """)
+            if self._countdown_styled:
+                self.btn_enable_safety.setStyleSheet("")
+                self._countdown_styled = False
+            # Energised: amber, as the SAFETY: LIVE label (the HV is on); otherwise the main action
+            set_tone(self.btn_enable_safety, "warn" if relay_active else "primary")
 
             if master_comms_lost:
                 self.btn_enable_safety.setEnabled(False)
@@ -277,17 +261,23 @@ class SystemHealthWidget(QWidget):
                 "Disabled: Abort is only permitted during the initial 'Hold Hot' phase.")
 
     def _update_fault_list(self, data: dict, master_comms_lost: bool):
-        self.active_faults_list.clear()
-
         if master_comms_lost:
-            item = QListWidgetItem("⚠️ TELEMETRY OFFLINE: FAULT STATUS UNKNOWN ⚠️")
-            self.active_faults_list.addItem(item)
-            return
-
-        # Every fault word in fault_config.json (word_3_spellman used to be missing here)
-        for udt_key, udt_info in self.fault_engine.fault_structures.items():
-            raw_word = data.get(udt_info.get("registry_tag", ""))
-            if raw_word is None:
-                continue
-            for fault in self.fault_engine.get_active_faults(udt_key, int(raw_word)):
-                self.active_faults_list.addItem(QListWidgetItem(f"⚠️ {fault['name'].upper()}: {fault['description']}"))
+            lines, tone = ["Telemetry offline: fault status unknown"], "unknown"
+        else:
+            # Every fault word in fault_config.json (word_3_spellman used to be missing here)
+            lines = []
+            for udt_key, udt_info in self.fault_engine.fault_structures.items():
+                raw_word = data.get(udt_info.get("registry_tag", ""))
+                if raw_word is None:
+                    continue
+                for fault in self.fault_engine.get_active_faults(udt_key, int(raw_word)):
+                    lines.append(f"{fault['name'].upper()}: {fault['description']}")
+            tone = "fault" if lines else "off"
+            if not lines:
+                lines = ["No latched faults"]
+        if lines == self._fault_lines:
+            return                  # unchanged: leave the list (and its scroll position) alone
+        self._fault_lines = lines
+        self.active_faults_list.clear()
+        self.active_faults_list.addItems(lines)
+        set_tone(self.active_faults_list, tone)

@@ -38,3 +38,6 @@ data_sim/
 .pytest_cache/
 config/backups/
 config/*.tmp
+
+# Per-machine look (theme chosen in View > Theme), shared by the HMI and the viewer
+config/appearance.json

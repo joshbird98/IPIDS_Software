@@ -279,11 +279,10 @@ class AdamMicroservice:
             self.context.term()
 
     def _sync_loop(self, next_tick: float):
+        """Sleep to the tick (it used to busy-wait the last 2 ms: CPU for timing nothing needs)."""
         sleep_time = next_tick - time.perf_counter()
-        if sleep_time > 0.002:
-            time.sleep(sleep_time - 0.002)
-        while time.perf_counter() < next_tick:
-            pass
+        if sleep_time > 0:
+            time.sleep(sleep_time)
 
 
 if __name__ == "__main__":

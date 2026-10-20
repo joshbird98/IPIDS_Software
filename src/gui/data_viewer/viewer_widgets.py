@@ -3,27 +3,24 @@ from datetime import datetime
 
 import pyqtgraph as pg
 from PyQt6.QtWidgets import QComboBox, QDialog, QDialogButtonBox, QFormLayout, QLineEdit
-from PyQt6.QtGui import QColor, QIcon, QPixmap
 from PyQt6.QtCore import QSize
+
+from src.gui.style import swatch
 
 
 class MarkerDialog(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("Add Event Marker")
+        self.setWindowTitle("Add event marker")
         self.setMinimumWidth(300)
         layout = QFormLayout(self)
 
         self.text_input = QLineEdit()
         self.color_input = QComboBox()
 
-        # SYSTEM RESERVED COLORS:
-        # Red (#F44336)    = Fault Activated
-        # Blue (#2196F3)   = Fault Cleared
-        # Orange (#FF9800) = Watchdog
-        # Green (#4CAF50)  = Phase Change
-
-        # User-safe distinct palette:
+        # System events have the theme's colours (faults red, cleared blue, watchdog orange, phase
+        # green: theme.py ev_*). The marker keeps the colour chosen here; the plot draws it darker
+        # or lighter if needed to stand out on its background.
         self.colors = {
             "Cyan": "#00E5FF",
             "Yellow": "#FFEA00",
@@ -33,18 +30,12 @@ class MarkerDialog(QDialog):
             "Pink": "#E91E63"
         }
 
-        # Generate Icons for the ComboBox
         for name, hex_code in self.colors.items():
-            # Create a 16x16 colored square
-            pixmap = QPixmap(16, 16)
-            pixmap.fill(QColor(hex_code))
-            icon = QIcon(pixmap)
-            self.color_input.addItem(icon, name)
-
-        self.color_input.setIconSize(QSize(16, 16))
+            self.color_input.addItem(swatch(hex_code), name)
+        self.color_input.setIconSize(QSize(14, 14))
 
         layout.addRow("Note:", self.text_input)
-        layout.addRow("Color:", self.color_input)
+        layout.addRow("Colour:", self.color_input)
 
         buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
         buttons.accepted.connect(self.accept)

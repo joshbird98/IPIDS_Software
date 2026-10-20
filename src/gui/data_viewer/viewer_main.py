@@ -26,8 +26,9 @@ from datetime import datetime, timedelta
 import numpy as np
 import pyqtgraph as pg
 from PyQt6.QtCore import QDateTime, Qt, QTimer
-from PyQt6.QtWidgets import (QApplication, QCheckBox, QComboBox, QDateTimeEdit, QFormLayout, QHBoxLayout, QLabel,
-                             QLineEdit, QMainWindow, QPushButton, QScrollArea, QVBoxLayout, QWidget)
+from PyQt6.QtWidgets import (QApplication, QCheckBox, QComboBox, QDateTimeEdit, QFormLayout, QFrame, QGroupBox,
+                             QHBoxLayout, QLineEdit, QMainWindow, QPushButton, QScrollArea, QSplitter,
+                             QVBoxLayout, QWidget)
 
 from src.core import paths
 from src.core.data_cache import DualPipelineCache
@@ -37,7 +38,7 @@ from src.core.perf_utils import PerfTracker
 from src.gui.data_viewer.channel_selector import ChannelSelectorDialog
 from src.gui.data_viewer.config_manager import load_registry
 from src.gui.data_viewer.event_overlay import EventOverlay
-from src.gui.data_viewer.viewer_export import ExportMixin
+from src.gui.data_viewer.viewer_export import EXPORT_TEXT, ExportMixin
 from src.gui.data_viewer.viewer_inspector import InspectorMixin
 from src.gui.data_viewer.viewer_lanes import LanesMixin
 from src.gui.data_viewer.viewer_markers import MarkersMixin
@@ -45,7 +46,13 @@ from src.gui.data_viewer.viewer_profiles import PROFILES_FILE, ProfilesMixin
 from src.gui.data_viewer.viewer_widgets import LogAxisItem, MarkerDialog, TimeAxisItem  # noqa: F401 (were defined here)
 
 __all__ = ["DataViewerApp", "LogAxisItem", "MarkerDialog", "TimeAxisItem"]
+from src.gui import theme
 from src.gui.settings import gui_settings
+from src.gui.style import set_role, set_tone
+
+SIDEBAR_WIDTH = 320             # the sidebar's starting width (drag the divider to change it)
+FOLLOW_TEXT = ("Following live data", "Browsing - click to follow live")
+Y_TEXT = ("Y axis: automatic", "Y axis: held - click for automatic")
 
 log = logging.getLogger("viewer")
 
@@ -88,10 +95,6 @@ class DataViewerApp(LanesMixin, InspectorMixin, MarkersMixin, ExportMixin, Profi
         self.profiles_file = PROFILES_FILE                # config/workspace_profiles.json
         self.profiles = self._load_all_profiles()
         self.plot_config = copy.deepcopy(self.profiles.get("Default", {}))
-
-        # Add these to track color assignments
-        self._assigned_colors = {}  # Maps {tag: hex_color}
-        self._used_colors = set()  # Tracks which hex_colors are currently in use
 
         # 3. State
         self.curves = {}  # For Live Data
@@ -144,104 +147,128 @@ class DataViewerApp(LanesMixin, InspectorMixin, MarkersMixin, ExportMixin, Profi
         self.marker_sync_timer.start(1000)  # Check SQLite every 1 second
 
     def _init_ui(self):
-        main_widget = QWidget()
-        self.setCentralWidget(main_widget)
-        layout = QHBoxLayout(main_widget)
+        # View menu: the theme (shared with the HMI: switching it in either changes both), Ctrl+Shift+T
+        view_menu = self.menuBar().addMenu("View")
+        self.sidebar_action = view_menu.addAction("Sidebar")
+        self.sidebar_action.setCheckable(True)
+        self.sidebar_action.setChecked(True)
+        self.sidebar_action.toggled.connect(lambda on: self.sidebar_scroll.setVisible(on))
+        view_menu.addSeparator()
+        theme.add_theme_menu(view_menu, self)
 
-        # --- Sidebar (Now Scrollable) ---
+        # Sidebar | plots, with a divider to drag (the sidebar used to be a fixed 350 px)
+        self.splitter = QSplitter(Qt.Orientation.Horizontal)
+        self.splitter.setChildrenCollapsible(False)
+        self.setCentralWidget(self.splitter)
+        main_widget = self.splitter
+
+        # --- Sidebar (scrolls when the window is short) ---
         self.sidebar_scroll = QScrollArea()
-        self.sidebar_scroll.setFixedWidth(350)  # Slightly wider to fit the scrollbar safely
+        self.sidebar_scroll.setMinimumWidth(250)
         self.sidebar_scroll.setWidgetResizable(True)
         self.sidebar_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        self.sidebar_scroll.setStyleSheet("QScrollArea { border: none; }")
+        self.sidebar_scroll.setFrameShape(QFrame.Shape.NoFrame)
 
         sidebar = QWidget()
         sidebar_layout = QVBoxLayout(sidebar)
+        sidebar_layout.setContentsMargins(8, 8, 8, 8)
+        sidebar_layout.setSpacing(8)
         self.sidebar_scroll.setWidget(sidebar)
 
-        self.btn_scroll_lock = QPushButton("🟢 Scroll: LOCKED")
-        self.btn_scroll_lock.setStyleSheet("background-color: #4CAF50; color: white; font-weight: bold; padding: 10px;")
+        # 1. Time: follow live / browse, span, go to a date, the Y axis
+        view_box = QGroupBox("Time")
+        view_layout = QVBoxLayout(view_box)
+        self.btn_scroll_lock = QPushButton(FOLLOW_TEXT[0])
+        self.btn_scroll_lock.setCheckable(True)
+        self.btn_scroll_lock.setChecked(True)
+        set_role(self.btn_scroll_lock, "toggle")
+        self.btn_scroll_lock.setToolTip("On: the plots scroll with the newest data. Dragging or zooming the "
+                                        "time axis stops that; click to follow live again.")
         self.btn_scroll_lock.clicked.connect(lambda: self._toggle_scroll_lock())
-        sidebar_layout.addWidget(self.btn_scroll_lock)
+        view_layout.addWidget(self.btn_scroll_lock)
 
-        self.btn_y_lock = QPushButton("🔓 Y-Scale: AUTO")
+        span_layout = QHBoxLayout()
+        span_layout.setSpacing(4)
+        for label, minutes in [("1m", 1), ("15m", 15), ("1h", 60), ("12h", 720)]:
+            btn = QPushButton(label)
+            btn.setToolTip(f"Show the last {label}")
+            btn.clicked.connect(lambda ch, m=minutes: self._set_timespan(m))
+            span_layout.addWidget(btn)
+        view_layout.addLayout(span_layout)
+
+        jump_row = QHBoxLayout()
+        self.jump_dt = QDateTimeEdit(QDateTime.currentDateTime())
+        self.jump_dt.setCalendarPopup(True)
+        jump_row.addWidget(self.jump_dt, stretch=1)
+        btn_jump = QPushButton("Go")
+        btn_jump.setToolTip("Show the plots from this date and time")
+        btn_jump.clicked.connect(self._jump_to_date)
+        jump_row.addWidget(btn_jump)
+        view_layout.addLayout(jump_row)
+
+        self.btn_y_lock = QPushButton(Y_TEXT[0])
+        self.btn_y_lock.setCheckable(True)
+        set_role(self.btn_y_lock, "toggle")
+        self.btn_y_lock.setToolTip("Automatic: each lane's Y axis follows its data. Held: it stays put.")
         self.btn_y_lock.clicked.connect(self._toggle_y_lock)
-        sidebar_layout.addWidget(self.btn_y_lock)
+        view_layout.addWidget(self.btn_y_lock)
+        sidebar_layout.addWidget(view_box)
 
-        sidebar_layout.addWidget(QLabel("<b>Profiles:</b>"))
+        # 2. Channels and saved profiles (which channels, in which lanes)
+        chan_box = QGroupBox("Channels")
+        chan_layout = QVBoxLayout(chan_box)
+        self.btn_config = QPushButton("Configure channels...")
+        set_tone(self.btn_config, "primary")
+        self.btn_config.clicked.connect(self.open_channel_config)
+        chan_layout.addWidget(self.btn_config)
 
         # Create a mini horizontal layout for the dropdown + delete button
         profile_row = QHBoxLayout()
 
         self.combo_profiles = QComboBox()
         self.combo_profiles.addItems(self.profiles.keys())
+        self.combo_profiles.setToolTip("Saved profiles: a set of channels and their lanes")
 
-        self.btn_delete_profile = QPushButton("🗑️")
-        self.btn_delete_profile.setFixedWidth(35)
+        self.btn_delete_profile = QPushButton("Delete")
+        self.btn_delete_profile.setToolTip("Delete this profile")
         # Connect to a wrapper function that passes the current text
         self.btn_delete_profile.clicked.connect(lambda: self._delete_profile(self.combo_profiles.currentText()))
 
-        profile_row.addWidget(self.combo_profiles)
+        profile_row.addWidget(self.combo_profiles, stretch=1)
         profile_row.addWidget(self.btn_delete_profile)
-        sidebar_layout.addLayout(profile_row)
+        chan_layout.addLayout(profile_row)
 
-        btn_load = QPushButton("Load Profile")
+        load_row = QHBoxLayout()
+        btn_load = QPushButton("Load profile")
         btn_load.clicked.connect(self._apply_profile)
-        sidebar_layout.addWidget(btn_load)
-
-        btn_save_profile = QPushButton("💾 Save Profile As...")
+        btn_save_profile = QPushButton("Save as...")
+        btn_save_profile.setToolTip("Save the channels shown now as a profile")
         btn_save_profile.clicked.connect(self._save_current_profile)
-        sidebar_layout.addWidget(btn_save_profile)
+        load_row.addWidget(btn_load)
+        load_row.addWidget(btn_save_profile)
+        chan_layout.addLayout(load_row)
+        sidebar_layout.addWidget(chan_box)
 
-        self.btn_config = QPushButton("⚙️ Configure Channels")
-        self.btn_config.setStyleSheet("""
-                    QPushButton {
-                        background-color: #2196F3; 
-                        color: white; 
-                        font-weight: bold; 
-                        padding: 12px;
-                        border-radius: 4px;
-                    }
-                    QPushButton:hover {
-                        background-color: #1976D2;
-                    }
-                """)
-        self.btn_config.clicked.connect(self.open_channel_config)
-        sidebar_layout.addWidget(self.btn_config)
-
-        sidebar_layout.addWidget(QLabel("<b>Jump to Date:</b>"))
-        self.jump_dt = QDateTimeEdit(QDateTime.currentDateTime())
-        self.jump_dt.setCalendarPopup(True)
-        sidebar_layout.addWidget(self.jump_dt)
-
-        btn_jump = QPushButton("🚀 Teleport to Date")
-        btn_jump.clicked.connect(self._jump_to_date)
-        sidebar_layout.addWidget(btn_jump)
-
-        sidebar_layout.addWidget(QLabel("<b>Timespan:</b>"))
-        span_layout = QHBoxLayout()
-        for label, minutes in [("1m", 1), ("15m", 15), ("1h", 60), ("12h", 720)]:
-            btn = QPushButton(label)
-            btn.clicked.connect(lambda ch, m=minutes: self._set_timespan(m))
-            span_layout.addWidget(btn)
-        sidebar_layout.addLayout(span_layout)
-
-        sidebar_layout.addSpacing(20)
-        sidebar_layout.addWidget(QLabel("<b>Diagnostics:</b>"))
-
-        self.btn_inspector = QPushButton("🔍 Enable Inspector")
+        # 3. Values: live, or under the cursor with the inspector on
+        values_box = QGroupBox("Values")
+        values_layout = QVBoxLayout(values_box)
+        self.btn_inspector = QPushButton("Inspector")
         self.btn_inspector.setCheckable(True)
+        set_role(self.btn_inspector, "toggle")
+        self.btn_inspector.setToolTip("Show the values under the cursor. Ctrl+click pins a time (differences "
+                                      "from it are shown); right-click clears the pin.")
         self.btn_inspector.toggled.connect(self._on_inspector_toggled)
-        sidebar_layout.addWidget(self.btn_inspector)
-
-        sidebar_layout.addSpacing(20)
-        sidebar_layout.addWidget(QLabel("<b>Live Channel Values:</b>"))
+        values_layout.addWidget(self.btn_inspector)
         self.value_display_layout = QFormLayout()
+        self.value_display_layout.setHorizontalSpacing(8)
+        self.value_display_layout.setVerticalSpacing(4)
         self.sidebar_value_labels = {}
-        sidebar_layout.addLayout(self.value_display_layout)
+        values_layout.addLayout(self.value_display_layout)
+        sidebar_layout.addWidget(values_box)
 
-        sidebar_layout.addSpacing(20)
-        sidebar_layout.addWidget(QLabel("<b>Export Settings:</b>"))
+        # 4. Export
+        export_box = QGroupBox("Export")
+        export_layout = QVBoxLayout(export_box)
 
         # Path selection layout
         path_layout = QHBoxLayout()
@@ -258,31 +285,24 @@ class DataViewerApp(LanesMixin, InspectorMixin, MarkersMixin, ExportMixin, Profi
         path_layout.addWidget(self.edit_export_path)
 
         btn_browse = QPushButton("...")
-        btn_browse.setFixedWidth(30)
+        btn_browse.setFixedWidth(34)
         btn_browse.clicked.connect(self._browse_export_path)
         path_layout.addWidget(btn_browse)
-        sidebar_layout.addLayout(path_layout)
+        export_layout.addLayout(path_layout)
 
-        self.btn_export = QPushButton("📸 Export Snapshot")
-        self.btn_export.setStyleSheet("background-color: #673AB7; color: white; font-weight: bold; padding: 8px;")
+        self.btn_export = QPushButton(EXPORT_TEXT)
         # lambda: QPushButton.clicked passes checked=False, which PyQt would feed
         # into _prepare_export's `options` parameter (export then did nothing)
         self.btn_export.clicked.connect(lambda: self._prepare_export())
-        sidebar_layout.addWidget(self.btn_export)
+        export_layout.addWidget(self.btn_export)
+        sidebar_layout.addWidget(export_box)
 
-        sidebar_layout.addSpacing(20)
-        sidebar_layout.addSpacing(20)
-
-        # 1. The Toggle Button
-        self.btn_overlay_toggle = QPushButton("▼ Event Overlays")
-        self.btn_overlay_toggle.setStyleSheet("text-align: left; font-weight: bold; border: none; padding: 5px;")
-        self.btn_overlay_toggle.setCheckable(True)
-        sidebar_layout.addWidget(self.btn_overlay_toggle)
-
-        # 2. The Container Frame
+        # 5. Event markers on the plots: which kinds
+        events_box = QGroupBox("Event markers")
+        events_layout = QVBoxLayout(events_box)
         self.overlay_frame = QWidget()
         overlay_layout = QVBoxLayout(self.overlay_frame)
-        overlay_layout.setContentsMargins(15, 0, 0, 0)  # Indent the checkboxes slightly
+        overlay_layout.setContentsMargins(0, 0, 0, 0)
 
         # Map UI labels to exact database event types (using pseudo-types for faults)
         self.event_filters = {
@@ -303,25 +323,20 @@ class DataViewerApp(LanesMixin, InspectorMixin, MarkersMixin, ExportMixin, Profi
             self.filter_checkboxes[label_text] = cb
             overlay_layout.addWidget(cb)
 
-        sidebar_layout.addWidget(self.overlay_frame)
-
-        # 3. Toggle Logic
-        def toggle_overlays(checked):
-            self.overlay_frame.setVisible(not checked)
-            self.btn_overlay_toggle.setText("▶ Event Overlays" if checked else "▼ Event Overlays")
-
-        self.btn_overlay_toggle.clicked.connect(toggle_overlays)
-        self.btn_overlay_toggle.setChecked(False)  # Menu starts OPEN by default
-        # ----------------------------------
+        events_layout.addWidget(self.overlay_frame)
+        sidebar_layout.addWidget(events_box)
 
         sidebar_layout.addStretch()
-        layout.addWidget(self.sidebar_scroll)
+        main_widget.addWidget(self.sidebar_scroll)
 
         pg.setConfigOptions(antialias=True)
 
         # Core container replaces the single PlotWidget
         self.layout_widget = pg.GraphicsLayoutWidget()
-        layout.addWidget(self.layout_widget)
+        main_widget.addWidget(self.layout_widget)
+        main_widget.setStretchFactor(0, 0)
+        main_widget.setStretchFactor(1, 1)
+        main_widget.setSizes([SIDEBAR_WIDTH, 1400])
         # readable names in the F12 figure-capture target list
         self.layout_widget.setObjectName("Plot area")
         self.sidebar_scroll.setObjectName("Sidebar")
@@ -345,6 +360,10 @@ class DataViewerApp(LanesMixin, InspectorMixin, MarkersMixin, ExportMixin, Profi
         self.layout_widget.scene().sigMouseMoved.connect(self._on_mouse_moved)
         self.layout_widget.scene().sigMouseClicked.connect(self._on_graph_clicked)
         self.layout_widget.scene().sigMouseClicked.connect(self._handle_click_events)
+
+        # Background and axes in the theme now and after every switch; curves, legends, the
+        # crosshair and the markers by _restyle_plots (viewer_lanes.py)
+        theme.style_plot(self.layout_widget, restyle=self._restyle_plots)
 
         # Build the initial grid
         QTimer.singleShot(200, self.request_ui_refresh)
@@ -390,12 +409,8 @@ class DataViewerApp(LanesMixin, InspectorMixin, MarkersMixin, ExportMixin, Profi
     def _toggle_y_lock(self):
         self.y_auto_scale = not self.y_auto_scale
 
-        if self.y_auto_scale:
-            self.btn_y_lock.setText("🔓 Y-Scale: AUTO")
-            self.btn_y_lock.setStyleSheet("")
-        else:
-            self.btn_y_lock.setText("🔒 Y-Scale: LOCKED")
-            self.btn_y_lock.setStyleSheet("background-color: #FF9800; color: white;")
+        self.btn_y_lock.setChecked(not self.y_auto_scale)
+        self.btn_y_lock.setText(Y_TEXT[0] if self.y_auto_scale else Y_TEXT[1])
 
         # Apply the state to all lanes
         for lane_name in self.lanes:
@@ -561,14 +576,8 @@ class DataViewerApp(LanesMixin, InspectorMixin, MarkersMixin, ExportMixin, Profi
         else:
             self.auto_scroll = not self.auto_scroll
 
-        if self.auto_scroll:
-            self.btn_scroll_lock.setText("🟢 Scroll: LOCKED")
-            self.btn_scroll_lock.setStyleSheet(
-                "background-color: #4CAF50; color: white; font-weight: bold; padding: 10px;")
-        else:
-            self.btn_scroll_lock.setText("🔴 Scroll: MANUAL")
-            self.btn_scroll_lock.setStyleSheet(
-                "background-color: #f44336; color: white; font-weight: bold; padding: 10px;")
+        self.btn_scroll_lock.setChecked(self.auto_scroll)
+        self.btn_scroll_lock.setText(FOLLOW_TEXT[0] if self.auto_scroll else FOLLOW_TEXT[1])
 
     # --- Profile & Config ---
 
@@ -704,6 +713,8 @@ if __name__ == "__main__":
     # so don't apply the services' 200 MB working-set ceiling here.
     harden_windows_process(limit_working_set=False)
     app = QApplication(sys.argv)
+    # The theme saved last (dark unless chosen otherwise: View > Theme), shared with the HMI
+    theme.install(app)
 
     # 1. One data cache, shared by every window
     log.info("Data folder: %s", paths.DATA_DIR)

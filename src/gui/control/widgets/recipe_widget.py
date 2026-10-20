@@ -5,27 +5,25 @@ it up again when the HMI comes back."""
 import os
 
 from PyQt6.QtCore import Qt
-from PyQt6.QtGui import QColor
+from PyQt6.QtGui import QFont
 from PyQt6.QtWidgets import (QComboBox, QFrame, QHBoxLayout, QLabel, QListWidget, QListWidgetItem, QMessageBox,
                              QPushButton, QVBoxLayout, QWidget)
 
 from src.core.recipe_engine import Recipe, RecipeError
 from src.core.recipe_files import RECIPES_DIR, migrate_legacy_recipes
+from src.gui import theme
 from src.gui.control.dialogs.recipe_builder_dialog import RecipeBuilderDialog
 from src.gui.control.sequencer_link import OFFLINE_TEXT, SequencerSlot
+from src.gui.style import chip, set_role, set_tone
 from src.sequencer import protocol as P
 
-# --- SCADA Standard Colors ---
-COLOR_OK = "background-color: #4CAF50; color: white; font-weight: bold; border-radius: 4px; padding: 6px;"
-COLOR_FAULT = "background-color: #F44336; color: white; font-weight: bold; border-radius: 4px; padding: 6px;"
-COLOR_WARNING = "background-color: #FF9800; color: white; font-weight: bold; border-radius: 4px; padding: 6px;"
-COLOR_INACTIVE = "background-color: #757575; color: white; font-weight: bold; border-radius: 4px; padding: 6px;"
-COLOR_BUTTON_STANDARD = "background-color: #E0E0E0; color: black; font-weight: normal; border-radius: 4px; padding: 6px;"
-PROMPT_STYLE = "QFrame#RecipePrompt { background-color: #FFF3E0; border: 2px solid #FF9800; border-radius: 6px; }"
-
-STEP_COLOURS = {"DONE": "#C8E6C9", "FAILED": "#FFCDD2", "RUNNING": "#BBDEFB", "WAITING_FOR_USER": "#FFE0B2"}
-STATE_STYLES = {P.RUNNING: COLOR_OK, P.PROMPT: COLOR_WARNING, P.PAUSED: COLOR_WARNING, P.COMPLETE: COLOR_OK,
-                P.STOPPED: COLOR_WARNING, P.FAILED: COLOR_FAULT}
+# Step rows: (background, text) theme colours
+STEP_COLOURS = {"DONE": ("ok_bg", "ok"), "FAILED": ("fault_bg", "fault"), "RUNNING": ("seq_bg", "seq"),
+                "WAITING_FOR_USER": ("warn_bg", "warn")}
+# The status line: violet while the sequence runs (it holds controls), amber when it waits for the
+# operator, red when it failed
+STATE_TONES = {P.RUNNING: "seq", P.PROMPT: "warn", P.PAUSED: "warn", P.COMPLETE: "ok",
+               P.STOPPED: "off", P.FAILED: "fault"}
 
 
 class RecipeExecutionWidget(QWidget):
@@ -50,9 +48,7 @@ class RecipeExecutionWidget(QWidget):
     def _init_ui(self):
         layout = QVBoxLayout(self)
 
-        self.btn_builder = QPushButton("🛠️ OPEN RECIPE BUILDER")
-        self.btn_builder.setStyleSheet(
-            "background-color: #9C27B0; color: white; font-weight: bold; border-radius: 4px; padding: 6px;")
+        self.btn_builder = QPushButton("OPEN RECIPE BUILDER")
         self.btn_builder.setToolTip("Open the interactive visual designer to create or edit recipes.")
         self.btn_builder.clicked.connect(self._open_builder)
         layout.addWidget(self.btn_builder)
@@ -65,10 +61,9 @@ class RecipeExecutionWidget(QWidget):
         self.btn_refresh.setToolTip("Rescan folder for new JSON files.")
         self.btn_refresh.clicked.connect(self._populate_recipes)
         self.btn_load = QPushButton("LOAD RECIPE")
-        self.btn_load.setStyleSheet(COLOR_BUTTON_STANDARD)
         self.btn_load.setToolTip("Show the selected recipe's steps, ready to start.")
         self.btn_load.clicked.connect(self._load_recipe)
-        self.btn_edit = QPushButton("✏️ EDIT")
+        self.btn_edit = QPushButton("EDIT")
         self.btn_edit.setToolTip("Open the selected recipe in the Builder for editing.")
         self.btn_edit.clicked.connect(self._edit_recipe)
         for w, stretch in ((self.cb_recipes, 1), (self.btn_refresh, 0), (self.btn_load, 0), (self.btn_edit, 0)):
@@ -91,57 +86,65 @@ class RecipeExecutionWidget(QWidget):
         # Operator prompt: answered here, checked by the sequencer
         self.prompt_frame = QFrame()
         self.prompt_frame.setObjectName("RecipePrompt")
-        self.prompt_frame.setStyleSheet(PROMPT_STYLE)
+        set_role(self.prompt_frame, "callout")
+        set_tone(self.prompt_frame, "warn")
         prompt_layout = QVBoxLayout(self.prompt_frame)
         self.lbl_prompt = QLabel()
         self.lbl_prompt.setWordWrap(True)
-        self.lbl_prompt.setStyleSheet("font-weight: bold; color: black;")
+        set_role(self.lbl_prompt, "title")
         self.lbl_prompt_feedback = QLabel()
         self.lbl_prompt_feedback.setWordWrap(True)
-        self.lbl_prompt_feedback.setStyleSheet("color: #B71C1C;")
+        set_role(self.lbl_prompt_feedback, "error")
         prompt_buttons = QHBoxLayout()
         self.btn_ack = QPushButton("✔ ACKNOWLEDGE")
-        self.btn_ack.setStyleSheet(COLOR_OK)
+        set_tone(self.btn_ack, "primary")
         self.btn_ack.setToolTip("Confirm the action is done. The recipe checks its conditions (live values) first.")
         self.btn_ack.clicked.connect(self._acknowledge)
         self.btn_prompt_stop = QPushButton("⏹ STOP RECIPE")
-        self.btn_prompt_stop.setStyleSheet(COLOR_FAULT)
+        set_tone(self.btn_prompt_stop, "danger")
         self.btn_prompt_stop.setToolTip("Stop the recipe here (nothing is switched off).")
         self.btn_prompt_stop.clicked.connect(self._abort_recipe)
         prompt_buttons.addWidget(self.btn_ack)
         prompt_buttons.addWidget(self.btn_prompt_stop)
-        prompt_layout.addWidget(QLabel("<b>Recipe action required</b>"))
+        prompt_head = QLabel("Recipe action required")
+        set_role(prompt_head, "heading")
+        prompt_layout.addWidget(prompt_head)
         prompt_layout.addWidget(self.lbl_prompt)
         prompt_layout.addWidget(self.lbl_prompt_feedback)
         prompt_layout.addLayout(prompt_buttons)
         self.prompt_frame.hide()
         layout.addWidget(self.prompt_frame)
 
-        layout.addWidget(QLabel("<b>Execution Sequence:</b>"))
+        lbl_steps = QLabel("Steps")
+        set_role(lbl_steps, "caption")
+        layout.addWidget(lbl_steps)
         self.list_steps = QListWidget()
         self.list_steps.setSelectionMode(QListWidget.SelectionMode.NoSelection)
-        self.list_steps.setStyleSheet("QListWidget { font-size: 11pt; }")
-        layout.addWidget(self.list_steps)
+        self.list_steps.setMinimumHeight(90)
+        font = QFont(self.list_steps.font())
+        font.setPointSizeF(font.pointSizeF() + 1)
+        self.list_steps.setFont(font)
+        layout.addWidget(self.list_steps, stretch=1)
 
-        self.lbl_status = QLabel("STATUS: IDLE")
+        self.lbl_status = chip("STATUS: IDLE", "off")
         self.lbl_status.setWordWrap(True)
-        self.lbl_status.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.lbl_status.setStyleSheet(COLOR_INACTIVE)
         layout.addWidget(self.lbl_status)
         self._set_buttons(start=False, pause=False, stop=False)
+        # The step colours are painted per row: draw them again in the new theme
+        theme.theme_changed().connect(self._repaint_steps)
 
     def _set_buttons(self, start: bool, pause: bool, stop: bool, paused: bool = False, start_tip: str = ""):
         self.btn_start.setEnabled(start)
-        self.btn_start.setStyleSheet(COLOR_OK if start else COLOR_INACTIVE)
+        set_tone(self.btn_start, "primary")
         self.btn_start.setToolTip(start_tip or ("Run the loaded recipe from step 1." if start else
                                                 "Load a recipe first (and the sequencer must be idle)."))
         self.btn_pause.setEnabled(pause)
         self.btn_pause.setText("▶ RESUME" if paused else "⏸ PAUSE")
-        self.btn_pause.setStyleSheet((COLOR_OK if paused else COLOR_WARNING) if pause else COLOR_INACTIVE)
+        set_tone(self.btn_pause, "primary" if paused else None)
         self.btn_pause.setToolTip("Resume (the current step carries on, or starts again if control was taken)."
                                   if paused else "Suspend execution and freeze all timers.")
         self.btn_abort.setEnabled(stop)
-        self.btn_abort.setStyleSheet(COLOR_FAULT if stop else COLOR_INACTIVE)
+        set_tone(self.btn_abort, "danger")
         self.btn_abort.setToolTip("Stop stepping through the recipe now. Nothing is switched off or reverted: "
                                   "outputs stay as the completed steps left them." if stop else
                                   "Stop is only available while a recipe is running.")
@@ -173,7 +176,7 @@ class RecipeExecutionWidget(QWidget):
         self._rendered = None
         self._render_preview()
         self.lbl_status.setText(f"READY: {self.preview.name}")
-        self.lbl_status.setStyleSheet(COLOR_INACTIVE)
+        set_tone(self.lbl_status, "off")
 
     def _edit_recipe(self):
         filename = self.cb_recipes.currentText()
@@ -221,7 +224,7 @@ class RecipeExecutionWidget(QWidget):
                 self._ack_refusal = (getattr(ticket, "prompt_seq", None), ticket.reason)
             elif not ticket.ok:
                 self.lbl_status.setText(f"{verb.upper()} refused: {ticket.reason}")
-                self.lbl_status.setStyleSheet(COLOR_FAULT)
+                set_tone(self.lbl_status, "fault")
 
     # ------------------------------------------------------------------ telemetry
     def update_telemetry(self, data: dict):
@@ -231,7 +234,7 @@ class RecipeExecutionWidget(QWidget):
             self._set_buttons(start=False, pause=False, stop=False, start_tip=OFFLINE_TEXT)
             self.prompt_frame.hide()
             self.lbl_status.setText("SEQUENCER OFFLINE - " + OFFLINE_TEXT)
-            self.lbl_status.setStyleSheet(COLOR_INACTIVE)
+            set_tone(self.lbl_status, "unknown")
             return
         state = self.slot.state
         if self._awaiting_run is not None and self.slot.get("run") == self._awaiting_run:
@@ -273,11 +276,19 @@ class RecipeExecutionWidget(QWidget):
             self.lbl_status.setText(f"FINISHED ({crumb}): {self.slot.get('message') or text}")
         else:
             self.lbl_status.setText(f"{state.upper()} ({crumb}): {text}")
-        self.lbl_status.setStyleSheet(STATE_STYLES.get(state, COLOR_INACTIVE))
+        set_tone(self.lbl_status, STATE_TONES.get(state, "off"))
 
     def _render_preview(self):
         self._render([(s.step_id, s.get_display_name(), s.get_description(), "IDLE") for s in self.preview.steps],
                      None, None)
+
+    def _repaint_steps(self, *_):
+        signature, self._rendered = self._rendered, None
+        if signature is not None:
+            try:
+                self._render(*signature)
+            except RuntimeError:            # (the panel has gone)
+                pass
 
     def _render(self, rows, current, state):
         signature = (tuple(rows), current, state)
@@ -293,8 +304,8 @@ class RecipeExecutionWidget(QWidget):
             if step_id == current and state in P.ACTIVE and step_state not in ("DONE", "FAILED"):
                 colour = STEP_COLOURS["WAITING_FOR_USER" if state == P.PROMPT else "RUNNING"]
             if colour:
-                item.setBackground(QColor(colour))
-                item.setForeground(QColor("black"))
+                item.setBackground(theme.color(colour[0]))
+                item.setForeground(theme.color(colour[1]))
             if step_state == "DONE":
                 item.setText(name + "  ✓")
             elif step_state == "FAILED":

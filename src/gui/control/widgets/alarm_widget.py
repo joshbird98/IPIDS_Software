@@ -11,22 +11,31 @@ belongs to the alarms, not the rows: it stays while the list is redrawn and re-s
 import time
 
 from PyQt6.QtCore import QItemSelection, QItemSelectionModel, Qt, QTimer
-from PyQt6.QtGui import QColor, QFont
+from PyQt6.QtGui import QFont
 from PyQt6.QtWidgets import (QAbstractItemView, QDialog, QDialogButtonBox, QFormLayout, QHBoxLayout, QHeaderView,
                              QLabel, QLineEdit, QPushButton, QSpinBox, QTableWidget, QTableWidgetItem, QVBoxLayout,
                              QWidget)
 
 from src.alarms.model import ACKED, PRIORITY_NAMES, RTN_UNACK, UNACK
+from src.gui import theme
 from src.gui.control.alarm_horn import AlarmHorn
+from src.gui.style import set_prop, set_role, set_tone
 
 OFFLINE_ID = "hmi.alarm_service_offline"
 COLUMNS = ["", "Priority", "State", "Time", "Alarm", "Count"]
 SELECT_TIP = "Click an alarm in the list to select it (Ctrl+click or Shift+click for several)."
-PRIORITY_COLOURS = {1: ("#B71C1C", "white"), 2: ("#E65100", "white"), 3: ("#F9A825", "black"), 4: ("#1565C0", "white")}
-FLASH_COLOURS = {1: "#EF9A9A", 2: "#FFCC80", 3: "#FFF59D", 4: "#90CAF9"}
-QUIET_COLOUR = ("#9E9E9E", "black")
 STATE_TEXT = {UNACK: "UNACKNOWLEDGED", ACKED: "ACKNOWLEDGED", RTN_UNACK: "CLEARED, UNACKNOWLEDGED", "NORMAL": "NORMAL"}
-BUTTON = "font-weight: bold; border-radius: 4px; padding: 6px; color: white; background-color: {};"
+
+
+def row_colours(priority: int, strong: bool, quiet: bool = False):
+    """(background, text) of an alarm row in the current theme: the priority's colour (strong), its
+    softer version (an acknowledged alarm, and the other half of an unacknowledged one's flash),
+    or grey for a shelved or suppressed alarm."""
+    t = theme.tokens()
+    if quiet or priority not in (1, 2, 3, 4):
+        return theme.qcolor(t["alarm_quiet"]), theme.qcolor(t["alarm_quiet_text"])
+    key = f"alarm_{priority}" if strong else f"alarm_{priority}_soft"
+    return theme.qcolor(t[key]), theme.qcolor(t[key + "_text"])
 
 
 def hhmmss(ts) -> str:
@@ -76,13 +85,13 @@ class AlarmPanel(QWidget):
         layout = QVBoxLayout(self)
         top = QHBoxLayout()
         self.lbl_summary = QLabel("Alarms: waiting for the alarm service...")
-        self.lbl_summary.setStyleSheet("font-size: 12pt; font-weight: bold; padding: 4px;")
-        self.btn_silence = QPushButton("🔇 SILENCE")
-        self.btn_silence.setStyleSheet(BUTTON.format("#455A64"))
+        set_role(self.lbl_summary, "banner")
+        self.btn_silence = QPushButton("SILENCE")
         self.btn_silence.setToolTip("Stop the sound without acknowledging (a new alarm sounds again).")
         self.btn_silence.clicked.connect(self.silence)
-        self.btn_ack_all = QPushButton("✔ ACK ALL")
-        self.btn_ack_all.setStyleSheet(BUTTON.format("#2E7D32"))
+        self.btn_ack_all = QPushButton("ACK ALL")
+        set_tone(self.btn_ack_all, "primary")
+        self.btn_ack_all.setToolTip("Acknowledge every alarm in the list.")
         self.btn_ack_all.clicked.connect(self.ack_all)
         top.addWidget(self.lbl_summary, stretch=1)
         top.addWidget(self.btn_silence)
@@ -104,9 +113,9 @@ class AlarmPanel(QWidget):
         layout.addWidget(self.table)
 
         buttons = QHBoxLayout()
-        self.btn_ack = QPushButton("✔ Acknowledge selected")
+        self.btn_ack = QPushButton("Acknowledge selected")
         self.btn_ack.clicked.connect(self.ack_selected)
-        self.btn_shelve = QPushButton("💤 Shelve...")
+        self.btn_shelve = QPushButton("Shelve...")
         self.btn_shelve.setToolTip("Take the selected alarm out of annunciation for a while (needs a reason).")
         self.btn_shelve.clicked.connect(self.shelve_selected)
         self.btn_unshelve = QPushButton("Unshelve")
@@ -212,9 +221,8 @@ class AlarmPanel(QWidget):
                                        "Restart it from the Service Manager panel."}]
             self._render()
             self.horn.update(1, self._sounding())
-            self.lbl_summary.setText("⚠ ALARM SERVICE NOT RUNNING")
-            self.lbl_summary.setStyleSheet("font-size: 12pt; font-weight: bold; padding: 4px; color: white; "
-                                           "background-color: #B71C1C;")
+            self.lbl_summary.setText("ALARM SERVICE NOT RUNNING")
+            set_prop(self.lbl_summary, "level", 1)
             return
         self.alarms = list(listed)
         self._render()
@@ -223,21 +231,20 @@ class AlarmPanel(QWidget):
         unack, active = counts.get("unack", 0), counts.get("active", 0)
         if unack:
             top = min(a["priority"] for a in self.alarms if a["state"] in (UNACK, RTN_UNACK))
-            bg, fg = PRIORITY_COLOURS.get(top, QUIET_COLOUR)
-            text = f"🔔 {unack} alarm{'s' if unack != 1 else ''} to acknowledge"
+            level = top if top in (1, 2, 3, 4) else "active"
+            text = f"{unack} alarm{'s' if unack != 1 else ''} to acknowledge"
         elif active:
-            bg, fg = "#FFF8E1", "black"
+            level = "active"
             text = f"{active} active alarm{'s' if active != 1 else ''} (acknowledged)"
         else:
-            bg, fg = "#E8F5E9", "#1B5E20"
+            level = "clear"
             text = "No active alarms"
         if counts.get("shelved"):
-            text += f"   💤 {counts['shelved']} shelved"
+            text += f"   |   {counts['shelved']} shelved"
         if self.horn.silenced and unack:
-            text += "   🔇 silenced"
+            text += "   |   silenced"
         self.lbl_summary.setText(text)
-        self.lbl_summary.setStyleSheet(f"font-size: 12pt; font-weight: bold; padding: 4px; color: {fg}; "
-                                       f"background-color: {bg};")
+        set_prop(self.lbl_summary, "level", level)
 
     def _render(self):
         signature = tuple((a["id"], a["state"], a.get("shelved_until"), a.get("suppressed"), a.get("first_out"),
@@ -292,19 +299,17 @@ class AlarmPanel(QWidget):
 
     def _paint(self):
         for row, alarm in enumerate(self.alarms):
-            quiet = alarm.get("shelved_until") or alarm.get("suppressed")
-            bg, fg = QUIET_COLOUR if quiet else PRIORITY_COLOURS.get(alarm["priority"], QUIET_COLOUR)
-            if alarm["state"] == UNACK and not quiet and self._flash_on:
-                bg, fg = FLASH_COLOURS.get(alarm["priority"], bg), "black"
-            elif alarm["state"] == ACKED and not quiet:
-                fg = "black"
-                bg = FLASH_COLOURS.get(alarm["priority"], bg)       # steady, paler: acknowledged
+            quiet = bool(alarm.get("shelved_until") or alarm.get("suppressed"))
+            # Unacknowledged: flashes between the priority colour and its softer version;
+            # acknowledged: the softer one, steady; cleared but unacknowledged: the full colour
+            strong = not ((alarm["state"] == UNACK and self._flash_on) or alarm["state"] == ACKED)
+            bg, fg = row_colours(alarm["priority"], strong, quiet)
             font = QFont()
             font.setBold(alarm["state"] in (UNACK, RTN_UNACK))
             font.setItalic(alarm["state"] == RTN_UNACK)
             for col in range(len(COLUMNS)):
                 item = self.table.item(row, col)
                 if item is not None:
-                    item.setBackground(QColor(bg))
-                    item.setForeground(QColor(fg))
+                    item.setBackground(bg)
+                    item.setForeground(fg)
                     item.setFont(font)

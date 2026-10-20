@@ -343,11 +343,11 @@ def test_a_hard_cap_is_refused_and_shown_on_the_field(env):
     assert env.confirm["shown"] == []                                  # no confirmation offered at all
     assert (env.cfg / "vac_gauges_config.json").read_bytes() == before
     field = widget_at(dlg, "10", "relays", "1", "on_val")
-    assert field.styleSheet() == ced.CAP_STYLE and "1e-05 mbar cap" in field.toolTip()
+    assert field.property("tone") == ced.CAP_TONE and "1e-05 mbar cap" in field.toolTip()
     field.setText("5.5e-06")
     widget_at(dlg, "10", "relays", "1", "off_val").setText("1e-05")    # at the cap is allowed
     dlg._save_and_restart()
-    assert field.styleSheet() == "" and env.boxes[-1][0] == "information" and "Saved" in env.boxes[-1][1]
+    assert not field.property("tone") and env.boxes[-1][0] == "information" and "Saved" in env.boxes[-1][1]
     assert cs.read("vac_gauges_config.json", str(env.cfg))["10"]["relays"]["1"]["off_val"] == 1e-05
 
 
@@ -372,4 +372,4 @@ def test_a_file_already_past_a_cap_is_shown_when_opened(env):
     dlg = env.make()
     dlg.cb_files.setCurrentText("magnet_config.json")
     assert not dlg.lbl_problems.isHidden() and "Hard cap: max_current 120 A" in dlg.lbl_problems.text()
-    assert widget_at(dlg, "max_current").styleSheet() == ced.CAP_STYLE
+    assert widget_at(dlg, "max_current").property("tone") == ced.CAP_TONE

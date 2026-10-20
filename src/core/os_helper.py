@@ -19,7 +19,7 @@ def harden_windows_process(limit_working_set=True):
 
     from src.core.paths import simulation_enabled
     if simulation_enabled():
-        # Simulated devices on a laptop: don't run a dozen spin-waiting processes at HIGH priority
+        # Simulated devices on a laptop: leave a dozen processes at normal priority
         log.info("Simulation mode: leaving process priority and working set at Windows defaults.")
         return
 

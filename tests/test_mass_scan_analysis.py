@@ -14,12 +14,12 @@ from src.sequencer.mass_scan import export_csv
 def test_mass_db_prefers_the_expected_elements():
     iso = isotopes.load_isotopes("/nonexistent.json")            # the built-in minimal set
     db = isotopes.build_mass_db(iso, {"Si"})
-    assert isotopes.match(db, 28.05) == ("<sup>28</sup>Si", "#FFEB3B")
+    assert isotopes.match(db, 28.05) == ("<sup>28</sup>Si", "expected")
     html, colour = isotopes.match(db, 56.1)                      # Si2 (expected) beats e.g. other pairs
-    assert "<sup>28</sup>Si<sub>2</sub>" in html and colour == "#FFEB3B"
+    assert "<sup>28</sup>Si<sub>2</sub>" in html and colour == "expected"
     html, colour = isotopes.match(db, 29.0)                      # 29Si (expected) or 28Si+H
-    assert colour == "#FFEB3B"
-    assert isotopes.match(db, 28.4) == ("", "#AAAAAA")           # too far from a whole mass
+    assert colour == "expected"
+    assert isotopes.match(db, 28.4) == ("", "none")              # too far from a whole mass
     plain = {c["plain"] for c in db[17]}
     assert "16O+H" in plain                                      # adducts
     assert all(m <= isotopes.MAX_MASS for m in db)

@@ -48,18 +48,16 @@ class PeriodicTableDialog(QDialog):
             btn = QPushButton(sym)
             btn.setFixedSize(36, 36)
             btn.setCheckable(True)
+            btn.setProperty("role", "toggle")      # (theme: a checked toggle is filled with the accent)
             if sym in self.selected:
                 btn.setChecked(True)
-                btn.setStyleSheet("background-color: #2196F3; color: white; font-weight: bold;")
 
             def make_toggle_handler(button, element):
                 def handler(checked):
                     if checked:
                         self.selected.add(element)
-                        button.setStyleSheet("background-color: #2196F3; color: white; font-weight: bold;")
                     else:
                         self.selected.discard(element)
-                        button.setStyleSheet("")
 
                 return handler
 
