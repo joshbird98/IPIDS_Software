@@ -40,10 +40,10 @@ class FakeUSSPump:
 
     def _zsw(self):
         zsw = 0
-        if self.error_code == 0:
-            zsw |= 1 << 0
-        else:
+        if self.error_code:
             zsw |= 1 << 3
+        elif self.hz >= MAX_HZ - 1:    # normal operation, at speed: as the HMI reads bit 0 (to be checked
+            zsw |= 1 << 0              # on the real pump; this used to be set whenever there was no error)
         if self.hz > 1:
             zsw |= 1 << 11
         return zsw

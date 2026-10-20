@@ -26,7 +26,7 @@ The same faults are alarms on the [Alarms](alarms.md) panel, where you acknowled
 
 | Control | What it does |
 |---|---|
-| **ENABLE SAFETY RELAY** | Asks the PLC to switch the safety relay on, with one click; then press START on the machine's panel (see [Switching on the safety relay](#switching-on-the-safety-relay)). Greyed out until the gate valve is fully open: "The Gate Valve must be fully OPEN before the safety circuit can be energized." |
+| **ENABLE SAFETY RELAY** | Asks the PLC to switch the safety relay on, with one click; then press **START** on the **High Voltage Systems Control** box (see [Switching on the safety relay](#switching-on-the-safety-relay)). Greyed out until the gate valve is fully open: "The Gate Valve must be fully OPEN before the safety circuit can be energized." |
 | **PRESS PANEL START (5s)** | The same button while the PLC waits for START: it counts down to **(1s)**, with an amber bar that shrinks as the time runs out. Clicking it withdraws the request. |
 | **DISABLE SAFETY RELAY** | The same button while the relay is on and the source is cold: one click switches the relay off. |
 | **RELAY ENERGIZED (LOCKED)** | The same button, greyed out, while the relay is on and the source is hot or at high voltage: "You cannot drop the safety relay while the source is hot or active. Run a shutdown first." |
@@ -41,10 +41,11 @@ All the buttons are greyed out while the PLC link is down. No sequence can take 
 ## Switching on the safety relay
 
 1. Open the gate valve on the [Vacuum System](vacuum.md) panel and wait for **OPEN**.
-2. Click **ENABLE SAFETY RELAY**. The button counts down from **PRESS PANEL START (5s)**.
-3. Press START on the machine's panel before the count runs out. **SAFETY: LIVE** shows when the relay closes.
+2. Turn the key on the **High Voltage Systems Control** box, on the desk next to the HMI's screen, to **ENABLE** (photo in [Safety rules](../safety.md#the-high-voltage-systems-control-box)).
+3. Click **ENABLE SAFETY RELAY**. The button counts down from **PRESS PANEL START (5s)**.
+4. Press **START** on the box before the count runs out. **SAFETY: LIVE** shows when the relay closes.
 
-The PLC can open the relay but can't close it: it passes your request on as an enable, and the relay closes when START is pressed. The PLC gives the enable only while its relay permissive holds:
+The PLC can open the relay but can't close it: it passes your request on as an enable, and the relay closes when **START** is pressed, if the rest of its hardwired loop is made (see [Safety rules](../safety.md#what-protects-you)). The PLC gives the enable only while its relay permissive holds:
 
 - compressed air pressure OK;
 - source coolant flowing;
@@ -68,7 +69,7 @@ The PLC runs its own shutdown sequences. It keeps two step counters, one for the
 
 | Chip | Step | What the PLC does |
 |---|---|---|
-| **SHUTDOWN SEQ: GRACE PERIOD (75% EXTR)** | 1 | The PLC has lost the PC (no watchdog change for 3 s) or the remote I/O. It holds the extraction at 75 % of its readback for up to 60 s, and ends the sequence if the link returns; the supplies stay as the PLC left them. Otherwise it goes on to step 2. As the PLC program reads, a lost PC watchdog also latches `PC_Watchdog_Timeout`, which closes the gate valve at once and so opens the relay. |
+| **SHUTDOWN SEQ: GRACE PERIOD (75% EXTR)** | 1 | The PLC has lost the PC (no watchdog change for 3 s) or the remote I/O. It holds the extraction at 75 % of its readback for up to 60 s, and ends the sequence if the link returns; the supplies stay as the PLC left them. Otherwise it goes on to step 2. A lost PC watchdog also latches `PC_Watchdog_Timeout`, which closes the gate valve at once and so opens the relay. This is deliberate: without the PC the PLC has no vacuum readings, so it assumes the worst. |
 | **SHUTDOWN SEQ: CESIUM COOLDOWN** | 2 | Extraction off, the caesium oven force-cooled, and the gate valve closed, which opens the safety relay. A hardware abort (below) comes straight here. Then step 3 once the caesium and the filament are cold; the remote I/O sequence normally goes to 99 as soon as the relay opens. |
 | **SHUTDOWN SEQ: FINAL KILL** | 3 | Target, filament and thermionic switched off, and the relay killed. After a PC link loss or hardware abort, it goes on to 99 once the link is back and no abort is active. |
 | **SHUTDOWN SEQ: LATCHED SAFE (RESET REQ)** | 99 | The automatic sequence has finished. It stays here until **RESET FAULTS**. |

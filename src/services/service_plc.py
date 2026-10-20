@@ -34,6 +34,20 @@ from src.core.network_map import (
 POLL_INTERVAL = 0.1  # 100ms cycle (10Hz)
 HEARTBEAT_INTERVAL = 0.5  # PC->PLC watchdog increment
 GV_REQUEST_CLEAR_S = 3.0  # gate valve shut by its interlock this long: its OPEN request is cleared
+# A vacuum-service restart (by hand, or by the config editor) used to drop the gate valve's vacuum
+# permissive 2 s into the restart and send GRAPHIX comms-fail, which the PLC latches: the valve closed,
+# the relay dropped and a fault reset was needed. Now, while the vacuum service is silent or still
+# starting (ion_beam.vacuum.stat_judged 0), the PLC keeps its last judgment - permissive and gauge flags
+# - for at most this long after it, then counts the vacuum as unknown as before (Josh, October 2026).
+VACUUM_HOLD_S = 60.0
+VAC_JUDGED = "ion_beam.vacuum.stat_judged"
+VAC_HOLD_LEFT = "ion_beam.source.chamber.vac_hold_left_s"     # published: seconds the hold has left, 0 if none
+VAC_GAUGES = ("ion_beam.source.vacuum_gauge_1", "ion_beam.beamline.vacuum_gauge_2", "ion_beam.beamline.vacuum_gauge_3",
+              "ion_beam.endstation.vacuum_gauge_4", "ion_beam.loadlock.vacuum_gauge_5",
+              "ion_beam.endstation.vacuum_gauge_6")
+VAC_UNKNOWN = {"ion_beam.source.chamber.stat_vac_ok_for_gv": False,       # no vacuum service: the PLC is told
+               "ion_beam.facilities.graphix1.stat_comms_fail": True,        # the vacuum is unknown
+               "ion_beam.facilities.graphix2.stat_comms_fail": True}
 MAX_CMD_AGE = 0.5  # TTL: Reject incoming commands older than 500ms
 RECONNECT_DELAYS = (1.0, 2.0, 5.0, 10.0)  # seconds between PLC connection attempts (backs off, then stays at 10 s)
 
@@ -81,6 +95,28 @@ def load_plc_tags():
     except (OSError, ValueError) as e:
         return {}, e
     return {t: m for t, m in all_tags.items() if m.get("source") == "service_plc_snap7"}, None
+
+
+def _flag_reader(payload: dict):
+    """flag(key, unknown=True): a status flag from another service's telemetry, for the PLC. A null
+    (unknown) flag counts as a fault unless said otherwise; a missing one as clear."""
+    def flag(key, unknown=True):
+        v = payload.get(key, 0.0)
+        return unknown if v is None else bool(v)
+    return flag
+
+
+def vacuum_flags(payload: dict) -> dict:
+    """What the PLC is given from one message of the vacuum service: the gate valve's vacuum
+    permissive, the GRAPHIX comms flags and each gauge's fault flags."""
+    flag = _flag_reader(payload)
+    out = {"ion_beam.facilities.graphix1.stat_comms_fail": flag("ion_beam.facilities.graphix1.stat_comms_fail"),
+           "ion_beam.facilities.graphix2.stat_comms_fail": flag("ion_beam.facilities.graphix2.stat_comms_fail"),
+           "ion_beam.source.chamber.stat_vac_ok_for_gv": flag("ion_beam.vacuum.gv_permissive_ready", False)}
+    for path in VAC_GAUGES:
+        for leaf in ("stat_not_found", "stat_mismatch", "stat_above_sp", "stat_rapid_rise"):
+            out[f"{path}.{leaf}"] = flag(f"{path}.{leaf}", False)
+    return out
 
 
 def subsystems_of(tags) -> tuple:
@@ -137,11 +173,17 @@ class PlcMicroservice(DeviceService):
                                and (t.rpartition(".")[2].startswith("rb_") or t.endswith(".resistance"))]
         self.state.update({"system.connected": 0.0, "system.cpu_state": "UNKNOWN",
                            "system.cycle_time_ms": POLL_INTERVAL * 1000})
-        # Other services' last telemetry (their flags fall back to 'fault' if they go quiet)
-        self.last_seen = {"VACUUM": time.time(), "TURBO": time.time(), "SPELLMAN": time.time(),
-                          "MAGNET": time.time()}
+        # Other services' last telemetry (their flags fall back to 'fault' if they go quiet). Monotonic: a
+        # clock step must neither hide a silent service nor make a live one look silent.
+        self.clock = time.monotonic
+        now = self.clock()
+        self.last_seen = {"VACUUM": now, "TURBO": now, "SPELLMAN": now, "MAGNET": now}
         self.SERVICE_TIMEOUT_SEC = 2.0
         self._gv_stale_since = None     # gate valve shut by its interlock with OPEN still requested, since
+        self._vac_judged = None         # the vacuum flags for the PLC from the vacuum service's last judgment
+        self._vac_judged_at = None      # (monotonic) when
+        self._vac_holding = None        # why the PLC is being given that judgment still, or None
+        self.state[VAC_HOLD_LEFT] = 0.0
 
     def _evaluate_word_faults(self):
         """Log each PLC fault bit's edges (from the 32-bit fault words) to the event log.
@@ -480,12 +522,9 @@ class PlcMicroservice(DeviceService):
 
                 for service in self.last_seen.keys():
                     if service in topic_str:
-                        self.last_seen[service] = time.time()
+                        self.last_seen[service] = self.clock()
 
-                # A null (unknown) flag from another service counts as a fault for the PLC
-                def flag(key, unknown=True):
-                    v = payload.get(key, 0.0)
-                    return unknown if v is None else bool(v)
+                flag = _flag_reader(payload)
 
                 if "TURBO" in topic_str:
                     base = "ion_beam.source.turbo_pump"
@@ -495,26 +534,7 @@ class PlcMicroservice(DeviceService):
                     pending_updates[f"{base}.stat_trip"] = flag(f"{base}.stat_trip", False)
 
                 elif "VACUUM" in topic_str:
-                    pending_updates["ion_beam.facilities.graphix1.stat_comms_fail"] = flag(
-                        "ion_beam.facilities.graphix1.stat_comms_fail")
-                    pending_updates["ion_beam.facilities.graphix2.stat_comms_fail"] = flag(
-                        "ion_beam.facilities.graphix2.stat_comms_fail")
-                    pending_updates["ion_beam.source.chamber.stat_vac_ok_for_gv"] = flag(
-                        "ion_beam.vacuum.gv_permissive_ready", False)
-
-                    vg_paths = [
-                        "ion_beam.source.vacuum_gauge_1",
-                        "ion_beam.beamline.vacuum_gauge_2",
-                        "ion_beam.beamline.vacuum_gauge_3",
-                        "ion_beam.endstation.vacuum_gauge_4",
-                        "ion_beam.loadlock.vacuum_gauge_5",
-                        "ion_beam.endstation.vacuum_gauge_6"
-                    ]
-                    for path in vg_paths:
-                        pending_updates[f"{path}.stat_not_found"] = flag(f"{path}.stat_not_found", False)
-                        pending_updates[f"{path}.stat_mismatch"] = flag(f"{path}.stat_mismatch", False)
-                        pending_updates[f"{path}.stat_above_sp"] = flag(f"{path}.stat_above_sp", False)
-                        pending_updates[f"{path}.stat_rapid_rise"] = flag(f"{path}.stat_rapid_rise", False)
+                    pending_updates.update(self._vacuum_updates(payload))
 
                 elif "SPELLMAN" in topic_str:
                     spellman_paths = [
@@ -565,7 +585,7 @@ class PlcMicroservice(DeviceService):
         if not stale:
             self._gv_stale_since = None
             return
-        now = time.monotonic()
+        now = self.clock()
         if self._gv_stale_since is None:
             self._gv_stale_since = now
             return
@@ -580,14 +600,69 @@ class PlcMicroservice(DeviceService):
         elif (n := self.throttle.ready("gv-clear")) is not None:
             log.warning("Could not clear the gate valve's OPEN request: %s%s", reason, Throttle.suffix(n))
 
+    # ------------------------------------------------------------------ the vacuum hold (restarts)
+    def _note_vacuum_judgment(self, payload: dict):
+        """The vacuum flags of a message, and whether they are the vacuum service's own judgment.
+        (A message without stat_judged, from an older vacuum service, always is.)"""
+        values = vacuum_flags(payload)
+        judged = payload.get(VAC_JUDGED, 1.0) == 1.0
+        if judged:
+            self._vac_judged, self._vac_judged_at = values, self.clock()
+        return values, judged
+
+    def _vacuum_hold_left(self, now: float) -> float:
+        if self._vac_judged is None:
+            return 0.0
+        return max(0.0, VACUUM_HOLD_S - (now - self._vac_judged_at))
+
+    def _vacuum_updates(self, payload: dict) -> dict:
+        values, judged = self._note_vacuum_judgment(payload)
+        now = self.clock()
+        if judged:
+            self._end_vacuum_hold(now)
+            return values
+        if self._vacuum_hold_left(now) > 0:           # restarted, still starting: its last judgment
+            self._start_vacuum_hold("still starting", now)
+            return dict(self._vac_judged)
+        self._vacuum_hold_over()
+        return values
+
+    def _start_vacuum_hold(self, why: str, now: float):
+        if self._vac_holding is None:
+            ok = self._vac_judged.get("ion_beam.source.chamber.stat_vac_ok_for_gv")
+            self.events.log_general(
+                f"Vacuum service {why}: the PLC keeps its last judgment of the vacuum (gate valve permissive "
+                f"{'given' if ok else 'withheld'}; GRAPHIX and gauge flags as they were) for up to "
+                f"{self._vacuum_hold_left(now):.0f} s more, until the vacuum service judges it again",
+                severity="WARNING")
+        self._vac_holding = why
+
+    def _end_vacuum_hold(self, now: float):
+        if self._vac_holding is not None:
+            ok = self._vac_judged.get("ion_beam.source.chamber.stat_vac_ok_for_gv")
+            self.events.log_general("Vacuum service judging the vacuum again: the PLC follows its readings "
+                                    f"(gate valve permissive {'given' if ok else 'withheld'})")
+        self._vac_holding = None
+
+    def _vacuum_hold_over(self):
+        if self._vac_holding is not None:
+            self.events.log_general(
+                f"No judgment of the vacuum from the vacuum service for {VACUUM_HOLD_S:.0f} s: the PLC is now "
+                "told the vacuum is unknown (gate valve permissive withdrawn)", severity="ERROR")
+        self._vac_holding = None
+
     def _enforce_it_watchdogs(self):
-        current_time = time.time()
+        current_time = self.clock()
         fallback_updates = {}
 
         if current_time - self.last_seen["VACUUM"] > self.SERVICE_TIMEOUT_SEC:
-            fallback_updates["ion_beam.source.chamber.stat_vac_ok_for_gv"] = False
-            fallback_updates["ion_beam.facilities.graphix1.stat_comms_fail"] = True
-            fallback_updates["ion_beam.facilities.graphix2.stat_comms_fail"] = True
+            if self._vacuum_hold_left(current_time) > 0:
+                self._start_vacuum_hold("not sending data (restarting?)", current_time)
+                fallback_updates.update(self._vac_judged)
+            else:
+                self._vacuum_hold_over()
+                fallback_updates.update(VAC_UNKNOWN)
+        self.state[VAC_HOLD_LEFT] = round(self._vacuum_hold_left(current_time), 1) if self._vac_holding else 0.0
 
         if current_time - self.last_seen["TURBO"] > self.SERVICE_TIMEOUT_SEC:
             fallback_updates["ion_beam.source.turbo_pump.stat_comms_fail"] = True
@@ -627,6 +702,7 @@ class PlcMicroservice(DeviceService):
 
     def publish_unknown(self):
         self._drain_external_telemetry()
+        self.state[VAC_HOLD_LEFT] = 0.0          # (nothing is being given to the PLC)
 
     # ------------------------------------------------------------------ permits / commands
     def permit(self, subsystem: str):
@@ -737,14 +813,20 @@ class PlcMicroservice(DeviceService):
         return None
 
     def _drain_external_telemetry(self):
-        """While the PLC is unreachable, keep the subscription drained and the IT watchdogs current."""
+        """While the PLC is unreachable, keep the subscription drained and the IT watchdogs current
+        (and the vacuum service's last judgment, which a restart of it may need held)."""
         try:
             while True:
-                topic, _ = self.telem_socket.recv_multipart(flags=zmq.NOBLOCK)
+                topic, msg = self.telem_socket.recv_multipart(flags=zmq.NOBLOCK)
                 topic_str = topic.decode('utf-8', 'replace').upper()
                 for service in self.last_seen:
                     if service in topic_str:
-                        self.last_seen[service] = time.time()
+                        self.last_seen[service] = self.clock()
+                if "VACUUM" in topic_str:
+                    try:
+                        self._note_vacuum_judgment(orjson.loads(msg))
+                    except ValueError:
+                        pass
         except zmq.Again:
             pass
 

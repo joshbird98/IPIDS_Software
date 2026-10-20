@@ -78,7 +78,7 @@ The other simulated devices, in `src/sim/`:
 | Spellman supplies | A model per address with an output that lags its setpoint. The output is limited by the current limit, which is 0 after every power-up. Closing the bus (relay off) loses their settings, as on the real units. The einzel draws under 1 µA, noisily. |
 | Magnet supplies | An inductive load: the current follows its setpoint with a time constant of about 1 s; voltage is current times resistance. |
 | SMU | A small mass spectrum on the Faraday cup: peaks where the Mass Scan panel's default calibration expects oxygen, the silicon isotopes and others, growing with the extracted beam. Nothing arrives until the source is running. |
-| Turbo pump | Spins up while it is told to run and coasts down otherwise; reports the vent strategy as already set, so nothing is written to its memory. |
+| Turbo pump | Spins up to 820 Hz in about 40 s while it is told to run, and coasts down otherwise; reports normal operation (status bit 0, **AT SPEED**) only at full speed; reports the vent strategy as already set, so nothing is written to its memory. |
 
 ## What it isn't
 

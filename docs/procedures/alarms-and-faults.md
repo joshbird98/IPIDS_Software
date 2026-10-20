@@ -44,7 +44,7 @@ A safety relay that opens when nobody asked for it latches **SAFETY_RELAY_TRIPPE
 
 1. Find out why it opened: an emergency stop, a door, loss of compressed air or cooling water, the gate valve leaving its open position, a caesium over-temperature (the first-out alarm and the PLC faults list say which the PLC saw).
 2. Put the cause right, then press **RESET FAULTS**.
-3. With the gate valve open, switch the relay on again (**ENABLE SAFETY RELAY**, then the panel's START button within 5 seconds), and bring the supplies back up in order.
+3. With the gate valve open, switch the relay on again (the key at **ENABLE**, **ENABLE SAFETY RELAY**, then **START** on the **High Voltage Systems Control** box within 5 seconds), and bring the supplies back up in order.
 
 > [!NOTE]
 > The PLC cools the caesium with air while the relay is off, but a relay trip doesn't start its shutdown sequence. If the source was hot, keep an eye on the caesium and filament as they cool.

@@ -20,6 +20,33 @@ simulator; none of it has been tried on the real hardware yet (see "Lab PC valid
    the help still opens, plainer (no call-out boxes or table borders).
 
 ## Done
+- Josh's requests of 20 October 2026:
+  - Help: the page reloaded itself several times a second for as long as it was open (the wait cursor
+    flashing): the scrollbar changed the text column, and a new column reloaded the page for its screenshots,
+    which hid and showed the scrollbar. The column now ignores the scrollbar, and a resize scales the
+    screenshots in place.
+  - Vacuum System panel: a gauge or the turbo pump without a live reading keeps its last value, greyed, with
+    a STALE chip and how long ago (tooltips say why: service silent, controllers or pump not answering, no
+    good reading for 3 s); NO READING / OFFLINE when there never was one. The vacuum service now also
+    withdraws a pressure the controller answers with something that isn't a number (it used to stay forever).
+    The OPEN tooltip says what the permissive needs (it named the turbo pump, which isn't part of it).
+  - Source turbo pump: never stopped from the software (Josh: trained staff stop it by hand, at the pump).
+    The service refuses cmd_enable false/0, and doesn't send a start or fault reset to a pump running without
+    a fault (the reset word, 0x0480, has the run bit clear: it was a stop pulse). The panel tells ACCELERATING
+    from SLOWING DOWN. The simulator reports status bit 0 (AT SPEED) only at full speed (it was set at 0 Hz).
+  - Vacuum-service restart: service_plc keeps giving the PLC the vacuum service's last judgment (gate-valve
+    permissive, GRAPHIX comms and gauge flags) while it is silent or still starting, for at most
+    VACUUM_HOLD_S = 60 s after it; the restarted service says when it has judged (ion_beam.vacuum.stat_judged:
+    the permissive given, or JUDGE_GRACE_S = 20 s after its start-up check). Nothing is written when the new
+    judgment matches the held one, so no momentary drop; a bad judgment passes at once; a running service's
+    own comms loss isn't held. The panel shows VACUUM PERMISSIVE HELD: n s LEFT. It used to drop the
+    permissive 2 s into the restart and send GRAPHIX comms-fail (latched: state 99, valve shut, relay dropped,
+    reset needed). tests/test_vacuum_restart.py, with a real restart of both services (slow).
+  - Help pages: Josh's answers in place of the "to be confirmed" notes (the High Voltage Systems Control box,
+    with the key switch, START and an ESO; the hardwired loop's contents; the ESO places; Units 2-4 not
+    installed; marker colours; the isotope list; the turbo stopped by hand; only Josh deletes files on the
+    lab PC, OneDrive backup); photos of the box (the key blurred: the repository is public) and the source
+    deck; the watchdog closing the gate valve is intended.
 - Help (October 2026): Help in the HMI and the data viewer opens the help window on the Markdown pages in
   docs/ (contents, search, back/forward, print or save as PDF, follows the theme); F1 opens the page of the
   panel under the mouse pointer; Help > About SINDIE shows the version (git commit) and the folders in use.
@@ -278,8 +305,10 @@ simulator; none of it has been tried on the real hardware yet (see "Lab PC valid
    ENABLE SAFETY RELAY), dragging panels into a narrow column, Reset layout, and the CPU use with the
    default layout (the simulator measured here: see the commit message).
 9. Help pages, for Josh: add the Ion Beam Centre's local rules (docs/safety.md, "Local rules") and the
-   caesium safe operating procedure; read the procedures (docs/procedures/) against practice; resolve the
-   remaining "to be confirmed" notes (grep -rn "to be confirmed" docs/).
+   caesium safe operating procedure; read the procedures (docs/procedures/) against practice; check the
+   photo captions in docs/safety.md (the source deck, the High Voltage Systems Control box). What is still
+   open is the PLC's behaviour, to check on the machine: which way the Faraday cup moves on a latched fault,
+   and the relay trip that starts no shutdown sequence (grep -rn "checked on the machine\|To be confirmed" docs/).
 
 10. Found while writing the help (October 2026), not fixed - to review (file:line at the time):
     - Simulator: INITIATE SHUTDOWN trips the relay (no shutdown sequencer; cmd_source_shutdown never
@@ -324,8 +353,7 @@ simulator; none of it has been tried on the real hardware yet (see "Lab PC valid
       plc_config.json says its limits mirror the PLC's, but filament 33 A and caesium 0-150 degC differ from the
       PLC's 0-40 A and 20-200 degC; after a change that rebuilds the registry the config editor restarts only
       the file's own service (the HMI and service_sequencer keep the old limits until restarted).
-    - HMI texts: the Vacuum panel's OPEN tooltip says "Ensure turbo pump is at speed", which isn't part of the
-      PLC's open permissive (vacuum_widget.py:274-275); the RECIPE badge ("Control yielded to active Recipe.",
+    - HMI texts: the RECIPE badge ("Control yielded to active Recipe.",
       PLC mode 2 - recipes use leases, and the PLC ignores mode 2) and the mode-1 tooltip ("automated
       sequencer" - it is the PLC's shutdown sequence) mislead (source_widget.py:442-446); the services word
       "relay off" refusals differently (service_plc.py:695, service_spellman_mpd.py:168/255,
@@ -339,21 +367,19 @@ simulator; none of it has been tried on the real hardware yet (see "Lab PC valid
       broken" alarm; which way the Faraday cup moves on a latched fault (FB20 sets Cmd_Insert_FC FALSE, OB100 and
       the shutdown sequences insert it); a relay trip doesn't start a shutdown sequence (facts report 12.2).
     - The config editor's password is written in the source (control_main.py, _show_config_editor).
-    - Stale values shown as live (found by the help reviewers, reproduced offscreen): a gauge whose pressure the
-      vacuum service withdraws (no good read for 3 s, controller not answering) keeps its last pressure and its
-      HEALTHY chip (vacuum_widget.py:149-173; stat_error_code and the relay flags are never nulled,
-      service_vac_gauge_controllers.py:490-500); with the turbo pump not answering, the last speed and current
-      stay, the status reads IDLE and START PUMP is enabled (vacuum_widget.py:184-213); the Faraday cup button
-      keeps its last text and colour when PLC data is lost (faraday_smu_widget.py:283-305). The panel shows
-      AT SPEED / RUNNING whenever the TURBOVAC's status bit 0 is set, even at 0 Hz (vacuum_widget.py:202) -
-      check what bit 0 means on the real pump (the simulator sets it whenever there is no error, src/sim/turbo.py).
-    - A vacuum-service restart (by hand, or by the config editor after a vac_gauges_config.json change) makes
-      service_plc report the GRAPHIX controllers lost after 2 s (service_plc.py:587-590), which withdraws the
-      gate valve's open permissive: with the source on, the PLC closes the valve and the relay drops. Consider
-      a grace period, or a warning in the services panel and the config editor.
-    - PLC (to confirm on the machine): as the program reads, a PC watchdog timeout withdraws the gate valve's
-      open permissive at once (PC_Watchdog_Timeout), so the valve closes and the relay drops straight away, and
-      the 75 % extraction hold of GRACE PERIOD acts on supplies without power.
+    - Stale values (the vacuum gauges and the turbo pump done, October 2026): the Faraday cup button keeps its
+      last text and colour when PLC data is lost (faraday_smu_widget.py:283-305). The panel shows AT SPEED /
+      RUNNING whenever the TURBOVAC's status bit 0 is set (vacuum_widget.py) - check what bit 0 means on the
+      real pump (the simulator now sets it only at full speed, src/sim/turbo.py).
+    - PLC: a PC watchdog timeout closes the gate valve at once, so the relay drops (intended, Josh, October
+      2026: without the PC the vacuum is unknown); so GRACE PERIOD's 75 % extraction hold acts on supplies
+      without power - the step could be simplified.
+    - Source turbo pump, to check on the machine (Josh: trained staff stop it by hand, at the pump): the service
+      sends the run control word (0x0401) with every message while the pump runs (and adopts RUN when it finds
+      the pump spinning at start-up). Check that a stop made at the pump isn't overridden by that word (if the
+      pump obeys the serial link while it is the control source, it may start again). If it is, the service
+      should stop asserting RUN once the pump slows down without a command from it, or the pump's control
+      source should be set so a local stop wins.
     - service_plc: permit() leaves out the caesium-hot hold (HELD_WHILE_CS_HOT), so the target, filament and
       thermionic switches aren't greyed out while the caesium is hot - the operator gets a refusal pop-up
       instead (service_plc.py:632); that refusal credits the PLC with the hold (:727), which the PC applies.

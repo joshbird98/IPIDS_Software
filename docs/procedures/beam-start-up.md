@@ -30,12 +30,12 @@ The values given are SINDIE's typical operating values. They are not limits.
     - the PLC faults on the **System Health** panel;
     - the **Alarms** panel;
     - any service on the **Service Manager** panel that isn't **ONLINE**.
-7. **Vacuum.** On the **Vacuum System** panel, the source pressure (**Source (VG1)**) is below 5×10⁻⁷ mbar.
+7. **Vacuum.** On the **Vacuum System** panel, the source pressure (**Source (VG1)**) is below 5×10⁻⁷ mbar, and live: not greyed and marked **STALE**.
 8. **Gate valve.** Open the source gate valve with **OPEN** on the **Vacuum System** panel. **OPEN** is available only while the PLC allows the valve to open: the vacuum is good and there are no gauge faults.
-9. **Safety relay.**
-    1. The safety relay needs its key (see [Safety rules](../safety.md#the-high-voltage-area)).
+9. **Safety relay.** Its key switch and **START** button are on the **High Voltage Systems Control** box, on the desk next to the HMI's screen (photo in [Safety rules](../safety.md#the-high-voltage-systems-control-box)).
+    1. Turn the key to **ENABLE**. For the key, see [Safety rules](../safety.md#the-high-voltage-area).
     2. Press **ENABLE SAFETY RELAY** on the **System Health** panel. The button counts down **PRESS PANEL START (5s)**.
-    3. Press the START button on the panel before the count reaches zero.
+    3. Press **START** on the box before the count reaches zero.
 10. **Beacon and buzzer.** Check that the beacon has turned red and that the buzzer has sounded. In the HMI, **SAFETY: LIVE** shows in amber and the button now reads **DISABLE SAFETY RELAY**.
 11. **Readbacks at rest.** Check the readbacks on the **TESS Ion Source Control** panel with nothing yet switched on:
     - the source body and caesium oven temperatures are between 10 °C and room temperature;

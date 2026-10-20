@@ -16,6 +16,7 @@ The colours follow high-performance HMI practice: normal is grey, and colour is 
 | Amber | Needs your attention, or high voltage is live | **SAFETY: LIVE**, **DISABLE SAFETY RELAY**, a button waiting for its confirming click, a readback out of tolerance (amber outline) |
 | Red | A fault or a trip | **TRIPPED**, latched PLC faults, **INITIATE SHUTDOWN** (red outline) |
 | Dashes, dashed outline | Not known: no data from the service | a readout showing `---`, a button with a dashed outline |
+| Greyed value, dashed **STALE** chip | Not live: the last value read, with how long ago | a vacuum gauge's pressure, or the turbo pump's speed, after its reading has stopped |
 
 Alarms have their own colours, by priority: see [Alarms](../panels/alarms.md).
 

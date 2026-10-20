@@ -194,7 +194,7 @@ A **hardware abort** sends the PC sequence straight to step 2. Its causes are:
 | 3 Tripped | FINAL KILL | from 2 | Relay kill; target, filament and thermionic off. | 99 when the watchdog is back and no abort is active |
 | 99 Latched | LATCHED SAFE (RESET REQ) | from 3 | Waits for a fault reset. | 0 on a fault reset |
 
-A lost PC watchdog also latches `PC_Watchdog_Timeout`, which takes away the gate valve's open permissive (see [Gate valve](#gate-valve)). As the program reads, the PLC then closes the valve at once, which opens the relay, so the step-1 hold acts on supplies without power. To be confirmed on the machine.
+A lost PC watchdog also latches `PC_Watchdog_Timeout`, which takes away the gate valve's open permissive (see [Gate valve](#gate-valve)). The PLC then closes the valve at once, which opens the relay, so the step-1 hold acts on supplies without power. This is intended (Josh Bird, October 2026): without the PC the PLC has no vacuum readings, so it assumes the worst. The gauge controller's set-point relay is in the safety relay's hardwired loop as well.
 
 ### Scenario C: operator shutdown
 

@@ -20,14 +20,34 @@ Before you operate SINDIE:
 
 ## The high-voltage area
 
-- **The source deck is the high-voltage area.** It is marked with high-voltage signs.
-- **The source deck door is interlocked.**
-- **Switching the safety relay on needs the key.** For the key, contact Dr Luke Antwis.
+- **The source deck is the high-voltage area.** It is enclosed in mesh and marked with high-voltage signs.
+- **The source deck's door is interlocked.** Opening it opens the safety relay's loop.
+- **Switching the safety relay on needs the key**, the **IPIDS HV ENABLE KEY**. For the key, contact Dr Luke Antwis.
+
+![The source deck in its mesh enclosure: the Danger High voltage sign on its front, the emergency switch-off on its side panel, and the beacon on its pole behind (red, amber, green)](images/photo-source-deck.jpg)
 
 High voltage can be present only while the safety relay is on. While it is on:
 
 - the beacon is red;
 - the **System Health** panel shows **SAFETY: LIVE** in amber.
+
+### The High Voltage Systems Control box
+
+The safety relay is switched on from the **High Voltage Systems Control** box, on the operator's desk next to the HMI's screen. It has:
+
+- the key switch, **DISABLE** and **ENABLE**;
+- the **START** button;
+- one of the two emergency switch-offs.
+
+![The High Voltage Systems Control box on the operator's desk: the key switch (DISABLE, ENABLE) with its key on the IPIDS HV ENABLE KEY tag, the EMERGENCY STOP button and the START button](images/photo-operator-box.jpg)
+
+To switch the relay on:
+
+1. Turn the key to **ENABLE**.
+2. Press **ENABLE SAFETY RELAY** on the HMI's **System Health** panel.
+3. Press **START** within 5 s.
+
+The full order of the start-up is in [Bringing up a beam](procedures/beam-start-up.md).
 
 ## Signals you must know
 
@@ -47,10 +67,10 @@ The beacon and the buzzer are driven by the PLC. The alarm sounds come from the 
 
 There are two emergency switch-offs (ESOs):
 
-- on the side of the source deck panel, at arm height;
-- on the operator's desk box.
+- on the side panel of the source deck, at arm height;
+- on the **High Voltage Systems Control** box, on the operator's desk.
 
-Learn where both are before you operate SINDIE. Test each one every week.
+Both are in the photos above. Learn where they are before you operate SINDIE. Test each one every week.
 
 Both ESOs are wired directly into the safety relay's loop. No software or PLC is involved.
 
@@ -79,9 +99,22 @@ Three layers protect people and the machine. Only the first two are safety syste
 
 | Layer | What it does | What it cannot do |
 |---|---|---|
-| The safety relay and its hardwired loop, with the emergency switch-offs, the door interlock and the key | Switches the high-voltage supplies off when the loop opens. | Be closed by software: the PLC can only allow it to close, and withdraw that permission. |
+| The safety relay and its hardwired loop (below) | Switches the high-voltage supplies off when anything in the loop opens. | Be closed by software: the PLC can only allow it to close, and withdraw that permission. |
 | The PLC | Applies its own limits and interlocks whatever the PC asks. It withdraws the safety relay without compressed air, without source or magnet cooling water, with the gate valve not open, or with the caesium oven over temperature. It holds the target (cathode) and filament while the caesium is hot, quenches arcs and runs shutdown sequences. | Control the supplies the PC drives directly: the Spellman einzel supplies, the magnet and steerer power supplies, and the SMU. |
 | The software (the HMI and its services) | Shows the machine's state, sends your commands, keeps the alarms and logs everything. | Protect anyone. A readout can be stale or wrong; a command can be lost. |
+
+The safety relay's hardwired loop holds:
+
+- the two door switches;
+- the two emergency switch-offs;
+- the key switch;
+- the vacuum gauge controller's relay, which opens when the pressure rises above its set point;
+- the PLC's permission: a switch the PLC drives over a fibre link;
+- the magnet coolant's flow meter and thermal cut-off switch.
+
+Anything in the loop opening switches the relay off. The PLC and the software only see whether the relay is on.
+
+The compressed-air pressure switch and the source coolant's flow and temperature switches go to the PLC's inputs instead: the PLC withdraws its permission when they trip.
 
 > [!CAUTION]
 > Never decide from what the HMI shows that something is safe to touch. Before any work on the source, the deck or the beamline, isolate it by the lab's procedure.
@@ -90,12 +123,14 @@ Three layers protect people and the machine. Only the first two are safety syste
 
 - **Check which system you are looking at.** The simulator's HMI says **[SIMULATION - fake devices]** in its title bar. If you run the simulator on the lab PC, close it before working on the machine.
 - **A dash is not a zero.** `---` means the value isn't known: its service has stopped reporting it, or never has. It says nothing about whether the supply is on.
-- **Shut the source down before you stop the services.** The PLC watches a watchdog that the PC writes. After 3 seconds without it, the PLC closes the gate valve, which drops the safety relay, and starts its own shutdown. See [Starting the software](getting-started/starting-the-software.md#stopping).
+- **STALE is not live.** A vacuum gauge or the turbo pump marked **STALE** shows the last value read, greyed, with how long ago it was read. The pressure now may be different.
+- **Shut the source down before you stop the services.** The PLC watches a watchdog that the PC writes. After 3 seconds without it, the PLC closes the gate valve, which drops the safety relay, and starts its own shutdown. This is deliberate: without the PC, the PLC has no vacuum readings, so it assumes the worst. See [Starting the software](getting-started/starting-the-software.md#stopping).
 - **Acknowledging an alarm doesn't clear its cause.** It only says you have seen it. A PLC fault stays latched until its cause is fixed and **RESET FAULTS** is pressed. See [Alarms and faults](procedures/alarms-and-faults.md).
 - **A stopped recipe leaves everything as it is.** **STOP** ends a recipe without switching anything off. If a sequence is doing something you don't want, take control on the Automation bar, then set things as they should be.
 - **Check every recipe before you run it**, and especially any recipe the recipe builder's AI assistant writes. A recipe can switch supplies on and set voltages. The one thing recipes are barred from is resetting faults.
 - **Don't edit configuration files by hand on the lab PC.** Use **Config** in the HMI. It checks every value against the hard caps and the physical limits, keeps a backup and records the change. A hard cap (for example 22 kV on every Spellman supply) can only be raised by changing the code.
 - **Never defeat an interlock** in the PLC, the software or the hardware, and never force a PLC value to get past one.
+- **Don't delete anything from the lab PC.** Only Josh Bird deletes files there. The data is backed up to OneDrive.
 
 ## Hazards and what the system does about them
 
@@ -135,6 +170,9 @@ The analyser magnet and the X-steerer magnet have their own power supplies, driv
     - no PC watchdog fault is latched.
 - Before you start, the source pressure should be below 5×10⁻⁷ mbar.
 - The PLC won't close the gate valve while there is high voltage or the source is hot: it overrides a **CLOSE** request. It closes the valve itself, hot or not, when any of the conditions above is lost, and that drops the safety relay.
+- The vacuum gauge controller's set-point relay is also in the safety relay's hardwired loop: a pressure above its set point drops the relay whatever the software does.
+- While the vacuum service restarts, the PLC keeps its last judgment of the vacuum for at most 60 s, so a restart doesn't close the gate valve (see [Vacuum System](panels/vacuum.md#when-the-vacuum-service-restarts)).
+- **Only trained staff stop the source turbo pump**, by hand, at the pump. The software can start it, but can't stop it.
 
 ### Cooling water and compressed air
 

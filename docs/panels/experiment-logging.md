@@ -56,8 +56,7 @@ The panel is not the only source of user markers. Others are added by:
 
 The panel's **Cyan** and **Purple** are the same colours as the optimiser's and the magnet jumps' markers, so a different colour keeps your own markers apart from them.
 
-> [!NOTE]
-> The colours mean nothing to the software. Any convention for what each colour means is the lab's, and is to be confirmed.
+Marker colours have no official meaning: use them to sort your own notes, for example one colour for each kind of observation. The data viewer draws other events in colours of their own, so these are best kept for them: faults red, cleared faults blue, watchdog events orange, readbacks out of tolerance amber, phase changes green and commands grey. The software itself doesn't read a marker's colour.
 
 ## See also
 

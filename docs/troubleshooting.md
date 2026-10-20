@@ -35,7 +35,7 @@ Check, in order:
 1. **Is the service running?** The HMI drops the values of a service that has been silent for about 2 s (longer for one that publishes slowly). In the **Service Manager** panel the service should be **ONLINE**. If it isn't, see [A service shows BACKOFF](#a-service-shows-backoff).
 2. **Can the service reach its device?** A service that can't reach its device keeps running and reports its values as unknown. Look in the **Alarms** panel for `<device>: communication lost` or `The PLC service has lost the PLC`, and check the device, its power and its network connection.
 3. **Is the safety relay off?** With the relay off, the source deck (filament, thermionic, caesium oven) and the Spellman supplies have no power, so their readbacks are unknown. The caesium oven then shows the PLC's estimate, marked `~`.
-4. **A vacuum gauge.** The vacuum service withdraws a gauge's pressure after 3 s without a good reading.
+4. **A vacuum gauge or the turbo pump.** The vacuum service withdraws a gauge's pressure after 3 s without a good reading. The **Vacuum System** panel then shows the last value it had, greyed, with **STALE** and how long ago, rather than dashes; dashes mean it has had no value since the HMI started. Hover over the value for the reason. See [Readings that have stopped](panels/vacuum.md#readings-that-have-stopped).
 5. **The analyser magnet or the X-steerer.** Until the supply has reported its nominal ratings, its voltage and current readbacks are unknown: see [Magnet and steerer services](messages.md#magnet-and-steerer-services).
 6. **An empty setpoint box.** The setpoint isn't known yet, or is outside the box's range. You can still type a whole value; the arrow keys do nothing until the setpoint is known.
 
@@ -77,11 +77,11 @@ Check, in order:
 1. **OPEN is greyed out.** Hover over it in the **Vacuum System** panel:
     - `Disabled: PLC telemetry stream is dead.` (the buttons read **OFFLINE**): see [PLC COMMS shows OFFLINE](#plc-comms-shows-offline).
     - `Disabled: Gate valve hardware fault detected.` (the buttons read **FAULT LOCKOUT**): `GateValve_Timeout` or `GateValve_Conflict` is latched. Check the valve, its compressed air and its limit switches, then press **RESET FAULTS**.
-    - `Disabled: Vacuum interlocks not met. Ensure turbo pump is at speed.`: the PLC's open permissive is false. Despite the tooltip, the turbo pump's speed is not part of it. Go on to step 2.
+    - `Disabled: the PLC doesn't allow the valve to open. ...`: the PLC's open permissive is false. Go on to step 2.
 2. **The open permissive.** The PLC needs the vacuum permissive from the PC (`ion_beam.source.chamber.stat_vac_ok_for_gv`), and none of these faults latched: `PC_Watchdog_Timeout`, `Graphix_1_Comms_Fail`, `Graphix_2_Comms_Fail`, or VG1's or VG2's `Not_Found`, `Type_Mismatch`, `Above_SP_Warn` and `Rapid_Rise_Warn`.
-    - VG1 (**Source (VG1)**) and VG2 (**Beamline pre-magnet (VG2)**) must show a pressure and **HEALTHY**, **WARNING** or **ONLINE**: not **TRIPPED** (above the relay's set point), **NOT FOUND**, **RAPID RISE**, **SENSOR OFF**, `FAULT (<code>)` or **OFFLINE**.
+    - VG1 (**Source (VG1)**) and VG2 (**Beamline pre-magnet (VG2)**) must show a live pressure and **HEALTHY**, **WARNING** or **ONLINE**: not **TRIPPED** (above the relay's set point), **NOT FOUND**, **RAPID RISE**, **SENSOR OFF**, `FAULT (<code>)`, **STALE** or **OFFLINE**.
     - The vacuum service gives the permissive only while it has had a good reading from VG1 and VG2 within the last 10 s, and has read back VG1's and VG2's relays holding the channel and set points in `config/vac_gauges_config.json`. The alarm `Gauge relay set points not confirmed against vac_gauges_config.json - see the event log (VG1/VG2 relays: gate valve held shut)` means it hasn't: `SystemLogs/service_vac_gauge_controllers.log` says which relay, and what it holds.
-    - If the vacuum service is silent for 2 s (while it restarts, for example), the PLC service withdraws the permissive and reports both gauge controllers as failed.
+    - While the vacuum service restarts, the PLC service keeps giving the PLC its last judgment of the vacuum, for at most 60 s (**VACUUM PERMISSIVE HELD** on the Vacuum System panel). If it hasn't judged the vacuum again by then, the PLC is told the vacuum is unknown, as it is when the vacuum service isn't running: the permissive goes, and while the vacuum service is silent both gauge controllers are reported failed, which latches their faults. See [Vacuum System](panels/vacuum.md#when-the-vacuum-service-restarts).
     - The faults listed above stay latched after the vacuum has recovered: check the **PLC faults** list in **System Health**, and press **RESET FAULTS** once the vacuum is good.
 3. **OPEN is accepted, but the valve doesn't move.** The PLC opens the valve only with the compressed air OK (`Air_Pressure_Low`) and with the shutdown sequencer's permission: a shutdown at **CESIUM COOLDOWN** closes the valve and keeps it closed. As the PLC program reads, its permission also stays off after an operator shutdown has finished, until a fault reset (see [The PLC program](how-it-works/plc.md)): press **RESET FAULTS**. If the valve hasn't reached its position 5 s after the request, the PLC latches `GateValve_Timeout`.
 4. **The valve opened, then closed by itself.** The PLC closes it when the open permissive goes. Once it has been shut that way for 3 s, the PLC service clears the OPEN request so that it stays shut, with the event `Gate valve closed by its interlock (vacuum permissive gone): its OPEN request is cleared, so it stays shut. Press OPEN again once the vacuum is OK.` Find why the permissive went (step 2), then press **OPEN** again.
@@ -91,7 +91,7 @@ Closing the gate valve with the safety relay on opens the relay. See [Vacuum Sys
 ## The safety relay does not switch on
 
 1. **ENABLE SAFETY RELAY is greyed out.** `Disabled: The Gate Valve must be fully OPEN before the safety circuit can be energized.`: open the gate valve first ([The gate valve does not open](#the-gate-valve-does-not-open)). `Disabled: GUI to PLC communications are offline.`: see [PLC COMMS shows OFFLINE](#plc-comms-shows-offline).
-2. **The panel start button.** After you press **ENABLE SAFETY RELAY** the button counts down, `PRESS PANEL START (<n>s)`. Press the physical start button before the count ends. The PLC can only allow the relay to close; it closes when the button is pressed.
+2. **START.** After you press **ENABLE SAFETY RELAY** the button counts down, `PRESS PANEL START (<n>s)`. Press **START** on the **High Voltage Systems Control** box, on the operator's desk, before the count ends. The PLC can only allow the relay to close; it closes when the button is pressed.
 3. **SAFETY: TRIPPED/REFUSED when the count ends.** The relay didn't close within 5 s, so the PLC dropped the request and latched `Safety_Relay_Refused`. Press **RESET FAULTS** before you try again.
 4. **The PLC's relay permissive.** The PLC passes the enable to the relay only when all of these hold. The HMI checks only the gate valve, so check the rest:
     - the compressed air is OK (fault `Air_Pressure_Low`);
@@ -102,12 +102,14 @@ Closing the gate valve with the safety relay on opens the relay. See [Vacuum Sys
     - `Cesium_Oven_OverTemp` isn't latched.
 
     The **PLC faults** list in **System Health** shows the latched faults. The air and coolant switches themselves can be plotted in the data viewer as `ion_beam.facilities.stat_air_press_ok`, `ion_beam.facilities.stat_src_coolant_ok` and `ion_beam.facilities.stat_mag_coolant_ok`, and the relay kill as `ion_beam.internal.seq_cmd_kill_relay`.
-5. **The hardwired safety loop.** The relay's own loop, which the software doesn't see, can also hold it open. The relay needs its key, the source-deck door is interlocked, so it must be shut, and both emergency switch-offs (ESOs) must be released. For the key, ask Dr Luke Antwis, the lab manager.
+5. **The hardwired safety loop.** The relay's own loop, which the software doesn't see, can also hold it open. Check each of:
+    - the key, turned to **ENABLE** on the **High Voltage Systems Control** box (for the key, ask Dr Luke Antwis, the lab manager);
+    - both emergency switch-offs (ESOs), released: on the box, and on the source deck's side panel;
+    - the doors, shut (two door switches);
+    - the vacuum: the gauge controller's set-point relay in the loop opens when the pressure is above its set point;
+    - the magnet coolant: its flow meter and thermal cut-off switch.
 
-When the relay closes, the buzzer sounds for 3 s and the beacon shows red instead of green.
-
-> [!NOTE]
-> Where the panel start button is, and what else is in the hardwired safety loop besides the key, the source-deck door and the two ESOs, are to be confirmed. See the [Safety rules](safety.md).
+When the relay closes, the buzzer sounds for 3 s and the beacon shows red instead of green. See [Safety rules](safety.md#the-high-voltage-systems-control-box) for photos of the box and the source deck.
 
 In the simulator the start button is taken as pressed 0.5 s after the request, and the simulated relay needs the gate valve open. A recipe's `safety_relay_init` step waits 6 s for the relay, then fails with `safety relay did not energise: physical PANEL START not pressed in time`.
 
@@ -117,7 +119,7 @@ In the simulator the start button is taken as pressed 0.5 s after the request, a
 
 Likely causes:
 
-1. **The gate valve closed.** Closing the valve opens the relay. The PLC closes it when its vacuum permissive goes (see [The gate valve does not open](#the-gate-valve-does-not-open), step 2), for example when VG1 or VG2 rises above its relay's set point: look for a pressure spike, such as a new filament degassing (see [Typical values](#typical-values)). It also closes it at shutdown step 2, **CESIUM COOLDOWN**: after a hardware abort, or 60 s after losing the remote I/O. As the PLC program reads, losing the PC watchdog closes it at once: `PC_Watchdog_Timeout` takes away its open permissive. Look at **SHUTDOWN SEQ**, and at the alarm marked first-out (a star in the **Alarms** panel).
+1. **The gate valve closed.** Closing the valve opens the relay. The PLC closes it when its vacuum permissive goes (see [The gate valve does not open](#the-gate-valve-does-not-open), step 2), for example when VG1 or VG2 rises above its relay's set point: look for a pressure spike, such as a new filament degassing (see [Typical values](#typical-values)). It also closes it at shutdown step 2, **CESIUM COOLDOWN**: after a hardware abort, or 60 s after losing the remote I/O. Losing the PC watchdog closes it at once, by design: `PC_Watchdog_Timeout` takes away its open permissive, as without the PC the PLC has no vacuum readings. Look at **SHUTDOWN SEQ**, and at the alarm marked first-out (a star in the **Alarms** panel).
 2. **The compressed air, the source coolant or the magnet coolant was lost**, or the caesium oven went over temperature. Their faults are in the **PLC faults** list.
 3. **The hardwired loop opened**, for example because an ESO was pressed or the source-deck door, which is interlocked, was opened.
 
@@ -125,7 +127,7 @@ The beacon then shows green, and amber while `Safety_Relay_Tripped` is latched.
 
 When the relay drops, the Spellman supplies are reported off; the analyser magnet and X-steerer outputs are forced to 0 A, 0 V and off, and stay off when the relay comes back; the SMU bias goes to 0 V and its setpoint is forgotten; the PLC zeroes every requested setpoint (the caesium oven's to 20 °C). Nothing comes back on by itself.
 
-To recover: clear the cause, let any shutdown sequence reach **FINAL KILL** or **LATCHED SAFE (RESET REQ)**, press **RESET FAULTS**, open the gate valve if it closed, press **ENABLE SAFETY RELAY** and the panel start, then switch the supplies on and set them again.
+To recover: clear the cause, let any shutdown sequence reach **FINAL KILL** or **LATCHED SAFE (RESET REQ)**, press **RESET FAULTS**, open the gate valve if it closed, press **ENABLE SAFETY RELAY** and **START** on the **High Voltage Systems Control** box, then switch the supplies on and set them again.
 
 > [!WARNING]
 > As the PLC program reads, a relay trip doesn't start a shutdown sequence, even with the source hot; the caesium oven's cooling air is still opened while the relay is open. To be confirmed on the machine: see [The PLC program](how-it-works/plc.md).
@@ -136,7 +138,7 @@ To recover: clear the cause, let any shutdown sequence reach **FINAL KILL** or *
 
 | Shows | Why | What the PLC does | What to do |
 |---|---|---|---|
-| **GRACE PERIOD (75% EXTR)** | Step 1: the PC watchdog has been lost for 3 s (`PC_Watchdog_Timeout`), or the remote I/O on the source deck (`Remote_IO_Lost`). | Holds extraction at 75 % of its readback for up to 60 s. Goes back to **INACTIVE** if the link returns, otherwise on to step 2. As the PLC program reads, a lost PC watchdog also closes the gate valve at once, which opens the relay. | See [PLC COMMS shows OFFLINE](#plc-comms-shows-offline). A fault reset is refused during this step. |
+| **GRACE PERIOD (75% EXTR)** | Step 1: the PC watchdog has been lost for 3 s (`PC_Watchdog_Timeout`), or the remote I/O on the source deck (`Remote_IO_Lost`). | Holds extraction at 75 % of its readback for up to 60 s. Goes back to **INACTIVE** if the link returns, otherwise on to step 2. A lost PC watchdog also closes the gate valve at once, by design, which opens the relay. | See [PLC COMMS shows OFFLINE](#plc-comms-shows-offline). A fault reset is refused during this step. |
 | **CESIUM COOLDOWN** | Step 2: a hardware abort (`Src_Coolant_Flow_Low`, `Src_Body_Temp_High`, `Cesium_Oven_OverTemp`, `Filament_OverCurrent` or a sustained arc), or step 1 ran out. | Extraction off; the gate valve closed, so the relay opens; forced cooling. | Find the cause in the **PLC faults** list; the first-out alarm is marked with a star. Let the oven cool: see the warning below. |
 | **FINAL KILL** | Step 3, once the caesium isn't hot and the filament is at 0 A. | Kills the relay; target, filament and thermionic off. | Clear the cause, then press **RESET FAULTS**. |
 | **LATCHED SAFE (RESET REQ)** | Step 99: the sequence has ended. | Holds everything off. | Clear the cause, then press **RESET FAULTS**. |
@@ -215,7 +217,7 @@ In the **Faraday Cup & SMU** panel:
 In the simulator, beam appears only once the thermionic power is above 200 W, the target above 4 kV and the caesium above 50 °C.
 
 > [!NOTE]
-> On a latched fault the PLC changes its Faraday cup request; how the cup then moves is to be confirmed. See [The PLC program](how-it-works/plc.md).
+> On a latched fault the PLC changes its Faraday cup request; which way the cup then moves hasn't been checked on the machine. See [The PLC program](how-it-works/plc.md).
 
 ## A command was refused
 
@@ -313,8 +315,8 @@ What grows, in the data folder (normally `data/`) and the project folder:
 
 Each night the compactor also copies new and changed day files, a snapshot of `events.db` and the exports to OneDrive. The copy goes one way: deleting a file here doesn't delete its copy there. In simulation it is skipped.
 
-> [!NOTE]
-> The software never deletes day files, events or exports. Where old data is archived, and what may be deleted from the lab PC, are to be confirmed.
+> [!IMPORTANT]
+> Don't delete anything from the lab PC: only Josh Bird deletes files there. If the disk is filling up, tell him. The software never deletes day files, events or exports. They are backed up to OneDrive each night; archiving to external drives, and to more than one cloud, is planned.
 
 ## A panel is missing or off the screen
 

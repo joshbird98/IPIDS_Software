@@ -25,17 +25,42 @@ def stack(monkeypatch):
     tap.close()
 
 
-def test_strategy_checked_and_start_stop(stack):
+def test_strategy_checked_and_start(stack):
     svc, tap, client, mp = stack
     d = tap.wait_for(lambda d: d[f"{B}.stat_comms_fail"] == 0.0 and d["system.safety_synced"] == 1.0, timeout=8)
     assert d[f"{B}.permit"] == 1.0 and d[f"{B}.rb_speed_hz"] == 0.0
+    assert d[f"{B}.stat_ready"] == 0.0                                     # stopped is not "at speed"
     assert client.request("src_turbo", f"{B}.cmd_enable", True)["status"] == C.OK
     tap.wait_for(lambda d: d[f"{B}.rb_speed_hz"] > 20 and d[f"{B}.stat_turning"] == 1.0, timeout=5)
-    assert client.request("src_turbo", f"{B}.cmd_enable", False)["status"] == C.OK
-    first = tap.last[f"{B}.rb_speed_hz"]
-    tap.wait_for(lambda d: d[f"{B}.rb_speed_hz"] < first, timeout=5)        # coasting down
     r = client.request("src_turbo", f"{B}.cmd_spin_faster", 1)
     assert r["status"] == C.REJECTED and "unsupported" in r["reason"]
+
+
+def test_the_software_never_stops_the_pump(stack):
+    """Trained staff stop the source turbo pump by hand, at the pump (Josh, October 2026). A stop is
+    refused, and neither a start nor a fault reset sends the reset word (which has the run bit clear)
+    to a pump running without a fault."""
+    svc, tap, client, mp = stack
+    tap.wait_for(lambda d: d[f"{B}.stat_comms_fail"] == 0.0 and d["system.safety_synced"] == 1.0, timeout=8)
+    assert client.request("src_turbo", f"{B}.cmd_enable", True)["status"] == C.OK
+    tap.wait_for(lambda d: d[f"{B}.rb_speed_hz"] > 20, timeout=5)
+    words = []
+    send = svc.link.transaction
+
+    def spy(pnu, index, value=0, ak=1, control_word=0x0400):
+        words.append(control_word)
+        return send(pnu, index, value, ak, control_word)
+    mp.setattr(svc.link, "transaction", spy)
+    for value in (False, 0):
+        r = client.request("src_turbo", f"{B}.cmd_enable", value)
+        assert r["status"] == C.REJECTED and "by hand" in r["reason"]
+    r = client.request("src_turbo", f"{B}.cmd_enable", True)
+    assert r["status"] == C.OK and "already running" in r["reason"]
+    r = client.request("src_turbo", f"{B}.cmd_reset", True)
+    assert r["status"] == C.OK and "no fault" in r["reason"]
+    first = tap.last[f"{B}.rb_speed_hz"]
+    tap.wait_for(lambda d: d[f"{B}.rb_speed_hz"] > first + 5, timeout=5)    # still running up
+    assert words and all(w & 0x0001 for w in words), [hex(w) for w in words]   # never a word without RUN
 
 
 def test_unreachable_controller_is_unknown_then_recovers(stack):

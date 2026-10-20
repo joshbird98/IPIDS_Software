@@ -3,6 +3,10 @@
 On connect the pump's vent/relay strategy parameters are checked and, if the pump is stopped,
 corrected and saved to its flash (about 30 s, heartbeating meanwhile). Then the frequency and
 status word are read every cycle and the slower values round-robin, one per cycle.
+
+The software can start the pump and reset its faults, but never stop it: trained staff stop it
+by hand, at the pump (a stop command is refused). A start or reset is not sent to a pump already
+running without a fault, as the reset word carries a stop.
 """
 import time
 
@@ -16,6 +20,8 @@ from src.drivers.turbo_uss import AK_READ, AK_WRITE_16, AK_WRITE_FIELD_16, UssLi
 
 BASE_TAG = "ion_beam.source.turbo_pump"
 CW_STOP, CW_RUN, CW_RESET = 0x0400, 0x0401, 0x0480
+STOP_REFUSED = ("the source turbo pump is never stopped from the software: trained staff stop it by hand, "
+                "at the pump")
 
 # Parameter numbers (PNU)
 PNU_HW_VER = 1
@@ -208,24 +214,36 @@ class TurbovacMicroservice(DeviceService):
         return True, ""
 
     # ------------------------------------------------------------------ commands
+    def _running_well(self) -> bool:
+        """Turning, in RUN, with no error: a fault reset now would only send it a stop (CW_RESET has
+        the run bit clear)."""
+        b = BASE_TAG
+        return (self.comms_ok and self.active_control_word == CW_RUN and not self.state.get(f"{b}.stat_error")
+                and (self.state.get(f"{b}.rb_speed_hz") or 0) > 0)
+
     def handle_command(self, cmd, subsystem: str, leaf: str):
         if not self.link.connected:
             cmd.reject("turbo controller not connected")
             return
         if leaf == "cmd_enable":
             # (was `value is True`, which treated a numeric 1 from a recipe as STOP)
-            if cmd.value:
-                if self._transaction(PNU_ACT_FREQ, control_word=CW_RESET)[0] is None:   # clear faults first
-                    cmd.fail("no reply from pump to the fault-reset/start request")
-                    return
-                self.active_control_word = CW_RUN
-                cmd.ok("start requested")
-            else:
-                self.active_control_word = CW_STOP
-                cmd.ok("stop requested")
+            if not cmd.value:
+                # Josh, October 2026: the pump is stopped only by trained staff, by hand, at the pump.
+                cmd.reject(STOP_REFUSED)
+                return
+            if self._running_well():
+                cmd.ok("already running")
+                return
+            if self._transaction(PNU_ACT_FREQ, control_word=CW_RESET)[0] is None:   # clear faults first
+                cmd.fail("no reply from pump to the fault-reset/start request")
+                return
+            self.active_control_word = CW_RUN
+            cmd.ok("start requested")
         elif leaf == "cmd_reset":
             if not cmd.value:
                 cmd.ok("nothing to do")
+            elif self._running_well():
+                cmd.ok("no fault to reset: the pump is running")
             elif self._transaction(PNU_ACT_FREQ, control_word=CW_RESET)[0] is None:
                 cmd.fail("no reply from pump")
             else:

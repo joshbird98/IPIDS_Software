@@ -17,6 +17,10 @@ no relay holds it back too (the permissive couldn't judge that gauge). Any relay
 raises stat_relay_sp_mismatch (an alarm) and an ERROR event. A relay set point command (on /
 off only, within the registry limits, on below off) changes what is expected until the
 service restarts and writes the config back.
+
+A restart mustn't close the gate valve: until this run has judged the vacuum itself (the
+permissive given, or JUDGE_GRACE_S after the start-up check if it still isn't) stat_judged is 0,
+and service_plc keeps the previous run's judgment for the PLC meanwhile, for a limited time.
 """
 import time
 from typing import Dict, Optional
@@ -33,6 +37,12 @@ from src.drivers.graphix import PARAM_PRESSURE, GraphixLink
 PRESSURE_STALE_S = 3.0   # a gauge with no good reading for this long is published as unknown
 GV_STALE_S = 10.0        # ...and VG1 / VG2 without one for this long lose the gate-valve permissive (it used to
                          # keep its last value; longer than the display's limit, as a drop can close the valve)
+# Restarts. Until this run of the service has judged the vacuum for itself, its gate-valve permissive
+# isn't a judgment (VG1 / VG2 maybe not read well yet, relays maybe not confirmed), and service_plc
+# keeps the previous run's for a while (service_plc.py: VACUUM_HOLD_S) so a restart doesn't close the
+# gate valve. Judged = the permissive given, or this long after the start-up check if it still isn't.
+JUDGED_TAG = "ion_beam.vacuum.stat_judged"
+JUDGE_GRACE_S = 20.0     # (a full round-robin of relay reads takes about 10 s on the real bus)
 
 NODE_IDS = [10, 20]
 CHANNELS = [1, 2, 3]
@@ -116,10 +126,12 @@ class VacuumMicroservice(DeviceService):
         self._relays_checked = False    # the start-up check is done (unconfirmed relays alarm from then on)
         self.relay_cap_problems = {}    # (node, relay) -> why its config values are refused (hard caps)
         self.silent_nodes = set()       # controllers that answered nothing at connect (not checked then)
+        self._polling_since = None      # (monotonic) the end of the first start-up check
+        self._judged = False            # this run has judged the gate-valve permissive (see JUDGED_TAG)
         self.build_relay_maps()
         self.gv_config_problems = self._find_gv_config_problems()
         self._gv_problems_reported = False
-        self.state.update({"system.connected": 0.0})
+        self.state.update({"system.connected": 0.0, JUDGED_TAG: 0.0})
         for base in self.tag_map.values():
             for flag in GAUGE_FLAGS:
                 self.state[f"{base}.{flag}"] = 0.0
@@ -200,6 +212,8 @@ class VacuumMicroservice(DeviceService):
         self._relays_checked = False
         self.read_static_data()
         self.enforce_startup_config()
+        if self._polling_since is None:
+            self._polling_since = time.monotonic()
 
     def read_static_data(self):
         """Serial number, gauge names and types. A controller that answers none of it is left out
@@ -498,6 +512,7 @@ class VacuumMicroservice(DeviceService):
         self.state["ion_beam.vacuum.gv_permissive_ready"] = 0.0
         self.state[MISMATCH_TAG] = None
         self.state["system.connected"] = 0.0
+        self.state[JUDGED_TAG] = 1.0 if self._judged else 0.0    # judged before: this is a real comms loss
 
     def poll_device(self):
         task, target = self.slow_tasks[self._slow_idx]
@@ -526,16 +541,14 @@ class VacuumMicroservice(DeviceService):
             return raw is not None
         now = time.monotonic()
         if raw is None:
-            # Occasional garbled reads are normal on this bus; only after a few seconds without a
-            # good reading is the last pressure withdrawn (published as unknown).
             self.state[f"{base}.stat_comms_fail"] = 1.0
-            if now - self._last_good_read.get(base, -1e9) > PRESSURE_STALE_S:
-                self.state[f"{base}.rb_pressure"] = None
+            self._withdraw_if_stale(base, now)
             return False
         try:
             p = float(raw)
-        except ValueError:
+        except ValueError:          # an answer, but no pressure (a gauge switched off may answer so)
             self.log.debug("Unparseable pressure from node %s ch %s: %r", node, ch, raw)
+            self._withdraw_if_stale(base, now)
             return True
         self.state[f"{base}.rb_pressure"] = p
         approaching = False
@@ -557,6 +570,12 @@ class VacuumMicroservice(DeviceService):
         self.state[f"{base}.stat_comms_fail"] = 0.0
         self._last_good_read[base] = now
         return True
+
+    def _withdraw_if_stale(self, base, now):
+        """Occasional garbled reads are normal on this bus; only after a few seconds without a good
+        reading is the last pressure withdrawn (published as unknown, which the HMI shows as STALE)."""
+        if now - self._last_good_read.get(base, -1e9) > PRESSURE_STALE_S:
+            self.state[f"{base}.rb_pressure"] = None
 
     def read_slow_item(self, node, task, target):
         self.heartbeat()
@@ -610,6 +629,12 @@ class VacuumMicroservice(DeviceService):
         safe = (self.link.connected and not faulty(self.tag_map.get((10, 1))) and not faulty(self.tag_map.get((10, 2)))
                 and self.gv_relays_confirmed())
         self.state["ion_beam.vacuum.gv_permissive_ready"] = 1.0 if safe else 0.0
+        if not self._judged and self._polling_since is not None and (
+                safe or time.monotonic() - self._polling_since >= JUDGE_GRACE_S):
+            self._judged = True
+            self.events.log_general("Vacuum judged: the gate-valve permissive is " + ("given" if safe else
+                                    "withheld") + " on this run's own readings")
+        self.state[JUDGED_TAG] = 1.0 if self._judged else 0.0
         states = [self.relay_state(n, r) for n, r in self.relay_expected]
         if self.gv_config_problems or self.relay_cap_problems or "differs" in states or \
                 (self._relays_checked and None in states):

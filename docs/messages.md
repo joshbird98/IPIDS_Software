@@ -134,7 +134,10 @@ Every command gets one answer. REJECTED means the service refused it before touc
 | `turbo controller not connected` | The service can't reach the pump's network bridge. | Check the bridge (alarm `source turbo pump: communication lost`). |
 | `no reply from pump to the fault-reset/start request` (FAILED) | **START PUMP** or **RESET & START** got no answer from the pump. | Check the pump controller, and try again. |
 | `no reply from pump` (FAILED) | A fault reset got no answer. | As above. |
-| `start requested`, `stop requested`, `fault reset sent` (OK) | Carried out. | |
+| `the source turbo pump is never stopped from the software: trained staff stop it by hand, at the pump` | A stop command (`cmd_enable` false or 0), from a script or a recipe: the panel has no stop. | If the pump must be stopped and you are trained to, stop it by hand at the pump. |
+| `already running` (OK) | A start for a pump already running without a fault: nothing was sent. | |
+| `no fault to reset: the pump is running` (OK) | A fault reset for a pump running without a fault: nothing was sent, as the reset message carries a stop. | |
+| `start requested`, `fault reset sent` (OK) | Carried out. | |
 
 ### Vacuum service
 
@@ -238,9 +241,10 @@ Every service publishes, for each subsystem it controls, whether it would accept
 | `Disabled: PLC telemetry stream is dead.` | **Vacuum System**: **OPEN** and **CLOSE** (both read **OFFLINE**). **Faraday Cup & SMU**: the Faraday cup button. | No PLC data. | See [PLC COMMS shows OFFLINE](troubleshooting.md#plc-comms-shows-offline). |
 | `Disabled: Gate valve hardware fault detected.` | **OPEN** and **CLOSE** (both read **FAULT LOCKOUT**) | `GateValve_Timeout` or `GateValve_Conflict` is latched. | Check the valve, its air and its limit switches, then press **RESET FAULTS**. |
 | `Disabled: Gate valve is already open.`, `Disabled: Gate valve is already closed.` | **OPEN**, **CLOSE** | | None needed. |
-| `Disabled: Vacuum interlocks not met. Ensure turbo pump is at speed.` | **OPEN** | The PLC's gate-valve open permissive (`ion_beam.source.chamber.stat_gv_open_permissive`) is false. The turbo pump's speed is not one of its conditions. | See [The gate valve does not open](troubleshooting.md#the-gate-valve-does-not-open). |
+| `Disabled: the PLC doesn't allow the valve to open. It needs VG1 and VG2 read, healthy and below their set points, and no VG1, VG2, GRAPHIX or watchdog fault latched (F1 for more).` | **OPEN** | The PLC's gate-valve open permissive (`ion_beam.source.chamber.stat_gv_open_permissive`) is false. | See [The gate valve does not open](troubleshooting.md#the-gate-valve-does-not-open). |
 | `Disabled: Source must be cold (HV, Filament, and Cesium OFF) to close manually.` | **CLOSE** | The gate valve's close permissive is false (see above). | Use **INITIATE SHUTDOWN**. |
-| `Disabled: Source Turbo telemetry stream is dead.` | **START PUMP** (reads `-`) | No data from the turbo service. | Check `service_source_turbo` in **Service Manager**. |
+| `Not available: the turbo service isn't sending data (stopped, restarting or not running).`, `Not available: the link to the pump's controller is down.`, `Not available: the pump isn't answering.` | **START PUMP** | The pump's readings aren't live (the chip reads **STALE** or **OFFLINE**). | Check `service_source_turbo` in **Service Manager**, then the pump's network bridge and the pump. |
+| `The pump is slowing down. It can be started again once it has stopped.` | **START PUMP** | The pump has been stopped, or has tripped, and is running down. | |
 | `Disabled: Hardware interlock or fault is active.` | source panel setpoint (badge **LOCKED**) | The PLC's lockout for the supply is set (`stat_lockout`). | Read the **PLC faults** list in **System Health**. |
 | `Disabled: auto-emission is on - the PLC sets the filament current to hold the thermionic emission setpoint.` | the filament setpoint box (badge **AUTO-EMIS**) | Auto-emission drives the filament. | Switch **AUTO EMISSION** off to set the filament by hand. |
 | `Disabled: Control yielded to automated sequencer.` | source panel setpoint (badge **AUTO**) | PLC mode 1 on a supply other than the oven: a PLC shutdown sequence has it. | Let the sequence finish. |
@@ -298,7 +302,11 @@ Texts in the panels that mean something is wrong or not known.
 | `FAULT (<code>)` | Vacuum System: a gauge card | Another status code from the controller. The PLC latches `VG<n>_Type_Mismatch`. | Check the gauge and the controller. |
 | **TRIPPED** | Vacuum System: a gauge card | The gauge's relay is off: the pressure is above its set point. The PLC latches `VG<n>_Above_SP_Warn`. | Find why the pressure is up. |
 | **WARNING** | Vacuum System: a gauge card | The pressure is above the relay's on point by up to 25 %. The relay drops at its off point. | Watch the pressure. |
-| **OFFLINE** | Vacuum System: gauge cards, turbo | No data from the vacuum or turbo service. | Check the service in **Service Manager**. |
+| **STALE** *time*, the value greyed | Vacuum System: gauge cards, turbo | No live reading: the value shown is the last one read, *time* ago. The tooltip says why: the service isn't sending data, the controllers or the pump aren't answering, or no good reading from that gauge for 3 s. | Check the service in **Service Manager**, then the device. See [Readings that have stopped](panels/vacuum.md#readings-that-have-stopped). |
+| **NO READING** | Vacuum System: a gauge card | The vacuum service is running but hasn't had a reading from this gauge since the HMI started. | Check the gauge and its controller. |
+| **OFFLINE** | Vacuum System: gauge cards, turbo | No data from the vacuum or turbo service since the HMI started. | Check the service in **Service Manager**. |
+| **ACCELERATING**, **TURNING**, **SLOWING DOWN** | Vacuum System: source turbo pump | The rotor turns below its speed: faster than a moment ago, steady, or slower (stopped, or tripped). | |
+| **VACUUM PERMISSIVE HELD:** *n* **s LEFT** | Vacuum System: gate valve | The vacuum service is restarting; the PLC is given its last judgment of the vacuum for *n* s more at most. | Let the vacuum service finish starting. See [When the vacuum service restarts](panels/vacuum.md#when-the-vacuum-service-restarts). |
 | **TRIPPED** | Vacuum System: source turbo pump | The pump reports an error and isn't ready. | **RESET & START**; then **RESET FAULTS** for `Src_Turbo_Trip`. |
 | **UNKNOWN**, **TRAVELLING**, **SENSOR CONFLICT** | Vacuum System: gate valve | No PLC data; neither limit switch made; both made. | A valve still travelling after 5 s latches `GateValve_Timeout`. **SENSOR CONFLICT** latches `GateValve_Conflict`. |
 | **FAULT: GATEVALVE_TIMEOUT**, **FAULT: GATEVALVE_CONFLICT** | Vacuum System: gate valve | The fault is latched. | See [Fault word 0 System](#fault-word-0-system). |
@@ -570,7 +578,7 @@ Acknowledging the alarm doesn't reset the fault. Only **RESET FAULTS** does. The
 
 ### What the PLC does about a fault
 
-- **Words 0, 1, 2, 4 and 5** put the machine in state 99 (Fault) and light the amber beacon. The PLC also sets its Faraday cup request (`Cmd_Insert_FC`) off; how the cup then moves is to be confirmed (see [The PLC program](how-it-works/plc.md)).
+- **Words 0, 1, 2, 4 and 5** put the machine in state 99 (Fault) and light the amber beacon. The PLC also sets its Faraday cup request (`Cmd_Insert_FC`) off; which way the cup then moves hasn't been checked on the machine (see [The PLC program](how-it-works/plc.md)).
 - **Word 3 (Spellman)** is latched only: it sets neither state 99 nor the amber beacon.
 - A **hardware abort** (a sustained arc, `Filament_OverCurrent`, `Src_Body_Temp_High`, `Src_Coolant_Flow_Low`, `Cesium_Oven_OverTemp`) starts the PLC's shutdown at step 2, **SHUTDOWN SEQ: CESIUM COOLDOWN**: extraction off, the gate valve closed (which opens the safety relay), forced cooling. From there it goes to **FINAL KILL** once the caesium isn't hot and the filament is at 0 A, then to **LATCHED SAFE (RESET REQ)**.
 - **RESET FAULTS** is accepted when the remote I/O sequence is at step 0, 3 or 99, the PC sequence is at step 0, 2, 3 or 99, and the PC watchdog isn't lost. It ends the shutdown sequences and clears all six words. A fault whose cause is still there latches again.
@@ -671,7 +679,7 @@ Acknowledging the alarm doesn't reset the fault. Only **RESET FAULTS** does. The
 | `UNIT4_ARC_EXCEEDED` (bit 3.3) | `Spellman MPD Unit 4 has exceeded arc limit.` | As for Unit 1. | |
 
 > [!NOTE]
-> Which supplies Units 2 to 4 are is set in the PLC program, not in this repository, and is to be confirmed. The PC's status flags for the beamline einzel and the neutral traps come from supplies not yet configured in `config/mpd_config.json`.
+> Units 2 to 4 are the beamline einzel and the two neutral traps, which aren't installed yet: none of them is in `config/mpd_config.json`.
 
 ### Fault word 4 Magnet
 
@@ -738,6 +746,10 @@ The services also write events to the event log (`data/events.db`, and `SystemLo
 | `PLC connection lost: <reason>` | `service_plc` | A read or write failed. The service publishes every PLC value as unknown, and connects again after 1, 2, 5 and then every 10 s. | See [PLC COMMS shows OFFLINE](troubleshooting.md#plc-comms-shows-offline). |
 | `PLC connection to <address> failed: <error>`, `Connected to S7-1200 at <address>` | `service_plc` | A connection attempt failed; the connection is made. | As above. |
 | `Gate valve closed by its interlock (vacuum permissive gone): its OPEN request is cleared, so it stays shut. Press OPEN again once the vacuum is OK.` | `service_plc` | The PLC closed the gate valve when the vacuum permissive went, and the valve has stayed shut for 3 s. | Press **OPEN** once the vacuum is good again. |
+| `Vacuum service not sending data (restarting?): the PLC keeps its last judgment of the vacuum (gate valve permissive given; GRAPHIX and gauge flags as they were) for up to <n> s more, until the vacuum service judges it again` (or `still starting`, `withheld`) | `service_plc` | The vacuum service is restarting: the PLC is given its last judgment meanwhile, for at most 60 s after it. | Let it finish starting. See [When the vacuum service restarts](panels/vacuum.md#when-the-vacuum-service-restarts). |
+| `Vacuum service judging the vacuum again: the PLC follows its readings (gate valve permissive given)` (or `withheld`) | `service_plc` | The restarted vacuum service has judged the vacuum, and the hold has ended. | |
+| `No judgment of the vacuum from the vacuum service for 60 s: the PLC is now told the vacuum is unknown (gate valve permissive withdrawn)` | `service_plc` | The vacuum service didn't come back in time: an open gate valve closes and the safety relay drops. | Find why the vacuum service isn't running or starting: see [A service shows BACKOFF](troubleshooting.md#a-service-shows-backoff). |
+| `Vacuum judged: the gate-valve permissive is given on this run's own readings` (or `withheld`) | `service_vac_gauge_controllers` | The vacuum service, after starting, has judged the vacuum for itself. | |
 | `<device> at <address> not reachable: <error>` | device services | The service can't connect to its device. It keeps trying. | Check the device. |
 | `Safety relay DE-ENERGISED (or its state unknown) - Spellman supplies unpowered, outputs reported disabled`, `No PLC telemetry - safety relay state unknown, treating as de-energised`, `Safety relay ENERGISED - Spellman supplies powered` | `service_spellman_mpd` | The relay as the Spellman service sees it. | |
 | `ARC DETECTED on <supply>: output collapsed to <v> kV, below 10% of the <sp> kV setpoint - latched until fault reset` (or `output current <i> uA above 500 uA`) | `service_spellman_mpd` | The software arc detection latched. | Find the cause, then **RESET FAULTS**. |
@@ -746,7 +758,7 @@ The services also write events to the event log (`data/events.db`, and `SystemLo
 | `Magnet PSU alarm: <alarms> (auto-clearing)` | magnet services | The supply reported OT (over-temperature), PF (power fail), OVP or OCP; the service clears it at the supply. | See [Fault word 4 Magnet](#fault-word-4-magnet). |
 | `Degauss aborted - <reason>` | magnet services | The degauss sequence stopped part-way. | Check the reason; run it again. |
 | `SMU bias forced to 0 V: safety relay off or no PLC telemetry`, `SMU reconnected - previous bias of <v> V NOT restored (safety relay not confirmed on); bias reset to 0 V, output off` | `service_smu` | The bias was taken to 0 V and forgotten. | Set the bias again when the relay is on. |
-| `Node <node> relay <relay> (<gauge>): set points differ from vac_gauges_config.json: <differences>` (or `set points could not be read back`), ending ` - gate-valve permissive withheld until they match` for the relays of VG1 and VG2 | `service_vac_gauge_controllers` | A gauge relay holds other values than the configuration, each given as `<kind> <value> (should be <value>)`. For VG1 and VG2 the gate valve is held shut. | Restart the vacuum service to write the configuration again (with the source off: the restart closes the gate valve), or correct the controller. |
+| `Node <node> relay <relay> (<gauge>): set points differ from vac_gauges_config.json: <differences>` (or `set points could not be read back`), ending ` - gate-valve permissive withheld until they match` for the relays of VG1 and VG2 | `service_vac_gauge_controllers` | A gauge relay holds other values than the configuration, each given as `<kind> <value> (should be <value>)`. For VG1 and VG2 the gate valve is held shut. | Restart the vacuum service to write the configuration again, or correct the controller. |
 | `Gate-valve permissive withheld: it judges VG1 and VG2 by their relays, and <problems>` | `service_vac_gauge_controllers` | `config/vac_gauges_config.json` gives VG1 or VG2 no usable relay. | Ask an engineer to correct the file. |
 | `Gauge controller node <node> doesn't answer: its names and relays aren't checked until the service reconnects (...)` | `service_vac_gauge_controllers` | One GRAPHIX controller was silent at start-up. | Check that controller. |
 | `<service>: process exited with code <code> (details in SystemLogs/<service>.log). Restart attempt <n> in <t> s.` | service manager | The service crashed. | Read its log. See [A service shows BACKOFF](troubleshooting.md#a-service-shows-backoff). |

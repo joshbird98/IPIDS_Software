@@ -32,10 +32,19 @@ SINDIE, the Surrey Implanter for Negative-ions, Defect Implantation, and Enrichm
 
 | May | May not |
 |---|---|
-| Close while the PLC gives its enable. After **ENABLE SAFETY RELAY** the HMI asks the operator to press the start button on the panel; if the relay hasn't closed 5 s after the enable, the PLC latches `Safety_Relay_Refused`. | Be closed by the PLC or the PC: they can only give or withdraw the enable. |
+| Close while the PLC gives its enable. After **ENABLE SAFETY RELAY** the HMI asks the operator to press **START** on the **High Voltage Systems Control** box, on the operator's desk; if the relay hasn't closed 5 s after the enable, the PLC latches `Safety_Relay_Refused`. | Be closed by the PLC or the PC: they can only give or withdraw the enable. |
 | Remove power from what it feeds, whatever the PLC or the PC do. The source supplies, the caesium oven, the electrostatic steering and the Spellman supplies are powered through it. | Tell the PLC why it opened. The PLC sees only its state, as a light level on a fibre into an analogue input. |
 
-The relay's loop holds the two emergency switch-offs (ESOs), wired directly into it, the interlocked source-deck door and the key switch. The rest of its wiring is not recorded in the software, and the PLC program has no inputs for any of these: it sees only whether the relay is closed. The X-steerer magnet supply is not on the relay circuit.
+The relay's loop holds:
+
+- two door switches;
+- the two emergency switch-offs (ESOs): one on the source deck's side panel, one on the **High Voltage Systems Control** box;
+- the key switch, on the same box;
+- the vacuum gauge controller's set-point relay;
+- the PLC's enable, a switch the PLC drives over a fibre link;
+- the magnet coolant's flow meter and thermal cut-off switch.
+
+The PLC program has no inputs for any of these: it sees only whether the relay is closed. The compressed-air pressure switch and the source coolant's flow and temperature switches are wired to PLC inputs instead, and the PLC withdraws its enable when they trip. The X-steerer magnet supply is not on the relay circuit. See [Safety rules](../safety.md#the-high-voltage-systems-control-box) for photos of the box and the source deck.
 
 ### The PLC machine logic
 

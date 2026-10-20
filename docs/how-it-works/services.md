@@ -10,7 +10,7 @@ Each service is a separate Python process in `src/services/`. The service manage
 |---|---|---|---|
 | `service_plc` | Reads the PLC's data block DB10 and publishes it; writes commands, the PC watchdog and the other services' status flags to the PLC; writes a FAULT event for each PLC fault bit that changes. | `PLC_DATA` | 100 ms |
 | `service_vac_gauge_controllers` | Reads the six gauges on the two GRAPHIX controllers; checks the gauge names and relay set points against `config/vac_gauges_config.json` and corrects them; works out the gate-valve vacuum permissive. | `VACUUM_DATA` | 50 ms |
-| `service_source_turbo` | Starts and stops the source turbo pump and reads its speed, temperatures, warnings and errors. On connect it checks the pump's vent strategy and, if the pump is stopped, corrects it and saves it to the pump's flash memory (about 30 s). | `SRC_TURBO_DATA` | 50 ms |
+| `service_source_turbo` | Starts the source turbo pump (it never stops it: trained staff do, by hand, at the pump) and reads its speed, temperatures, warnings and errors. On connect it checks the pump's vent strategy and, if the pump is stopped, corrects it and saves it to the pump's flash memory (about 30 s). | `SRC_TURBO_DATA` | 50 ms |
 | `service_spellman_mpd` | Drives the Spellman MPD supplies (the source einzel is the one configured): voltage, current limit, output. Detects arcs in software and follows the safety relay. | `SPELLMAN_DATA` | 100 ms |
 | `service_magnet_psu` | Drives the analyser magnet supply: current setpoint (the voltage limit follows from it), output, degauss. Checks the coil resistance and follows the safety relay. | `MAGNET_DATA` | 50 ms |
 | `service_steerer_magnet_psu` | The same program for the X-steerer supply. The steerer isn't on the safety relay circuit, so this service's relay watch is its only interlock. | `STEEER_MAGNET_DATA` | 50 ms |
@@ -209,7 +209,9 @@ The Spellman, magnet, X-steerer and SMU services follow the safety relay from th
 | `MAGNET_DATA` | analyser magnet: comms failure, short circuit, open circuit, unexpected resistance, PSU over-temperature, power fail, overvoltage, overcurrent |
 | `SRC_TURBO_DATA` | source turbo: comms failure, error, warning, trip |
 
-A comms-failure flag that a service publishes as unknown is sent to the PLC as a failure. If one of these four services publishes nothing for 2 s, `service_plc` sends its comms flags as failed, and for the vacuum service also withdraws the gate-valve permissive. The X-steerer's and the SMU's flags are not sent to the PLC.
+A comms-failure flag that a service publishes as unknown is sent to the PLC as a failure. If one of these four services publishes nothing for 2 s, `service_plc` sends its comms flags as failed. The X-steerer's and the SMU's flags are not sent to the PLC.
+
+The vacuum service is the exception, so that restarting it doesn't close the gate valve. Each message from it says whether its flags are its own judgment of the vacuum (`ion_beam.vacuum.stat_judged`). A restarted vacuum service has judged once it gives the gate-valve permissive, or 20 s after its start-up check if it still doesn't. While the vacuum service is silent, or publishing but not yet judging, `service_plc` keeps sending its last judged flags, for at most 60 s after that judgment (`VACUUM_HOLD_S` in `service_plc.py`). It publishes the time left as `ion_beam.source.chamber.vac_hold_left_s`. After that it sends the vacuum as unknown, as for the others: no gate-valve permissive, both GRAPHIX controllers failed. A running vacuum service's own judgments, a lost controller included, go to the PLC at once. See [Vacuum System](../panels/vacuum.md#when-the-vacuum-service-restarts).
 
 ## Ports
 

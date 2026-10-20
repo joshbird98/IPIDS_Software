@@ -139,6 +139,8 @@ A change that rebuilds the registry changes the setpoint limits, which the HMI a
 
 > [!NOTE]
 > Restarting `service_plc` stops the PC watchdog to the PLC for a few seconds; the PLC treats 3 s without it as lost communication. See [The PLC program](../how-it-works/plc.md#the-watchdog).
+>
+> Restarting `service_vac_gauge_controllers`, after a change to `vac_gauges_config.json`, doesn't close the gate valve: the PLC keeps its last judgment of the vacuum for up to 60 s while it restarts. See [When the vacuum service restarts](../panels/vacuum.md#when-the-vacuum-service-restarts).
 
 ### History
 

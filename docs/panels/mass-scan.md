@@ -149,10 +149,7 @@ Peak finding needs at least 10 points and the `scipy` package. It ignores negati
 
 A peak within 0.25 AMU of a whole mass is matched against the isotopes and molecular ions at that mass. Up to two candidates made of the expected elements (molecules of up to four atoms) are shown; failing those, the likeliest other isotope or molecule (up to two atoms). Common additions are included: +H, +H₂, +O, +O₂ and +N. Peaks further from a whole mass, or with no candidate, are not named. On the plot, a named peak within 0.6 AMU of a larger named peak gets no label of its own.
 
-The isotope list is `isotope_db.json`, next to the panel's code, built with `python src/utils/build_element_database.py` (which needs the `mendeleev` package). Without that file the panel uses a short built-in list (H, He, C, N, O, F, Ne, Si, P, S, Cl, Ar and Ge), and choosing any other element makes no difference.
-
-> [!NOTE]
-> Whether the lab PC has the full isotope list (`isotope_db.json`) is to be confirmed.
+The isotope list is `isotope_db.json`, next to the panel's code, built with `python src/utils/build_element_database.py` (which needs the `mendeleev` package). The lab PC has it. Without that file the panel uses a short built-in list (H, He, C, N, O, F, Ne, Si, P, S, Cl, Ar and Ge), and choosing any other element makes no difference.
 
 **Tail ±0.5** is the larger of the beam currents 0.5 AMU either side of the peak, in parts per million of the peak current: how much of this peak reaches its neighbours. It reads **< 1 ppm** below 1 ppm and **Overlapped** above 500 000 ppm. Its colour runs from green (up to 100 ppm) through amber (1000 ppm) to red (10 000 ppm and above).
 
