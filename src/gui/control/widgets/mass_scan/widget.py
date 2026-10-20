@@ -397,11 +397,17 @@ class PrecisionMassScannerWidget(QWidget):
         visible = not self.control_panel_widget.isVisible()
         self.control_panel_widget.setVisible(visible)
         self.btn_toggle_ctrl.setText("◀ Setup" if visible else "Setup ▶")
+        self._rebalance()
 
     def _toggle_right_panel(self):
         visible = not self.analysis_panel_widget.isVisible()
         self.analysis_panel_widget.setVisible(visible)
         self.btn_toggle_analysis.setText("Analysis ▶" if visible else "◀ Analysis")
+        self._rebalance()
+
+    def _rebalance(self):
+        if not self.splitter_balance.moved:      # (a divider the operator placed stays put)
+            self.splitter_balance.balance()
 
     def _browse_export_path(self):
         path, _ = QFileDialog.getSaveFileName(self, "Select Base Export File",

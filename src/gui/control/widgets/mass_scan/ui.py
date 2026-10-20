@@ -1,10 +1,10 @@
 """Layout of the Mass Scan panel: settings (left), plot (centre), analysis and calibration (right).
 build(w) creates the controls as attributes of the panel w and connects them to its methods."""
 import pyqtgraph as pg
-from PyQt6.QtCore import Qt
-from PyQt6.QtWidgets import (QCheckBox, QDoubleSpinBox, QFrame, QGridLayout, QGroupBox, QHBoxLayout, QHeaderView,
-                             QLabel, QLineEdit, QPushButton, QScrollArea, QSpinBox, QSplitter, QTableWidget,
-                             QVBoxLayout, QWidget)
+from PyQt6.QtCore import QEvent, QObject, Qt
+from PyQt6.QtWidgets import (QCheckBox, QDoubleSpinBox, QFormLayout, QFrame, QGroupBox, QHBoxLayout,
+                             QHeaderView, QLabel, QLineEdit, QPushButton, QScrollArea, QSpinBox, QSplitter,
+                             QTableWidget, QVBoxLayout, QWidget)
 
 from src.gui import theme
 from src.gui.control.setpoint_box import SetpointBox
@@ -30,13 +30,20 @@ def _spin(lo, hi, decimals, value, suffix="", step=None, tip="", box=None):
     return box
 
 
+def _form():
+    """Label beside its field while there is room; the field below its label in a narrow panel."""
+    form = QFormLayout()
+    form.setRowWrapPolicy(QFormLayout.RowWrapPolicy.WrapLongRows)
+    form.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
+    return form
+
+
 def _grid(group_title, rows):
     group = QGroupBox(group_title)
-    grid = QGridLayout()
-    for r, (label, widget) in enumerate(rows):
-        grid.addWidget(QLabel(label), r, 0)
-        grid.addWidget(widget, r, 1)
-    group.setLayout(grid)
+    form = _form()
+    for label, widget in rows:
+        form.addRow(label, widget)
+    group.setLayout(form)
     return group
 
 
@@ -50,8 +57,42 @@ def _side(content: QWidget) -> QScrollArea:
     scroll.setFocusPolicy(Qt.FocusPolicy.NoFocus)      # a click on empty space leaves the focus be
     scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
     scroll.setWidget(content)
-    scroll.setMinimumWidth(PANEL_MIN_WIDTH)
+    # Never narrower than its contents (which would be cut off: no sideways scrolling here)
+    content.ensurePolished()
+    scroll.setMinimumWidth(max(PANEL_MIN_WIDTH, content.minimumSizeHint().width()
+                               + scroll.verticalScrollBar().sizeHint().width() + 2))
     return scroll
+
+
+class _Balance(QObject):
+    """Shares the width out as the panel is resized - side panels about a quarter each, between
+    PANEL_MIN_WIDTH and PANEL_WIDTH, the plot the rest - until the operator drags a divider, which
+    then stays where it was put. (Qt's own sharing gave a panel of ~850 px a ~290 px plot.)"""
+
+    def __init__(self, w, splitter):
+        super().__init__(splitter)
+        self.w, self.splitter, self.moved = w, splitter, False
+        splitter.splitterMoved.connect(self._moved)
+        splitter.installEventFilter(self)
+
+    def _moved(self, *_):
+        self.moved = True
+
+    def eventFilter(self, obj, event):
+        if event.type() == QEvent.Type.Resize and not self.moved:
+            self.balance()
+        return False
+
+    def balance(self):
+        total = sum(self.splitter.sizes())
+        if total <= 0:
+            return
+        sides = []
+        for panel in (self.w.control_panel_widget, self.w.analysis_panel_widget):
+            want = int(min(max(PANEL_WIDTH, panel.minimumWidth()), max(panel.minimumWidth(), total * 0.24)))
+            sides.append(want if panel.isVisibleTo(self.w) else 0)
+        left, right = sides
+        self.splitter.setSizes([left, max(0, total - left - right), right])
 
 
 def build(w):
@@ -66,6 +107,7 @@ def build(w):
     splitter.setStretchFactor(1, 1)               # a wider panel widens the plot
     splitter.setStretchFactor(2, 0)
     splitter.setSizes([PANEL_WIDTH, 1100, PANEL_WIDTH])
+    w.splitter_balance = _Balance(w, splitter)
     w.main_layout.addWidget(splitter)
     theme.style_plot(w.plot_widget, restyle=w._restyle_plot)
 
@@ -140,7 +182,8 @@ def _settings_panel(w):
     set_role(w.lbl_eta, "readout-sm")
     w.lbl_rem_time = QLabel("Remaining: --:--")
     set_role(w.lbl_rem_time, "readout-sm")
-    time_row = QHBoxLayout()
+    time_row = QVBoxLayout()                  # (one above the other: the panel stays narrow)
+    time_row.setSpacing(2)
     time_row.addWidget(w.lbl_eta)
     time_row.addWidget(w.lbl_rem_time)
     w.btn_start = QPushButton("START PRECISION SWEEP")
@@ -157,7 +200,7 @@ def _settings_panel(w):
     set_role(lbl_path, "caption")
     for item in (w.chk_loop, w.chk_export, lbl_path, export_row, time_row, w.btn_start,
                  w.btn_stop, w.lbl_status):
-        (layout.addLayout if isinstance(item, QHBoxLayout) else layout.addWidget)(item)
+        (layout.addLayout if isinstance(item, (QHBoxLayout, QVBoxLayout)) else layout.addWidget)(item)
     group.setLayout(layout)
     panel.addWidget(group)
     panel.addStretch()
@@ -233,7 +276,7 @@ def _analysis_panel(w):
     layout.addLayout(files)
 
     calib = QGroupBox("Mass calibration")
-    grid = QGridLayout()
+    grid = _form()
     w.lbl_energy_display = QLabel("--- keV")
     set_role(w.lbl_energy_display, "readout-sm")
     # SetpointBox: "entered by hand" only when someone types or steps one (any focus-out used to
@@ -246,15 +289,17 @@ def _analysis_panel(w):
     w.sp_i_offset.committed.connect(w._calibration_typed)
     model = QLabel("Model: AMU = k (I + I_off)² / E")
     set_role(model, "caption")
-    grid.addWidget(model, 0, 0, 1, 2)
-    for r, (label, widget) in enumerate((("Beam Energy (E):", w.lbl_energy_display),
-                                         ("Calib. Constant (k):", w.sp_k_factor),
-                                         ("Current Offset (I_off):", w.sp_i_offset)), start=1):
-        grid.addWidget(QLabel(label), r, 0)
-        grid.addWidget(widget, r, 1)
-    w.btn_table = QPushButton("Expected elements (periodic table)...")
+    model.setWordWrap(True)
+    grid.addRow(model)
+    for label, widget in (("Beam energy E:", w.lbl_energy_display),
+                          ("Constant k:", w.sp_k_factor),
+                          ("Offset I_off:", w.sp_i_offset)):
+        grid.addRow(label, widget)
+    w.btn_table = QPushButton("Expected elements...")
+    w.btn_table.setToolTip("Choose the elements you expect (periodic table): peaks are matched against "
+                           "their isotopes and compounds first.")
     w.btn_table.clicked.connect(w._open_periodic_table)
-    grid.addWidget(w.btn_table, 4, 0, 1, 2)
+    grid.addRow(w.btn_table)
     calib.setLayout(grid)
     layout.addWidget(calib)
 
@@ -294,11 +339,9 @@ def _analysis_panel(w):
     w.sp_max_peaks.valueChanged.connect(w._conditional_peak_update)
     w.sp_sensitivity = _spin(0.0001, 100.0, 3, 0.05, " %")
     w.sp_sensitivity.valueChanged.connect(w._conditional_peak_update)
-    params = QGridLayout()
-    params.addWidget(QLabel("Max Peaks:"), 0, 0)
-    params.addWidget(w.sp_max_peaks, 0, 1)
-    params.addWidget(QLabel("Sensitivity:"), 1, 0)
-    params.addWidget(w.sp_sensitivity, 1, 1)
+    params = _form()
+    params.addRow("Max peaks:", w.sp_max_peaks)
+    params.addRow("Sensitivity:", w.sp_sensitivity)
     peaks_layout.addLayout(params)
     w.btn_detect = QPushButton("Auto-detect peaks")
     w.btn_detect.setCheckable(True)

@@ -24,6 +24,7 @@ import tempfile
 import weakref
 import zlib
 
+from PyQt6 import sip
 from PyQt6.QtCore import QObject, QTimer, pyqtSignal
 from PyQt6.QtGui import QColor, QFont, QFontDatabase, QPalette
 from PyQt6.QtWidgets import QApplication
@@ -100,9 +101,13 @@ _state = {"mode": DEFAULT_MODE, "notifier": None, "sync": None, "fonts": None}
 _plots = weakref.WeakKeyDictionary()          # plot object -> extra restyle callback (or None)
 
 
+def _alive(obj) -> bool:
+    return obj is not None and not sip.isdeleted(obj)
+
+
 def theme_changed():
     """The signal emitted (with the mode) after every switch."""
-    if _state["notifier"] is None:
+    if not _alive(_state["notifier"]):        # (first use - or the application it lived in has gone)
         _state["notifier"] = _Notifier()
     return _state["notifier"].changed
 
@@ -713,7 +718,7 @@ def install(app: QApplication, mode: str = None, follow: bool = True):
         f.setFamily(ui)
         app.setFont(f)
     apply_theme(app, mode or saved_mode())
-    if follow and _state["sync"] is None:
+    if follow and not _alive(_state["sync"]):
         _state["sync"] = _Follower(app)
 
 
