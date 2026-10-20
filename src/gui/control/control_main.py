@@ -357,6 +357,10 @@ class ControlMainWindow(QMainWindow):
         scroll.setObjectName("PanelScroll")
         scroll.setWidgetResizable(True)
         scroll.setFrameShape(QFrame.Shape.NoFrame)
+        # A scroll area takes the keyboard focus on a click (StrongFocus): a click on an empty part
+        # of a panel would move it there - and a typed setpoint not yet entered counts as "moved on
+        # to another control" and is sent. Empty space must leave the focus where it is.
+        scroll.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         scroll.setWidget(widget)
         dock = QDockWidget(title, self)
         dock.setObjectName(object_name)

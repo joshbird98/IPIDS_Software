@@ -47,6 +47,7 @@ def _side(content: QWidget) -> QScrollArea:
     scroll.setObjectName("PanelScroll")
     scroll.setWidgetResizable(True)
     scroll.setFrameShape(QFrame.Shape.NoFrame)
+    scroll.setFocusPolicy(Qt.FocusPolicy.NoFocus)      # a click on empty space leaves the focus be
     scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
     scroll.setWidget(content)
     scroll.setMinimumWidth(PANEL_MIN_WIDTH)

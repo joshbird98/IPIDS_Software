@@ -49,6 +49,13 @@ def wait_for(app, predicate, timeout, what):
     raise AssertionError(f"timed out waiting for {what}")
 
 
+def show(dock, app):
+    """Bring a panel to the front, as the operator would: panels behind another tab aren't refreshed
+    (control_main._ui_update_loop) and catch up when shown."""
+    dock.raise_()
+    pump(app, 0.2)
+
+
 def shot(window, name):
     if SHOTS:
         os.makedirs(SHOTS, exist_ok=True)
@@ -111,6 +118,7 @@ def test_fresh_view_and_services(hmi, app):
     assert view["system.connected"] is True
     assert set(view["manager.services"].values()) == {"ONLINE"}
     assert "PLC_DATA/system.connected" in view            # generic keys kept per service
+    show(hmi.service_dock, app)
     wait_for(app, lambda: len(hmi.service_widget.service_rows) >= 10, 5, "service rows")
 
 
@@ -129,6 +137,7 @@ def test_gate_valve_and_relay_through_the_gui(hmi, app, stack):
 def test_einzel_needs_two_clicks_to_enable_one_to_disable(hmi, app):
     from src.gui.control.arming import ARMED_TONE
     from src.gui.style import tone
+    show(hmi.src_dock, app)
     ctrl = hmi.src_widget.psu_controls["Source Einzel"]
     btn = ctrl["btn_enable"]
     wait_for(app, btn.isEnabled, 15, "einzel enable button available (Spellman sees the relay)")
@@ -157,6 +166,7 @@ def test_einzel_setpoint_typed_in_the_gui_brings_the_output_up(hmi, app):
     registry had current limits - an older system_tags.json left the einzel at 0 V and latched an arc)."""
     from PyQt6.QtCore import Qt
     from PyQt6.QtTest import QTest
+    show(hmi.src_dock, app)
     ctrl = hmi.src_widget.psu_controls["Source Einzel"]
     box = ctrl["sp_box"]
     wait_for(app, box.isEnabled, 15, "einzel setpoint box available")
@@ -184,6 +194,7 @@ def test_einzel_setpoint_typed_in_the_gui_brings_the_output_up(hmi, app):
 
 
 def test_arming_times_out(hmi, app):
+    show(hmi.optics_dock, app)
     btn = hmi.optics_widget.btn_mag_en
     wait_for(app, btn.isEnabled, 10, "magnet enable available")
     btn.click()
@@ -205,6 +216,7 @@ def test_rejection_is_shown_to_the_operator(hmi, app):
 def test_stopped_service_shows_unknown_not_last_value(hmi, app, stack):
     from src.gui.control.arming import UNKNOWN_TONE
     from src.gui.style import tone
+    show(hmi.src_dock, app)
     ctrl = hmi.src_widget.psu_controls["Source Einzel"]
     wait_for(app, lambda: "---" not in ctrl["lbl_rb"].text(), 10, "einzel readback present")
     r = stack.cmd("manager", "manager_cmd", {"command": "stop", "service": "service_spellman_mpd"})
@@ -325,6 +337,7 @@ def test_operator_takes_control_from_a_recipe(hmi, app, stack):
     assert bar.groups["recipe 'hmi_hold'"] == ["ion_beam.beamline.steerer_magnet"]
     r = stack.cmd("steerer_magnet", "ion_beam.beamline.steerer_magnet.sp_requested_current", 3.0)
     assert r["status"] == C.REJECTED and "recipe 'hmi_hold'" in r["reason"]
+    show(hmi.optics_dock, app)
     wait_for(app, lambda: not hmi.optics_widget.sp_x_steer.isEnabled(), 5, "steerer box locked")
     assert "recipe 'hmi_hold'" in hmi.optics_widget.sp_x_steer.toolTip()
     shot(hmi, "6_automation_bar_lease")
@@ -346,10 +359,10 @@ def test_tolerance_colours_the_readback(hmi, app, stack):
     assert stack.cmd("magnet", "ion_beam.beamline.magnet.cmd_enable", True)["status"] == C.OK
     wait_for(app, lambda: abs(hmi.master_telemetry_cache["ion_beam.beamline.magnet.rb_current"] - 25) < 0.2, 15,
              "magnet at 25 A")
+    show(hmi.optics_dock, app)
     sim.set_faults({"magnet_sag"})
     try:
         wait_for(app, lambda: hmi.optics_widget.lbl_mag_rb.property("tolerance") == "out", 20, "amber readback")
-        hmi.optics_dock.raise_()
         pump(app, 0.3)
         shot(hmi, "4_magnet_out_of_tolerance")
     finally:
@@ -378,6 +391,7 @@ def test_calculate_and_set_amps_puts_the_mass_on_the_cup(hmi, app, stack):
              and abs(view["ion_beam.source.target.rb_voltage"] - 5.0) < 0.05, 15, "20 keV beam")
     cal = hmi.mass_scan_widget.current_calibration()
     assert cal["source"].startswith("default")
+    show(hmi.optics_dock, app)
     wait_for(app, hmi.optics_widget.btn_calc_mass.isEnabled, 5, "Calculate & set amps available")
     hmi.optics_widget.sp_mass.setValue(28.0)
     hmi.optics_widget.btn_calc_mass.click()
@@ -404,9 +418,10 @@ def test_mass_scan_runs_in_the_sequencer_and_the_panel_follows_it(hmi, app):
     wait_for(app, lambda: view.get("sequencer.mass_scan.state") == "running", 10, "scan running")
     wait_for(app, lambda: set(view.get("sequencer.mass_scan.leases") or []) ==
              {"ion_beam.beamline.magnet", "ion_beam.beamline.faraday.smu"}, 10, "magnet and SMU held")
+    show(hmi.optics_dock, app)
     wait_for(app, lambda: not hmi.optics_widget.sp_mag_current.isEnabled(), 5,
              "the operator's magnet box locked while the scan holds the magnet")
-    hmi.mass_scan_dock.raise_()
+    show(hmi.mass_scan_dock, app)            # (the scan panel follows the scan behind a tab too)
     wait_for(app, lambda: view.get("sequencer.mass_scan.state") == "complete", 90, "scan complete")
     wait_for(app, lambda: len(w.last_scan_data) == 8, 10, "the whole pass analysed in the panel")
     shot(hmi, "7_mass_scan_from_the_sequencer")
@@ -414,6 +429,7 @@ def test_mass_scan_runs_in_the_sequencer_and_the_panel_follows_it(hmi, app):
     saved = view.get("sequencer.mass_scan.file")
     assert saved and os.path.exists(saved)
     wait_for(app, lambda: view.get("ion_beam.beamline.faraday.smu.rb_nplc") == 1.0, 10, "NPLC restored")
+    show(hmi.optics_dock, app)
     wait_for(app, lambda: hmi.optics_widget.sp_mag_current.isEnabled(), 10, "magnet back to the operator")
 
 

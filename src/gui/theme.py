@@ -214,13 +214,23 @@ def _icon_path(name: str, colour: str) -> str:
     svg = ('<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 16 16">'
            + _ICONS[name].format(c=colour) + "</svg>")
     folder = os.path.join(tempfile.gettempdir(), "sindie_theme_icons")
-    os.makedirs(folder, exist_ok=True)
+    try:
+        os.makedirs(folder, exist_ok=True)
+    except OSError:
+        log.debug("Theme icon folder %s not available", folder, exc_info=True)
     path = os.path.join(folder, f"{name}_{zlib.crc32(svg.encode()):08x}.svg")
     if not os.path.exists(path):
         tmp = f"{path}.{os.getpid()}.tmp"
-        with open(tmp, "w", encoding="utf-8") as f:
-            f.write(svg)
-        os.replace(tmp, path)          # (both programs may write it at once)
+        try:
+            with open(tmp, "w", encoding="utf-8") as f:
+                f.write(svg)
+            os.replace(tmp, path)      # (both programs may write it at once: same name, same contents)
+        except OSError:                # a missing icon is only cosmetic: never stop a start or a switch
+            log.debug("Theme icon %s not written", path, exc_info=True)
+            try:
+                os.remove(tmp)
+            except OSError:
+                pass
     return path.replace("\\", "/")
 
 
@@ -346,7 +356,6 @@ QGroupBox::title {{ subcontrol-origin: margin; subcontrol-position: top left; le
     color: {t['text_muted']}; font-weight: 600; }}
 QFrame[role="card"] {{ background-color: {t['card_alt']}; border: 1px solid {t['border_soft']};
     border-radius: 5px; }}
-QFrame[role="card"] QLabel {{ background: transparent; }}
 QFrame[role="callout"] {{ background-color: {t['card_alt']}; border: 1px solid {t['border']}; border-radius: 6px; }}
 QFrame[role="callout"][tone="warn"] {{ background-color: {t['warn_bg']}; border: 2px solid {t['warn_fill']}; }}
 QFrame[role="callout"][tone="fault"] {{ background-color: {t['fault_bg']}; border: 2px solid {t['fault_fill']}; }}

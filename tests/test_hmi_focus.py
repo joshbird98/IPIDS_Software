@@ -58,6 +58,30 @@ def test_a_locked_button_or_box_hands_the_keyboard_to_the_window(hmi):
     assert notices and notices[-1].startswith("Target setpoint: 6 not sent")
 
 
+def test_a_click_on_empty_panel_space_sends_nothing(hmi):
+    """October 2026 (found in review before release): with every panel in a scroll area, a click on
+    an empty part of a panel moved the keyboard focus to the scroll area - and a typed setpoint not
+    yet entered counted as "moved on to another control" and was sent. Empty space must leave the
+    focus, and the entry, where they are."""
+    from PyQt6.QtCore import QPoint
+    app, w, notices = hmi
+    sent = []
+    w.cmd_thread.send_command = lambda *a, **k: sent.append(a)
+    w.src_dock.raise_()
+    app.processEvents()
+    box = w.src_widget.psu_controls["Extraction"]["sp_box"]
+    box.setEnabled(True)
+    box.show_setpoint(10.0)
+    box.setFocus(Qt.FocusReason.MouseFocusReason)
+    box.lineEdit().selectAll()
+    QTest.keyClicks(box, "12")
+    assert box.editing
+    panel = w.src_widget                         # below the supplies: empty panel space
+    QTest.mouseClick(panel, Qt.MouseButton.LeftButton, pos=QPoint(panel.width() - 3, panel.height() - 3))
+    app.processEvents()
+    assert sent == [] and box.editing and box.hasFocus()
+
+
 def test_switching_a_dock_tab_away_drops_an_unsent_entry(hmi):
     app, w, notices = hmi
     w.src_dock.raise_()

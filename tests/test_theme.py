@@ -143,6 +143,28 @@ def test_tones_are_drawn_by_the_stylesheet(app, theme_mod):
     assert "QLabel[tone]" not in sheet and "QPushButton[tone]" not in sheet
 
 
+def test_a_chip_in_a_card_keeps_its_colour(app, theme_mod):
+    """Found in review: a rule for labels inside cards outranked the chips' tone rules, so a vacuum
+    gauge's TRIPPED chip lost its red fill (white text on a white card in the light theme)."""
+    from PyQt6.QtWidgets import QFrame, QVBoxLayout
+    from src.gui.style import chip, set_role
+    theme = theme_mod
+    for mode in ("light", "dark"):
+        theme.apply_theme(app, mode)
+        card = QFrame()
+        set_role(card, "card")
+        lay = QVBoxLayout(card)
+        c = chip("TRIPPED", "fault")
+        lay.addWidget(c)
+        card.resize(240, 80)
+        card.show()
+        app.processEvents()
+        img = c.grab().toImage()
+        fill = img.pixelColor(5, img.height() // 2)          # in the chip's padding, clear of the text
+        assert fill.name() == theme.tokens()["fault_fill"].lower(), mode
+        card.deleteLater()
+
+
 # ------------------------------------------------------------------ reflow
 def test_cards_reflow_with_the_width(app):
     from src.gui.reflow import ReflowGrid

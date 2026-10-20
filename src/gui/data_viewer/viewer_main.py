@@ -168,6 +168,7 @@ class DataViewerApp(LanesMixin, InspectorMixin, MarkersMixin, ExportMixin, Profi
         self.sidebar_scroll.setWidgetResizable(True)
         self.sidebar_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.sidebar_scroll.setFrameShape(QFrame.Shape.NoFrame)
+        self.sidebar_scroll.setFocusPolicy(Qt.FocusPolicy.NoFocus)   # a click on empty space leaves the focus be
 
         sidebar = QWidget()
         sidebar_layout = QVBoxLayout(sidebar)

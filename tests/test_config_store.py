@@ -30,6 +30,14 @@ def edited(name, change, config_dir=paths.CONFIG_DIR):
 
 
 # --------------------------------------------------------------------------- checks
+def test_per_machine_state_is_not_offered_for_editing(tmp_path):
+    """The engineering editor lists configuration only: not the viewer's saved state or the theme
+    choice (applying an edit would restart the services for a cosmetic file)."""
+    for name in ("magnet_config.json", "appearance.json", "workspace_profiles.json", "system_tags.json"):
+        (tmp_path / name).write_text("{}")
+    assert cs.config_files(str(tmp_path)) == ["magnet_config.json"]
+
+
 def test_shipped_configs_have_no_problems():
     names = cs.config_files()
     assert "magnet_config.json" in names and "system_tags.json" not in names
