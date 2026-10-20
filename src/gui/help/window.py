@@ -14,7 +14,7 @@ import os
 import re
 
 from PyQt6 import sip
-from PyQt6.QtCore import QMarginsF, QSize, Qt, QTimer, QUrl
+from PyQt6.QtCore import QMarginsF, QSize, Qt, QTimer, QUrl, QVariant
 from PyQt6.QtGui import (QAction, QCursor, QFont, QImage, QImageReader, QKeySequence, QPageLayout, QPageSize,
                          QTextCharFormat, QTextCursor, QTextDocument)
 from PyQt6.QtWidgets import (QApplication, QDockWidget, QFileDialog, QFrame, QLabel, QLineEdit, QListWidget,
@@ -51,6 +51,8 @@ class HelpBrowser(QTextBrowser):
         self.highlight_terms = []
         self._cache = {}
         self._column = None
+        self._page_images = {}                   # the current page's screenshots: url text -> QUrl
+        self._rescaled = {}                      # the ones scaled again in place since it opened
         self._reflow = QTimer(self)
         self._reflow.setSingleShot(True)
         self._reflow.setInterval(150)
@@ -60,6 +62,8 @@ class HelpBrowser(QTextBrowser):
     def doSetSource(self, name, rtype=QTextDocument.ResourceType.UnknownResource):
         if name.isLocalFile() and name.toLocalFile().lower().endswith(".md") and render.available():
             rtype = _HTML                      # (otherwise Qt renders the Markdown itself)
+        self._forget_rescaled()
+        self._page_images = {}
         super().doSetSource(name, rtype)
         self._fit_column(force=True)
         self.show_highlights()
@@ -73,6 +77,7 @@ class HelpBrowser(QTextBrowser):
                 if rtype == _IMAGE.value:
                     image = self._image(path)
                     if image is not None:
+                        self._page_images[url.toString()] = QUrl(url)
                         return image
         except Exception:        # a broken page must not take the program down
             log.exception("Help: could not load %s", url.toString())
@@ -107,23 +112,26 @@ class HelpBrowser(QTextBrowser):
         return image
 
     # --- the text column ------------------------------------------------------------------------
-    def _side_margin(self) -> int:
-        return max(self.MIN_SIDE, (self.viewport().width() - self.MAX_COLUMN) // 2)
-
+    # The column's width depends on the window only, never on whether the scrollbar is showing:
+    # the scrollbar's width is always left free. When the scrollbar changed the column, the page
+    # was loaded again for its screenshots, which hid and showed the scrollbar again: the page
+    # reloaded several times a second, for ever, flashing the wait cursor.
     def column_width(self) -> int:
-        return max(100, self.viewport().width() - 2 * self._side_margin())
+        room = self.contentsRect().width() - self.verticalScrollBar().sizeHint().width()
+        return max(100, min(self.MAX_COLUMN, room - 2 * self.MIN_SIDE))
 
     def _fit_column(self, force: bool = False):
-        side = self._side_margin()
+        width = self.column_width()
+        free = max(0, self.viewport().width() - width)
+        left, right = free // 2, free - free // 2      # centred in what the scrollbar leaves
         root = self.document().rootFrame()
         fmt = root.frameFormat()
-        if force or fmt.leftMargin() != side:
-            fmt.setLeftMargin(side)
-            fmt.setRightMargin(side)
+        if force or fmt.leftMargin() != left or fmt.rightMargin() != right:
+            fmt.setLeftMargin(left)
+            fmt.setRightMargin(right)
             fmt.setTopMargin(18)
             fmt.setBottomMargin(48)
             root.setFrameFormat(fmt)
-        width = self.column_width()
         if self._column is not None and width != self._column:
             self._reflow.start()                 # screenshots: scaled again for the new width
         self._column = width
@@ -133,25 +141,47 @@ class HelpBrowser(QTextBrowser):
         self._fit_column()
 
     def _rescale_images(self):
-        if self.source().isEmpty():
+        """Scale the page's screenshots to the new column where they are. (Loading the page
+        again would show the wait cursor, and lose the place.)"""
+        if not self._page_images:
             return
+        doc = self.document()
+        for key, url in self._page_images.items():
+            image = self._image(url.toLocalFile())
+            if image is not None:
+                doc.addResource(_IMAGE.value, url, image)
+                self._rescaled[key] = url
+        self._keep_place(lambda: doc.markContentsDirty(0, doc.characterCount()))
+
+    def _forget_rescaled(self):
+        """A screenshot scaled in place stays in the document past the page: take it out again
+        (an empty value lets the next page load it, for its own width)."""
+        doc = self.document()
+        for url in self._rescaled.values():
+            doc.addResource(_IMAGE.value, url, QVariant())
+        self._rescaled = {}
+
+    def _keep_place(self, change):
         bar = self.verticalScrollBar()
         fraction = bar.value() / max(1, bar.maximum())
-        self.reload()
+        change()
         QTimer.singleShot(0, lambda: bar.setValue(int(round(fraction * bar.maximum()))))
+
+    def _reload(self):
+        """Convert the page again (a new theme or text size), at the same place."""
+        if not self.source().isEmpty():
+            self._keep_place(self.reload)
 
     # --- look -----------------------------------------------------------------------------------
     def restyle(self):
         t = theme.tokens()
         self.setStyleSheet(f"QTextBrowser#HelpPage {{ background: {t['card']}; border: none; }}")
         self._cache.clear()
-        if not self.source().isEmpty():
-            self._rescale_images()               # (the same: reload where we are)
+        self._reload()
 
     def set_text_size(self, points: float):
         self.base_pt = points
-        if not self.source().isEmpty():
-            self._rescale_images()
+        self._reload()
 
     def show_highlights(self):
         """Mark every occurrence of the search words on the page."""

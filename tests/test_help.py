@@ -186,6 +186,82 @@ def test_screenshots_are_scaled_to_the_column(help_window, app):
     assert shown <= w.browser.column_width() < 1536
 
 
+def _wait(app, seconds):
+    import time
+    end = time.monotonic() + seconds
+    while time.monotonic() < end:
+        app.processEvents()
+        time.sleep(0.005)
+
+
+def _count_loads(monkeypatch):
+    """The number of pages loaded into the help window from here on."""
+    from src.gui.help import window
+    count = [0]
+    original = window.HelpBrowser.doSetSource
+
+    def counted(self, *args):
+        count[0] += 1
+        return original(self, *args)
+    monkeypatch.setattr(window.HelpBrowser, "doSetSource", counted)
+    return count
+
+
+def _drawn_width(browser, image: str) -> float:
+    """The width the page's screenshot is drawn at: the image the document holds for it."""
+    from PyQt6.QtCore import QUrl
+    from PyQt6.QtGui import QTextDocument
+    url = QUrl.fromLocalFile(pages.path_of(image))
+    held = browser.document().resource(QTextDocument.ResourceType.ImageResource.value, url)
+    return held.width() / held.devicePixelRatio()
+
+
+@pytest.mark.parametrize("width", [1000, 1180])
+def test_a_page_is_not_loaded_again_while_it_is_read(help_window, app, monkeypatch, width):
+    """The scrollbar used to change the text column, and a new column loaded the page again for its
+    screenshots, which hid and showed the scrollbar: the page loaded several times a second for
+    ever, and the mouse pointer flashed the wait cursor. (1180 wide is the window's first size.)"""
+    w = help_window
+    w.resize(width, 800)
+    w.open_page(pages.SAFETY)
+    _wait(app, 0.5)
+    loads = _count_loads(monkeypatch)
+    _wait(app, 1.0)
+    assert loads[0] == 0
+
+
+def test_a_resize_scales_the_screenshots_where_they_are(help_window, app, monkeypatch):
+    w = help_window
+    w.resize(1500, 800)
+    w.open_page("getting-started/screen-tour.md")
+    _wait(app, 0.4)
+    wide = _drawn_width(w.browser, "images/hmi-overview.png")
+    loads = _count_loads(monkeypatch)
+    w.resize(950, 800)
+    _wait(app, 0.6)
+    narrow = _drawn_width(w.browser, "images/hmi-overview.png")
+    assert loads[0] == 0                       # scaled where it is: no wait cursor, same place
+    assert narrow < wide
+    assert narrow <= w.browser.column_width()
+
+
+def test_a_screenshot_scaled_where_it_is_does_not_outlive_its_page(help_window, app):
+    w = help_window
+    w.resize(1500, 800)
+    w.open_page("getting-started/screen-tour.md")
+    _wait(app, 0.4)
+    w.resize(950, 800)                         # scaled for this width where it is
+    _wait(app, 0.6)
+    w.open_page(pages.SAFETY)
+    _wait(app, 0.2)
+    w.resize(1300, 800)
+    _wait(app, 0.6)
+    w.open_page("getting-started/screen-tour.md")
+    _wait(app, 0.4)
+    assert _drawn_width(w.browser, "images/hmi-overview.png") == pytest.approx(
+        w.browser.column_width() - 4, abs=1)  # for the window as it is now, not as it was
+
+
 def test_links_and_back(help_window, app):
     w = help_window
     w.open_page(pages.HOME)
