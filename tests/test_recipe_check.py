@@ -176,7 +176,7 @@ def test_recipes_calling_each_other_are_an_error(catalog, tmp_path):
     (act("ion_beam.beamline.image_slits.left.cmd_range", 2),
      "Set the image slits left current monitor range to 2 (500mV)"),
     ({"type": "WAIT_TIME", "duration_sec": 150}, "Wait 2 min 30 s"),
-    (wait_for(VG1, "<", 5e-7, timeout=0), "Wait until the source pressure (VG1) is below 5.0e-07 mbar (no time limit)"),
+    (wait_for(VG1, "<", 5e-7, timeout=0), "Wait until the source pressure (VG1) is below 5e-07 mbar (no time limit)"),
     (wait_for(RELAY, "==", 1, timeout=10), "Wait until the safety relay is on (fails after 10 s)"),
     (wait_for(f"{EXT}.rb_voltage", "within", 15) | {"tolerance": 0.2},
      "Wait until the extraction voltage is within ±0.2 kV of 15 kV (fails after 30 s)"),
@@ -196,7 +196,7 @@ def test_recipes_calling_each_other_are_an_error(catalog, tmp_path):
      "Switch the extraction on and set it to 15 kV, then wait up to 1 min for the readback to be within ±0.2 kV"),
     ({"type": "ROUTINE_CALL", "routine_name": "safety_relay_init", "parameters": {}},
      "Bring the safety relay on, with the operator (the gate valve opened once the source pressure is below "
-     "5.0e-07 mbar; START pressed within 6 s; then 15 s to settle)"),
+     "5e-07 mbar; START pressed within 6 s; then 15 s to settle)"),
     ({"type": "TELEPORT"}, "TELEPORT step (a step type the sequencer doesn't know)"),
     ({"type": "ACTION"}, "Set (no tag chosen)"),
 ])
@@ -221,7 +221,53 @@ def test_recipe_text_and_time(catalog):
         "t - version 1.0", "", "It stops if:",
         "  - the Safety Relay Tripped fault is latched (Hardware safety loop broken. HV disabled)", "",
         "1. Wait 1 min 30 s", "   Note: Let it settle", "2. Do 2 steps at the same time",
-        "    2.1. Wait 30 s", "    2.2. Wait until the source pressure (VG1) is below 1.0e-06 mbar (fails after 30 s)",
+        "    2.1. Wait 30 s", "    2.2. Wait until the source pressure (VG1) is below 1e-06 mbar (fails after 30 s)",
         "", "The timed parts take about 2 min; waits for conditions and for the operator come on top."]
     assert estimate(recipe({"type": "WAIT_TIME", "duration_sec": 5})) == (5.0, False)
     assert duration_text(3900) == "1 h 05 min" and duration_text(0.5) == "0.5 s"
+
+
+# ============================================================================ found in review
+def test_malformed_steps_are_errors_not_exceptions(catalog, tmp_path):
+    """The order checks and the text walked steps the engine had refused, and raised on them."""
+    from src.core.recipe_text import describe_recipe, estimate
+    bad = recipe({"type": "ROUTINE_CALL", "routine_name": "psu_control", "parameters": ["x"]},
+                 {"type": "USER_PROMPT", "prompt_text": "x", "verify_conditions": 5},
+                 {"type": "PARALLEL", "steps": 5})
+    found = messages(check_recipe(bad, catalog), ERROR)
+    assert len(found) == 3, found
+    describe_recipe(bad, catalog)
+    estimate(bad)
+    (tmp_path / "bad.json").write_text(json.dumps(bad))
+    caller = recipe({"type": "SUB_RECIPE", "target_file": "bad.json"})
+    assert any(m.startswith("step 1: in bad.json:") for m in messages(check_recipe(caller, catalog, str(tmp_path))))
+
+
+def test_a_sub_recipe_in_the_windows_code_page_is_read_as_the_sequencer_reads_it(catalog, tmp_path):
+    (tmp_path / "ansi.json").write_bytes(json.dumps(recipe(
+        {"type": "WAIT_TIME", "duration_sec": 1, "comment": "warm to 40 °C"}), ensure_ascii=False).encode("cp1252"))
+    caller = recipe({"type": "SUB_RECIPE", "target_file": "ansi.json"})
+    assert messages(check_recipe(caller, catalog, str(tmp_path))) == []
+
+
+def test_the_turbo_start_is_no_routines_tag_and_its_reset_isnt_offered(catalog):
+    psu = {"type": "ROUTINE_CALL", "routine_name": "psu_control", "parameters": {
+        "cmd_enable": f"{EXT}.cmd_enable", "stat_enabled": f"{EXT}.stat_enabled",
+        "sp_tag": "ion_beam.source.turbo_pump.cmd_enable", "target_val": 0}}
+    assert any("turbo pump's start isn't a routine's to drive" in m for m in messages(check_recipe(recipe(psu),
+                                                                                                  catalog), ERROR))
+    assert "ion_beam.source.turbo_pump.cmd_reset" not in {t.name for t in catalog.settable()}
+
+
+def test_messages_name_steps_by_their_own_numbers(catalog):
+    data = {"recipe_name": "r", "steps": [{"step_id": 10, "type": "WAIT_TIME", "duration_sec": 1},
+                                          {"step_id": 20, "type": "ACTION", "target": "nope.cmd_x", "value": 1}]}
+    assert messages(check_recipe(data, catalog), ERROR) == [
+        "step 20: nope.cmd_x isn't a tag the machine knows (it isn't in the tag registry)"]
+
+
+def test_small_numbers_keep_their_digits():
+    from src.core.recipe_text import fmt
+    from src.gui.control.dialogs.recipe_builder.fields import show_number
+    assert fmt(1.26e-7, "mbar") == "1.26e-07 mbar" and fmt(5e-7) == "5e-07" and fmt(15.0, "kV") == "15 kV"
+    assert show_number(1.234e-7) == "1.234e-07" and show_number(20.0) == "20" and show_number(0.05) == "0.05"

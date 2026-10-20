@@ -49,7 +49,8 @@ class RecipeExecutionWidget(QWidget):
         self.loaded_file = None           # recipe START runs (picked with LOAD, or the last run seen)
         self.preview = None               # its steps, read here for display before it runs
         self.load_errors = []             # what the checks found wrong with it (START stays off)
-        self._builders = {}               # file (None: a new recipe) -> the open recipe builder
+        self._load_failed = None          # a file LOAD couldn't read: shown until the next LOAD or run
+        self._builders = []               # the recipe builder windows open
         self._tickets = {}                # "start" / "pause" / "ack" ... -> ticket of the last click
         self._ack_refusal = None          # (prompt number, reason) of a refused acknowledgement
         self._preview_mode = False        # show the loaded recipe rather than the last run
@@ -192,16 +193,15 @@ class RecipeExecutionWidget(QWidget):
         path = os.path.join(self.config_dir, filename)
         try:
             preview = Recipe(path)
+            problems = check_recipe(preview.data, shared(), self.config_dir, path)
         except (OSError, RecipeError) as e:      # (RecipeError covers every fault in the file itself)
-            self.preview, self.loaded_file, self.load_errors = None, None, []
-            self._preview_mode = False
-            self._rendered = None
-            self.list_steps.clear()
-            self._show_check([], f"{filename} can't be run: {e}")
-            self.lbl_status.setText(f"NOT LOADED: {filename} - {e}")
-            set_tone(self.lbl_status, "fault")
+            self._not_loaded(filename, str(e))
             return
-        problems = check_recipe(preview.data, shared(), self.config_dir, path)
+        except Exception as e:   # a fault in the checks: said as such, and the recipe isn't loaded
+            log.exception("Checking %s failed", filename)
+            self._not_loaded(filename, f"the checks failed on it ({type(e).__name__}: {e}) - report it")
+            return
+        self._load_failed = None
         self.preview = preview
         self.loaded_file = filename
         self.load_errors = errors(problems)
@@ -210,6 +210,22 @@ class RecipeExecutionWidget(QWidget):
         self._render_preview()
         self._show_check(problems)
         self._show_ready()
+
+    def _not_loaded(self, filename: str, why: str):
+        """LOAD couldn't read or check the file: nothing is loaded (an earlier run isn't shown
+        instead), until the next LOAD or run."""
+        self.preview, self.loaded_file, self.load_errors = None, None, []
+        self._load_failed = (filename, why)
+        self._preview_mode = False
+        self._rendered = None
+        self.list_steps.clear()
+        self._show_check([], f"{filename} can't be run: {why}")
+        self._show_not_loaded()
+
+    def _show_not_loaded(self):
+        filename, why = self._load_failed
+        self.lbl_status.setText(f"NOT LOADED: {filename} - {why}")
+        set_tone(self.lbl_status, "fault")
 
     def _show_ready(self):
         if self.preview is None:
@@ -248,34 +264,32 @@ class RecipeExecutionWidget(QWidget):
             self._open_builder(filename)
 
     def _open_builder(self, filename: str = None):
-        """The recipe builder, beside the HMI (one window per recipe: a second EDIT brings it back)."""
-        builder = self._builders.get(filename)
-        if builder is not None:
-            try:
-                builder.showNormal()
-                builder.raise_()
-                builder.activateWindow()
-                return builder
-            except RuntimeError:                  # (it has been closed and deleted)
-                self._builders.pop(filename, None)
+        """The recipe builder, beside the HMI. EDIT on a recipe already open in one (whatever it was
+        opened as: a window can open another recipe, and a new one gets a file when saved) brings
+        that window to the front."""
+        for builder in list(self._builders):
+            if filename and getattr(builder, "filename", None) == filename:
+                try:
+                    builder.showNormal()
+                    builder.raise_()
+                    builder.activateWindow()
+                    return builder
+                except RuntimeError:              # (closed and deleted meanwhile)
+                    self._forget_builder(builder)
         path = os.path.join(self.config_dir, filename) if filename else None
         builder = RecipeBuilderDialog(self, self.config_dir, load_filepath=path)
-        self._builders[filename] = builder
-        builder.saved.connect(lambda f, b=builder: self._recipe_saved(f, b))
+        self._builders.append(builder)
+        builder.saved.connect(self._recipe_saved)
         builder.destroyed.connect(lambda *_a, b=builder: self._forget_builder(b))
         builder.show()
         return builder
 
     def _forget_builder(self, builder):
-        for key in [k for k, v in self._builders.items() if v is builder]:
-            del self._builders[key]
+        self._builders = [b for b in self._builders if b is not builder]
 
-    def _recipe_saved(self, filename: str, builder=None):
+    def _recipe_saved(self, filename: str):
         """A recipe was saved in the builder: list it, and load it again if it is the one loaded
         (its steps here were the old ones)."""
-        if builder is not None:                   # (a new recipe has a file now: EDIT on it finds this window)
-            self._forget_builder(builder)
-            self._builders[filename] = builder
         self._populate_recipes()
         if filename == self.loaded_file and not self.slot.active:
             self._load_recipe(filename)
@@ -330,7 +344,9 @@ class RecipeExecutionWidget(QWidget):
             return
         if getattr(self, "_offline", False):      # back online: the status line says what it did before
             self._offline = False
-            if self._preview_mode and self.preview is not None:
+            if self._load_failed and not self.slot.active:
+                self._show_not_loaded()
+            elif self._preview_mode and self.preview is not None:
                 self._show_ready()
             else:
                 self.lbl_status.setText("STATUS: IDLE")
@@ -342,6 +358,8 @@ class RecipeExecutionWidget(QWidget):
         busy = any(v in self._tickets for v in ("start", "stop")) or self._awaiting_run is not None
         if self.slot.active:
             self._preview_mode = False
+            self._load_failed = None
+            self.lbl_check.hide()                 # (what LOAD found belongs to the loaded file, not this run)
             if not self.loaded_file:
                 self.loaded_file = self.slot.get("file")
             self._show_run()
@@ -350,13 +368,16 @@ class RecipeExecutionWidget(QWidget):
                               and state != P.STOPPING, stop="stop" not in self._tickets, paused=state == P.PAUSED,
                               start_tip="A recipe is running - stop it first.")
         else:
-            if self._preview_mode and self.preview is not None:
+            if self._load_failed:
+                pass                              # (NOT LOADED stays: not the last run instead)
+            elif self._preview_mode and self.preview is not None:
                 self._render_preview()
             elif state in P.FINAL:
                 self.loaded_file = self.loaded_file or self.slot.get("file")
+                self.lbl_check.hide()
                 self._show_run()
             blocked = self._preview_mode and bool(self.load_errors)
-            can_start = bool(self.loaded_file) and not busy and not blocked
+            can_start = bool(self.loaded_file) and not busy and not blocked and not self._load_failed
             self._set_buttons(start=can_start, pause=False, stop=False,
                               start_tip=("The checks found errors in this recipe (above): the sequencer would refuse "
                                          "it. EDIT opens it in the recipe builder." if blocked else ""))

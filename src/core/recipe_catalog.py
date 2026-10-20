@@ -127,10 +127,10 @@ NOT_SETTABLE = {
     FAULT_RESET: "recipes may not reset faults: press RESET FAULTS yourself",
     "ion_beam.system.plc_watchdog": "the PC watchdog is the PLC service's own",
 }
-# Commands the services take that aren't in the registry
+# Commands the services take that aren't in the registry (the pump's fault reset isn't one a recipe
+# may send: a person resets faults)
 EXTRA_SETTABLE = {
     TURBO_ENABLE: {"datatype": "BOOL", "unit": "", "label": "source turbo pump start"},
-    "ion_beam.source.turbo_pump.cmd_reset": {"datatype": "BOOL", "unit": "", "label": "source turbo pump fault reset"},
 }
 # Values a recipe may wait on that aren't in the registry
 EXTRA_READABLE = {

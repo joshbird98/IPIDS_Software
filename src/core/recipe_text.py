@@ -74,16 +74,25 @@ STATES = {
 }
 
 
+def _dict(value) -> dict:
+    return value if isinstance(value, dict) else {}
+
+
+def _list(value) -> list:
+    return value if isinstance(value, list) else []
+
+
 def _catalog(catalog) -> Catalog:
     return catalog if catalog is not None else shared()
 
 
 def fmt(value, unit: str = "") -> str:
-    """15 -> '15', 5e-7 -> '5.0e-07' ... with the unit if there is one."""
+    """15 -> '15', 5e-7 -> '5e-07', 1.26e-7 -> '1.26e-07' ... with the unit if there is one (six
+    significant figures: the text is what authors check a recipe by)."""
     x = number(value)
     if x is None:
         return "?" if value in (None, "") else repr(value)
-    s = f"{x:.1e}" if x != 0 and (abs(x) < 1e-3 or abs(x) >= 1e6) else f"{x:.6g}"
+    s = f"{x:.6g}"
     return f"{s} {unit}" if unit else s
 
 
@@ -323,7 +332,7 @@ def estimate(data: dict, load=None, depth: int = 0) -> tuple:
     it have no fixed length (waits for a condition or the operator, ramps that start from the
     readback). load(target_file) -> sub-recipe data, or None if not known."""
     seconds, open_ended = 0.0, False
-    for step in (data or {}).get("steps") or []:
+    for step in _list(_dict(data).get("steps")):
         s, o = _step_estimate(step, load, depth)
         seconds += s
         open_ended = open_ended or o
@@ -341,13 +350,13 @@ def _step_estimate(step, load, depth):
     if kind in ("WAIT_TELEMETRY", "USER_PROMPT", "VERIFIED_ACTION"):
         return 0.0, True
     if kind == "PARALLEL":
-        parts = [_step_estimate(s, load, depth) for s in step.get("steps") or []]
+        parts = [_step_estimate(s, load, depth) for s in _list(step.get("steps"))]
         return max((p[0] for p in parts), default=0.0), any(p[1] for p in parts)
     if kind == "SUB_RECIPE":
         sub = load(step.get("target_file")) if load is not None and depth < 8 else None
         return estimate(sub, load, depth + 1) if isinstance(sub, dict) else (0.0, True)
     if kind == "ROUTINE_CALL":
-        p = step.get("parameters") or {}
+        p = _dict(step.get("parameters"))
         name = step.get("routine_name")
         if name == "mass_scan":
             start, stop, size = number(p.get("start_a")), number(p.get("stop_a")), number(p.get("step_a"))
@@ -380,14 +389,14 @@ def describe_recipe(data: dict, catalog=None, recipe_names: dict = None, load=No
     if str(data.get("description") or "").strip():
         lines.append(str(data["description"]).strip())
     lines.append("")
-    policy = data.get("fault_policy") or []
-    if isinstance(policy, list) and policy:
+    policy = _list(data.get("fault_policy"))
+    if policy:
         lines.append("It stops if:")
         lines.extend(f"  - {describe_policy_entry(e, catalog)}" for e in policy if isinstance(e, dict))
     else:
         lines.append("It has no stop conditions: it runs to the end unless a step fails or it is stopped.")
     lines.append("")
-    steps = data.get("steps") or []
+    steps = _list(data.get("steps"))
 
     def add(step, number_text, indent):
         lines.append(f"{indent}{number_text} {describe_step(step, catalog, recipe_names)}")
@@ -395,7 +404,7 @@ def describe_recipe(data: dict, catalog=None, recipe_names: dict = None, load=No
         if note and note != "No description":
             lines.append(f"{indent}{' ' * (len(number_text) + 1)}Note: {note}")
         if isinstance(step, dict) and step.get("type") == "PARALLEL":
-            for j, sub in enumerate(step.get("steps") or [], 1):
+            for j, sub in enumerate(_list(step.get("steps")), 1):
                 add(sub, f"{number_text[:-1]}.{j}.", indent + "    ")
 
     for i, step in enumerate(steps, 1):

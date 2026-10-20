@@ -140,3 +140,13 @@ def test_safety_relay_routine_asks_for_the_vacuum_first(world, tmp_path):
 def test_routine_parameters_are_checked_when_the_recipe_loads(world, tmp_path, routine, params, why):
     with pytest.raises(RecipeError, match=why):
         start(world, tmp_path, routine, **params)
+
+
+def test_the_relay_routine_checks_the_vacuum_even_with_its_gauge_field_emptied(world, tmp_path):
+    """An emptied tag field used to switch the vacuum check off without a word."""
+    world.set("PLC_DATA", RELAY, 0.0)
+    world.set("PLC_DATA", "ion_beam.source.chamber.stat_gv_open", 0.0)
+    world.set("PLC_DATA", "ion_beam.source.vacuum_gauge_1.rb_pressure", 5e-5)
+    job = start(world, tmp_path, "safety_relay_init", vacuum_tag="", gv_stat_open="")
+    world.run_until(job, lambda: job.state == PROMPT, timeout=1)
+    assert "The source pressure is 5.00e-05 mbar" in job.prompt["text"]

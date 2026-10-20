@@ -51,12 +51,14 @@ def parse_number(text: str):
 
 
 def show_number(value) -> str:
+    """A number as it was typed, to the last digit (it is stored again as shown, so it must never
+    be rounded: 1.234e-07 stays 1.234e-07)."""
     if value is None:
         return ""
     x = number(value)
     if x is None or isinstance(value, str):
         return str(value)
-    return f"{x:g}" if abs(x) >= 1e-3 or x == 0 else f"{x:.3g}"
+    return str(int(x)) if x.is_integer() and abs(x) < 1e15 else repr(x)
 
 
 # ============================================================================ tags

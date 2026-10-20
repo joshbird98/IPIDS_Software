@@ -458,7 +458,7 @@ Once the relay is on, the routine waits `stabilization_sec` (15 s) before the st
 | Failure | What it means |
 |---|---|
 | `no live readback <tag> to start the ramp from` | The readback it starts from has no live value. |
-| `no live value for <tags> for 30 s` | The pressure or arc signal it watches had no live value for 30 s; it held the setpoint meanwhile. |
+| `no live value for <tags> for 30 s` | The pressure, arc or on-status signal it watches had no live value for 30 s; it held the setpoint meanwhile. |
 | `exceeded the maximum of <n> arcs` | More arcs than `max_arcs` (5 unless the step says otherwise). |
 | `the supply is off (<tag> is 0): switch it on before conditioning it` | The supply's on status reads 0. |
 | `the readback (<value>) didn't follow the setpoint (<setpoint>) within <tolerance>: is the supply on?` | At the end of a hold, the readback wasn't within the tolerance (one step unless the step says otherwise) of the setpoint. |

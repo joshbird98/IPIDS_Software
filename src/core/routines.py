@@ -150,6 +150,15 @@ class BaseRoutine:
                 return param.read(self.parameters)
         return self.parameters.get(key)
 
+    def tag(self, key) -> str:
+        """A tag parameter. Left empty, it is its default: clearing a field in the builder mustn't drop
+        the check it is for (the source vacuum before the gate valve opens, say)."""
+        value = self.p(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+        default = next((q.default for q in self.PARAMS if q.key == key), "")
+        return default or ""
+
     def num(self, key) -> float:
         x = number(self.p(key))
         if x is None:
@@ -407,12 +416,12 @@ class SafetyRelayRoutine(BaseRoutine):
 
     def __init__(self, parameters: dict):
         super().__init__(parameters)
-        self.gv_cmd_open = self.p("cmd_gv_open")
-        self.gv_stat_open = self.p("gv_stat_open")
-        self.gv_open_perm = self.p("gv_open_perm")
-        self.cmd_virtual = self.p("cmd_virtual")
-        self.rb_relay = self.p("rb_relay")
-        self.vacuum_tag = self.p("vacuum_tag")
+        self.gv_cmd_open = self.tag("cmd_gv_open")
+        self.gv_stat_open = self.tag("gv_stat_open")
+        self.gv_open_perm = self.tag("gv_open_perm")
+        self.cmd_virtual = self.tag("cmd_virtual")
+        self.rb_relay = self.tag("rb_relay")
+        self.vacuum_tag = self.tag("vacuum_tag")
         self.vacuum_max = self.num("vacuum_max")
         self.timeout_sec = self.num("timeout_sec")
         self.gv_timeout_sec = self.num("gv_timeout_sec")
@@ -723,7 +732,7 @@ class PSUControlRoutine(BaseRoutine):
         self.timeout_sec = self.num("timeout_sec")
         self.wait_for_readback = bool(self.num("wait_for_readback"))
         self.requires_relay = bool(self.num("requires_relay"))
-        self.rb_relay = self.p("rb_relay")
+        self.rb_relay = self.tag("rb_relay")
 
         self.timer_start = 0.0
         self.state = "INIT"

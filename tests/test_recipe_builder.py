@@ -377,3 +377,53 @@ def test_every_template_loads_with_no_problems(make):
         assert dlg.new_from_template(path)
         assert dlg.problems == [], (name, [p.text() for p in dlg.problems])
         assert dlg.is_dirty() and dlg.filename is None
+
+
+# ============================================================================ found in review
+def test_a_stop_condition_added_after_an_undo_is_kept(make):
+    """After an undo to a state without stop conditions, the tab edited a list that wasn't the recipe's."""
+    dlg = make()
+    add(dlg, "wait_time")
+    dlg.undo()
+    dlg.policy._add_recommended()
+    assert [e["name"] for e in dlg.data["fault_policy"]] == ["Safety_Relay_Tripped"]
+    dlg._check()
+    assert dlg.tabs.tabText(1) == "Stop conditions (1)"
+
+
+def test_showing_a_step_doesnt_change_the_recipe(make, folder):
+    (folder / "plain.json").write_text(json.dumps({"recipe_name": "Plain", "steps": [
+        {"step_id": 1, "type": "USER_PROMPT", "prompt_text": "Check it"},
+        {"step_id": 2, "type": "ROUTINE_CALL", "routine_name": "safety_relay_init"}]}))
+    dlg = make("plain.json")
+    for path in ((0,), (1,), (0,)):
+        dlg.outline.select_path(path, quiet=False)
+    assert not dlg.is_dirty() and not dlg.windowTitle().endswith("*")
+    assert "verify_conditions" not in dlg.data["steps"][0] and "parameters" not in dlg.data["steps"][1]
+
+
+def test_a_malformed_file_opens_with_its_errors_shown(make, folder):
+    (folder / "odd.json").write_text(json.dumps({"recipe_name": "Odd", "steps": [
+        {"step_id": 1, "type": "ROUTINE_CALL", "routine_name": "psu_control", "parameters": ["x"]},
+        {"step_id": 2, "type": "PARALLEL", "steps": 5}]}))
+    dlg = make("odd.json")
+    assert dlg.filename == "odd.json" and len([p for p in dlg.problems if p.level == "error"]) == 2
+
+
+def test_redo_from_the_keyboard_and_after_typing(make, app):
+    from PyQt6.QtCore import Qt
+    from PyQt6.QtTest import QTest
+    dlg = make()
+    dlg.show()
+    app.processEvents()
+    add(dlg, "wait_time")
+    add(dlg, "ask")
+    dlg.outline.setFocus()
+    QTest.keyClick(dlg.outline, Qt.Key.Key_Z, Qt.KeyboardModifier.ControlModifier)
+    assert len(dlg.data["steps"]) == 1
+    QTest.keyClick(dlg.outline, Qt.Key.Key_Y, Qt.KeyboardModifier.ControlModifier)
+    assert len(dlg.data["steps"]) == 2
+    dlg.undo()
+    dlg.le_name.setText("Typed after the undo")            # (not recorded yet when Redo comes)
+    dlg.redo()
+    assert dlg.data["recipe_name"] == "Typed after the undo" and len(dlg.data["steps"]) == 1

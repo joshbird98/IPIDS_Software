@@ -30,7 +30,7 @@ from PyQt6.QtWidgets import (QDialog, QDialogButtonBox, QFormLayout, QGridLayout
 
 from src.core import paths
 from src.core.recipe_catalog import shared
-from src.core.recipe_check import ERROR, check_recipe, errors, warnings
+from src.core.recipe_check import ERROR, Problem, check_recipe, errors, warnings
 from src.core.recipe_engine import RecipeError, resolve_sub_recipe
 from src.core.recipe_files import RECIPES_DIR
 from src.core.recipe_store import free_filename, read_recipe, save_recipe
@@ -282,8 +282,8 @@ class RecipeBuilderDialog(QDialog):
         set_role(self.lbl_status, "caption")
         root.addWidget(self.lbl_status)
 
-        for keys, slot in ((QKeySequence.StandardKey.Save, self.save), (QKeySequence.StandardKey.Undo, self.undo),
-                           (QKeySequence.StandardKey.Redo, self.redo), ("Ctrl+Y", self.redo)):
+        for keys, slot in (("Ctrl+S", self.save), ("Ctrl+Z", self.undo), ("Ctrl+Y", self.redo),
+                           ("Ctrl+Shift+Z", self.redo)):
             QShortcut(QKeySequence(keys), self, activated=lambda s=slot: s())
         QShortcut(QKeySequence(Qt.Key.Key_Delete), self.outline, activated=self.delete_step,
                   context=Qt.ShortcutContext.WidgetShortcut)
@@ -512,7 +512,7 @@ class RecipeBuilderDialog(QDialog):
 
     def _record(self):
         self._record_timer.stop()
-        snap = _snapshot(self.data)
+        snap = json.dumps(self.data, sort_keys=True)         # exactly: what undo puts back
         if self._pos >= 0 and self._history[self._pos] == snap:
             self._update_history_buttons()
             return
@@ -535,6 +535,8 @@ class RecipeBuilderDialog(QDialog):
             self._restore(self._history[self._pos])
 
     def redo(self):
+        if self._record_timer.isActive():
+            self._record()                   # an edit since the undo: it stays (and there is nothing to redo)
         if self._pos < len(self._history) - 1:
             self._pos += 1
             self._restore(self._history[self._pos])
@@ -569,8 +571,9 @@ class RecipeBuilderDialog(QDialog):
             w.blockSignals(True)
             w.setText(str(self.data.get(key) or ""))
             w.blockSignals(False)
-        policy = self.data.get("fault_policy")
-        self.policy.set_policy(policy if isinstance(policy, list) else [])
+        if not isinstance(self.data.get("fault_policy"), list):
+            self.data["fault_policy"] = []     # (the editor must edit the recipe's own list, never a copy)
+        self.policy.set_policy(self.data["fault_policy"])
         self._check(render=False)
         self._render_outline(select)
         self._update_title()
@@ -637,7 +640,12 @@ class RecipeBuilderDialog(QDialog):
     # ================================================================== the checks
     def _check(self, render: bool = True):
         self._check_timer.stop()
-        self.problems = check_recipe(self.data, self.catalog, self.recipes_dir, self._path())
+        try:
+            self.problems = check_recipe(self.data, self.catalog, self.recipes_dir, self._path())
+        except Exception as e:   # a fault in the checks must not stop the builder: shown as an error
+            log.exception("The recipe checks failed")
+            self.problems = [Problem(ERROR, (), f"the checks failed on this recipe ({type(e).__name__}: {e}) - "
+                                                "report it; it can't be saved until they pass")]
         by_path = {}
         policy = {}
         for p in self.problems:
@@ -670,7 +678,12 @@ class RecipeBuilderDialog(QDialog):
         policy_list = self.data.get("fault_policy")
         n_policy = len(policy_list) if isinstance(policy_list, list) else 0
         self.tabs.setTabText(1, f"Stop conditions ({n_policy})")
-        self.txt_recipe.setPlainText(describe_recipe(self.data, self.catalog, self._recipe_names(), self._load_sub))
+        try:
+            text = describe_recipe(self.data, self.catalog, self._recipe_names(), self._load_sub)
+        except Exception as e:   # (the text is a view: never let it stop an edit)
+            log.exception("No text for the recipe")
+            text = f"(The recipe can't be shown as text: {type(e).__name__}: {e})"
+        self.txt_recipe.setPlainText(text)
 
     def _render_marks(self):
         for path, _number, text, _note, level, mark, _kind in self._rows():

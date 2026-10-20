@@ -106,7 +106,7 @@ If you take control of something a running recipe drives, with **TAKE CONTROL** 
 A recipe's stop conditions (its fault policy, in the file) end it as failed as soon as one holds. There are two kinds:
 
 - **a PLC fault**: the recipe stops when that fault is latched, for example **Safety Relay Tripped**: **Stopped at step 4: fault Safety_Relay_Tripped is active.**;
-- **a condition** on a live reading, for example the source pressure above 5×10⁻⁶ mbar, with an optional message: **Stopped at step 4:** the message **(the source pressure (VG1) is above 5.0e-06 mbar).**
+- **a condition** on a live reading, for example the source pressure above 5×10⁻⁶ mbar, with an optional message: **Stopped at step 4:** the message **(the source pressure (VG1) is above 5e-06 mbar).**
 
 The sequencer checks them every time it moves the recipe on (about 50 times a second), together with the stop conditions of every sub-recipe running (**... (a stop condition of 'Standard Beamline Startup')**). If a reading a stop condition needs has had no live value for 3 s, the recipe stops too: **the stop conditions can't be checked - no live value for** ... **for 3 s.** An entry the sequencer can't evaluate (an unknown condition, a bad fault bit, no tag) refuses the start.
 
@@ -205,7 +205,7 @@ The **Stop conditions** tab lists the recipe's stop conditions as sentences. **A
 
 | Template | What it does |
 |---|---|
-| **Start-up: vacuum, safety relay, high voltage, filament and caesium** | [Bringing up a beam](../procedures/beam-start-up.md) as a recipe: the checks at the machine (asked of the operator), the source vacuum, the gate valve and the safety relay, then extraction, target, ioniser, einzel (with its current checked), filament, and the caesium oven up to temperature. |
+| **Start-up: vacuum, safety relay, high voltage, filament and caesium** | [Bringing up a beam](../procedures/beam-start-up.md) as a recipe: the checks at the machine (asked of the operator), the source vacuum, the gate valve and the safety relay, then extraction, target, ioniser, einzel (with its current checked), the filament (at 15 A first, with a stop for degassing when it is needed), and the caesium oven up to temperature. |
 | **Shutdown by hand: cool the caesium, then switch everything off** | [Shutting down](../procedures/beam-shut-down.md) by hand: the caesium oven off and cooled until the PLC says it is no longer hot, the filament to zero, every supply off, the safety relay off. |
 | **Shutdown by the PLC (INITIATE SHUTDOWN)** | Asks first, then hands the shutdown to the PLC and waits for it to finish. |
 | **Mass scan: magnet on, cup in and biased, scan, then the biggest peak** | Everything a scan needs, then the scan. |

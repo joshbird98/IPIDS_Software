@@ -152,6 +152,30 @@
         "stat_enabled": "ion_beam.source.filament.stat_enabled",
         "sp_tag": "ion_beam.source.filament.sp_requested_current",
         "rb_tag": "ion_beam.source.filament.rb_current",
+        "target_val": 15.0,
+        "wait_for_readback": true,
+        "tolerance": 0.5,
+        "timeout_sec": 120.0,
+        "requires_relay": true
+      },
+      "comment": "Filament on at 15 A (the PLC zeroes the setpoint of a supply that is off)"
+    },
+    {
+      "step_id": 12,
+      "type": "USER_PROMPT",
+      "prompt_text": "If the filament is new or the source has been at air, let it degas now: the source pressure spikes, then falls back to a low baseline (watch VG1 on a log axis in the data viewer). Otherwise, or once it has, click OK.",
+      "verify_conditions": [],
+      "comment": "Degassing, if the filament is new or the source has been at air"
+    },
+    {
+      "step_id": 13,
+      "type": "ROUTINE_CALL",
+      "routine_name": "psu_control",
+      "parameters": {
+        "cmd_enable": "ion_beam.source.filament.cmd_enable",
+        "stat_enabled": "ion_beam.source.filament.stat_enabled",
+        "sp_tag": "ion_beam.source.filament.sp_requested_current",
+        "rb_tag": "ion_beam.source.filament.rb_current",
         "target_val": 28.0,
         "wait_for_readback": true,
         "tolerance": 0.5,
@@ -161,34 +185,34 @@
       "comment": "Filament to its operating point (the PLC raises it at 1 A per second)"
     },
     {
-      "step_id": 12,
+      "step_id": 14,
       "type": "WAIT_TIME",
       "duration_sec": 20.0,
       "comment": "The ioniser current rises as the filament warms"
     },
     {
-      "step_id": 13,
+      "step_id": 15,
       "type": "ACTION",
       "target": "ion_beam.source.cesium.cmd_force_cooling",
       "value": false,
       "comment": "Caesium forced cooling off"
     },
     {
-      "step_id": 14,
+      "step_id": 16,
       "type": "ACTION",
       "target": "ion_beam.source.cesium.cmd_ctrl_mode",
       "value": 1,
       "comment": "Caesium oven heater on"
     },
     {
-      "step_id": 15,
+      "step_id": 17,
       "type": "ACTION",
       "target": "ion_beam.source.cesium.sp_requested_temp",
       "value": 140.0,
       "comment": "Caesium oven setpoint"
     },
     {
-      "step_id": 16,
+      "step_id": 18,
       "type": "WAIT_TELEMETRY",
       "target": "ion_beam.source.cesium.rb_temp",
       "condition": ">=",
@@ -197,7 +221,7 @@
       "comment": "The caesium heats (about 15 minutes)"
     },
     {
-      "step_id": 17,
+      "step_id": 19,
       "type": "USER_PROMPT",
       "prompt_text": "The caesium is hot. To read the beam, insert the Faraday cup and bias it above 50 V: the beam takes 10 to 60 minutes to rise. Then tune it (help: Selecting a mass and tuning the beam).",
       "verify_conditions": [],

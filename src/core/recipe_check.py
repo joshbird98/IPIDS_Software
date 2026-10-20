@@ -28,6 +28,7 @@ from typing import List, Optional
 
 from src.core import hard_caps, paths
 from src.core.conditions import number
+from src.core.config_store import read_text
 from src.core.recipe_catalog import FAULT_RESET, SAFETY_ENABLE, SAFETY_RELAY, TURBO_ENABLE, Catalog, shared
 from src.core.recipe_engine import (MAX_DEPTH, STEP_TYPES, RecipeError, create_step, parse_fault_policy,
                                     resolve_sub_recipe)
@@ -80,6 +81,7 @@ class _Checker:
         self.stack = stack                  # the files from the root to this one ('<unsaved>' for a new recipe)
         self.cache = cache                  # sub-recipe path -> (data or None, its problems), checked once
         self.tree = tree or {}              # path -> Recipe already loaded (the sequencer's)
+        self.steps = []                     # the recipe's steps (for the step numbers in the messages)
         self.problems: List[Problem] = []
 
     @property
@@ -88,7 +90,18 @@ class _Checker:
 
     # ------------------------------------------------------------------ helpers
     def add(self, level, path, message):
-        self.problems.append(Problem(level, tuple(path), message, _where(path)))
+        self.problems.append(Problem(level, tuple(path), message, self.where(tuple(path))))
+
+    def where(self, path) -> str:
+        """'step 3', 'step 20.1' ... by the step's own number in the file, as the Recipe Execution
+        panel lists it (the builder numbers steps 1..n, so there it is the position too)."""
+        if not path or path[0] == "policy":
+            return _where(path)
+        head = path[0]
+        step = self.steps[head] if isinstance(head, int) and 0 <= head < len(self.steps) else None
+        sid = step.get("step_id") if isinstance(step, dict) else None
+        own = isinstance(sid, (int, str)) and not isinstance(sid, bool) and str(sid).strip() != ""
+        return "step " + (str(sid).strip() if own else str(head + 1)) + "".join(f".{i + 1}" for i in path[1:])
 
     def label(self, tag) -> str:
         return self.catalog.label(tag) if self.known else str(tag)
@@ -185,8 +198,7 @@ class _Checker:
                 if full in self.tree:
                     data = self.tree[full].data
                 else:
-                    with open(full, "r", encoding="utf-8-sig") as f:
-                        data = json.load(f)
+                    data = json.loads(read_text(full)[0])
             except (OSError, ValueError) as e:
                 self.cache[full] = (None, [Problem(ERROR, (), f"can't be read: {e}")])
             else:
@@ -211,6 +223,7 @@ class _Checker:
         if not isinstance(steps, list):
             self.add(ERROR, (), "steps must be a list")
             return
+        self.steps = steps
         if not steps:
             self.add(WARNING, (), "the recipe has no steps")
         ids = [s.get("step_id") for s in steps if isinstance(s, dict)]
@@ -334,7 +347,12 @@ class _Checker:
         by_key = {p.key: p for p in cls.PARAMS}
         for p in cls.PARAMS:
             value = p.read(params)
-            if p.kind == "settable_tag" and value:
+            if p.kind == "settable_tag" and value == TURBO_ENABLE:
+                # (a routine sends its tags other values than 1: a supply's setpoint, a ramp's back-off, the
+                # relay routine's 0 when START isn't pressed - any of them would be a stop)
+                self.add(ERROR, path, f"{p.label.lower()}: the source turbo pump's start isn't a routine's to drive - "
+                                      f"{TURBO_STOP}")
+            elif p.kind == "settable_tag" and value:
                 self.settable(path, value, None, f"for {p.label.lower()}")
             elif p.kind == "readable_tag" and value:
                 self.readable(path, value, f"for {p.label.lower()}")
@@ -422,7 +440,7 @@ class _Checker:
             kind, target = s.get("type"), s.get("target")
             value = number(s.get("value"))
             routine = s.get("routine_name") if kind == "ROUTINE_CALL" else None
-            params = (s.get("parameters") or {}) if routine else {}
+            params = _dict(s.get("parameters")) if routine else {}
             conds = _conditions_of(s)
             if routine == "safety_relay_init" or _holds_one(conds, SAFETY_RELAY):
                 relay_sure = True
@@ -479,6 +497,14 @@ class _Checker:
                                            f"if the relay trips: add {SAFETY_TRIP_FAULT} to its stop conditions")
 
 
+def _dict(value) -> dict:
+    return value if isinstance(value, dict) else {}
+
+
+def _list(value) -> list:
+    return value if isinstance(value, list) else []
+
+
 def _where(path) -> str:
     if not path:
         return ""
@@ -508,7 +534,7 @@ def _targets(step) -> list:
     if step.get("type") in ("ACTION", "VERIFIED_ACTION") and isinstance(step.get("target"), str):
         return [step["target"]]
     if step.get("type") == "ROUTINE_CALL":
-        p = step.get("parameters") or {}
+        p = _dict(step.get("parameters"))
         return [t for t in (p.get("cmd_enable"), p.get("sp_tag"), p.get("cmd_tag")) if isinstance(t, str) and t]
     return []
 
@@ -527,7 +553,7 @@ def _switched_on(step) -> set:
         if sub == CESIUM and leaf == "cmd_ctrl_mode" and v == 1.0:
             out.add(sub)
     if kind == "ROUTINE_CALL" and step.get("routine_name") == "psu_control":
-        tag = (step.get("parameters") or {}).get("cmd_enable")
+        tag = _dict(step.get("parameters")).get("cmd_enable")
         if isinstance(tag, str):
             out.add(tag.rpartition(".")[0])
     return out
@@ -540,7 +566,7 @@ def _conditions_of(step) -> list:
         return [(step.get("target"), step.get("condition", "=="), number(step.get("value")))]
     if kind == "USER_PROMPT":
         return [(c.get("target"), c.get("condition", "=="), number(c.get("value", 1.0)))
-                for c in step.get("verify_conditions") or [] if isinstance(c, dict)]
+                for c in _list(step.get("verify_conditions")) if isinstance(c, dict)]
     if kind == "VERIFIED_ACTION":
         out = []
         if step.get("pre_target"):
@@ -595,8 +621,7 @@ def check_recipe(data: dict, catalog: Catalog = None, recipes_dir: str = None, p
 
 def check_file(path: str, catalog: Catalog = None, recipes_dir: str = None) -> List[Problem]:
     try:
-        with open(path, "r", encoding="utf-8-sig") as f:
-            data = json.load(f)
+        data = json.loads(read_text(path)[0])
     except (OSError, ValueError) as e:
         return [Problem(ERROR, (), f"{os.path.basename(path)} can't be read: {e}")]
     return check_recipe(data, catalog, recipes_dir, path)

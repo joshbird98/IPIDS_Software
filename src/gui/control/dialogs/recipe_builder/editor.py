@@ -18,6 +18,13 @@ SUPPLY_TAGS = {"psu_control": ("cmd_enable", "stat_enabled", "sp_tag", "rb_tag")
                "hv_conditioning": ("cmd_tag", "rb_tag", "enabled_tag")}
 
 
+def _attach(step: dict, key: str, value):
+    """Put a list or dict the form made into the step, on the first edit (showing a step never
+    changes it: the recipe would read as changed)."""
+    if step.get(key) is not value:
+        step[key] = value
+
+
 def _label(text: str, role: str = "caption", wrap: bool = True) -> QLabel:
     lbl = QLabel(text)
     lbl.setWordWrap(wrap)
@@ -235,7 +242,7 @@ class StepEditor(QScrollArea):
         form.addRow("Message", text)
         conditions = step.get("verify_conditions")
         if not isinstance(conditions, list):
-            conditions = step["verify_conditions"] = []
+            conditions = []                          # (made part of the step when one is added)
         box = QWidget()
         box_layout = QVBoxLayout(box)
         box_layout.setContentsMargins(0, 0, 0, 0)
@@ -266,7 +273,8 @@ class StepEditor(QScrollArea):
                 inner.addWidget(row)
                 rows.addWidget(frame)
 
-        add.clicked.connect(lambda: (conditions.append({"target": "", "condition": "==", "value": 1}), draw(),
+        add.clicked.connect(lambda: (_attach(step, "verify_conditions", conditions),
+                                     conditions.append({"target": "", "condition": "==", "value": 1}), draw(),
                                      self._edited()))
         draw()
         form.addRow("Accept OK only once", box)
@@ -293,7 +301,7 @@ class StepEditor(QScrollArea):
         name = step.get("routine_name")
         params = step.get("parameters")
         if not isinstance(params, dict):
-            params = step["parameters"] = {}
+            params = {}                              # (made part of the step on the first edit)
         cls = ROUTINE_REGISTRY.get(name)
         if cls is None:
             layout.addWidget(_label(f"The sequencer has no routine {name!r} (it has: "
@@ -308,7 +316,7 @@ class StepEditor(QScrollArea):
             if p.key == "gv_stat_closed":
                 continue                                  # (read by nothing)
             target = more.form if (p.advanced or p.key in supply_keys) else form
-            self._param_row(target, params, p, cls)
+            self._param_row(target, step, params, p, cls)
         if more.form.rowCount():
             layout.addWidget(more)
 
@@ -320,6 +328,7 @@ class StepEditor(QScrollArea):
         def chosen(supply):
             if supply is None:
                 return
+            _attach(step, "parameters", params)
             if routine == "psu_control":
                 params.update({"cmd_enable": supply.enable_tag, "stat_enabled": supply.enabled_tag,
                                "sp_tag": supply.setpoint_tag, "rb_tag": supply.readback_tag,
@@ -333,11 +342,12 @@ class StepEditor(QScrollArea):
         field.chosen.connect(chosen)
         form.addRow("Supply", field)
 
-    def _param_row(self, form, params, p, cls):
+    def _param_row(self, form, step, params, p, cls):
         value = p.read(params)
         key = next((n for n in (p.key,) + p.aliases if n in params), p.key)   # an older name stays as it is
 
         def store(v, drop_none=True):
+            _attach(step, "parameters", params)
             if v is None and drop_none:
                 params.pop(key, None)
             else:

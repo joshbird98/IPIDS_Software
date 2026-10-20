@@ -1,6 +1,7 @@
 """HMI panels as clients of the sequencer: the Recipe panel and the Automation bar (offscreen,
 with a fake command thread)."""
 import json
+import os
 
 import pytest
 
@@ -216,3 +217,69 @@ def test_automation_bar_lists_holders_and_takes_control(app):
     bar.update_telemetry({})
     assert not bar.rows and bar.idle_action.isVisible()
     bar.deleteLater()
+
+
+def test_a_failed_load_after_a_run_doesnt_show_the_run_again(panel, tmp_path):
+    """The panel used to fall back to the finished run (and offer RESTART) after a LOAD it couldn't do."""
+    w, cmds = panel
+    w.select_recipe("ramp.json")
+    w.btn_load.click()
+    w.update_telemetry({"sequencer.recipe.state": "idle", "sequencer.recipe.run": None})
+    cmds.replies["cmd_start"] = Ticket(data={"run": 7})
+    w.btn_start.click()
+    w.update_telemetry(run_telemetry("complete", ("DONE", "DONE"), message="Recipe completed successfully."))
+    assert w.btn_start.text() == "↻ RESTART"
+    (tmp_path / "broken.json").write_text("{ nope")
+    w.select_recipe("broken.json")
+    w.btn_load.click()
+    w.update_telemetry(run_telemetry("complete", ("DONE", "DONE"), message="Recipe completed successfully."))
+    assert w.lbl_status.text().startswith("NOT LOADED: broken.json") and not w.btn_start.isEnabled()
+    assert w.list_steps.count() == 0
+
+
+def test_load_of_a_recipe_calling_a_malformed_one_reports_it(panel, tmp_path):
+    w, _ = panel
+    (tmp_path / "odd.json").write_text(json.dumps({"recipe_name": "Odd", "steps": [
+        {"step_id": 1, "type": "PARALLEL", "steps": 5}]}))
+    (tmp_path / "caller.json").write_text(json.dumps({"recipe_name": "Caller", "steps": [
+        {"step_id": 1, "type": "SUB_RECIPE", "target_file": "odd.json"}]}))
+    w.select_recipe("caller.json")
+    w.btn_load.click()
+    assert "NOT READY: Caller" in w.lbl_status.text() and "in odd.json" in w.lbl_check.text()
+
+
+def test_edit_finds_the_window_that_holds_the_recipe(panel, tmp_path, monkeypatch):
+    import src.gui.control.widgets.recipe_widget as rw
+
+    class FakeBuilder:
+        made = []
+
+        def __init__(self, parent, folder, load_filepath=None):
+            self.filename = os.path.basename(load_filepath) if load_filepath else None
+            self.saved = Signal()
+            self.destroyed = Signal()
+            FakeBuilder.made.append(self)
+
+        def show(self):
+            pass
+
+        def showNormal(self):
+            pass
+
+        def raise_(self):
+            pass
+
+        def activateWindow(self):
+            self.activated = True
+
+    class Signal:
+        def connect(self, slot):
+            pass
+
+    monkeypatch.setattr(rw, "RecipeBuilderDialog", FakeBuilder)
+    w, _ = panel
+    first = w._open_builder("ramp.json")
+    assert w._open_builder("ramp.json") is first and first.activated
+    first.filename = "other.json"                           # (it opened another recipe since)
+    assert w._open_builder("ramp.json") is not first and len(FakeBuilder.made) == 2
+    assert w._open_builder(None) is not w._open_builder(None)         # NEW RECIPE: a window each time
