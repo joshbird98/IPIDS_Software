@@ -7,6 +7,7 @@ from PyQt6.QtCore import Qt, QRectF, QPointF
 from PyQt6.QtGui import QPainter, QPen, QFont
 
 from src.gui import theme
+from src.gui.control.last_known import LastKnown, age_text
 from src.gui.control.permits import permit_reason
 from src.gui.control.setpoint_box import SetpointBox
 from src.gui.control.widgets.source_widget import show_tolerance, tolerance_flagged
@@ -100,6 +101,7 @@ class FaradaySMUWidget(QWidget):
     def __init__(self, cmd_thread):
         super().__init__()
         self.cmd_thread = cmd_thread
+        self._fc_last = LastKnown()          # the cup's last known position, for the tooltip once unknown
         self.main_layout = QVBoxLayout(self)
 
         self._init_actuator_ui()
@@ -280,7 +282,11 @@ class FaradaySMUWidget(QWidget):
         self.btn_fc.blockSignals(True)
         fc_state_string = "UNKNOWN"
 
-        if fc_in is not None and fc_out is not None:
+        if fc_in is None or fc_out is None:
+            # Not known now (no PLC data): not the last state as if it were live
+            self.btn_fc.setText("FARADAY CUP: UNKNOWN")
+            set_tone(self.btn_fc, "unknown")
+        else:
             if bool(fc_in) and not bool(fc_out):
                 fc_state_string = "INSERTED"
                 self.btn_fc.setChecked(True)
@@ -299,10 +305,15 @@ class FaradaySMUWidget(QWidget):
                 fc_state_string = "SENSOR ERROR"
                 self.btn_fc.setText("FARADAY CUP: LOGIC ERROR")
                 set_tone(self.btn_fc, "fault")
+            self._fc_last.update("fc", fc_state_string)
 
-        if master_comms_lost:
+        if master_comms_lost or fc_in is None or fc_out is None:
             self.btn_fc.setEnabled(False)
-            self.btn_fc.setToolTip("Disabled: PLC telemetry stream is dead.")
+            tip = "Disabled: no live PLC data, so the cup's position isn't known."
+            if "fc" in self._fc_last:
+                tip += (f" It was {self._fc_last.value('fc')} at {self._fc_last.read_at('fc')} "
+                        f"({age_text(self._fc_last.age('fc'))} ago).")
+            self.btn_fc.setToolTip(tip)
         elif not air_ok:
             self.btn_fc.setEnabled(False)
             self.btn_fc.setToolTip("Disabled: Facility air pressure is lost. Actuator cannot be moved.")

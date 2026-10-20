@@ -29,7 +29,8 @@ simulator; none of it has been tried on the real hardware yet (see "Lab PC valid
     a STALE chip and how long ago (tooltips say why: service silent, controllers or pump not answering, no
     good reading for 3 s); NO READING / OFFLINE when there never was one. The vacuum service now also
     withdraws a pressure the controller answers with something that isn't a number (it used to stay forever).
-    The OPEN tooltip says what the permissive needs (it named the turbo pump, which isn't part of it).
+    The OPEN tooltip says what the permissive needs (it named the turbo pump, which isn't part of it). The
+    Faraday cup button reads UNKNOWN without PLC data (it kept its last position and colour).
   - Source turbo pump: never stopped from the software (Josh: trained staff stop it by hand, at the pump).
     The service refuses cmd_enable false/0, and doesn't send a start or fault reset to a pump running without
     a fault (the reset word, 0x0480, has the run bit clear: it was a stop pulse). The panel tells ACCELERATING
@@ -367,10 +368,8 @@ simulator; none of it has been tried on the real hardware yet (see "Lab PC valid
       broken" alarm; which way the Faraday cup moves on a latched fault (FB20 sets Cmd_Insert_FC FALSE, OB100 and
       the shutdown sequences insert it); a relay trip doesn't start a shutdown sequence (facts report 12.2).
     - The config editor's password is written in the source (control_main.py, _show_config_editor).
-    - Stale values (the vacuum gauges and the turbo pump done, October 2026): the Faraday cup button keeps its
-      last text and colour when PLC data is lost (faraday_smu_widget.py:283-305). The panel shows AT SPEED /
-      RUNNING whenever the TURBOVAC's status bit 0 is set (vacuum_widget.py) - check what bit 0 means on the
-      real pump (the simulator now sets it only at full speed, src/sim/turbo.py).
+    - The Vacuum panel shows AT SPEED / RUNNING whenever the TURBOVAC's status bit 0 is set (vacuum_widget.py)
+      - check what bit 0 means on the real pump (the simulator now sets it only at full speed, src/sim/turbo.py).
     - PLC: a PC watchdog timeout closes the gate valve at once, so the relay drops (intended, Josh, October
       2026: without the PC the vacuum is unknown); so GRACE PERIOD's 75 % extraction hold acts on supplies
       without power - the step could be simplified.

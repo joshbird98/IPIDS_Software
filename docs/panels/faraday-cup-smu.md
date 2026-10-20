@@ -14,7 +14,7 @@ The **Faraday Cup & SMU** panel moves the Faraday cup into and out of the beam, 
 | **FARADAY CUP: RETRACTED** | plain | Out of the beam path. |
 | **FARADAY CUP: TRAVELLING** | amber | Neither flag is set: the cup is moving, or unpowered. |
 | **FARADAY CUP: LOGIC ERROR** | red | Both flags are set. |
-| **FARADAY CUP: UNKNOWN** | plain | No position received yet. |
+| **FARADAY CUP: UNKNOWN** | dashed outline | No live position: no PLC data. The button's tooltip says what the position was, and when. |
 
 **2. SMU bias voltage** has a status chip, the **Bias setpoint** box, the bias readback (**RB:**, V) and **ENABLE BIAS**.
 
