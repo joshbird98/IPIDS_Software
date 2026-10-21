@@ -30,6 +30,7 @@ class FakeGraphix:
         self.t0 = time.monotonic()
         self.names = {}
         self.relays = {}   # (node, relay) -> {"ch": int, "on": float, "off": float}
+        self.relay_closed = {}  # (node, relay) -> its state: it closes below "on", opens above "off"
         try:
             with open(paths.config_path("vac_gauges_config.json"), "r") as f:
                 cfg = json.load(f)
@@ -49,7 +50,7 @@ class FakeGraphix:
         base = _BASE_PRESSURES.get((node, ch), 1e-6)
         t = time.monotonic() - self.t0
         if (node, ch) == (10, 1) and "vacuum_vent_source" in injected_faults():
-            return min(1000.0, base * math.exp(t / 5.0))
+            return min(1000.0, base * math.exp(min(t / 5.0, 60.0)))     # (no overflow after an hour)
         drift = 1.0 + 0.08 * math.sin(t / 37.0 + node + ch)
         return base * drift * (1.0 + random.gauss(0, 0.01))
 
@@ -71,10 +72,15 @@ class FakeGraphix:
                 return f"SIM-{node}"
             if group == "4":
                 if param in _RELAY_STATUS:
-                    r = self.relays.get((node, _RELAY_STATUS[param]))
+                    key = (node, _RELAY_STATUS[param])
+                    r = self.relays.get(key)
                     if not r:
                         return "0"
-                    return "1" if self.pressure(node, r["ch"]) < r["on"] else "0"
+                    p = self.pressure(node, r["ch"])
+                    closed = self.relay_closed.get(key, p < r["on"])
+                    closed = True if p < r["on"] else False if p > r["off"] else closed     # (hysteresis)
+                    self.relay_closed[key] = closed
+                    return "1" if closed else "0"
                 for table, key in ((_RELAY_CH, "ch"), (_RELAY_ON, "on"), (_RELAY_OFF, "off")):
                     if param in table:
                         r = self.relays.setdefault((node, table[param]), {"ch": 1, "on": 1e-5, "off": 2e-5})

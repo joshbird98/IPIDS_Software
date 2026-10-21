@@ -1,6 +1,6 @@
 # System Health
 
-The **System Health** panel switches the safety relay on and off, starts and aborts the PLC's source shutdown, resets latched faults, and lists the faults the PLC has latched. Look here first when the machine won't do what you ask.
+The **System Health** panel switches the safety relay on and off, starts and aborts the PLC's source shutdown, resets latched faults, and lists the faults the PLC has latched. Look here first when the machine won't do what you ask; the [Interlocks](interlocks.md) panel, a tab behind it, shows what is holding each interlock.
 
 ![The System Health panel with the safety relay live and no shutdown running](../images/panel-system-health.png)
 
@@ -101,6 +101,7 @@ An accepted reset clears all six fault words, returns both step counters to 0, e
 
 ## See also
 
+- [Interlocks](interlocks.md)
 - [Safety rules](../safety.md)
 - [Alarms](alarms.md)
 - [Alarms and faults](../procedures/alarms-and-faults.md)

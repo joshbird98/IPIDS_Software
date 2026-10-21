@@ -11,10 +11,11 @@ if __name__ == "__main__":
     if __package__ in (None, ""):
         # Started as a script (python src/services/service_manager.py): make 'src' importable
         sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")))
-    if "--sim" in sys.argv[1:]:
+    from src.core.env import flag, use_simulator     # (reads nothing at import)
+    if "--sim" in sys.argv[1:] or flag("SIMULATE"):
         # Simulated devices, data_sim/ and the simulator's ports: set before src.core.paths and
-        # the network map are imported (they decide the data folder and the ports at import)
-        from src.core.env import use_simulator
+        # the network map are imported (they decide the data folder and the ports at import).
+        # SINDIE_SIMULATE=1 alone gets the ports too (an offset already set is kept).
         use_simulator()
 
 import psutil
@@ -54,6 +55,12 @@ SERVICES_CONFIG = {
     # ADAM module is broken (hardware). Its heartbeat name is "service_adam_monitor", so use that key if re-enabled:
     # "service_adam_monitor": {"script": os.path.join(CURRENT_DIR, "service_current_monitor.py"), "tier": 2, "timeout": 2.5, "boot_grace": 15.0},
 }
+
+# The command that stops every service and the manager itself (the launcher's "Stop services...")
+# must carry this, so that nothing sends it by accident (src/launcher/programs.py)
+SHUTDOWN_CONFIRM = "stop every SINDIE service"
+EVENTS_SERVICE = "service_events"   # stopped last, so that the way down is still in the event log
+REPLY_FLUSH_S = 0.5                 # after answering a shutdown: time for the reply to leave before closing
 
 # Seconds to wait before restart attempt 1, 2, 3, ... (stays at the last value).
 # A service that has then run ONLINE for STABLE_RESET_S gets its count reset.
@@ -179,6 +186,7 @@ class SindieServiceManager:
         self.waiting = {}             # name -> reason, while waiting out the backoff delay
         self.last_exit = {}
         self.running = True
+        self._shutdown_answered_at = None
 
     def _enforce_singleton(self):
         self.lock_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -308,6 +316,17 @@ class SindieServiceManager:
             msg = cmd.value if isinstance(cmd.value, dict) else {}
             action = msg.get("command")
             target = msg.get("service")
+            if action == "shutdown":
+                # Every service, then the manager: from the launcher, after a typed confirmation
+                if msg.get("confirm") != SHUTDOWN_CONFIRM:
+                    cmd.reject("shutdown needs its confirmation text (see src/launcher/programs.py)")
+                    continue
+                self.events.log_general(f"Operator stopped every service and the service manager "
+                                        f"(from {cmd.origin or 'unknown'})", severity="WARNING")
+                cmd.ok("stopping every service and the service manager")
+                self._shutdown_answered_at = time.monotonic()
+                self.stop()
+                continue
             if target not in self.services:
                 cmd.reject(f"unknown service {target!r}")
                 continue
@@ -404,11 +423,32 @@ class SindieServiceManager:
         except KeyboardInterrupt:
             self.events.log_general("Shutdown signal received. Terminating all services...")
         finally:
-            for name in list(self.running_processes.keys()):
+            self.commands.finish()          # (the shutdown's reply is out before anything slow)
+            self.stop_all_services()
+            if self._shutdown_answered_at is not None:      # (the socket drops what it hasn't sent)
+                time.sleep(max(0.0, REPLY_FLUSH_S - (time.monotonic() - self._shutdown_answered_at)))
+            self.close()
+
+    def close(self):
+        """Every socket, the lock among them (the end of run())."""
+        self.commands.close()
+        self.lock_socket.close()
+        self.context.destroy(linger=0)
+
+    def stop_all_services(self):
+        """The last started first (the sequencer before the devices it drives, the devices before
+        the PLC service and the loggers), and the event log last, so that the way down is still
+        recorded."""
+        order = sorted(self.running_processes, key=lambda n: (n == EVENTS_SERVICE,
+                                                              -self.services.get(n, {}).get("tier", 0),
+                                                              -self.launch_times.get(n, 0.0)))
+        for name in order:
+            if name != EVENTS_SERVICE:
                 self._kill_service(name)
-            self.events.log_general("All systems offline. Goodbye.")
-            self.commands.close()
-            self.lock_socket.close()
+        self.events.log_general("All systems offline. Goodbye.")
+        if EVENTS_SERVICE in self.running_processes:
+            time.sleep(0.5)                 # (for the last events to reach the event log)
+            self._kill_service(EVENTS_SERVICE)
 
 
 if __name__ == "__main__":

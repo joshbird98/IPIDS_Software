@@ -26,8 +26,70 @@ simulator; none of it has been tried on the real hardware yet (see "Lab PC valid
    once: open the builder, type a request, Draft. The model is gemini-3.8-flash (config/recipe_ai.json);
    `python -m src.core.recipe_ai.cli draft "..."` runs a draft from a terminal. Each draft is logged in
    SystemLogs/recipe_ai/, and each request (with how long its answer took) in the HMI's log.
+8. The launcher, so PyCharm isn't needed (docs/getting-started/starting-the-software.md): stop the service
+   manager running in its command window (Ctrl+C), then run `main_launcher.py` once from PyCharm (it uses
+   PyCharm's project interpreter, which has every library: nothing to install). Press **Start services**,
+   **Put shortcuts on the desktop**, and tick **Start with Windows** (the launcher then starts in the tray
+   at log-on and keeps the service manager running). From then on: the SINDIE shortcuts and the tray icon.
+9. The Interlocks panel (a tab behind System Health): with the machine safe, refuse the relay on purpose
+   (key at DISABLE, ENABLE SAFETY RELAY, no START): the Safety relay card should read REFUSED and leave the
+   doors, ESOs, key and START. Find which GRAPHIX output is wired into the safety relay's loop and set it in
+   the config editor: vac_gauges_config.json, system_interlocks.safety_loop_relays, e.g. ["10.4"] (until
+   then every relay of controller 1 is checked; with the safety relay closed, the card says which open
+   relays can't be the one). An amber "doesn't match" note on a card means the PLC program differs from
+   docs/how-it-works/plc.md there, or (on the Safety relay card) that safety_loop_relays is set wrongly:
+   tell Claude what it said.
+10. The network test for alerts and remote viewing: `python src/utils/network_probe.py` on the lab PC (and
+    `--send-test` with the ntfy topic it prints open on a phone), then send SystemLogs/network_probe_<date>.txt.
 
 ## Done
+- Josh's notes of 21 October 2026, afternoon ("the interlock overview and the launcher; the rest later"):
+  - Interlocks panel (src/core/interlocks.py works it out, widgets/interlocks_widget.py draws it; help page
+    docs/panels/interlocks.md): every permissive as a chain of live conditions - safety relay (the PLC's
+    enable, then its hardwired loop), gate valve, source cold (what the PLC holds on while hot), source
+    supplies, caesium oven, fault reset (would a reset be accepted now, and what is latched), and the services'
+    permits and leases. A rail down each card is solid while the conditions hold and dashed after the first
+    that doesn't; that one is shaded and named in the card's summary. After a refusal or trip it rules out
+    what the PC can see in the loop (the gauge controller's relay, from the vacuum service; the magnet
+    coolant switch, from its PLC input) and names what is left: a door, an ESO, the key switch or START,
+    which nothing can tell apart (Josh). Where the PLC publishes its own verdict (machine state Ready, the gate
+    valve's open and close permissives, the caesium lockout) a mismatch lasting 3 s is flagged: the PLC
+    program would then differ from docs/how-it-works/plc.md. A tab behind System Health; a layout saved
+    before it existed gets it there too.
+  - The gauge relay is ruled out only on a current reading: its state read as closed within 25 s (the
+    vacuum service now publishes when it read each relay, and starts with every relay unknown rather than
+    the last run's values), its gauge answering with a pressure no higher than the relay's off point, and
+    the set points confirmed on the controller; a pressure above the off point counts as open. The service
+    still publishes a relay as unknown after 30 s unread or with the controllers unreachable.
+    vac_gauges_config.json: system_interlocks.safety_loop_relays (shipped [], checked by the editor).
+  - After an independent review of the panel: an open relay that may not be in the loop leaves the doors,
+    ESOs, key and START in the diagnosis; a PLC condition holding now doesn't hide what the loop leaves;
+    the summaries go by the PLC's own verdicts; Source cold says HOT (not HELD ON) with the relay open;
+    the shutdown sequence isn't a contactor condition; the remote I/O is unknown with the relay open (the
+    PLC only reports a loss after 25 s closed); a reset at PC step 2 warns that it ends the cool-down;
+    forced cooling left on after a cancelled shutdown is named. The simulator's Ready follows the
+    documented permissive alone, and its gauge relays have hysteresis.
+  - Simulator: the interlock bits as plc.md describes them - machine state 99/3/2/1, the relay permissive
+    with air and both coolants, the open permissive with the watchdog, GRAPHIX and VG1/VG2 faults, the close
+    permissive (no HV, filament and caesium cold, with a filament model), the caesium lockout, gauge flags in
+    word 5. New faults: safety_loop_open (refused after 5 s, or tripped), air_low.
+  - Launcher (main_launcher.py, src/launcher/): starts the HMI, the data viewer, the help and the simulator
+    without PyCharm, with the Python that started it (PyCharm's project interpreter: nothing to install).
+    Starts the service manager in the background with pythonw (no command window to close by mistake);
+    "Keep the services running" starts it again if it stops (5 s, 30 s, then every 2 min; a manager just
+    started gets 30 s to come up), except after "Stop services...", which explains the watchdog shutdown
+    and needs STOP typed: that stop is recorded for the system (data/launcher_state_<offset>.json) and
+    every launcher leaves the services stopped until Start services. The manager now takes a confirmed
+    "shutdown" command (every service, the last started first and the event log last, then itself). Tray
+    icon with the services' state as a dot; closing the window or the launcher never stops the services.
+    Desktop shortcuts and Start with Windows (Startup folder shortcut, --tray --keep-running), icon
+    src/launcher/sindie.ico (src/utils/make_launcher_icon.py). One copy of the launcher, the HMI and the
+    data viewer per system and user: a second start brings the first to the front (one that doesn't
+    answer is reported, not doubled). HMI: View > Open the data viewer; viewer: View > Open the operator
+    HMI.
+  - src/utils/network_probe.py: what the lab PC's network lets through (push services, Teams workflows,
+    Microsoft 365, SMTP, GitLab/GitHub, Cloudflare and Tailscale, Gemini, pip, Backblaze, the research share
+    and the OneDrive folder); standard library only, outbound only, read-only unless --send-test.
 - Josh's notes of 21 October 2026:
   - The start-up recipe stopped in the simulation: "could not keep control of the einzel: stale: sent 0.73 s
     ago". A recipe renews its control lease on each supply every second, and the Spellman service refuses any
@@ -348,7 +410,13 @@ simulator; none of it has been tried on the real hardware yet (see "Lab PC valid
    - turbo start/stop; logger journal file appears in data/parquet_logs; tolerance rules sensible;
    - closing the gate valve with the relay on: relay drops, supplies show off, Safety_Relay_Tripped shows,
      and the relay can be re-enabled after fault reset (compare with the simulator's assumptions above);
-   - auto-emission: filament box locked, shows the PLC's filament current, unlocks when switched off.
+   - auto-emission: filament box locked, shows the PLC's filament current, unlocks when switched off;
+   - Interlocks panel against the real PLC: each card's conditions as the machine is (see step 9 above),
+     the source-cold card while hot, a fault reset refused during HOLD HOT PHASE;
+   - the launcher: services started from it survive closing it, PyCharm and the HMI; Start with Windows
+     brings them back after a reboot; Stop services... stops them (PLC watchdog shutdown, as expected)
+     and they stay stopped across a launcher restart until Start services; the tray dot follows the
+     services; Start the simulator opens run_simulation.py in its own console with a working fault menu.
 2. Take the example parquet data out of git - on the lab PC (the files stay on disk; back up data/ first anyway):
    ```
    git rm -r --cached data/daily_logs data/parquet_logs
@@ -399,7 +467,38 @@ simulator; none of it has been tried on the real hardware yet (see "Lab PC valid
      while a Spellman or magnet PSU holds a setpoint past its cap (e.g. set at its front panel); mass
      scans, the optimiser and "Calculate & set amps" name the cap when they refuse; the HMI's setpoint
      boxes name their cap in the tooltip (a value typed past a box's maximum just doesn't go in).
-7. Future: a one-page interlock overview (every permissive and what is holding it), as discussed.
+7. Later (agreed with Josh, 21 October 2026: "the rest we will come back to"):
+   - **Operator log-in.** Josh Bird and Dr Luke Antwis to start with, each with a name and a password
+     (stored salted and hashed, per machine, not in git); an operator role and an engineer role (the config
+     editor, service restarts), replacing the config editor's password in the source. The HMI starts
+     logged out, and logged out allows only viewing, STOP / ABORT of a running sequence, and INITIATE
+     SHUTDOWN (Josh: that list is right). Every command in the audit trail names who sent it. Auto-lock
+     after 1 hour without input (Josh: a long timeout); locking never sends a command or stops anything.
+     Windows going to its lock screen must cause no problems: the HMI keeps running and refreshing, sends
+     nothing, and is as it was on unlocking (locked if the hour has passed). Test that with a recipe running.
+   - **Alerts for unattended runs.** Outbound only (nothing on the lab PC listens for connections: Josh
+     suspects the university firewall reacts to a PC acting as a server). Pick the channel from the network
+     probe: ntfy.sh (phone app, plain HTTPS), Pushover, a Teams workflow webhook (Microsoft 365), or e-mail
+     through Office 365. Plus a dead-man's switch (healthchecks.io): the PC pings it every few minutes, and
+     it alerts when the pings stop, which covers the PC or its network being down. An "Unattended" switch
+     in the HMI choosing which alarm priorities alert, with a test button. Josh: "maybe good, will have to see
+     what is possible". GitLab worked before but only at about one update a minute; other things didn't work.
+   - **Remote viewing.** Read-only. Live: a status snapshot (machine state, key readbacks, active alarms)
+     sent out on request or every few minutes through the alert channel, a Teams message, or a small file
+     on OneDrive / the research share. History: the data viewer on a laptop reading a copy of the data (see
+     housekeeping). No inbound access to the lab PC.
+   - **Remote shutdown request.** INITIATE SHUTDOWN only (the PLC's operator shutdown), nothing else, ever.
+     Armed at the machine by a logged-in operator before leaving it unattended (not armed: refused), a
+     one-time authenticator code (TOTP, per user) and a second confirmation for each request, rate-limited,
+     every request logged and alerted, through the alert channel (the PC fetches requests; nothing listens).
+     The PLC's own rules still decide whether it starts. After the log-in. Josh: armed at the machine and an
+     authenticator code are good.
+   - **Data housekeeping.** Versioned backups instead of the compactor's OneDrive copy (_Archive_Versions):
+     restic (or Kopia) of data/ (daily files, events.db) and config/ to the research share
+     \\surrey.ac.uk\research\ibcfac2 and/or OneDrive, keeping daily versions for a month and weekly for a
+     year, checked (restic check, a weekly test restore of one file), with the last good backup shown in the
+     HMI and an alarm after 36 h without one. It never deletes anything on the lab PC (Josh's rule): pruning
+     only removes the backup's own old versions. The network probe says whether the share is reachable.
 8. On the lab PC and a laptop: the new look in both themes (alarm colours, the safety-relay countdown on
    ENABLE SAFETY RELAY), dragging panels into a narrow column, Reset layout, and the CPU use with the
    default layout (the simulator measured here: see the commit message).
@@ -412,8 +511,8 @@ simulator; none of it has been tried on the real hardware yet (see "Lab PC valid
 10. Found while writing the help (October 2026), not fixed - to review (file:line at the time):
     - Simulator: INITIATE SHUTDOWN trips the relay (no shutdown sequencer; cmd_source_shutdown never
       cleared), and after a fault reset the relay is refused until service_plc restarts (src/sim/plc.py:205);
-      machine state 2/1 instead of 3/99; stat_gv_close_permissive set once and never updated; caesium "hot"
-      at 50 degC and target minimum 0.5 kV instead of the PLC's 30 degC and 3 kV.
+      caesium "hot" at 50 degC and target minimum 0.5 kV instead of the PLC's 30 degC and 3 kV. (The machine
+      state and the close permissive are modelled now: 21 October 2026.)
     - service_plc: the steerer's and SMU's status flags are never written to the PLC although DB10 has
       Beamline_Steerer_Magnet and word 4 has Str_Magnet_* bits; PLC_DATA publishes those never-written
       ion_beam.beamline.steerer_magnet.stat_* tags (at 0) under the same names as the steerer service's own,

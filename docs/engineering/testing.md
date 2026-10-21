@@ -48,13 +48,13 @@ The service manager the slow tests start only clears up leftover processes of it
 |---|---|
 | Messaging and leases | `test_commands.py`, `test_leases.py`, `test_device_service.py`, `test_relay_watch.py`, `test_telemetry_cache.py` |
 | Device services, against simulated devices | `test_service_plc.py`, `test_service_vacuum.py`, `test_service_turbo.py`, `test_service_spellman.py`, `test_service_magnet.py`, `test_service_steerer.py`, `test_service_smu.py`, `test_magnet_driver.py` |
-| Service manager | `test_restart_policy.py`, `test_manager_purge.py` |
+| Service manager and the launcher | `test_restart_policy.py`, `test_manager_purge.py`, `test_launcher.py` |
 | Alarms | `test_alarms.py`, `test_service_alarms.py`, `test_alarm_panel.py` |
 | Sequencer: recipes, mass scans, optimiser | `test_sequencer_recipe.py`, `test_sequencer_mass_scan.py`, `test_sequencer_optimiser.py`, `test_sequencer_port.py`, `test_service_sequencer.py`, `test_sequencer_panels.py`, `test_recipe_builder.py`, `test_recipe_check.py`, `test_recipe_routines.py`, `test_recipe_files.py` |
 | The recipe builder's drafting (a scripted model; the Gemini adapter through the real SDK against a fake service) | `test_recipe_ai.py`, `test_recipe_drafting.py` |
 | Configuration | `test_config_store.py`, `test_config_editor.py`, `test_hard_caps.py`, `test_tolerance.py` |
 | Logging and data | `test_logger_journal.py`, `test_data_bounds.py`, `test_export_unreadable.py` |
-| HMI | `test_setpoint_box.py`, `test_hmi_focus.py`, `test_wheel_guard.py`, `test_source_widget.py`, `test_theme.py`, `test_gui_settings.py`, `test_mass_calibration.py`, `test_mass_scan_analysis.py`, `test_mass_scan_axis.py` |
+| HMI | `test_interlocks.py` (the interlock logic), `test_interlocks_panel.py`, `test_setpoint_box.py`, `test_hmi_focus.py`, `test_wheel_guard.py`, `test_source_widget.py`, `test_theme.py`, `test_gui_settings.py`, `test_mass_calibration.py`, `test_mass_scan_analysis.py`, `test_mass_scan_axis.py` |
 | Data viewer | `test_viewer_colours.py`, `test_viewer_profiles.py`, `test_event_overlay.py`, `test_viewer_markers.py` |
 | Simulator | `test_sim_plc_model.py`, `test_sim_registry.py`, `test_sim_flag.py`, `test_sim_stack.py`, `test_hmi_sim.py` |
 | Help | `test_help.py` |

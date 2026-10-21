@@ -28,7 +28,9 @@ The topic of the X-steerer is spelt `STEEER_MAGNET_DATA`, with three Es, in `src
 
 ## The service manager
 
-`python src/services/service_manager.py` starts the services and keeps them running. The HMI's **Service Manager** panel shows what it reports and sends it commands.
+`python src/services/service_manager.py` starts the services and keeps them running. The launcher (`main_launcher.py`) starts it in the background with `pythonw`, so it has no command window to close by mistake, and can start it again if it stops (**Keep the services running**). The HMI's **Service Manager** panel shows what it reports and sends it commands: restart, stop or start one service.
+
+One more command, `shutdown`, stops every service and then the manager. Only the launcher's **Stop services...** sends it, after a typed confirmation; the manager refuses it without its confirmation text (`SHUTDOWN_CONFIRM`), so that nothing sends it by accident. Stopping, whether so or with Ctrl+C, the manager ends the most recently started services first and the event service last, so that the way down is still in the event log. See [Starting the software](../getting-started/starting-the-software.md#stopping).
 
 ### Start order
 
@@ -90,7 +92,7 @@ A failed connection is logged once, then at most once a minute. A command that r
 | Service | What happens | Reconnects after |
 |---|---|---|
 | `service_plc` | Every PLC value is published as unknown and `system.connected` as 0. The connection is made in a helper thread, so the service keeps heartbeating. The PLC itself notices the missing watchdog after 3 s. | 1, 2, 5, 10 s, then every 10 s |
-| `service_vac_gauge_controllers` | A gauge with no good reading for 3 s is shown as unknown. VG1 or VG2 with no good reading for 10 s withdraws the gate-valve vacuum permissive. With the link down, every gauge is unknown and both controllers' comms flags are set. | 1, 2, 5 s |
+| `service_vac_gauge_controllers` | A gauge with no good reading for 3 s is shown as unknown. VG1 or VG2 with no good reading for 10 s withdraws the gate-valve vacuum permissive. Each relay's on or off state (`ion_beam.vacuum.controller_<node>.relay_<n>_status`) is published with the time it was read (`..._read_at`), and both are unknown until the relay has been read in this run and again once it hasn't been read for 30 s. The [Interlocks](../panels/interlocks.md) panel uses them, with the gauge's pressure, to judge the safety relay's loop only on a current reading. With the link down, every gauge and relay state is unknown and both controllers' comms flags are set. | 1, 2, 5 s |
 | `service_source_turbo` | `stat_comms_fail` set, readbacks unknown. | 1, 2, 5, 10 s |
 | `service_spellman_mpd` | A supply that doesn't answer its status query within 1 s gets `stat_comms_fail` and unknown readbacks. Each bus reconnects on its own. | 1, 2, 5, 10 s |
 | `service_magnet_psu`, `service_steerer_magnet_psu` | `stat_comms_fail` set, readbacks unknown. A supply that hasn't reported its nominal ratings takes only 0 A and output off. | 0.5, 1, 2, 5 s |

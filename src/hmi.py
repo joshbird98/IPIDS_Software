@@ -5,10 +5,10 @@ if __package__ in (None, ""):
     # Started as a script (python src/hmi.py): make 'src' importable from any working directory
     sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
-if "--sim" in sys.argv[1:]:
+from src.core.env import flag, use_simulator     # (reads nothing at import)
+if "--sim" in sys.argv[1:] or flag("SIMULATE"):
     # Simulation mode (fake devices, data in data_sim/, the simulator's ports): must be set
-    # before anything else from src is imported
-    from src.core.env import use_simulator
+    # before anything else from src is imported. SINDIE_SIMULATE=1 alone gets the ports too.
     use_simulator()
 
 os.environ["QT_API"] = "PyQt6"
@@ -29,9 +29,16 @@ if __name__ == "__main__":
     harden_windows_process(limit_working_set=False)
     app = QApplication(sys.argv)
 
+    # One HMI per system: started again (a shortcut, the launcher), the one running comes to the front
+    from src.launcher.instance import SingleInstance, bring_to_front
+    guard = SingleInstance("hmi")
+    if not guard.claim():
+        sys.exit(0)
+
     # The theme saved last (dark unless chosen otherwise: View > Theme), shared with the viewer
     theme.install(app)
 
     window = ControlMainWindow()
+    guard.activated.connect(lambda _message: bring_to_front(window))
     window.show()
     sys.exit(app.exec())

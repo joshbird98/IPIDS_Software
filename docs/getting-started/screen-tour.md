@@ -7,12 +7,12 @@ What is where on the HMI's screen, how to arrange its panels, and the keyboard s
 ## The parts of the screen
 
 1. **The menu bar.**
-    - **View**: **Panels** opens and closes each panel; **Layouts** saves the arrangement of the panels under a name and brings it back; **Reset layout** puts every panel back where it starts; **Theme** switches between dark and light; **Capture GUI figure...** saves any panel or the whole window as a figure for a report (F12).
+    - **View**: **Panels** opens and closes each panel; **Layouts** saves the arrangement of the panels under a name and brings it back; **Reset layout** puts every panel back where it starts; **Theme** switches between dark and light; **Open the data viewer** brings it to the front, or starts it; **Capture GUI figure...** saves any panel or the whole window as a figure for a report (F12).
     - **Config**: the configuration editor, for engineers (it asks for the engineering password). See [Configuration files and the config editor](../engineering/configuration.md).
     - **Help**: this help, the most-used pages, and **About SINDIE**, which shows the version that is running.
 2. **The Automation bar.** Which recipe, scan or optimiser run holds which controls, with a **TAKE CONTROL** button for each. When nothing is running it reads "Automation: nothing holds any controls". See [The Automation bar](../panels/automation-bar.md).
 3. **[Vacuum System](../panels/vacuum.md):** the six gauges, the source turbo pump and the source gate valve.
-4. **[System Health](../panels/system-health.md):** the PLC connection, the safety relay, the PLC's shutdown sequence, **RESET FAULTS**, and the list of latched PLC faults.
+4. **[System Health](../panels/system-health.md):** the PLC connection, the safety relay, the PLC's shutdown sequence, **RESET FAULTS**, and the list of latched PLC faults. Behind it, as a tab, **[Interlocks](../panels/interlocks.md)**: every interlock and what is holding it now.
 5. **The machine panels**, as tabs: [TESS Ion Source Control](../panels/ion-source.md), [Beamline Optics](../panels/beamline-optics.md), [Faraday Cup & SMU](../panels/faraday-cup-smu.md), [Mass Scan](../panels/mass-scan.md), [Optimiser](../panels/optimiser.md) and [Current Monitoring](../panels/current-monitoring.md). Click a tab to bring its panel forward.
 6. **The record-keeping panels**, as tabs: [Alarms](../panels/alarms.md), [Recipe Execution](../panels/recipes.md), [Experiment Logging](../panels/experiment-logging.md), [Command Log](../panels/command-log.md) and [Service Manager](../panels/service-manager.md).
 7. **A panel's own buttons:** pull the panel out into a window of its own, or close it.
@@ -29,7 +29,7 @@ Every panel can go anywhere in the window, beside or on top of the others, or in
 - **Close a panel:** its close button. Reopen it from **View > Panels**.
 - **Make a panel narrower than its contents:** it scrolls rather than pushing the window wider, and its cards (gauges, current monitors, buttons) fold into fewer columns.
 
-The arrangement is saved when the HMI closes and comes back the next time. To keep several, arrange the panels and use **View > Layouts > Save layout as...**; choose a saved name from **View > Layouts** to bring it back. **View > Reset layout** puts back the default: **Vacuum System** over **System Health** on the left, the machine panels over the record-keeping panels on the right, sized for the screen.
+The arrangement is saved when the HMI closes and comes back the next time. To keep several, arrange the panels and use **View > Layouts > Save layout as...**; choose a saved name from **View > Layouts** to bring it back. **View > Reset layout** puts back the default: **Vacuum System** over **System Health** (with **Interlocks** as a tab behind it) on the left, the machine panels over the record-keeping panels on the right, sized for the screen.
 
 The window always stays on a screen and no bigger than it, so a layout saved on a big monitor still opens properly on a laptop.
 

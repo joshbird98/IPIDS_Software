@@ -19,6 +19,7 @@ START_UP = "procedures/beam-start-up.md"
 PANEL_PAGES = {
     "VacuumDock": "panels/vacuum.md",
     "HealthDock": "panels/system-health.md",
+    "InterlocksDock": "panels/interlocks.md",
     "SourceDock": "panels/ion-source.md",
     "OpticsDock": "panels/beamline-optics.md",
     "FaradaySmuDock": "panels/faraday-cup-smu.md",

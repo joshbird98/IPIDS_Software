@@ -11,7 +11,7 @@ The label at the top says whether the service manager itself is reporting:
 | Label | Colour | Meaning |
 |---|---|---|
 | **SERVICE MANAGER: ONLINE** | green | The service manager is running and reporting. |
-| **SERVICE MANAGER: OFFLINE** | red | Nothing from the service manager for 2.5 s. Every service then shows **UNKNOWN**, and the buttons are greyed out. |
+| **SERVICE MANAGER: OFFLINE** | red | Nothing from the service manager for 2.5 s. Every service then shows **UNKNOWN**, and the buttons are greyed out. Start it with the launcher's **Start services** (see [Starting the software](../getting-started/starting-the-software.md#the-launcher)). |
 
 Below it, one row per service: its name, its state, a detail, **Stop** (or **Start**) and **Restart**.
 

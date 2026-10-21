@@ -349,6 +349,29 @@ def test_a_controller_that_comes_back_gets_the_check_it_missed(idle, monkeypatch
     assert svc.state[MISMATCH] == 0.0 and svc.state[PERMISSIVE] == 1.0
 
 
+def test_a_relay_status_not_read_lately_is_unknown(idle, monkeypatch):
+    """Each relay's on/off status (the Interlocks panel rules the loop's gauge relay in or out with
+    it) is withdrawn when it hasn't been read for a while, or the controllers can't be reached:
+    never an old reading."""
+    import time
+    import src.services.service_vac_gauge_controllers as vac
+    svc, graphix, events = idle
+    tag, at = vac.relay_status_tag(10, 4), vac.relay_read_at_tag(10, 4)
+    assert svc.state[tag] is None and svc.state[at] is None    # this run hasn't read it yet
+    svc.read_slow_item(10, "relay_status", 4)
+    assert svc.state[tag] == 1.0                                # VG1 well below the relay's set point
+    assert abs(svc.state[at] - time.time()) < 5
+    svc.withdraw_stale_relay_status()
+    assert svc.state[tag] == 1.0
+    svc._relay_status_at[(10, 4)] -= vac.RELAY_STATUS_STALE_S + 1     # ...and not read since
+    svc.withdraw_stale_relay_status()
+    assert svc.state[tag] is None and svc.state[at] is None
+    svc.read_slow_item(10, "relay_status", 4)
+    assert svc.state[tag] == 1.0
+    svc.publish_unknown()                                       # the controllers unreachable
+    assert svc.state[tag] is None
+
+
 def test_config_values_past_a_hard_cap_are_never_written(monkeypatch, fake_events):
     """A vac_gauges_config.json edited past the editor: those relay values aren't written to the
     controller; for VG1 / VG2 the gate-valve permissive is withheld, with the reason."""

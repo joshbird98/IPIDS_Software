@@ -21,6 +21,9 @@ data/events.db-wal
 # Alarm acknowledgements and shelves (service_alarms)
 data/alarm_state.json
 data/alarm_state.json.tmp
+# Services stopped on purpose from the launcher (src/launcher/programs.py)
+data/launcher_state_*.json
+data/launcher_state_*.json.tmp
 data/telemetry/
 # Data viewer's saved plot settings (per machine)
 config/plot_settings.json

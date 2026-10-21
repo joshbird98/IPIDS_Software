@@ -465,23 +465,34 @@ def test_optimiser_sweeps_and_restores(hmi, app, stack):
              "magnet restored")
 
 
-def test_closing_the_gate_valve_trips_the_relay(hmi, app, stack):
-    """Last in this module: it drops the relay. The PLC trips the relay on the gate-valve
-    readback; the supplies go off and stay off (latched) until the relay is enabled again."""
+def test_a_vacuum_loss_closes_the_gate_valve_and_trips_the_relay(hmi, app, stack):
+    """Last in this module: it drops the relay. With the source at high voltage the gate valve
+    can't be closed from the HMI (the PLC's close permissive), but the PLC closes it itself when the
+    vacuum goes, and the relay trips on the gate-valve readback; the supplies go off and stay off
+    (latched) until the relay is enabled again."""
+    from src import sim
     view = hmi.master_telemetry_cache
     assert view["ion_beam.facilities.safety_relay_active"] == 1.0
     assert view["ion_beam.source.target.stat_enabled"] == 1.0
-    hmi.vac_widget.btn_gv_close.click()
-    wait_for(app, lambda: view.get("ion_beam.facilities.safety_relay_active") == 0.0, 10, "relay tripped")
-    # ... and the Alarms panel: unacknowledged, critical, sounding, first out
-    panel = hmi.alarm_widget
-    wait_for(app, lambda: any(a["id"] == "plc.Safety_Relay_Tripped" and a["state"] == "UNACK"
-                              for a in panel.alarms), 10, "relay-trip alarm")
-    trip = next(a for a in panel.alarms if a["id"] == "plc.Safety_Relay_Tripped")
-    assert trip["priority"] == 1 and panel.horn.playing == 1
-    hmi.alarm_dock.raise_()
-    pump(app, 0.3)
-    shot(hmi, "8_relay_trip_alarm")
+    assert view["ion_beam.source.chamber.stat_gv_close_permissive"] == 0.0         # hot: no closing by hand
+    assert not hmi.vac_widget.btn_gv_close.isEnabled()
+    sim.set_faults({"vacuum_vent_source"})                  # VG1 to atmosphere
+    try:
+        wait_for(app, lambda: view.get("ion_beam.facilities.safety_relay_active") == 0.0, 20, "relay tripped")
+        assert view["ion_beam.source.chamber.stat_gv_open"] == 0.0
+        # ... and the Alarms panel: unacknowledged, critical, sounding, first out
+        panel = hmi.alarm_widget
+        wait_for(app, lambda: any(a["id"] == "plc.Safety_Relay_Tripped" and a["state"] == "UNACK"
+                                  for a in panel.alarms), 10, "relay-trip alarm")
+        trip = next(a for a in panel.alarms if a["id"] == "plc.Safety_Relay_Tripped")
+        assert trip["priority"] == 1 and panel.horn.playing == 1
+        hmi.alarm_dock.raise_()
+        pump(app, 0.3)
+        shot(hmi, "8_relay_trip_alarm")
+    finally:
+        sim.set_faults(set())
+    wait_for(app, lambda: view.get("ion_beam.source.chamber.stat_gv_open_permissive") == 1.0, 30, "vacuum back")
+    pump(app, 1.0)
     panel.btn_ack_all.click()
     wait_for(app, lambda: all(a["state"] != "UNACK" for a in panel.alarms), 5, "alarms acknowledged")
     assert panel.horn.playing is None
@@ -489,7 +500,12 @@ def test_closing_the_gate_valve_trips_the_relay(hmi, app, stack):
              and view.get("ion_beam.source.einzel.stat_enabled") == 0.0, 10, "supplies off")
     assert "Safety_Relay_Tripped" in {f["name"] for f in hmi.fault_engine.get_active_faults(
         "UDT_Fault_Word_0_System", int(view["ion_beam.faults.word_0_system"]))}
-    hmi.vac_widget.btn_gv_open.click()
-    wait_for(app, lambda: view.get("ion_beam.source.chamber.stat_gv_open") == 1.0, 15, "gate valve open again")
+    is_open = lambda: view.get("ion_beam.source.chamber.stat_gv_open") == 1.0     # noqa: E731
+    # (the OPEN request is cleared 3 s after the interlock shut the valve: if the vacuum came back
+    # sooner, the valve reopens by itself)
+    wait_for(app, lambda: hmi.vac_widget.btn_gv_open.isEnabled() or is_open(), 10, "OPEN offered again")
+    if not is_open():
+        hmi.vac_widget.btn_gv_open.click()
+    wait_for(app, is_open, 15, "gate valve open again")
     pump(app, 2)
     assert view["ion_beam.facilities.safety_relay_active"] == 0.0              # not back by itself

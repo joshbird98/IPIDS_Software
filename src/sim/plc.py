@@ -37,8 +37,19 @@ Modelled behaviour (from Josh's description of the machine, Oct 2026)
     and would open again by itself 2 s after it returns. The PLC service clears the request once
     the valve has been shut by its interlock for 3 s, so it stays shut until OPEN is pressed again
     (Josh, Oct 2026). Check the real program's seq_cmd_open_gv against this.
-  * comms-fail flags and the source einzel's status/arc flags written by the PC are
-    mirrored into the fault words
+  * comms-fail flags, the gauge flags and the source einzel's status/arc flags written by the PC
+    are mirrored into the fault words
+  * the interlock bits the HMI's Interlocks panel reads, as docs/how-it-works/plc.md describes
+    them: the relay permissive (air, both coolants, gate valve open, no caesium over-temperature),
+    the machine state (99 / 3 / 2 / 1), the gate valve's open permissive (the PC's vacuum flag and
+    no watchdog, GRAPHIX or VG1/VG2 fault) and close permissive (extraction and target below
+    0.15 kV, filament and caesium not hot: the filament's model follows its readback and cools at
+    2 A/s with the relay off), the caesium heating lockout. There are no shutdown sequences, so the
+    sequencer's gate-valve permission is always given and it never kills the relay.
+  * the hardwired loop: with safety_loop_open injected (a door, an ESO or the key switch open) the
+    relay doesn't close on its enable, so after 5 s the PLC latches Safety_Relay_Refused and drops
+    the request (and a closed relay opens: Safety_Relay_Tripped). air_low opens the compressed air
+    switch.
 """
 import json
 import math
@@ -63,6 +74,15 @@ FILAMENT_AUTO_MAX_A = 31.0
 EMISSION_MAX_MA = 200.0            # the thermionic supply's own current limit
 CS_AMBIENT, CS_FORCED = 22.0, 20.0
 CS_HOT_C = 50.0                    # assumed: estimated cesium temperature the PLC treats as "hot"
+FIL_HOT_A = 1.0                    # the PLC's filament model: hot above this
+FIL_COOL_A_S = 2.0                 # ... and with the relay off it falls this fast (0.2 A per 100 ms tick)
+HV_OFF_KV = 0.15                   # the gate valve's close permissive: extraction and target below this
+RELAY_TIMEOUT_S = 5.0              # the relay not closed this long after the enable: Safety_Relay_Refused
+GAUGE_FAULTS = {"stat_not_found": "Not_Found", "stat_mismatch": "Type_Mismatch", "stat_above_sp": "Above_SP_Warn",
+                "stat_rapid_rise": "Rapid_Rise_Warn"}
+GAUGE_TAGS = {1: "ion_beam.source.vacuum_gauge_1", 2: "ion_beam.beamline.vacuum_gauge_2",
+              3: "ion_beam.beamline.vacuum_gauge_3", 4: "ion_beam.endstation.vacuum_gauge_4",
+              5: "ion_beam.loadlock.vacuum_gauge_5", 6: "ion_beam.endstation.vacuum_gauge_6"}
 
 
 def emission_ma(filament_a: float) -> float:
@@ -105,6 +125,8 @@ class SimulatedPLC:
         self._relay_tripped = False      # latched until fault reset
         self._relay_refused = False
         self._fil_heat = 0.0             # filament temperature, as the current it corresponds to
+        self._fil_model = 0.0            # the PLC's filament model (Fil_Thermal_Amps): fil_is_hot
+        self._relay_permissive = False
         self._auto_fil = None            # filament current the auto-emission loop is driving
         self._sputter = 0.0              # target (sputter) current, mA
         self._kv = {}                    # extraction / target output without readback noise
@@ -180,13 +202,17 @@ class SimulatedPLC:
             if self.get("ion_beam.system.cmd_fault_reset"):
                 self._relay_tripped = self._relay_refused = False
                 self.set("ion_beam.system.cmd_fault_reset", 0)      # a pulse: the PLC clears it
+            self.set("ion_beam.facilities.stat_air_press_ok", "air_low" not in injected_faults())
+            # No shutdown sequences here: the sequencer always allows the gate valve, never kills the relay
+            self.set("ion_beam.internal.seq_cmd_open_gv", 1)
+            self.set("ion_beam.internal.seq_cmd_kill_relay", 0)
 
-            self._gate_valve(now)
+            self._gate_valve(now, comms_lost)
             relay = self._safety_relay(now, comms_lost)
-            self.set("ion_beam.system.machine_state", 2 if relay else 1)
 
             self._source(relay, dt)
             self._steering(relay)
+            self._source_cold()
             fc = bool(self.get("ion_beam.beamline.diagnostics.cmd_insert_fc"))
             self.set("ion_beam.beamline.diagnostics.stat_fc_inserted", fc)
             self.set("ion_beam.beamline.diagnostics.stat_fc_retracted", not fc)
@@ -194,20 +220,35 @@ class SimulatedPLC:
                 self.set(f"{base}.ctrl_mode", self.get(f"{base}.cmd_ctrl_mode", 0.0))
             self.set("ion_beam.source.chamber.rb_body_temp",
                      noisy(24.0 + 0.002 * self.get("ion_beam.source.filament.rb_current", 0.0) ** 2, 0.001))
-            self._fault_words(comms_lost)
+            summary_fault = self._fault_words(comms_lost)
+            self.set("ion_beam.system.machine_state",
+                     99 if summary_fault else 3 if relay else 2 if self._relay_permissive else 1)
 
     def _safety_relay(self, now, comms_lost):
-        """Pulls in on request + panel start (assumed 0.5 s later) with the gate valve open,
-        then holds itself until dropped or a permissive goes (a latched trip)."""
+        """The enable reaches the relay's loop on request while the relay permissive holds; the relay
+        closes on START (assumed pressed 0.5 s after the request) if the hardwired loop is made, then
+        holds itself until dropped, a permissive goes or the loop opens (a latched trip). Not closed
+        RELAY_TIMEOUT_S after the enable: Safety_Relay_Refused, and the request is dropped."""
+        faults = injected_faults()
         want = bool(self.get("ion_beam.system.cmd_enable_safety"))
         relay = bool(self.get("ion_beam.facilities.safety_relay_active"))
-        permissive = (bool(self.get("ion_beam.source.chamber.stat_gv_open")) and not comms_lost
-                      and not self.get("ion_beam.system.cmd_source_shutdown")
-                      and "plc_relay_trip" not in injected_faults())
+        # The relay permissive as plc.md has it (the sequencer's relay kill and the caesium
+        # over-temperature aren't simulated); machine state 2, Ready, is this alone
+        documented = (bool(self.get("ion_beam.source.chamber.stat_gv_open"))
+                      and bool(self.get("ion_beam.facilities.stat_air_press_ok"))
+                      and bool(self.get("ion_beam.facilities.stat_src_coolant_ok"))
+                      and bool(self.get("ion_beam.facilities.stat_mag_coolant_ok")))
+        self._relay_permissive = documented
+        # The simulator's shortcuts besides: a lost watchdog drops the relay at once (the real PLC
+        # closes the gate valve, which does the same a moment later), INITIATE SHUTDOWN drops it (no
+        # sequences here), and so does the plc_relay_trip fault
+        permissive = (documented and not comms_lost and not self.get("ion_beam.system.cmd_source_shutdown")
+                      and "plc_relay_trip" not in faults)
+        loop_made = "safety_loop_open" not in faults      # the doors, the ESOs and the key switch
         if relay:
             if not want:
                 relay = False                                   # the operator dropped it
-            elif not permissive:
+            elif not permissive or not loop_made:
                 relay = False
                 self._relay_tripped = True
                 self.set("ion_beam.system.cmd_enable_safety", 0)
@@ -221,9 +262,13 @@ class SimulatedPLC:
             else:
                 if self._relay_request_t is None:
                     self._relay_request_t = now
-                if now - self._relay_request_t > 0.5:
+                if loop_made and now - self._relay_request_t > 0.5:
                     relay = True
                     self._relay_request_t = None
+                elif now - self._relay_request_t > RELAY_TIMEOUT_S:
+                    self._relay_refused = True                  # START pressed, the loop open
+                    self._relay_request_t = None
+                    self.set("ion_beam.system.cmd_enable_safety", 0)
         else:
             self._relay_request_t = None
         waiting = self._relay_request_t is not None
@@ -305,6 +350,9 @@ class SimulatedPLC:
         self.set(f"{fil}.rb_power", fil_rb * fil_v)
         self.set(f"{fil}.resistance", FILAMENT_OHMS if fil_rb > 0.1 else 0.0)
         self.set(f"{fil}.out_cv_current", fil_rb)
+        # The PLC's filament model: the readback while the relay is closed, cooling without it
+        self._fil_model = fil_rb if relay else max(0.0, self._fil_model - FIL_COOL_A_S * dt)
+        self.set("ion_beam.internal.fil_is_hot", self._fil_model > FIL_HOT_A)
 
         cesium_c = self._cesium(relay, dt)
 
@@ -354,7 +402,17 @@ class SimulatedPLC:
         self.set(f"{base}.estimated_temp", temp)
         self.set(f"{base}.out_cv_heating", max(0.0, min(100.0, (sp - temp) * 5.0)) if heating else 0.0)
         self.set(f"{base}.stat_cooling_active", cooling)
+        # The heating lockout: the relay open (no caesium faults are simulated)
+        self.set(f"{base}.stat_lockout", not relay)
+        self.set("ion_beam.internal.cs_heating_permissive", relay)
         return temp
+
+    def _source_cold(self):
+        """The gate valve's close permissive: no high voltage, the filament and the caesium cold."""
+        hv = max(abs(self.get(f"{SRC}.{name}.rb_voltage", 0.0)) for name in ("extraction", "target"))
+        cold = (hv < HV_OFF_KV and not self.get("ion_beam.internal.fil_is_hot")
+                and not self.get("ion_beam.internal.cs_is_hot"))
+        self.set("ion_beam.source.chamber.stat_gv_close_permissive", cold)
 
     def _steering(self, relay):
         base = "ion_beam.beamline.steering"
@@ -364,10 +422,16 @@ class SimulatedPLC:
             sp = self.get(f"{base}.sp_requested_{axis}_volts", 0.0)
             self.set(f"{base}.sp_actual_{axis}_volts", sp if enabled else 0.0)
 
-    def _gate_valve(self, now):
+    def _gate_valve(self, now, comms_lost=False):
+        """Opens on request with the open permissive - the PC's vacuum flag, and no watchdog, GRAPHIX
+        comms or VG1 / VG2 fault - and compressed air (the valve is pneumatic)."""
         base = "ion_beam.source.chamber"
-        permissive = bool(self.get(f"{base}.stat_vac_ok_for_gv"))
+        gauges = any(self.get(f"{GAUGE_TAGS[n]}.{flag}") for n in (1, 2) for flag in GAUGE_FAULTS)
+        permissive = (bool(self.get(f"{base}.stat_vac_ok_for_gv")) and not comms_lost and not gauges
+                      and not self.get("ion_beam.facilities.graphix1.stat_comms_fail")
+                      and not self.get("ion_beam.facilities.graphix2.stat_comms_fail"))
         self.set(f"{base}.stat_gv_open_permissive", permissive)
+        permissive = permissive and bool(self.get("ion_beam.facilities.stat_air_press_ok"))
         want_open = bool(self.get(f"{base}.cmd_open_gv"))
         is_open = bool(self.get(f"{base}.stat_gv_open"))
         if want_open and permissive and not is_open:
@@ -398,8 +462,13 @@ class SimulatedPLC:
             "Unit1_Arc_Exceeded": bool(self.get("ion_beam.source.einzel.stat_arc_exceeded")),
             "Magnet_Comms_Fail": bool(self.get("ion_beam.beamline.magnet.stat_comms_fail")),
             "Str_Magnet_Comms_Fail": bool(self.get("ion_beam.beamline.steerer_magnet.stat_comms_fail")),
+            "Air_Pressure_Low": not self.get("ion_beam.facilities.stat_air_press_ok"),
         }
-        for udt in self.faults.values():
+        for n, gauge in GAUGE_TAGS.items():
+            for flag, suffix in GAUGE_FAULTS.items():
+                active[f"VG{n}_{suffix}"] = bool(self.get(f"{gauge}.{flag}"))
+        summary = False             # a fault in any word but the Spellman one: machine state 99
+        for key, udt in self.faults.items():
             tag = udt.get("registry_tag")
             m = self._meta(tag)
             if m is None:
@@ -407,7 +476,10 @@ class SimulatedPLC:
             buf = self.dbs[m["db_number"]]
             for pos, bit in udt.get("bits", {}).items():
                 byte_idx, bit_idx = (int(x) for x in pos.split("."))
-                set_bool(buf, m["byte_offset"] + byte_idx, bit_idx, bool(active.get(bit["name"], False)))
+                on = bool(active.get(bit["name"], False))
+                set_bool(buf, m["byte_offset"] + byte_idx, bit_idx, on)
+                summary = summary or (on and "spellman" not in key.lower())
+        return summary
 
 
 _PLC = None

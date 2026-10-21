@@ -10,7 +10,7 @@ The configuration files in `config/` and what reads them, the tag registry built
 | `plc_config.json` | the PC's limits for the PLC's setpoints: extraction, the target (cathode), filament, thermionic, caesium oven, steering | the registry builder |
 | `fault_config.json` | the PLC fault words and their bits: name, severity, description | `service_plc`, `service_alarms`, the HMI, the event helper of every program (fault descriptions), `plc/build_plc_types.py` |
 | `mpd_config.json` | the Spellman buses and supplies: address, type, voltage range, current-limit range, the default current limit, and the software arc detection | `service_spellman_mpd`, the registry builder |
-| `vac_gauges_config.json` | for each gauge controller: the gauge names, and each relay's channel and on and off points; the rapid-rise threshold | `service_vac_gauge_controllers`, the registry builder |
+| `vac_gauges_config.json` | for each gauge controller: the gauge names, and each relay's channel and on and off points; the rapid-rise threshold; which relays are wired into the safety relay's loop (`system_interlocks.safety_loop_relays`, below) | `service_vac_gauge_controllers`, the registry builder, the HMI's Interlocks panel (re-read within a few seconds of a change) |
 | `magnet_config.json`, `steerer_magnet_config.json` | maximum current, voltage and power; the coil resistance checks; the degauss steps and step time | the magnet services, the registry builder |
 | `smu_config.json` | the bias voltage range and the compliance current | `service_smu`, the registry builder |
 | `logger_config.json` | the logger's row rate, chunk interval and crash-journal interval | `service_logger` |
@@ -24,6 +24,10 @@ The configuration files in `config/` and what reads them, the tag registry built
 | `backups/` | previous versions of files changed in the config editor, and of recipes saved in the recipe builder (`backups/recipes/`) | the config editor's **History...** |
 
 The per-machine files and `backups/` are not in git. The services read their files when they start, so a change made outside the config editor needs the service restarted, except `readback_tolerance.json`.
+
+## The gauge relay in the safety relay's loop
+
+The gauge controller's set-point relay that is wired into the safety relay's hardwired loop is named in `vac_gauges_config.json` as `system_interlocks.safety_loop_relays`: a list of controller node and relay, such as `["10.4"]` for gauge controller 1 (node 10), relay 4. The [Interlocks](../panels/interlocks.md) panel uses it to rule that relay in or out when the safety relay won't close. It ships as `[]`, as the wiring hasn't been checked yet; meanwhile the panel checks every relay the file lists for node 10. The config editor refuses anything but a node and relay 1 to 6 that the file configures.
 
 ## Recipe drafting
 

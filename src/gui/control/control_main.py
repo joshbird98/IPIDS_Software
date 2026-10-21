@@ -35,6 +35,7 @@ from src.gui.control.widgets.logger_widget import ExperimentLoggerWidget
 from src.gui.control.widgets.source_widget import IonSourceWidget
 from src.gui.control.widgets.optics_widget import BeamlineOpticsWidget
 from src.gui.control.widgets.system_health_widget import SystemHealthWidget
+from src.gui.control.widgets.interlocks_widget import InterlocksWidget
 from src.gui.control.widgets.services_widget import ServicesWidget
 from src.gui.control.dialogs.config_editor_dialog import ConfigEditorDialog
 from src.gui.control import wheel_guard
@@ -175,6 +176,13 @@ class ControlMainWindow(QMainWindow):
             except Exception:
                 log.exception("%s.update_telemetry failed", type(widget).__name__)
 
+    def _open_program(self, program: str):
+        """The data viewer (or another SINDIE program) to the front, or started (src/launcher/instance.py)."""
+        from src.launcher.instance import open_or_raise
+        problem = open_or_raise(program)
+        if problem:
+            QMessageBox.warning(self, "SINDIE", problem)
+
     def _show_notice(self, message: str):
         log.info("Setpoint not sent: %s", message)
         try:
@@ -202,6 +210,10 @@ class ControlMainWindow(QMainWindow):
 
         view_menu.addSeparator()
         theme.add_theme_menu(view_menu, self)
+        view_menu.addSeparator()
+        self.open_viewer_action = view_menu.addAction("Open the data viewer")
+        self.open_viewer_action.setToolTip("Brings the data viewer to the front, or starts it")
+        self.open_viewer_action.triggered.connect(lambda: self._open_program("viewer"))
 
         # Thesis/report figures of the GUI itself: vector PDF/SVG + high-DPI PNG (also F12)
         from src.gui.figure_capture import add_capture_action, install_figure_capture
@@ -242,6 +254,7 @@ class ControlMainWindow(QMainWindow):
         self.addDockWidget(L, self.vac_dock)
         self.addDockWidget(L, self.health_dock)
         self.splitDockWidget(self.vac_dock, self.health_dock, Qt.Orientation.Vertical)
+        self.tabifyDockWidget(self.health_dock, self.interlocks_dock)
         self.addDockWidget(R, self.src_dock)
         self.addDockWidget(R, self.alarm_dock)
         self.splitDockWidget(self.src_dock, self.alarm_dock, Qt.Orientation.Vertical)
@@ -256,6 +269,7 @@ class ControlMainWindow(QMainWindow):
             previous = dock
         for dock in self._docks:
             dock.show()
+        self.health_dock.raise_()
         self.src_dock.raise_()
         self.alarm_dock.raise_()
         QTimer.singleShot(0, self._size_default_docks)
@@ -276,7 +290,21 @@ class ControlMainWindow(QMainWindow):
         if not (isinstance(state, QByteArray) and not state.isEmpty()
                 and self.restoreState(state, self.LAYOUT_VERSION)):
             self._arrange_default()
+        else:
+            self._place_new_panels()
         self._fit_to_screen()
+
+    def _place_new_panels(self):
+        """A panel added since the layout was saved (the saved layout doesn't place it): a tab behind
+        System Health, where it can be found, rather than nowhere."""
+        for dock in self._docks:
+            if self.dockWidgetArea(dock) == Qt.DockWidgetArea.NoDockWidgetArea and not dock.isFloating():
+                anchor = self.health_dock if dock is not self.health_dock else self.vac_dock
+                if self.dockWidgetArea(anchor) == Qt.DockWidgetArea.NoDockWidgetArea:
+                    self.addDockWidget(Qt.DockWidgetArea.LeftDockWidgetArea, dock)
+                else:
+                    self.tabifyDockWidget(anchor, dock)
+                    anchor.raise_()
 
     def _fit_to_screen(self, force: bool = False):
         """Keep the window on a screen that exists and no bigger than it (a layout saved on a big
@@ -336,6 +364,8 @@ class ControlMainWindow(QMainWindow):
         if not (isinstance(state, QByteArray) and self.restoreState(state, self.LAYOUT_VERSION)):
             QMessageBox.warning(self, "Layout", f"The layout '{name}' could not be restored "
                                                 f"(saved by an older version?).")
+        else:
+            self._place_new_panels()
         self._fit_to_screen()
 
     def _delete_layout(self, name: str):
@@ -418,6 +448,11 @@ class ControlMainWindow(QMainWindow):
         self.health_dock = self._panel("System Health", "HealthDock", self.health_widget)
         self.subsystems["health"] = self.health_widget
 
+        # Every interlock and what is holding it now (read only)
+        self.interlocks_widget = InterlocksWidget(self.fault_engine)
+        self.interlocks_dock = self._panel("Interlocks", "InterlocksDock", self.interlocks_widget)
+        self.subsystems["interlocks"] = self.interlocks_widget
+
         self.service_widget = ServicesWidget(self.cmd_thread)
         self.service_dock = self._panel("Service Manager", "ServicesDock", self.service_widget)
         self.subsystems["services"] = self.service_widget
@@ -435,7 +470,7 @@ class ControlMainWindow(QMainWindow):
         self._always_refresh = {self.automation_bar, self.alarm_widget, self.recipe_widget,
                                 self.mass_scan_widget, self.optimiser_widget}
         self._refreshed = [self.vac_widget, self.src_widget, self.optics_widget, self.health_widget,
-                           self.service_widget, self.log_widget, self.smu_widget, self.current_mon_widget,
+                           self.interlocks_widget, self.service_widget, self.log_widget, self.smu_widget, self.current_mon_widget,
                            self.optimiser_widget, self.mass_scan_widget, self.recipe_widget,
                            self.automation_bar, self.alarm_widget]
         self._dock_of = {w: d for d, w in self._panel_widgets.items()}

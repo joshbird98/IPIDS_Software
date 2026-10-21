@@ -36,12 +36,13 @@ def test_the_simulator_and_sim_agree():
 
 
 def test_hmi_sim_flag_sets_the_offset():
-    """What the HMI, the data viewer and the service manager do with --sim, in a fresh process
-    (nothing set beforehand)."""
-    for script in ("src/hmi.py", "src/gui/data_viewer/viewer_main.py", "src/services/service_manager.py"):
+    """What the HMI, the data viewer, the service manager and the launcher do with --sim, in a fresh
+    process (nothing set beforehand)."""
+    for script in ("src/hmi.py", "src/gui/data_viewer/viewer_main.py", "src/services/service_manager.py",
+                   "main_launcher.py"):
         with open(os.path.join(ROOT, script), "r", encoding="utf-8") as f:
             text = f.read()
-        branch = text[text.index('if "--sim" in sys.argv[1:]:'):][:400]
+        branch = text[text.index('if "--sim" in sys.argv[1:] or flag("SIMULATE"):'):][:400]
         assert "use_simulator()" in branch, script
     code = ("import sys, os; sys.argv = ['hmi.py', '--sim']; "
             "from src.core.env import use_simulator; use_simulator(); "
@@ -50,3 +51,15 @@ def test_hmi_sim_flag_sets_the_offset():
     out = subprocess.run([sys.executable, "-c", code], cwd=ROOT, capture_output=True, text=True, timeout=60,
                          env=dict(env, PYTHONPATH=ROOT))
     assert out.stdout.split() == [str(SIM_PORT_OFFSET), "1"], out.stderr
+
+
+def test_the_simulate_flag_alone_gets_the_simulators_ports_too():
+    """SINDIE_SIMULATE=1 without a port offset (a PyCharm run configuration, say): the launcher
+    and the programs take the simulator's ports as well, never the simulator's data with the real
+    system's ports."""
+    env = {k: v for k, v in os.environ.items() if not k.startswith(("SINDIE_", "IPIDS_"))}
+    code = ("import sys; sys.argv = ['main_launcher.py']; import main_launcher; "
+            "from src.core import network_map, paths; print(network_map.PORT_OFFSET, paths.simulation_enabled())")
+    out = subprocess.run([sys.executable, "-c", code], cwd=ROOT, capture_output=True, text=True, timeout=60,
+                         env=dict(env, PYTHONPATH=ROOT, SINDIE_SIMULATE="1"))
+    assert out.stdout.split() == [str(SIM_PORT_OFFSET), "True"], out.stderr

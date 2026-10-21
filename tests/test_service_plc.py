@@ -163,7 +163,7 @@ def test_simulated_supply_follows_setpoint(plc_service, monkeypatch):
     from src.sim.plc import SimulatedPLC
     # no vacuum service here to permit the gate valve, and the relay needs it open
     monkeypatch.setattr(SimulatedPLC, "_gate_valve",
-                        lambda self, now: self.set("ion_beam.source.chamber.stat_gv_open", 1))
+                        lambda self, now, *rest: self.set("ion_beam.source.chamber.stat_gv_open", 1))
     c = _client()
     assert c.request("plc", "ion_beam.system.cmd_enable_safety", True)["status"] == C.OK
     assert _wait_state(plc_service, "ion_beam.facilities.safety_relay_active", 1.0) == 1.0

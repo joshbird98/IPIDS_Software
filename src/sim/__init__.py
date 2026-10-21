@@ -21,6 +21,8 @@ process through the environment variable SINDIE_SIM_FAULTS. Known faults:
     steerer_disconnect  steerer PSU unreachable    smu_disconnect      SMU unreachable
     turbo_disconnect    turbo bridge unreachable   turbo_error         turbo run-up error
     vacuum_disconnect   gauge bridge unreachable   vacuum_vent_source  VG1 rises to atmosphere
+    safety_loop_open    a door, ESO or key switch open in the safety relay's hardwired loop
+    air_low             compressed air pressure switch open
 """
 import math
 import os
@@ -46,6 +48,8 @@ FAULT_DESCRIPTIONS = {
     "turbo_error": "turbo pump run-up error",
     "vacuum_disconnect": "gauge controller bridge unreachable",
     "vacuum_vent_source": "source vacuum (VG1) rises to atmosphere",
+    "safety_loop_open": "a door, an ESO or the key switch open (the safety relay won't close)",
+    "air_low": "compressed air pressure low (the gate valve closes, the safety relay drops)",
 }
 KNOWN_FAULTS = tuple(FAULT_DESCRIPTIONS)
 _file_cache = {"checked": 0.0, "mtime": None, "faults": frozenset()}

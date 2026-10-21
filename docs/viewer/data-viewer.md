@@ -19,11 +19,13 @@ Drag the divider between the sidebar and the plots to make the sidebar wider or 
 
 ## Starting the data viewer
 
-On the lab PC, start the data viewer with:
+On the lab PC, start the data viewer from the launcher or the **SINDIE Data Viewer** shortcut, from the HMI (**View > Open the data viewer**), or with:
 
 ```
 python src/gui/data_viewer/viewer_main.py
 ```
+
+It runs once: started again, the open one comes to the front. See [Starting the software](../getting-started/starting-the-software.md).
 
 `python run_simulation.py` starts it together with the simulator. Started on its own, `--sim` makes it show the simulator's data, live and logged, instead of the machine's. See [Starting the software](../getting-started/starting-the-software.md).
 
@@ -190,6 +192,7 @@ Right-click a user marker's line or label and choose **Delete marker** followed 
 | **View > Sidebar** | Shows or hides the sidebar. |
 | **View > Theme > Dark**, **View > Theme > Light** | Switches the theme. The HMI follows within a second, and both programs start in it next time (it is kept in `config/appearance.json`). |
 | **View > Theme > Switch theme** | Switches to the other theme. **Ctrl+Shift+T** does the same. |
+| **View > Open the operator HMI** | Brings the HMI to the front, or starts it. |
 | **Help > Using the data viewer** | Opens this page. **F1** does the same. |
 | **Help > Help contents** | Opens the help's home page. |
 | **Help > Exporting data and figures**, **Recording an experiment**, **Safety rules** | Open those pages: [Exporting data and figures](exporting.md), [Recording an experiment](../procedures/recording-an-experiment.md) and the [Safety rules](../safety.md). |

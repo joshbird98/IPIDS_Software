@@ -17,6 +17,7 @@ src/sequencer/      recipes, mass scans and the optimiser (run by service_sequen
 src/alarms/         alarm states and the rules that raise them (run by service_alarms)
 src/gui/control/    operator HMI (python src/hmi.py)
 src/gui/data_viewer data viewer (python src/gui/data_viewer/viewer_main.py)
+src/launcher/       the launcher (main_launcher.py): programs, the services in the background, tray
 src/core/           shared code: device service base, commands, leases, telemetry cache, paths,
                     logging, recipe steps, config checking
 src/sim/            simulated devices (see below)
@@ -41,10 +42,16 @@ section link and screenshot.
 ## Running on the lab PC
 
 ```
-python src/services/service_manager.py      starts and supervises every service
-python src/hmi.py                           operator HMI
-python src/gui/data_viewer/viewer_main.py   data viewer
+pythonw main_launcher.py                    the launcher: starts the services in the background (tray
+                                            icon), the HMI and the data viewer; desktop shortcuts and
+                                            Start with Windows, so PyCharm isn't needed
+python src/services/service_manager.py      (by hand) starts and supervises every service
+python src/hmi.py                           (by hand) operator HMI
+python src/gui/data_viewer/viewer_main.py   (by hand) data viewer
 ```
+
+Use the project's Python (PyCharm's interpreter): it has the libraries, and the launcher's shortcuts
+point at it. See docs/getting-started/starting-the-software.md.
 
 In the data viewer, double-click the plot to add a marker. Click an event's label or line to read
 it in full: an event details window lists every event of that line (or group) with its date and
@@ -66,11 +73,15 @@ the middle of another panel to place it beside it or as a tab with it. A panel t
 smaller than its contents scrolls, and cards (gauges, current monitors, buttons) fold into fewer
 columns when a panel is narrow, so a panel fits wherever it is dropped. View > Panels opens and
 closes them; View > Layouts saves the current arrangement under a name and brings it back; View >
-Reset layout puts the default back (Vacuum and System Health on the left, the source panels over
-the Alarms on the right), sized for the screen. The window is always kept on a screen and no
-bigger than it (a layout saved on a big monitor used to open a laptop-sized screen's worth
-off-screen). Panels that are closed or behind another tab aren't refreshed; they catch up the
-moment they are shown.
+Reset layout puts the default back (Vacuum and System Health on the left, with Interlocks as a tab
+behind System Health, the source panels over the Alarms on the right), sized for the screen.
+Interlocks shows every permissive (safety relay, gate valve, source cold, supplies, caesium oven,
+fault reset, the services' permits) as a chain of live conditions with the first one holding it
+marked; for the safety relay's hardwired loop it rules out what the PC can see (the gauge
+controller's relay, the magnet coolant switch) and names what is left (doors, ESOs, key, START).
+The window is always kept on a screen and no bigger than it (a layout saved on a big monitor used
+to open a laptop-sized screen's worth off-screen). Panels that are closed or behind another tab
+aren't refreshed; they catch up the moment they are shown.
 
 Both programs share one look, dark (the default) or light: View > Theme, or Ctrl+Shift+T,
 switches it while they run, and the other program follows within a second. The choice is kept per
@@ -152,13 +163,13 @@ valve and energise the safety relay before the supplies accept commands.
 
 The simulated source behaves roughly like the real TESS (Thermionic Emission Sputter Source;
 details in `src/sim/plc.py`):
-closing the gate valve trips the safety relay (latched: supplies off, fault reset and enable the
-relay again); the thermionic supply sits at 2500 V and its current comes from the filament
-(~3 mA at 25 A, ~150 mA at 29 A), with auto-emission driving the filament; the cesium oven heats
-to its setpoint, forced cooling takes it towards 20 °C; extraction and target draw 0.02 mA/kV
-through their bleed resistors, and beam (target current, ~10 % of it extracted, and peaks on the
-Faraday cup) appears once thermionic > 200 W, target > 4 kV and cesium > 50 °C. The einzel draws
-under 1 µA, noisily.
+the gate valve closing (by hand with the source cold, or by the PLC when the vacuum goes) trips the
+safety relay (latched: supplies off, fault reset and enable the relay again); the thermionic
+supply sits at 2500 V and its current comes from the filament (~3 mA at 25 A, ~150 mA at 29 A),
+with auto-emission driving the filament; the cesium oven heats to its setpoint, forced cooling
+takes it towards 20 °C; extraction and target draw 0.02 mA/kV through their bleed resistors, and
+beam (target current, ~10 % of it extracted, and peaks on the Faraday cup) appears once
+thermionic > 200 W, target > 4 kV and cesium > 50 °C. The einzel draws under 1 µA, noisily.
 
 Each program also takes `--sim` on its own, e.g. `python src/hmi.py --sim`: simulated devices, `data_sim/`
 and the simulator's ports (offset 10000, unless `SINDIE_PORT_OFFSET` is set), so a program started that

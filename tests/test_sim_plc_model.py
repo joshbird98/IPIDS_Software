@@ -216,3 +216,85 @@ def test_hot_cesium_keeps_target_and_ioniser_on(plc):
     assert plc.get("ion_beam.internal.cs_is_hot") == 0.0
     for name in ("target", "thermionic", "filament"):
         assert plc.get(S + f"{name}.stat_enabled") == 0.0, name
+
+
+def test_machine_state_and_the_close_permissive(plc):
+    """The interlock bits the Interlocks panel reads (docs/how-it-works/plc.md): Ready only with the
+    relay permissive made, Live with the relay closed; the source cold only with no high voltage and
+    the filament and the caesium cold."""
+    run(plc, 0.5)
+    assert plc.get("ion_beam.system.machine_state") == 1.0          # gate valve closed: not ready
+    plc.set(S + "chamber.cmd_open_gv", 1)
+    run(plc, 3)
+    assert plc.get("ion_beam.system.machine_state") == 2.0          # ready
+    plc.set("ion_beam.system.cmd_enable_safety", 1)
+    run(plc, 1)
+    assert plc.get("ion_beam.system.machine_state") == 3.0
+    assert plc.get(S + "chamber.stat_gv_close_permissive") == 1.0
+    plc.set(S + "filament.sp_requested_current", 5.0)
+    plc.set(S + "filament.cmd_enable", 1)
+    run(plc, 6)
+    assert plc.get("ion_beam.internal.fil_is_hot") == 1.0
+    assert plc.get(S + "chamber.stat_gv_close_permissive") == 0.0   # hot: the PLC would hold the relay
+    plc.set(S + "filament.cmd_enable", 0)
+    run(plc, 8)
+    assert plc.get("ion_beam.internal.fil_is_hot") == 0.0
+    plc.set(S + "extraction.sp_requested_voltage", 5.0)
+    plc.set(S + "extraction.cmd_enable", 1)
+    run(plc, 3)
+    assert plc.get(S + "chamber.stat_gv_close_permissive") == 0.0   # high voltage
+    assert plc.get(S + "cesium.stat_lockout") == 0.0 and plc.get("ion_beam.internal.cs_heating_permissive") == 1.0
+
+
+def test_ready_is_the_documented_relay_permissive_alone(plc, monkeypatch):
+    """Machine state 2 follows the relay permissive plc.md describes, not the simulator's own
+    shortcuts (INITIATE SHUTDOWN and the plc_relay_trip fault drop the relay here)."""
+    plc.set(S + "chamber.cmd_open_gv", 1)
+    run(plc, 3)
+    monkeypatch.setenv("SINDIE_SIM_FAULTS", "plc_relay_trip")
+    run(plc, 0.3)
+    assert plc.get("ion_beam.system.machine_state") == 2.0
+    plc.set("ion_beam.system.cmd_source_shutdown", 1)
+    run(plc, 0.3)
+    assert plc.get("ion_beam.system.machine_state") == 2.0
+
+
+def test_an_open_safety_loop_refuses_the_relay_after_5_s(plc, monkeypatch):
+    """A door, an ESO or the key switch open: the PLC gives its enable, nothing closes, and after
+    5 s it latches Safety_Relay_Refused and drops the request. A closed relay opens: tripped."""
+    plc.set(S + "chamber.cmd_open_gv", 1)
+    run(plc, 3)
+    monkeypatch.setenv("SINDIE_SIM_FAULTS", "safety_loop_open")
+    plc.set("ion_beam.system.cmd_enable_safety", 1)
+    run(plc, 3)
+    assert plc.get(RELAY) == 0.0 and plc.get("ion_beam.system.cmd_enable_safety") == 1.0
+    assert 2000 < plc.get("ion_beam.system.safety_timer_elapsed_ms") < 5000      # PRESS PANEL START
+    assert not fault_active(plc, "Safety_Relay_Refused")
+    run(plc, 2.5)
+    assert plc.get(RELAY) == 0.0 and plc.get("ion_beam.system.cmd_enable_safety") == 0.0
+    assert fault_active(plc, "Safety_Relay_Refused") and plc.get("ion_beam.system.machine_state") == 99.0
+    monkeypatch.delenv("SINDIE_SIM_FAULTS")
+    plc.set("ion_beam.system.cmd_fault_reset", 1)
+    plc.set("ion_beam.system.cmd_enable_safety", 1)
+    run(plc, 1)
+    assert plc.get(RELAY) == 1.0
+    monkeypatch.setenv("SINDIE_SIM_FAULTS", "safety_loop_open")       # an ESO pressed
+    run(plc, 0.3)
+    assert plc.get(RELAY) == 0.0 and fault_active(plc, "Safety_Relay_Tripped")
+
+
+def test_low_air_drops_the_relay_and_closes_the_gate_valve(plc, monkeypatch):
+    energise(plc)
+    monkeypatch.setenv("SINDIE_SIM_FAULTS", "air_low")
+    run(plc, 0.5)
+    assert plc.get("ion_beam.facilities.stat_air_press_ok") == 0.0
+    assert plc.get(RELAY) == 0.0 and plc.get(S + "chamber.stat_gv_open") == 0.0
+    assert fault_active(plc, "Air_Pressure_Low")
+
+
+def test_a_gauge_fault_withholds_the_open_permissive(plc):
+    run(plc, 0.5)
+    assert plc.get(S + "chamber.stat_gv_open_permissive") == 1.0
+    plc.set(S + "vacuum_gauge_1.stat_above_sp", 1)
+    run(plc, 0.2)
+    assert plc.get(S + "chamber.stat_gv_open_permissive") == 0.0 and fault_active(plc, "VG1_Above_SP_Warn")

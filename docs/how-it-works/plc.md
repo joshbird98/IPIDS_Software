@@ -3,6 +3,9 @@
 What the Siemens S7-1200 PLC does and how it decides it: machine states, the safety relay enable, interlocks and latched faults, the shutdown sequences, arc quench, the gate valve, the caesium oven, auto-emission, setpoint arbitration, and the data block it shares with the PC. It ends with the known issues in the program.
 
 > [!NOTE]
+> The HMI's [Interlocks](../panels/interlocks.md) panel follows this page (`src/core/interlocks.py`): it shows each permissive below with what holds it, and flags a PLC verdict that doesn't match. If the program changes, change both.
+
+> [!NOTE]
 > The PLC program is kept in its TIA Portal project, not in this repository. The repository holds the interface block the PC reads (`plc/generated/PLC_PC_Interface.scl`) and the script that makes the fault data types (`plc/build_plc_types.py`). This page describes the program from an export of it; names such as FB20 are its blocks. If the program has been changed since, check the PLC.
 
 ## How the program runs
@@ -385,6 +388,7 @@ These were found while checking the program and the software against each other,
 
 ## See also
 
+- [Interlocks](../panels/interlocks.md)
 - [System overview](overview.md)
 - [Services and messaging](services.md)
 - [Alarm handling](alarms.md)

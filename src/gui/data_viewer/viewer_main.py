@@ -5,10 +5,10 @@ if __name__ == "__main__":
     if __package__ in (None, ""):
         # Started as a script: make 'src' importable from any working directory
         sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "..")))
-    if "--sim" in sys.argv[1:]:
+    from src.core.env import flag, use_simulator     # (reads nothing at import)
+    if "--sim" in sys.argv[1:] or flag("SIMULATE"):
         # Simulation mode: data_sim/ and the simulator's ports (set before src.core.paths and
-        # the network map are imported)
-        from src.core.env import use_simulator
+        # the network map are imported). SINDIE_SIMULATE=1 alone gets the ports too.
         use_simulator()
 
 """SINDIE Data Viewer: live and historical telemetry in plot lanes, event markers, exports.
@@ -148,6 +148,14 @@ class DataViewerApp(LanesMixin, InspectorMixin, MarkersMixin, ExportMixin, Profi
         self.marker_sync_timer.timeout.connect(self._refresh_event_markers)
         self.marker_sync_timer.start(1000)  # Check SQLite every 1 second
 
+    def _open_program(self, program: str):
+        """The HMI (or another SINDIE program) to the front, or started (src/launcher/instance.py)."""
+        from PyQt6.QtWidgets import QMessageBox
+        from src.launcher.instance import open_or_raise
+        problem = open_or_raise(program)
+        if problem:
+            QMessageBox.warning(self, "SINDIE", problem)
+
     def _init_ui(self):
         # View menu: the theme (shared with the HMI: switching it in either changes both), Ctrl+Shift+T
         view_menu = self.menuBar().addMenu("View")
@@ -157,6 +165,10 @@ class DataViewerApp(LanesMixin, InspectorMixin, MarkersMixin, ExportMixin, Profi
         self.sidebar_action.toggled.connect(lambda on: self.sidebar_scroll.setVisible(on))
         view_menu.addSeparator()
         theme.add_theme_menu(view_menu, self)
+        view_menu.addSeparator()
+        self.open_hmi_action = view_menu.addAction("Open the operator HMI")
+        self.open_hmi_action.setToolTip("Brings the HMI to the front, or starts it")
+        self.open_hmi_action.triggered.connect(lambda: self._open_program("hmi"))
 
         # Help: the pages in docs/ (shared with the HMI); F1 opens the data viewer's page
         from src.gui.help import add_help_menu, pages as help_pages
@@ -726,6 +738,11 @@ if __name__ == "__main__":
     # so don't apply the services' 200 MB working-set ceiling here.
     harden_windows_process(limit_working_set=False)
     app = QApplication(sys.argv)
+    # One data viewer per system: started again, the one running comes to the front
+    from src.launcher.instance import SingleInstance, bring_to_front
+    guard = SingleInstance("viewer")
+    if not guard.claim():
+        sys.exit(0)
     # The theme saved last (dark unless chosen otherwise: View > Theme), shared with the HMI
     theme.install(app)
 
@@ -742,6 +759,7 @@ if __name__ == "__main__":
 
     # 2. The window(s): each fetches the data it needs as it renders
     window_1 = DataViewerApp(master_cache, window_title="SINDIE Data Viewer - Window 1")
+    guard.activated.connect(lambda _message: bring_to_front(window_1))
     window_1.show()
 
     exit_code = app.exec()

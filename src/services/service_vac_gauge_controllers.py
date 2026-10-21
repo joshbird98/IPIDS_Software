@@ -43,6 +43,12 @@ GV_STALE_S = 10.0        # ...and VG1 / VG2 without one for this long lose the g
 # gate valve. Judged = the permissive given, or this long after the start-up check if it still isn't.
 JUDGED_TAG = "ion_beam.vacuum.stat_judged"
 JUDGE_GRACE_S = 20.0     # (a full round-robin of relay reads takes about 10 s on the real bus)
+# Each relay's on/off status (ion_beam.vacuum.controller_<node>.relay_<n>_status) and when it was read
+# (..._read_at, epoch seconds) are published as unknown when it hasn't been read for this long (three
+# round-robins), when the controllers can't be reached, and until this run has read it: the HMI's
+# Interlocks panel uses them to rule the gauge controller's relay in the safety relay's loop in or out,
+# which mustn't be done on an old reading (nor on the previous run's, which the HMI would still hold).
+RELAY_STATUS_STALE_S = 30.0
 
 NODE_IDS = [10, 20]
 CHANNELS = [1, 2, 3]
@@ -79,6 +85,16 @@ RELAY_REREADS = 3   # a relay value that is known only changes when this many ro
 RELAY_TRUSTED_TRIES = 4     # a deliberate read needs two agreeing answers in this many tries
 MISMATCH_TAG = "ion_beam.vacuum.stat_relay_sp_mismatch"
 GRAPHIX = {10: "graphix1", 20: "graphix2"}     # the registry's names for the controllers (relay limits)
+
+
+def relay_status_tag(node, relay) -> str:
+    """1 while the relay is on (the pressure below its set point), 0 while it is off; unknown when
+    not read recently (RELAY_STATUS_STALE_S). Its ..._read_at twin: when it was read (epoch s)."""
+    return f"ion_beam.vacuum.controller_{node}.relay_{relay}_status"
+
+
+def relay_read_at_tag(node, relay) -> str:
+    return f"ion_beam.vacuum.controller_{node}.relay_{relay}_read_at"
 
 
 def relay_value(kind: str, raw) -> Optional[str]:
@@ -128,6 +144,7 @@ class VacuumMicroservice(DeviceService):
         self.silent_nodes = set()       # controllers that answered nothing at connect (not checked then)
         self._polling_since = None      # (monotonic) the end of the first start-up check
         self._judged = False            # this run has judged the gate-valve permissive (see JUDGED_TAG)
+        self._relay_status_at = {}      # (node, relay) -> when its status was last read (monotonic)
         self.build_relay_maps()
         self.gv_config_problems = self._find_gv_config_problems()
         self._gv_problems_reported = False
@@ -135,6 +152,10 @@ class VacuumMicroservice(DeviceService):
         for base in self.tag_map.values():
             for flag in GAUGE_FLAGS:
                 self.state[f"{base}.{flag}"] = 0.0
+        for node in NODE_IDS:                   # unknown until this run reads them
+            for relay in RELAYS:
+                self.state[relay_status_tag(node, relay)] = None
+                self.state[relay_read_at_tag(node, relay)] = None
         self.slow_tasks = [("gauge_status", ch) for ch in CHANNELS]
         for sp in RELAYS:
             self.slow_tasks += [("relay_status", sp), ("relay_on", sp), ("relay_off", sp), ("relay_ch", sp)]
@@ -511,6 +532,10 @@ class VacuumMicroservice(DeviceService):
         self.state["ion_beam.facilities.graphix2.stat_comms_fail"] = 1.0
         self.state["ion_beam.vacuum.gv_permissive_ready"] = 0.0
         self.state[MISMATCH_TAG] = None
+        for node, relay in list(self._relay_status_at):
+            self.state[relay_status_tag(node, relay)] = None
+            self.state[relay_read_at_tag(node, relay)] = None
+        self._relay_status_at.clear()
         self.state["system.connected"] = 0.0
         self.state[JUDGED_TAG] = 1.0 if self._judged else 0.0    # judged before: this is a real comms loss
 
@@ -523,6 +548,7 @@ class VacuumMicroservice(DeviceService):
                     answered.add(node)
             self.read_slow_item(node, task, target)
         self._slow_idx = (self._slow_idx + 1) % len(self.slow_tasks)
+        self.withdraw_stale_relay_status()
         if self.silent_nodes & answered:
             self.recheck_returning_nodes(answered)
         fault = 0.0 if self.link.connected else 1.0
@@ -601,7 +627,9 @@ class VacuumMicroservice(DeviceService):
             except ValueError:
                 self.log.debug("Unparseable relay status from node %s: %r", node, val)
                 return
-            self.state[f"ion_beam.vacuum.controller_{node}.relay_{target}_status"] = float(status)
+            self.state[relay_status_tag(node, target)] = float(status)
+            self.state[relay_read_at_tag(node, target)] = round(time.time(), 2)
+            self._relay_status_at[(node, target)] = time.monotonic()
             ch = self.relay_to_channel_map.get((node, target))
             base = self.tag_map.get((node, ch)) if ch else None
             if base:
@@ -618,6 +646,16 @@ class VacuumMicroservice(DeviceService):
                 if (node, target) in self.relay_expected:
                     self.relay_reading(node, target, kind, val)
                     self.review_relay(node, target)
+
+    def withdraw_stale_relay_status(self):
+        """A relay status not read for RELAY_STATUS_STALE_S (a controller that stopped answering)
+        is published as unknown until it is read again."""
+        now = time.monotonic()
+        for (node, relay), at in list(self._relay_status_at.items()):
+            if now - at > RELAY_STATUS_STALE_S:
+                self.state[relay_status_tag(node, relay)] = None
+                self.state[relay_read_at_tag(node, relay)] = None
+                del self._relay_status_at[(node, relay)]
 
     def evaluate_gv_permissive(self):
         now = time.monotonic()

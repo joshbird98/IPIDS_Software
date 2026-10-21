@@ -59,7 +59,7 @@ What to do:
 
 A device that can't be reached doesn't cause **BACKOFF**. The device services keep running and heartbeating while their device is unreachable, and report it as a comms failure instead.
 
-The other states are **STARTING** (started, no heartbeat yet), **OFFLINE** (not running), **CRASHED** and **HANGING** (seen only briefly, before the manager restarts the service) and **UNKNOWN** (no data from the service manager itself: start it with `python src/services/service_manager.py`). After 10 s in **BACKOFF**, **CRASHED**, **HANGING** or **OFFLINE** the alarm service raises `<service> is waiting to be restarted` (or `is crashed`, `is hanging (no heartbeat)`, `is not running`). See [Service Manager](panels/service-manager.md).
+The other states are **STARTING** (started, no heartbeat yet), **OFFLINE** (not running), **CRASHED** and **HANGING** (seen only briefly, before the manager restarts the service) and **UNKNOWN** (no data from the service manager itself: start it with the launcher's **Start services**, or `python src/services/service_manager.py`). After 10 s in **BACKOFF**, **CRASHED**, **HANGING** or **OFFLINE** the alarm service raises `<service> is waiting to be restarted` (or `is crashed`, `is hanging (no heartbeat)`, `is not running`). See [Service Manager](panels/service-manager.md).
 
 ## PLC COMMS shows OFFLINE
 
@@ -72,7 +72,7 @@ The **System Health** panel shows **PLC COMMS: OFFLINE** when the HMI has no liv
 
 ## The gate valve does not open
 
-Check, in order:
+The **Gate valve** card on the [Interlocks](panels/interlocks.md) panel shows each of the conditions below, live, and which one holds the valve shut. Check, in order:
 
 1. **OPEN is greyed out.** Hover over it in the **Vacuum System** panel:
     - `Disabled: PLC telemetry stream is dead.` (the buttons read **OFFLINE**): see [PLC COMMS shows OFFLINE](#plc-comms-shows-offline).
@@ -90,10 +90,12 @@ Closing the gate valve with the safety relay on opens the relay. See [Vacuum Sys
 
 ## The safety relay does not switch on
 
+The **Safety relay** card on the [Interlocks](panels/interlocks.md) panel shows the PLC's conditions below, live, and after a refusal it rules out what the PC can see in the relay's loop (the gauge controller's relay and the magnet coolant switch), leaving what has to be checked by hand.
+
 1. **ENABLE SAFETY RELAY is greyed out.** `Disabled: The Gate Valve must be fully OPEN before the safety circuit can be energized.`: open the gate valve first ([The gate valve does not open](#the-gate-valve-does-not-open)). `Disabled: GUI to PLC communications are offline.`: see [PLC COMMS shows OFFLINE](#plc-comms-shows-offline).
 2. **START.** After you press **ENABLE SAFETY RELAY** the button counts down, `PRESS PANEL START (<n>s)`. Press **START** on the **High Voltage Systems Control** box, on the operator's desk, before the count ends. The PLC can only allow the relay to close; it closes when the button is pressed.
 3. **SAFETY: TRIPPED/REFUSED when the count ends.** The relay didn't close within 5 s, so the PLC dropped the request and latched `Safety_Relay_Refused`. Press **RESET FAULTS** before you try again.
-4. **The PLC's relay permissive.** The PLC passes the enable to the relay only when all of these hold. The HMI checks only the gate valve, so check the rest:
+4. **The PLC's relay permissive.** The PLC passes the enable to the relay only when all of these hold. **ENABLE SAFETY RELAY** checks only the gate valve; the Interlocks panel shows the rest:
     - the compressed air is OK (fault `Air_Pressure_Low`);
     - the source coolant flow is OK (`Src_Coolant_Flow_Low`);
     - the magnet coolant is OK (`Mag_Coolant_Flow_Low`; **MAG COOLING** in **Beamline Optics**);
@@ -150,7 +152,7 @@ While a sequence runs, the source supplies are greyed out with `automated source
 
 ## RESET FAULTS does not clear a fault
 
-1. **The PLC refused the reset.** The PLC takes a reset only when the remote I/O sequence is at step 0, 3 or 99, the PC sequence at step 0, 2, 3 or 99, and the PC watchdog isn't lost. It refuses one during **GRACE PERIOD (75% EXTR)**, during **HOLD HOT PHASE** and **FILAMENT RAMP DOWN**, during step 2 of a remote I/O shutdown, and while the PC watchdog is lost. The **Command Log** still shows `written to PLC`: the PLC drops a refused reset. Press it again once the sequence has moved on.
+1. **The PLC refused the reset.** The PLC takes a reset only when the remote I/O sequence is at step 0, 3 or 99, the PC sequence at step 0, 2, 3 or 99, and the PC watchdog isn't lost. It refuses one during **GRACE PERIOD (75% EXTR)**, during **HOLD HOT PHASE** and **FILAMENT RAMP DOWN**, during step 2 of a remote I/O shutdown, and while the PC watchdog is lost. The **Command Log** still shows `written to PLC`: the PLC drops a refused reset. Press it again once the sequence has moved on. The **Fault reset** card on the [Interlocks](panels/interlocks.md) panel says whether a reset would be accepted now.
 2. **The cause is still there.** A fault whose condition still holds latches again (after its delay). Clear the cause first.
 3. **You acknowledged the alarm.** Acknowledging an alarm doesn't reset the fault. Only **RESET FAULTS** does.
 4. **RESET FAULTS is greyed out**, with `Disabled: GUI to PLC communications are offline.`: see [PLC COMMS shows OFFLINE](#plc-comms-shows-offline).

@@ -33,6 +33,7 @@ SCREEN = {"synchronousWindowSystemEvents": False, "windowFrameMargins": False,
 PANELS = {
     "VacuumDock": ("panel-vacuum", 680, 450),
     "HealthDock": ("panel-system-health", 680, 470),
+    "InterlocksDock": ("panel-interlocks", 1240, 1100),
     "SourceDock": ("panel-ion-source", 780, 480),
     "OpticsDock": ("panel-beamline-optics", 780, 700),
     "FaradaySmuDock": ("panel-faraday-cup-smu", 700, 560),
@@ -291,7 +292,9 @@ class Shooter:
         self.shoot_viewer()
         self.shoot_panels()
         self.shoot_dialogs()
+        self.shoot_launcher()
         self.shoot_alarm()
+        self.shoot_interlocks_refused()
         hmi.close()
         self.viewer.close()
         self.cache.stop()
@@ -540,6 +543,23 @@ class Shooter:
         except Exception as e:
             print("  (config editor not taken:", e, ")")
 
+    def shoot_launcher(self):
+        """The launcher's window, watching the simulator's services (so it says SIMULATOR)."""
+        try:
+            from src.launcher.window import LauncherWindow
+            w = LauncherWindow(windows=True)
+            w.show()
+            self.wait(lambda: "ONLINE" in w.services_chip.text(), 15, "the launcher's services ONLINE")
+            self.spin(0.5)
+            self.unfocus(w)
+            self.save(w.grab(), "launcher")
+            w.quit = lambda: None           # (it would quit the application)
+            w._quitting = True
+            w._shutdown_threads()
+            w.close()
+        except Exception as e:
+            print("  (launcher not taken:", e, ")")
+
     def shoot_alarm(self):
         """The Alarms panel with an alarm raised: the turbo pump's controller made unreachable."""
         from src import sim
@@ -559,6 +579,29 @@ class Shooter:
             dock.raise_()
             self.spin(1.0)
             self.save(dock.grab(), name)
+        finally:
+            sim.set_faults(set())
+
+    def shoot_interlocks_refused(self):
+        """The Interlocks panel's safety relay card after a refusal: something in the relay's
+        hardwired loop open (a door, say). Last, as it drops the relay."""
+        from src import sim
+        hmi, view = self.hmi, self.view
+        try:
+            self.send("ion_beam.system.cmd_enable_safety", False)
+            self.wait(lambda: view.get("ion_beam.facilities.safety_relay_active") == 0.0, 15, "the relay off")
+            sim.set_faults({"safety_loop_open"})
+            self.spin(1.5)
+            self.send("ion_beam.system.cmd_enable_safety", True)
+            self.wait(lambda: view.get("faults.Safety_Relay_Refused") == 1.0, 20, "the relay refused")
+            dock = hmi.interlocks_dock
+            dock.setFloating(True)
+            dock.resize(600, 1000)
+            dock.show()
+            dock.raise_()
+            self.spin(4.0)                  # (a disagreement would show after 3 s: there should be none)
+            self.unfocus(dock)
+            self.save(hmi.interlocks_widget.cards["relay"].grab(), "panel-interlocks-refused")
         finally:
             sim.set_faults(set())
 

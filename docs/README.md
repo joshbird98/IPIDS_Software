@@ -31,6 +31,7 @@ In the HMI, press **F1** with the mouse over a panel to open that panel's page. 
 - **HMI panels**
     - [Vacuum System](panels/vacuum.md)
     - [System Health](panels/system-health.md)
+    - [Interlocks](panels/interlocks.md)
     - [TESS Ion Source Control](panels/ion-source.md)
     - [Beamline Optics](panels/beamline-optics.md)
     - [Faraday Cup & SMU](panels/faraday-cup-smu.md)
