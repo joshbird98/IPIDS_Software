@@ -31,6 +31,7 @@ class FakeDevice:
         self.values = {}                  # tag -> last value commanded
         self.log = []                     # (tag, value, holder, status)
         self.online = True
+        self.late = 0                     # the next n requests reach it late: refused as stale (CommandServer)
 
     def subsystem_of(self, tag):
         best = None
@@ -40,6 +41,10 @@ class FakeDevice:
         return best
 
     def handle(self, tag, value, holder, origin):
+        if self.late > 0:
+            self.late -= 1
+            self.log.append((tag, value, holder, C.REJECTED))
+            return C.REJECTED, f"{C.STALE} sent 0.73 s ago (limit 0.50 s)"
         if tag.endswith(LEASE_SUFFIX):
             ok, reason, _ = self.leases.handle(tag[:-len(LEASE_SUFFIX)], value, origin)
             status = C.OK if ok else C.REJECTED

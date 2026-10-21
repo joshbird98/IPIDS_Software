@@ -35,7 +35,7 @@ class Model:
     def __init__(self):
         self.scripts, self.sessions = [], []
 
-    def provider(self, settings, progress=None, cancelled=None):
+    def provider(self, settings, progress=None, cancelled=None, http_client=None):
         model = self
 
         class Chat:
@@ -456,3 +456,32 @@ def test_closing_while_a_draft_runs_cancels_it_only_if_the_window_closes(make, m
         assert dlg._may_discard() and dlg._job is None and job.cancelled()
     finally:
         released.append(1)
+
+
+
+def test_the_connection_test_says_what_answered(make, monkeypatch):
+    """Josh, 21 October 2026: a draft seemed to hang, with no way to tell why."""
+    from src.core.recipe_ai import provider as P
+    dlg = make()
+    monkeypatch.setattr(P, "make_provider", dlg.model.provider)
+    dlg.model.scripts.append([Reply(text="OK", model="gemini-x")])
+    assert not dlg.draft_panel.btn_test.isHidden()
+    dlg.draft_panel.btn_test.click()
+    assert dlg._test_job is None and dlg.draft_panel.btn_test.isEnabled()
+    assert dlg.draft_panel.lbl_test.text().startswith("Connected: gemini-x answered in")
+    assert not dlg._busy()                                  # (it locks nothing)
+    dlg.model.scripts.append([AIError("network", "No connection to the service within 15 s: is this PC on the "
+                                                 "internet?")])
+    dlg.draft_panel.btn_test.click()
+    assert dlg.draft_panel.lbl_test.text() == ("Not connected: No connection to the service within 15 s: is this PC "
+                                               "on the internet?")
+
+
+def test_the_first_wait_says_that_the_model_thinks_first(make):
+    dlg = make()
+    said = []
+    dlg.model.scripts.append([propose(changed(dlg, lambda d: d["steps"].pop()))])
+    original = dlg._ai_progress
+    dlg._ai_progress = lambda job, text: (said.append(text), original(job, text))
+    dlg.request_draft("drop the last step")
+    assert any("first answer (it thinks before it answers" in t for t in said), said

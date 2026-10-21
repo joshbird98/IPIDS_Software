@@ -1,7 +1,10 @@
-"""The recipe builder's list of steps: each step as a sentence (what it does), its note under it,
-and a mark for its problems. Steps can be dragged: onto a "Do steps at the same time" step to go
-inside it, between steps to move there. The list never moves anything itself: it says what was
-asked (moved) and the builder changes the recipe and draws the list again.
+"""The recipe builder's list of steps, drawn as a flow: a node for each step on a line from the
+first step to the last (its icon says what kind of step it is: src/gui/control/dialogs/
+recipe_builder/look.py), the steps of a "Do steps at the same time" step branching off it; beside
+each node the step's number, the step as a sentence, its note, and a mark for its problems. Steps
+can be dragged: onto a "Do steps at the same time" step to go inside it, between steps to move
+there. The list never moves anything itself: it says what was asked (moved) and the builder
+changes the recipe and draws the list again.
 
 While a draft is shown, the list shows its changes: + a step it adds, − one it removes (struck
 through), ~ one it changes (with what it was under it). A step added but left out is drawn faint,
@@ -10,17 +13,22 @@ the change back or leaves it out (change_clicked). A review's note on a step is 
 from dataclasses import dataclass
 from typing import Optional
 
-from PyQt6.QtCore import QRect, QSize, Qt, pyqtSignal
-from PyQt6.QtGui import QFont, QFontMetrics
+from PyQt6.QtCore import QPointF, QRect, QSize, Qt, pyqtSignal
+from PyQt6.QtGui import QFont, QFontMetrics, QPainter, QPen
 from PyQt6.QtWidgets import (QAbstractItemView, QStyle, QStyledItemDelegate, QStyleOptionViewItem, QTreeWidget,
                              QTreeWidgetItem)
 
 from src.gui import theme
+from src.gui.control.dialogs.recipe_builder import look
 
 (PATH, NUMBER, TEXT, NOTE, LEVEL, KIND, MARK, CHANGE, CHANGE_ID, KEPT, WAS, REVIEW,
- REVIEW_LEVEL) = (Qt.ItemDataRole.UserRole + i for i in range(13))
+ REVIEW_LEVEL, BLOCK) = (Qt.ItemDataRole.UserRole + i for i in range(14))
 PAD = 6
 GLYPH_W = 18
+NODE, NODE_SM = 24, 20                  # a step's node; one inside "Do steps at the same time"
+NODE_COL, NODE_COL_SM = 34, 28          # the column it sits in
+ELBOW = 10                              # a branch's length left of a child step's row
+RAIL_W = 2.0
 GLYPHS = {"add": "+", "remove": "−", "change": "~"}
 CHANGE_TIPS = {"add": "added by the draft", "remove": "removed by the draft", "change": "changed by the draft"}
 
@@ -40,21 +48,34 @@ class OutlineRow:
     was: str = ""                   # a changed step: what it was ("was: ..."), or the change left out
     review: str = ""                # a review's note on the step
     review_level: str = ""          # "concern", "suggestion", "question"
+    block: str = ""                 # the block it is (blocks.py: its icon); "" for a type the builder doesn't know
+
+
+class _Geometry:
+    """Where a row's parts go."""
+
+    def __init__(self, option, index, changes_shown):
+        self.fm = QFontMetrics(option.font)
+        self.rect = option.rect.adjusted(PAD, PAD // 2 + 1, -PAD, -(PAD // 2 + 1))
+        self.child = index.parent().isValid()
+        self.glyph_w = GLYPH_W if changes_shown and not self.child else 0
+        self.node_w, self.node = (NODE_COL_SM, NODE_SM) if self.child else (NODE_COL, NODE)
+        self.num_w = self.fm.horizontalAdvance("00.00") + 6
+        mark = index.data(MARK) or ""
+        self.mark_w = self.fm.horizontalAdvance(mark) + 18 if mark else 0
+        self.text_w = max(60, self.rect.width() - self.glyph_w - self.node_w - self.num_w - self.mark_w)
+        self.lead = max(0, (self.node - self.fm.height()) // 2)     # the first line level with the node's centre
+        self.node_x = self.rect.left() + self.glyph_w + self.node_w / 2
+        self.node_y = self.rect.top() + self.node / 2
 
 
 class _StepDelegate(QStyledItemDelegate):
-    """Change mark, number, sentence (wrapped), note, was, review (muted) and a problem mark."""
+    """Change mark, the flow's line and the step's node, number, sentence (wrapped), note, was,
+    review (muted) and a problem mark."""
 
-    def _layout(self, option, index):
-        fm = QFontMetrics(option.font)
-        rect = option.rect.adjusted(PAD, PAD // 2 + 1, -PAD, -(PAD // 2 + 1))
+    def _geometry(self, option, index):
         view = self.parent()
-        glyph_w = GLYPH_W if view is not None and getattr(view, "changes_shown", False) else 0
-        num_w = fm.horizontalAdvance("00.00") + 6
-        mark = index.data(MARK) or ""
-        mark_w = fm.horizontalAdvance(mark) + 18 if mark else 0
-        text_w = max(60, rect.width() - glyph_w - num_w - mark_w)
-        return fm, rect, glyph_w, num_w, mark_w, text_w
+        return _Geometry(option, index, view is not None and getattr(view, "changes_shown", False))
 
     @staticmethod
     def _extra_lines(index):
@@ -81,12 +102,12 @@ class _StepDelegate(QStyledItemDelegate):
         width = max(120, width - depth * (view.indentation() if view is not None else 18))
         option = QStyleOptionViewItem(option)
         option.rect = QRect(0, 0, width, 0)
-        fm, rect, glyph_w, num_w, mark_w, text_w = self._layout(option, index)
+        g = self._geometry(option, index)
         flags = int(Qt.TextFlag.TextWordWrap)
-        h = fm.boundingRect(QRect(0, 0, text_w, 10000), flags, index.data(TEXT) or "").height()
+        h = g.lead + g.fm.boundingRect(QRect(0, 0, g.text_w, 10000), flags, index.data(TEXT) or "").height()
         for _kind, line in self._extra_lines(index):
-            h += fm.boundingRect(QRect(0, 0, text_w, 10000), flags, line).height() + 2
-        return QSize(width, max(h, fm.height()) + PAD + 2)
+            h += g.fm.boundingRect(QRect(0, 0, g.text_w, 10000), flags, line).height() + 2
+        return QSize(width, max(h, g.node) + PAD + 4)
 
     def paint(self, painter, option, index):
         opt = QStyleOptionViewItem(option)
@@ -99,7 +120,8 @@ class _StepDelegate(QStyledItemDelegate):
             painter.fillRect(option.rect, theme.color("info_bg"))
         if style is not None:
             style.drawPrimitive(QStyle.PrimitiveElement.PE_PanelItemViewItem, opt, painter, opt.widget)
-        fm, rect, glyph_w, num_w, mark_w, text_w = self._layout(option, index)
+        g = self._geometry(option, index)
+        fm, rect = g.fm, g.rect
         text_colour = option.palette.highlightedText().color() if selected else theme.color("text")
         muted = option.palette.highlightedText().color() if selected else theme.color("text_muted")
         faint = option.palette.highlightedText().color() if selected else theme.color("text_faint")
@@ -107,55 +129,76 @@ class _StepDelegate(QStyledItemDelegate):
         # (a change left out shows the step as it stays, and the change under it)
         gone = (change == "remove" and kept) or (change == "add" and not kept)
         painter.save()
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         font = QFont(option.font)
         flags = Qt.TextFlag.TextWordWrap
         x = rect.left()
-        if glyph_w and change:
+        if g.glyph_w and change:
             bold = QFont(option.font)
             bold.setBold(True)
             painter.setFont(bold)
             painter.setPen(theme.color("info") if kept and not selected else
                            (text_colour if selected else faint))
-            painter.drawText(QRect(x, rect.top(), glyph_w, fm.height()),
+            painter.drawText(QRect(x, rect.top() + g.lead, g.glyph_w, fm.height()),
                              int(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop), GLYPHS.get(change, ""))
-        x += glyph_w
+        self._paint_flow(painter, option, index, g, gone)
+        x += g.glyph_w + g.node_w
         painter.setFont(font)
         painter.setPen(muted)
-        painter.drawText(QRect(x, rect.top(), num_w, fm.height()),
+        painter.drawText(QRect(x, rect.top() + g.lead, g.num_w, fm.height()),
                          int(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop), index.data(NUMBER) or "")
-        x += num_w
+        x += g.num_w
         text = index.data(TEXT) or ""
         struck = QFont(font)
         struck.setStrikeOut(change == "remove" and kept)
         painter.setFont(struck)
         painter.setPen(faint if gone else text_colour)
-        box = fm.boundingRect(QRect(0, 0, text_w, 10000), int(flags), text)
-        painter.drawText(QRect(x, rect.top(), text_w, box.height()), int(flags | Qt.AlignmentFlag.AlignLeft), text)
+        top = rect.top() + g.lead
+        box = fm.boundingRect(QRect(0, 0, g.text_w, 10000), int(flags), text)
+        painter.drawText(QRect(x, top, g.text_w, box.height()), int(flags | Qt.AlignmentFlag.AlignLeft), text)
         painter.setFont(font)
-        y = rect.top() + box.height() + 2
+        y = top + box.height() + 2
         for kind, line in self._extra_lines(index):
             if kind == "review":
                 level = index.data(REVIEW_LEVEL) or ""
                 painter.setPen(text_colour if selected else theme.color("warn" if level == "concern" else "info"))
             else:
                 painter.setPen(faint if (gone or kind == "was") else muted)
-            lbox = fm.boundingRect(QRect(0, 0, text_w, 10000), int(flags), line)
-            painter.drawText(QRect(x, y, text_w, lbox.height()), int(flags | Qt.AlignmentFlag.AlignLeft), line)
+            lbox = fm.boundingRect(QRect(0, 0, g.text_w, 10000), int(flags), line)
+            painter.drawText(QRect(x, y, g.text_w, lbox.height()), int(flags | Qt.AlignmentFlag.AlignLeft), line)
             y += lbox.height() + 2
         mark = index.data(MARK) or ""
         if mark:
             level = index.data(LEVEL)
             colour = theme.color("fault" if level == "error" else "warn")
             fill = theme.color("fault_fill" if level == "error" else "warn_fill")
-            mx = rect.right() - mark_w + 6
+            mx = rect.right() - g.mark_w + 6
             painter.setPen(Qt.PenStyle.NoPen)
             painter.setBrush(fill)
             r = max(3, fm.height() // 5)
-            painter.drawEllipse(mx, rect.top() + fm.height() // 2 - r, 2 * r, 2 * r)
+            painter.drawEllipse(mx, top + fm.height() // 2 - r, 2 * r, 2 * r)
             painter.setPen(text_colour if selected else colour)
-            painter.drawText(QRect(mx + 2 * r + 4, rect.top(), mark_w, fm.height()),
+            painter.drawText(QRect(mx + 2 * r + 4, top, g.mark_w, fm.height()),
                              int(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop), mark)
         painter.restore()
+
+    @staticmethod
+    def _paint_flow(painter, option, index, g, gone):
+        """The line through the steps and this step's node: a step's line runs on to the next step,
+        and down the branches of its steps at the same time (Outline.drawBranches draws those)."""
+        model = index.model()
+        pen = QPen(theme.color("border_strong"), RAIL_W)
+        pen.setCapStyle(Qt.PenCapStyle.FlatCap)
+        painter.setPen(pen)
+        cx, cy, r = g.node_x, g.node_y, g.node / 2
+        if g.child:                         # the rest of the branch, from the edge of the row to the node
+            painter.drawLine(QPointF(option.rect.left(), cy), QPointF(cx - r, cy))
+        else:
+            if index.row() > 0:
+                painter.drawLine(QPointF(cx, option.rect.top()), QPointF(cx, cy - r))
+            if index.row() < model.rowCount(index.parent()) - 1 or model.rowCount(index) > 0:
+                painter.drawLine(QPointF(cx, cy + r), QPointF(cx, option.rect.bottom() + 1))
+        look.paint_node(painter, QPointF(cx, cy), g.node, index.data(BLOCK) or "", faint=gone)
 
 
 class Outline(QTreeWidget):
@@ -195,12 +238,15 @@ class Outline(QTreeWidget):
         self.blockSignals(True)
         self.clear()
         self.changes_shown = any(r.change for r in rows)
+        # (a branch starts at the line through the steps, then runs right to the step's own node)
+        self.setIndentation(int(PAD + (GLYPH_W if self.changes_shown else 0) + NODE_COL / 2 + ELBOW))
         items = {}
         for r in rows:
             item = QTreeWidgetItem()
             for role, value in ((PATH, r.path), (NUMBER, r.number), (TEXT, r.text), (NOTE, r.note), (LEVEL, r.level),
                                 (MARK, r.mark), (KIND, r.kind), (CHANGE, r.change), (CHANGE_ID, r.change_id),
-                                (KEPT, r.kept), (WAS, r.was), (REVIEW, r.review), (REVIEW_LEVEL, r.review_level)):
+                                (KEPT, r.kept), (WAS, r.was), (REVIEW, r.review), (REVIEW_LEVEL, r.review_level),
+                                (BLOCK, r.block)):
                 item.setData(0, role, value)
             tip = r.text + (f"\nNote: {r.note}" if r.note else "")
             if r.was:
@@ -251,6 +297,26 @@ class Outline(QTreeWidget):
     def resizeEvent(self, event):
         super().resizeEvent(event)
         self.scheduleDelayedItemsLayout()         # the sentences wrap to the new width
+
+    def drawBranches(self, painter, rect, index):
+        """Left of a step inside "Do steps at the same time": the line through the steps, going on
+        down past it, and a branch off it to the step (its delegate draws the rest of the branch)."""
+        parent = index.parent()
+        if not parent.isValid():
+            return
+        model = self.model()
+        spine = self.visualRect(parent).left() + PAD + (GLYPH_W if self.changes_shown else 0) + NODE_COL / 2
+        node_y = rect.top() + PAD // 2 + 1 + NODE_SM / 2
+        last = index.row() == model.rowCount(parent) - 1
+        more = parent.row() < model.rowCount(parent.parent()) - 1     # (a step after the branches)
+        painter.save()
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        pen = QPen(theme.color("border_strong"), RAIL_W)
+        pen.setCapStyle(Qt.PenCapStyle.FlatCap)
+        painter.setPen(pen)
+        painter.drawLine(QPointF(spine, rect.top()), QPointF(spine, rect.bottom() + 1 if (more or not last) else node_y))
+        painter.drawLine(QPointF(spine, node_y), QPointF(rect.right() + 1, node_y))
+        painter.restore()
 
     def paintEvent(self, event):
         super().paintEvent(event)

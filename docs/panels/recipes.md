@@ -116,7 +116,7 @@ Any recipe that switches on the source, the high voltage or the magnets should s
 
 **NEW RECIPE** opens the builder with a new recipe, and **EDIT** with the selected one. The builder is a window of its own beside the HMI, not a dialog that blocks it: the panels stay usable while it is open, and several recipes can be open at once, one window each.
 
-![The recipe builder: the blocks on the left, the steps as sentences in the middle, the selected step's form on the right, and the problems, stop conditions and text below](../images/dialog-recipe-builder.png)
+![The recipe builder: the blocks on the left, the steps as a flow of sentences in the middle, the selected step's form on the right, and the problems, stop conditions and text below](../images/dialog-recipe-builder.png)
 
 | Part | What it is |
 |---|---|
@@ -126,9 +126,9 @@ Any recipe that switches on the source, the high voltage or the magnets should s
 | The chip at the top right | What the checks find: **No problems found** (green), the number of warnings (amber) or of errors (red). |
 | **Name**, **Version**, **About** | The recipe's name, its version, and a description (optional). Beside them, the file the recipe is saved to, or the name a new one will get. |
 | The box under them, **Draft**, **Review** | Drafting with AI: see [Drafting and reviewing with AI](#drafting-and-reviewing-with-ai). |
-| **Add a step** | The blocks, by kind (see below). Double-click one, or select it and press **Add**. |
-| **Steps** | The recipe as sentences, in the order they run, each with its note under it and a mark for its problems. Select a step to edit it. **Move up**, **Move down**, **Duplicate**, **Delete** act on the selected step. |
-| The step's form | What the selected step does, in words, its problems, and its fields. |
+| **Add a step** | The blocks, by kind, each with its icon (see below). Double-click one, or select it and press **Add**. |
+| **Steps** | The recipe as a flow, in the order it runs: a node for each step on a line from the first step to the last, its block's icon in it, and beside it the step's number, the step as a sentence, its note and a mark for its problems. The steps of a **Do steps at the same time** step branch off the line. Most nodes are grey; blue ones hand over to the operator (**Ask the operator**), violet ones run a procedure (**Bring the safety relay on**, **Ramp a supply up slowly**, **Mass scan**); a wait's node is hollow, and a structure block's (**Run another recipe**, **Do steps at the same time**) is square. Select a step to edit it. **Move up**, **Move down**, **Duplicate**, **Delete** act on the selected step. |
+| The step's form | The block's icon and the step's number, what the selected step does in words, its problems, and its fields. |
 | **Problems** | Every error and warning the checks find. Click one to go to the step. |
 | **Stop conditions** | The recipe's stop conditions (see [Setting the stop conditions](#setting-the-stop-conditions)). |
 | **Read as text** | The whole recipe as numbered sentences, with what stops it and how long its timed parts take. **Copy the text** copies it, for a log book or an email. |
@@ -223,7 +223,7 @@ The box under the recipe's name asks a language model (Google's Gemini) for a dr
 **Drafting:**
 
 1. Type what you want, for example *Condition the source einzel to 16 kV in 0.5 kV steps, 2 minutes each, and stop if it arcs*, or *after this step, wait for the source pressure to fall below 5e-6 mbar*. If the request is about a step ("this step", "here"), select it first: new steps go after the selected step unless you say where.
-2. Press **Draft** (or Enter; Shift+Enter starts a new line, and Up brings back an earlier request). The line under the box says what the model is doing - looking up tags, reading the help's procedures, checking its draft - and for how long. **Cancel** (or Escape) stops waiting. The recipe can't be edited until the draft is back. Closing the window cancels the draft only if you go on to close it.
+2. Press **Draft** (or Enter; Shift+Enter starts a new line, and Up brings back an earlier request). The line under the box says what the model is doing - looking up tags, reading the help's procedures, checking its draft - and for how long. The model thinks before each answer, so the first one often takes 10 to 60 s, and a whole draft a minute or two. **Cancel** (or Escape) stops waiting. The recipe can't be edited until the draft is back. Closing the window cancels the draft only if you go on to close it.
 3. The draft is checked before you see it. One with errors goes back to the model to put right, up to three times; after that it is shown with its errors, which stop it being saved as they would any recipe.
 4. The draft is shown in the steps as changes:
 
@@ -243,6 +243,8 @@ The box under the recipe's name asks a language model (Google's Gemini) for a dr
 
 **Setting it up.** Drafting needs the `google-genai` package (`pip install -r requirements.txt`) and a Gemini API key (from [aistudio.google.com](https://aistudio.google.com)), in a line `GEMINI_API_KEY=<your key>` in the file `.env` in the SINDIE folder. The file isn't in git: the repository is public. Without them the box says what is missing, and the rest of the builder works as before. The model and the time limits are in `config/recipe_ai.json` (see [Configuration files](../engineering/configuration.md#recipe-drafting)).
 
+**Test the connection** (in the **Draft** tab) sends the model the smallest request and says what answered, how fast and where the key was read from, or why it couldn't be reached: the PC must reach `generativelanguage.googleapis.com` on the internet (a network that needs a proxy: set `HTTPS_PROXY` for the HMI). From a terminal: `python -m src.core.recipe_ai.cli check`. Each request, and how long its answer took, is also in the HMI's log.
+
 | Message | What it means | What to do |
 |---|---|---|
 | `Drafting isn't available: No API key for Gemini: ...` | No `GEMINI_API_KEY` in the environment or in `.env`. | Add the key to `.env`, then open the builder again. |
@@ -251,6 +253,10 @@ The box under the recipe's name asks a language model (Google's Gemini) for a dr
 | `The model '<name>' isn't available to this key (...)` | The model in `config/recipe_ai.json` (and each one in its fallback list) isn't offered to this key. | Set another model there. |
 | `The service's rate limit or quota for this key is used up (...)` | Too many requests in a minute, or the key's quota is spent (a request is tried twice more first, unless the service asks for a wait over 30 s). | Try again in a minute; if it keeps coming, the key's daily quota is spent. |
 | `Can't reach the service (...): is this PC online?` | No connection to Google. | Check the PC's network. |
+| `No connection to the service within 15 s: is this PC on the internet? ...` | The connection to Google wasn't accepted: the PC is off the internet, or its network only lets connections out through a proxy. | **Test the connection**. Set `HTTPS_PROXY` if the network has a proxy. |
+| `The model didn't answer within <n> s: ...` | Connected, but no answer in `timeout_s` (120 s). | Try again; a long request may need a longer `timeout_s`. |
+| `The proxy refused the connection (...)` | `HTTPS_PROXY` (or the Windows proxy setting) names a proxy that refused. | Check the proxy's address, and whether it needs a sign-in. |
+| `The service's certificate wasn't trusted: ...` | The network inspects secure connections with a certificate of its own. | Ask IT for its certificate, and set `SSL_CERT_FILE` to it. |
 | `The model hadn't finished after <n> answers` | The model kept looking things up without proposing. | Try again, perhaps with a simpler request. |
 | `The draft changes nothing: <the model's reason>` | The model proposed the recipe as it is: for example because the request asked for something a recipe may not do, such as resetting faults. | Read its reason. |
 | `The draft couldn't be shown (...): the recipe is as it was.` | A fault in the builder while showing the draft (logged). | Report it, with the log; try the request again. |

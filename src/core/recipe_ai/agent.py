@@ -160,7 +160,11 @@ class Session:
                                      "with a simpler request.")
         if self.cancelled():
             raise AIError("cancelled", "Cancelled.")
-        self.progress(f"Waiting for {getattr(self.chat, 'model', 'the model')}")
+        model = outcome.model or getattr(self.chat, "model", "") or "the model"
+        if outcome.rounds == 0:     # (the wait the operator notices: say that it is normal)
+            self.progress(f"Waiting for {model}'s first answer (it thinks before it answers: often 10-60 s)")
+        else:
+            self.progress(f"Waiting for {model} (answer {outcome.rounds + 1})")
         reply = self.chat.send(text=text, results=results)
         outcome.rounds += 1
         outcome.model = reply.model or outcome.model

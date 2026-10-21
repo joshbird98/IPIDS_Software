@@ -1,13 +1,17 @@
 """The recipe builder's step editor: a form for the selected step, made for what that step does
 (not a list of its JSON keys). Every field writes into the step as it is edited and the builder
 re-checks the recipe; the form shows the step's problems and what it does, in words."""
+from PyQt6 import sip
 from PyQt6.QtCore import Qt, pyqtSignal
-from PyQt6.QtWidgets import (QCheckBox, QFormLayout, QFrame, QLabel, QLineEdit, QPlainTextEdit, QPushButton,
+from PyQt6.QtWidgets import (QCheckBox, QFormLayout, QFrame, QHBoxLayout, QLabel, QLineEdit, QPlainTextEdit,
+                             QPushButton,
                              QScrollArea, QVBoxLayout, QWidget)
 
 from src.core.conditions import number
 from src.core.recipe_text import describe_step
 from src.core.routines import ROUTINE_REGISTRY
+from src.gui import theme
+from src.gui.control.dialogs.recipe_builder import look
 from src.gui.control.dialogs.recipe_builder.blocks import block_for
 from src.gui.control.dialogs.recipe_builder.fields import (ConditionRow, DurationField, NumberField, RecipeFileField,
                                                             SupplyField, TagField, ValueField)
@@ -67,6 +71,8 @@ class StepEditor(QScrollArea):
         self.recipe_names = recipe_names
         self.step = None
         self.path = None
+        self.lbl_icon, self._icon_key = None, ""
+        theme.theme_changed().connect(self._show_icon)
         self._empty()
 
     # ------------------------------------------------------------------ building
@@ -105,7 +111,17 @@ class StepEditor(QScrollArea):
         layout.setSpacing(8)
         title = block.title if block is not None else f"{step.get('type')} step"
         label = label or f"Step {'.'.join(str(i + 1) for i in path)}"
-        layout.addWidget(_label(f"{label}: {title}", "heading"))
+        head = QHBoxLayout()
+        head.setSpacing(8)
+        self.lbl_icon = QLabel()
+        self.lbl_icon.setObjectName("StepIcon")
+        self._icon_key = block.key if block is not None else ""
+        self._show_icon()
+        head.addWidget(self.lbl_icon, 0, Qt.AlignmentFlag.AlignTop)
+        heading = _label(f"{label}: {title}", "heading")
+        heading.setObjectName("StepHeading")
+        head.addWidget(heading, 1)
+        layout.addLayout(head)
         if block is not None:
             layout.addWidget(_label(block.help, "hint"))
         self.lbl_problems = QLabel()
@@ -144,6 +160,13 @@ class StepEditor(QScrollArea):
         layout.addStretch(1)
         self._set_body(body)
         self.refresh_text()
+
+    def _show_icon(self, *_):
+        """The step's block icon beside its heading, in the theme's colours."""
+        lbl = getattr(self, "lbl_icon", None)
+        if lbl is None or sip.isdeleted(lbl):
+            return
+        lbl.setPixmap(look.block_icon(self._icon_key).pixmap(20, 20))
 
     def _on_note(self, text):
         if text.strip():

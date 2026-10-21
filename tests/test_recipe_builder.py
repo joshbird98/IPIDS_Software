@@ -88,7 +88,7 @@ def test_every_block_adds_a_step_with_its_own_form(make):
         dlg._selected = None
         step = add(dlg, block.key)
         assert step["type"] == block.step["type"]
-        heading = dlg.editor.widget().findChildren(QLabel)[0].text()
+        heading = dlg.editor.widget().findChild(QLabel, "StepHeading").text()
         assert heading.endswith(block.title), heading
     assert [s["step_id"] for s in dlg.data["steps"]] == list(range(1, len(BLOCKS) + 1))
 

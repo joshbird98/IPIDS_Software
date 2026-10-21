@@ -139,3 +139,35 @@ def test_service_down_keeps_the_lease_and_renewal_reclaims_after_a_restart():
     world.devices["magnet"].online = True
     settle(world, port, seconds=1.5)
     assert world.devices["magnet"].leases.active(MAGNET).holder == "seq-test-1"
+
+
+def test_a_command_that_reached_its_service_late_is_sent_again():
+    """A service refuses a command that reaches it more than 0.5 s after it was sent (stale): it
+    was never carried out, and the sequence still wants it."""
+    world = World()
+    port, keeper, lost = make_port(world)
+    port.send(SP, 20.0)
+    settle(world, port)
+    world.devices["magnet"].late = 2
+    ticket = port.send(SP, 21.0)
+    settle(world, port, seconds=0.5)
+    assert ticket.ok and world.devices["magnet"].values[SP] == 21.0 and not lost
+    world.devices["magnet"].late = 3                    # late every time: the job hears of it
+    ticket = port.send(SP, 22.0)
+    settle(world, port, seconds=0.5)
+    assert ticket.status == C.REJECTED and ticket.reason.startswith(C.STALE)
+    assert world.devices["magnet"].values[SP] == 21.0
+
+
+def test_a_renewal_that_reached_its_service_late_keeps_control():
+    """Josh, 21 October 2026: the start-up recipe stopped - "could not keep control of the einzel:
+    stale: sent 0.73 s ago" - because one renewal reached a busy service late."""
+    world = World()
+    port, keeper, lost = make_port(world)
+    port.send(SP, 20.0)
+    settle(world, port)
+    world.devices["magnet"].late = 3                    # the next renewal, and both times it is sent again
+    settle(world, port, seconds=1.5)
+    assert not lost and MAGNET in keeper.held
+    settle(world, port, seconds=6.0)                    # past the lease's TTL: the renewals carried on
+    assert world.devices["magnet"].leases.active(MAGNET).holder == "seq-test-1" and not lost

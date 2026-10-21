@@ -31,14 +31,16 @@ import logging
 import os
 from dataclasses import dataclass
 
-from PyQt6.QtCore import Qt, QTimer, pyqtSignal
+from PyQt6 import sip
+from PyQt6.QtCore import QSize, Qt, QTimer, pyqtSignal
 from PyQt6.QtGui import QKeySequence, QShortcut, QTextCursor
-from PyQt6.QtWidgets import (QDialog, QDialogButtonBox, QFormLayout, QGridLayout, QHBoxLayout, QLabel, QLineEdit,
+from PyQt6.QtWidgets import (QDialog, QDialogButtonBox, QFormLayout, QFrame, QGridLayout, QHBoxLayout, QLabel, QLineEdit,
                              QListWidget, QListWidgetItem, QMenu, QMessageBox, QPlainTextEdit, QPushButton,
                              QSplitter, QTabWidget, QTreeWidget, QTreeWidgetItem, QVBoxLayout, QWidget)
 
 from src.core import paths
 from src.core.recipe_ai import changes as ai_changes
+from src.core.recipe_ai import provider as ai_provider
 from src.core.recipe_ai.agent import Session
 from src.core.recipe_ai.settings import Settings, availability
 from src.core.recipe_catalog import shared
@@ -48,6 +50,7 @@ from src.core.recipe_files import RECIPES_DIR
 from src.core.recipe_store import free_filename, read_recipe, renumber, save_recipe
 from src.core.recipe_text import describe_policy_entry, describe_recipe, describe_step
 from src.gui import theme
+from src.gui.control.dialogs.recipe_builder import look
 from src.gui.control.dialogs.recipe_builder.blocks import BLOCKS, BY_KEY, GROUPS, block_for, next_version
 from src.gui.control.dialogs.recipe_builder.drafting import DraftBar, DraftPanel, Job, ProposalBanner
 from src.gui.control.dialogs.recipe_builder.drafting import start as start_job
@@ -98,6 +101,12 @@ def _snapshot(data) -> str:
         if not str(data.get("description") or "").strip():
             data.pop("description", None)
     return json.dumps(data, sort_keys=True)
+
+
+def _block_key(step) -> str:
+    """The block a step is (its icon in the list), or "" for a step the builder doesn't know."""
+    block = block_for(step)
+    return block.key if block is not None else ""
 
 
 def _step_at(data, path):
@@ -196,6 +205,7 @@ class RecipeBuilderDialog(QDialog):
         self.ai_ok, self.ai_why = availability(self.ai_settings)
         self.ai_threaded = True         # (the tests run a draft where they are)
         self._job = None                # the draft or review running
+        self._test_job = None           # the connection test running (it locks nothing)
         self._session = None            # the conversation of the draft shown: a refinement carries it on
         self._draft = None              # the draft shown (_Draft)
         self._review = None             # (outcome, the keys of the notes' steps then, request)
@@ -300,11 +310,18 @@ class RecipeBuilderDialog(QDialog):
         body.addWidget(self._build_steps())
         self.editor = StepEditor(self.catalog, recipes=self._recipes, recipe_names=self._recipe_names)
         self.editor.edited.connect(self._on_step_edited)
-        body.addWidget(self.editor)
+        set_role(self.editor, "pane-body")
+        editor_pane = QFrame()
+        editor_pane.setObjectName("StepPane")
+        set_role(editor_pane, "pane")
+        pane_layout = QVBoxLayout(editor_pane)
+        pane_layout.setContentsMargins(4, 4, 4, 4)
+        pane_layout.addWidget(self.editor)
+        body.addWidget(editor_pane)
         body.setStretchFactor(0, 0)
         body.setStretchFactor(1, 3)
         body.setStretchFactor(2, 3)
-        body.setSizes([230, 560, 520])
+        body.setSizes([250, 550, 510])
 
         self.tabs = QTabWidget()
         self.list_problems = QListWidget()
@@ -338,6 +355,10 @@ class RecipeBuilderDialog(QDialog):
         self.draft_panel.fix.connect(self.draft_fix)
         self.draft_panel.go.connect(self._go_to_note)
         self.draft_panel.dismiss.connect(self.clear_review)
+        self.draft_panel.test.connect(self.test_connection)
+        self.draft_panel.btn_test.setVisible(self.ai_ok)
+        self.draft_panel.show_test(f"Drafting uses {self.ai_settings.describe()}." if self.ai_ok else
+                                   f"Drafting isn't available: {self.ai_why}", "caption" if self.ai_ok else "warning")
         self.draft_panel.show_idle(self._idle_text())
         self.tabs.addTab(self.draft_panel, "Draft")
         if not self.ai_settings.enabled:
@@ -367,9 +388,11 @@ class RecipeBuilderDialog(QDialog):
         QShortcut(QKeySequence("Alt+Down"), self, activated=lambda: self.move_step(1))
 
     def _build_palette(self) -> QWidget:
-        box = QWidget()
+        box = QFrame()
+        box.setObjectName("BlocksPane")
+        set_role(box, "pane")
         layout = QVBoxLayout(box)
-        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setContentsMargins(8, 8, 8, 8)
         title = QLabel("Add a step")
         set_role(title, "heading")
         layout.addWidget(title)
@@ -393,6 +416,9 @@ class RecipeBuilderDialog(QDialog):
             item.setData(0, Qt.ItemDataRole.UserRole, block.key)
             item.setToolTip(0, block.help)
             groups[block.group].addChild(item)
+        self.palette.setIconSize(QSize(16, 16))
+        self._palette_icons()
+        theme.theme_changed().connect(self._palette_icons)
         self.palette.expandAll()
         self.palette.itemDoubleClicked.connect(
             lambda item, _c: item.data(0, Qt.ItemDataRole.UserRole) and self.add_block(item.data(0, Qt.ItemDataRole.UserRole)))
@@ -409,10 +435,22 @@ class RecipeBuilderDialog(QDialog):
         layout.addWidget(self.btn_add)
         return box
 
+    def _palette_icons(self, *_):
+        """Each block's icon, in the theme's colours (again after a switch)."""
+        if sip.isdeleted(self.palette):
+            return
+        for i in range(self.palette.topLevelItemCount()):
+            group = self.palette.topLevelItem(i)
+            for j in range(group.childCount()):
+                item = group.child(j)
+                item.setIcon(0, look.block_icon(item.data(0, Qt.ItemDataRole.UserRole)))
+
     def _build_steps(self) -> QWidget:
-        box = QWidget()
+        box = QFrame()
+        box.setObjectName("StepsPane")
+        set_role(box, "pane")
         layout = QVBoxLayout(box)
-        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setContentsMargins(8, 8, 8, 8)
         title = QLabel("Steps")
         set_role(title, "heading")
         layout.addWidget(title)
@@ -721,7 +759,7 @@ class RecipeBuilderDialog(QDialog):
                 review, review_level = reviewed.get(path, ("", ""))
                 rows.append(OutlineRow(path, f"{prefix}{i + 1}", text, note if note != "No description" else "",
                                        level, mark, s.get("type") if isinstance(s, dict) else "", review=review,
-                                       review_level=review_level))
+                                       review_level=review_level, block=_block_key(s)))
                 if isinstance(s, dict) and isinstance(s.get("steps"), list):
                     walk(s["steps"], path, f"{prefix}{i + 1}.")
         walk(self._steps(), (), "")
@@ -1019,10 +1057,10 @@ class RecipeBuilderDialog(QDialog):
                 "Shift+Enter starts a new line.")
 
     def _idle_text(self) -> str:
+        """What drafting does (the Draft tab with no draft or review; which model, or why drafting isn't
+        available, is beside the connection test)."""
         if not self.ai_settings.enabled:
             return ""
-        how = (f"Drafting uses {self.ai_settings.describe()}." if self.ai_ok else
-               f"Drafting isn't available: {self.ai_why}")
         return ("Describe a recipe, or a change to this one, in the box above the steps and press Draft. The model "
                 "drafts it from SINDIE's tags, procedures and templates; the draft is checked with the checks the "
                 "sequencer makes (one with errors goes back to the model to fix) and shown in the steps as changes: "
@@ -1030,7 +1068,7 @@ class RecipeBuilderDialog(QDialog):
                 "the procedures and note what looks wrong or missing; it changes nothing.\n\n"
                 "The model never acts on the machine, and nothing is saved or run until you keep a draft and save "
                 "it. It is sent your request, this recipe, the machine's tag list and the help's procedures - "
-                "nothing from the machine itself.\n\n" + how)
+                "nothing from the machine itself.")
 
     def request_draft(self, request: str):
         """Draft what the operator describes (or, with a draft shown, change the draft)."""
@@ -1108,6 +1146,27 @@ class RecipeBuilderDialog(QDialog):
         self._status(f"{verb} with {self.ai_settings.describe()}: the recipe can't be edited until it is done "
                      "(Cancel, or Escape, stops it).")
         start_job(job, threaded=self.ai_threaded)
+
+    def test_connection(self):
+        """The smallest request to the model, in a thread: whether this PC reaches it, how fast it
+        answers, and where the key came from."""
+        if self._test_job is not None or not self.ai_ok:
+            return
+        settings = self.ai_settings
+        job = Job(lambda j: ai_provider.check_connection(settings, j.progress, j.cancelled), "test", "")
+        job.on_done = lambda text: self._test_done(job, text, "success")
+        job.on_failed = lambda error: self._test_done(job, "Not connected: " + getattr(error, "message", str(error)),
+                                                      "error")
+        self._test_job = job
+        self.draft_panel.show_test(f"Asking {settings.model} (it may take a few seconds) …", running=True)
+        start_job(job, threaded=self.ai_threaded)
+
+    def _test_done(self, job, text: str, role: str):
+        if job is not self._test_job:
+            return
+        self._test_job = None
+        self.draft_panel.show_test(text, role)
+        self._status(text)
 
     def cancel_ai(self):
         job = self._job
@@ -1228,7 +1287,7 @@ class RecipeBuilderDialog(QDialog):
             text = describe_step(step, self.catalog, names) if isinstance(step, dict) else "(not a step)"
             rows.append(OutlineRow((k,), str(number) if number else "", text, note if note != "No description" else "",
                                    level, mark, step.get("type") if isinstance(step, dict) else "", row.kind,
-                                   row.change, kept, was))
+                                   row.change, kept, was, block=_block_key(step)))
             if isinstance(step, dict) and isinstance(step.get("steps"), list):
                 for j, sub in enumerate(step["steps"]):
                     level, mark = self._marks(self._by_path.get((number - 1, j), []) if number else [])
@@ -1236,7 +1295,8 @@ class RecipeBuilderDialog(QDialog):
                     rows.append(OutlineRow((k, j), f"{number}.{j + 1}" if number else "",
                                            describe_step(sub, self.catalog, names) if isinstance(sub, dict)
                                            else "(not a step)", sub_note, level, mark,
-                                           sub.get("type") if isinstance(sub, dict) else "", row.kind, None, kept))
+                                           sub.get("type") if isinstance(sub, dict) else "", row.kind, None, kept,
+                                           block=_block_key(sub)))
         return rows
 
     def _row_path(self, result_path: tuple):
@@ -1558,6 +1618,10 @@ class RecipeBuilderDialog(QDialog):
     def closeEvent(self, event):
         if self._may_close():
             self.cancel_ai()
+            if self._test_job is not None:
+                self._test_job.cancel()
+                self._test_job.on_done = self._test_job.on_failed = None
+                self._test_job = None
             super().closeEvent(event)
         else:
             event.ignore()

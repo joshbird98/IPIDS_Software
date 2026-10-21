@@ -87,6 +87,20 @@ def test_stale_command_rejected_before_handler(running_server):
     assert seen == []
 
 
+def test_lease_operations_are_never_refused_as_stale(running_server):
+    """A renewal handled late is harmless; refusing it made a recipe lose control of a supply."""
+    seen = []
+    client = running_server(lambda cmd: (seen.append(cmd.tag), cmd.ok()), max_age=0.5)
+    cmd_id = client.send("test", "ion_beam.source.einzel.cmd_lease", {"op": "renew", "holder": "seq-recipe-1"},
+                         ts=time.time() - 5.0)
+    deadline = time.time() + 2
+    replies = []
+    while time.time() < deadline and not replies:
+        replies = client.poll(50)
+    assert replies[0]["id"] == cmd_id and replies[0]["status"] == C.OK
+    assert seen == ["ion_beam.source.einzel.cmd_lease"]
+
+
 def test_unreachable_when_service_not_running():
     client = C.CommandClient({"ghost": free_tcp_endpoint()}, default_timeout=0.5, connect_wait=0.1)
     t0 = time.time()

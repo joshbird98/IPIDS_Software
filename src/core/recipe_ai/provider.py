@@ -11,6 +11,14 @@ signatures must go back unchanged.
 
 Every failure is an AIError whose message is meant for the operator ('The API key was refused
 ...'), never a traceback. The key is never logged or put in a message.
+
+Time limits: the service has CONNECT_TIMEOUT_S to accept the connection, and timeout_s (from the
+settings) to answer. google-genai gives every phase of a request the same limit, and replaces a
+client's own limits with it, so a PC that couldn't reach the service waited the whole 120 s to
+say so; a hook on our HTTP client sets the two apart. Each request and its answer go to the log,
+with how long the answer took.
+
+    check_connection(settings)   the smallest request: what answered, and how fast
 """
 import importlib
 import json
@@ -20,6 +28,8 @@ import time
 from dataclasses import dataclass, field
 
 log = logging.getLogger("recipe_ai")
+
+CONNECT_TIMEOUT_S = 15.0        # for the service to accept the connection (a network that can't reach it)
 
 
 class AIError(Exception):
@@ -61,7 +71,7 @@ def wait(seconds: float, cancelled=None):
 _RETRY = re.compile(r'"retryDelay"\s*:\s*"(\d+(?:\.\d+)?)s"')
 
 
-def classify(e: Exception, model: str) -> AIError:
+def classify(e: Exception, model: str, timeout_s: float = None) -> AIError:
     """An AIError, in words for the operator, for whatever the service or the network raised."""
     if isinstance(e, AIError):
         return e
@@ -92,9 +102,18 @@ def classify(e: Exception, model: str) -> AIError:
         if code >= 500:
             return AIError("server", f"The service is busy or failing{said}: try again shortly.", retry_after=0.0)
         return AIError("refused", f"The service refused the request{said}.")
+    if httpx is not None and isinstance(e, (httpx.ConnectTimeout, httpx.PoolTimeout)):
+        return AIError("network", f"No connection to the service within {CONNECT_TIMEOUT_S:.0f} s: is this PC on the "
+                                  "internet? (A network that needs a proxy: set HTTPS_PROXY for the HMI.)")
     if httpx is not None and isinstance(e, httpx.TimeoutException):
-        return AIError("timeout", "No answer from the service in time: try again, or set a longer timeout_s in "
+        within = f" within {timeout_s:.0f} s" if timeout_s else " in time"
+        return AIError("timeout", f"The model didn't answer{within}: try again, or set a longer timeout_s in "
                                   "config/recipe_ai.json.")
+    if httpx is not None and isinstance(e, httpx.ProxyError):
+        return AIError("network", f"The proxy refused the connection ({str(e)[:200]}): check HTTPS_PROXY.")
+    if "CERTIFICATE_VERIFY_FAILED" in str(e):
+        return AIError("network", "The service's certificate wasn't trusted: a network that inspects secure "
+                                  "connections needs its own certificate trusted (SSL_CERT_FILE).")
     if (httpx is not None and isinstance(e, httpx.HTTPError)) or isinstance(e, OSError):
         return AIError("network", f"Can't reach the service ({type(e).__name__}: {str(e)[:200]}): is this PC "
                                   "online?")
@@ -115,6 +134,7 @@ class GeminiSession:
         self.types = types
         self.contents = []
         self.answered = False           # the model has answered: no more falling back to another model
+        self.requests = 0
         declarations = [types.FunctionDeclaration(name=t["name"], description=t["description"],
                                                   parameters_json_schema=t["parameters"]) for t in tools]
         config = dict(system_instruction=system,
@@ -161,11 +181,16 @@ class GeminiSession:
         delays = [2.0, 6.0]
         while True:
             self.p.check_cancelled()
+            self.requests += 1
+            started = time.monotonic()
+            log.info("Recipe drafting: request %d to %s", self.requests, self.p.model)
             try:
                 response = self.p.client.models.generate_content(model=self.p.model, contents=self.contents,
                                                                  config=self.config)
             except Exception as e:      # (whatever the SDK or the network raises: classified for the operator)
-                err = classify(e, self.p.model)
+                err = classify(e, self.p.model, self.p.settings.timeout_s)
+                log.warning("Recipe drafting: request %d to %s failed after %.1f s (%s): %s", self.requests,
+                            self.p.model, time.monotonic() - started, type(e).__name__, err.message)
                 if err.kind == "model" and not self.answered and self.p.next_model():
                     log.info("Recipe drafting: %s", err.message)
                     self.p.progress(f"Trying the model {self.p.model}")
@@ -177,7 +202,11 @@ class GeminiSession:
                         wait(pause, self.p.cancelled)
                         continue
                 raise err from None
-            return self._reply(response)
+            reply = self._reply(response)
+            log.info("Recipe drafting: %s answered in %.1f s (%s; tokens %s)", reply.model,
+                     time.monotonic() - started, ", ".join(c.name for c in reply.calls) or reply.finish or "text",
+                     reply.usage)
+            return reply
 
     def _reply(self, response) -> Reply:
         candidates = getattr(response, "candidates", None) or []
@@ -220,10 +249,8 @@ class GeminiProvider:
         self.model = self.models[0]
         self.progress = progress or (lambda text: None)
         self.cancelled = cancelled or (lambda: False)
-        options = dict(timeout=int(settings.timeout_s * 1000))
-        if http_client is not None:          # (the tests answer for the service)
-            options["httpx_client"] = http_client
-        self.client = genai.Client(api_key=key, http_options=types.HttpOptions(**options))
+        self.client = genai.Client(api_key=key, http_options=types.HttpOptions(
+            timeout=int(settings.timeout_s * 1000), httpx_client=_http_client(settings, http_client)))
 
     def next_model(self) -> bool:
         """On to the next model of the list (each is tried once); False when there are no more."""
@@ -239,6 +266,37 @@ class GeminiProvider:
 
     def start(self, system: str, tools: list) -> GeminiSession:
         return GeminiSession(self, system, tools)
+
+
+def _http_client(settings, client=None):
+    """An HTTP client (the tests give theirs) whose requests get CONNECT_TIMEOUT_S to connect and
+    settings.timeout_s for the answer, whatever limit google-genai passes with them. It takes a proxy
+    from the environment (HTTPS_PROXY), and on Windows from the system's settings."""
+    import httpx
+    connect, answer = CONNECT_TIMEOUT_S, float(settings.timeout_s)
+
+    def limits(request):
+        request.extensions["timeout"] = {"connect": connect, "pool": connect, "read": answer, "write": answer}
+    client = client if client is not None else httpx.Client()
+    hooks = dict(client.event_hooks)
+    hooks["request"] = list(hooks.get("request", [])) + [limits]
+    client.event_hooks = hooks
+    return client
+
+
+def check_connection(settings, progress=None, cancelled=None, http_client=None) -> str:
+    """The smallest request - no tools, one word back - and what answered, how fast and with which
+    key (where it came from, never the key): for 'Test the connection' and the command line.
+    AIError as for a draft."""
+    from src.core.recipe_ai.settings import api_key
+    provider = make_provider(settings, progress, cancelled, http_client)
+    session = provider.start("Answer with the single word OK.", [])
+    started = time.monotonic()
+    reply = session.send(text="Are you there?")
+    seconds = time.monotonic() - started
+    where = api_key()[1]
+    return (f"Connected: {reply.model or provider.model} answered in {seconds:.1f} s"
+            + (f" (the key from {where})." if where else "."))
 
 
 def make_provider(settings, progress=None, cancelled=None, http_client=None):

@@ -146,7 +146,7 @@ def recipe_builder_shots(parent, recipes_dir, save, spin, unfocus=lambda within=
             return _Chat()
     real_provider, real_availability = agent.make_provider, builder.availability
     agent.make_provider = lambda *a, **k: _Provider()
-    builder.availability = lambda settings=None: (True, "Gemini, gemini-flash-latest")
+    builder.availability = lambda settings=None: (True, "Gemini, gemini-3.8-flash")
     try:
         dlg = builder.RecipeBuilderDialog(parent, recipes_dir)
         dlg.new_from_template(os.path.join(templates, "mass_scan.json"))

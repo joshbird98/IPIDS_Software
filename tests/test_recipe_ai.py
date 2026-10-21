@@ -391,7 +391,7 @@ def test_gemini_sends_the_conversation_back_with_its_signatures(monkeypatch):
 
     def handler(request):
         seen.append((str(request.url), json.loads(request.content), request.headers))
-        if "gemini-flash-latest" in str(request.url):
+        if settings.Settings().model in str(request.url):
             return httpx.Response(404, json={"error": {"code": 404, "message": "not found", "status": "NOT_FOUND"}})
         if len(seen) == 3:
             return httpx.Response(503, json={"error": {"code": 503, "message": "overloaded", "status": "UNAVAILABLE"}})
@@ -456,7 +456,7 @@ def test_gemini_tries_each_model_once(monkeypatch):
     def handler(request):
         seen.append(str(request.url))
         return httpx.Response(404, json={"error": {"code": 404, "message": "no model", "status": "NOT_FOUND"}})
-    provider, _ = _gemini(handler, monkeypatch, fallback_models=("gemini-b", "gemini-flash-latest", "gemini-b"))
+    provider, _ = _gemini(handler, monkeypatch, fallback_models=("gemini-b", settings.Settings().model, "gemini-b"))
     with pytest.raises(AIError) as e:
         provider.start("S", TOOLS).send(text="x")
     assert e.value.kind == "model" and len(seen) == 2 and "gemini-b" in seen[1]
@@ -480,6 +480,59 @@ def test_gemini_withheld_answer(monkeypatch):
     with pytest.raises(AIError) as e:
         provider.start("S", TOOLS).send(text="x")
     assert e.value.kind == "blocked"
+
+
+def test_gemini_requests_get_a_short_connect_limit_and_a_long_answer_limit(monkeypatch):
+    """google-genai gives every phase of a request one limit (and replaces a client's own), so a PC
+    that couldn't reach the service waited the whole 120 s to say so."""
+    import httpx
+    seen = []
+
+    def handler(request):
+        seen.append(request.extensions.get("timeout"))
+        return httpx.Response(200, json=_answer([{"text": "OK"}]))
+    provider, _ = _gemini(handler, monkeypatch, timeout_s=90.0)
+    provider.start("S", TOOLS).send(text="x")
+    assert seen == [{"connect": 15.0, "pool": 15.0, "read": 90.0, "write": 90.0}]
+
+
+@pytest.mark.parametrize("raised,kind,said", [
+    ("ConnectTimeout", "network", "No connection to the service within 15 s"),
+    ("ReadTimeout", "timeout", "didn't answer within 120 s"),
+    ("ProxyError", "network", "The proxy refused"),
+    ("ConnectError", "network", "Can't reach the service"),
+])
+def test_gemini_network_failures_say_which(monkeypatch, raised, kind, said):
+    import httpx
+
+    def handler(request):
+        raise getattr(httpx, raised)("no", request=request)
+    provider, _ = _gemini(handler, monkeypatch)
+    with pytest.raises(AIError) as e:
+        provider.start("S", TOOLS).send(text="x")
+    assert e.value.kind == kind and said in e.value.message
+
+
+def test_a_certificate_the_network_replaced_is_said_so():
+    from src.core.recipe_ai.provider import classify
+    err = classify(OSError("[SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed"), "m")
+    assert err.kind == "network" and "SSL_CERT_FILE" in err.message
+
+
+def test_the_connection_test_says_what_answered(monkeypatch, tmp_path):
+    pytest.importorskip("google.genai")
+    httpx = pytest.importorskip("httpx")
+    from src.core.recipe_ai import provider as P
+    for name in settings.KEY_NAMES:
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setattr(settings.paths, "PROJECT_ROOT", str(tmp_path))
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / ".env").write_text("GEMINI_API_KEY=k-123\n")
+    client = httpx.Client(transport=httpx.MockTransport(
+        lambda request: httpx.Response(200, json=_answer([{"text": "OK"}]))))
+    said = P.check_connection(settings.Settings(), http_client=client)
+    assert said.startswith("Connected: gemini-x answered in") and str(tmp_path / ".env") in said
+    assert "k-123" not in said
 
 
 def test_no_key_no_provider(monkeypatch, tmp_path):

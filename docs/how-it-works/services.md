@@ -146,7 +146,10 @@ Commands are acknowledged: every request gets exactly one reply. Each service bi
 | timeout | No reply in time (3 s by default): the service is busy, hung or restarted. | the sender |
 | unreachable | The service isn't running or not connected; nothing was sent. | the sender |
 
-**Too old.** A command whose `ts` is older than the service's limit when the service gets to it is rejected as stale, so clicks made while a service (or the HMI) was frozen aren't all carried out at once when it recovers.
+**Too old.** A command whose `ts` is older than the service's limit when the service gets to it is rejected as stale, so clicks made while a service (or the HMI) was frozen aren't all carried out at once when it recovers. Two exceptions:
+
+- Lease commands (claim, renew, release, take) are never refused as too old. A renewal handled late is harmless, and refusing one cost a sequence its control of a supply: a start-up recipe stopped because one renewal reached the Spellman service 0.73 s after it was sent.
+- The sequencer sends a command refused as too old again, up to twice. The command was never carried out, and the sequence still wants it.
 
 | Service | Age limit |
 |---|---|
@@ -164,7 +167,7 @@ Commands are acknowledged: every request gets exactly one reply. Each service bi
 A sequence (a recipe, a mass scan or the optimiser, run by `service_sequencer`) holds a control lease on each subsystem it drives, for example `ion_beam.beamline.magnet`. While it holds the lease, the service that owns the subsystem takes commands for it only from that sequence; anyone else's are rejected with "... is controlled by ... - stop it, or take control, first".
 
 - **Claim.** The sequence claims a subsystem immediately before its first command to it.
-- **Renew.** It renews every 1 s; a lease lasts 5 s unless renewed. So a sequencer that dies gives control back within 5 s. A service that restarts loses its leases, and the next renewal claims them again.
+- **Renew.** It renews every 1 s; a lease lasts 5 s unless renewed. So a sequencer that dies gives control back within 5 s. A service that restarts loses its leases, and the next renewal claims them again. A renewal that times out, or reaches the service late, doesn't lose the lease: the next one carries on.
 - **Release.** The sequence releases its leases when it ends.
 - **Take control.** The operator can always take a subsystem back: **TAKE CONTROL** in the Automation bar (clicked twice). The lease is cleared at once, with a WARNING event, and the sequence's next command or renewal is refused with "control was taken by the operator". A recipe then pauses (**Resume** claims again); a mass scan or the optimiser stops.
 

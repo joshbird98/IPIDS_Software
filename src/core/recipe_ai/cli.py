@@ -1,13 +1,14 @@
 """Recipe drafting from a terminal: to see what the model is told, to try a tool, or to run a draft
 without the HMI.
 
+    python -m src.core.recipe_ai.cli check                          can this PC reach the model? (and how fast)
     python -m src.core.recipe_ai.cli prompt [--mode review]          the instructions the model gets
     python -m src.core.recipe_ai.cli task "add a 2 min wait" --recipe config/recipes/auto_tune.json --selected 3
     python -m src.core.recipe_ai.cli tool find_tags '{"query": "einzel current"}'
     python -m src.core.recipe_ai.cli draft "condition the einzel to 16 kV" [--recipe FILE] [--out FILE]
     python -m src.core.recipe_ai.cli review --recipe config/recipes/test_sequence.json
 
-draft and review ask the model (they need the API key, see settings.py); the others don't. tool
+check, draft and review ask the model (they need the API key, see settings.py); the others don't. tool
 runs one tool as the model would (its arguments as JSON, or @file for a file holding them); with
 --state DIR a proposal or review it accepts is written there (proposal.json, review.json).
 """
@@ -47,6 +48,7 @@ def _changes(base, proposed, catalog):
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(prog="python -m src.core.recipe_ai.cli", description=__doc__.split("\n\n")[0])
     sub = parser.add_subparsers(dest="command", required=True)
+    sub.add_parser("check", help="send the smallest request: can this PC reach the model, and how fast?")
     p = sub.add_parser("prompt", help="print the model's instructions")
     p.add_argument("--mode", choices=("draft", "review"), default="draft")
     for name in ("task", "draft"):
@@ -67,6 +69,24 @@ def main(argv=None) -> int:
     p.add_argument("--mode", choices=("draft", "review"), default="draft")
     p.add_argument("--state", default="", help="write an accepted proposal or review here")
     opts = parser.parse_args(argv)
+
+    if opts.command == "check":
+        import logging
+        from src.core.recipe_ai.provider import check_connection
+        from src.core.recipe_ai.settings import Settings, availability
+        logging.basicConfig(level=logging.INFO, format="  %(message)s")
+        settings = Settings.load()
+        ok, why = availability(settings)
+        if not ok:
+            print(f"Drafting isn't available: {why}", file=sys.stderr)
+            return 1
+        print(f"Asking {settings.model} (connection limit 15 s, answer limit {settings.timeout_s:.0f} s) ...")
+        try:
+            print(check_connection(settings))
+        except AIError as e:
+            print(f"Not connected: {e.message}", file=sys.stderr)
+            return 1
+        return 0
 
     catalog = Catalog.load()
     if opts.command == "prompt":

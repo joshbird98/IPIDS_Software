@@ -383,6 +383,9 @@ QGroupBox::title {{ subcontrol-origin: margin; subcontrol-position: top left; le
 QFrame[role="card"] {{ background-color: {t['card_alt']}; border: 1px solid {t['border_soft']};
     border-radius: 5px; }}
 QFrame[role="callout"] {{ background-color: {t['card_alt']}; border: 1px solid {t['border']}; border-radius: 6px; }}
+QFrame[role="pane"] {{ background-color: {t['card']}; border: 1px solid {t['border_soft']}; border-radius: 6px; }}
+QFrame[role="pane"] QScrollArea[role="pane-body"], QScrollArea[role="pane-body"] > QWidget,
+QScrollArea[role="pane-body"] > QWidget > QWidget {{ background: transparent; border: none; }}
 QFrame[role="callout"][tone="warn"] {{ background-color: {t['warn_bg']}; border: 2px solid {t['warn_fill']}; }}
 QFrame[role="callout"][tone="fault"] {{ background-color: {t['fault_bg']}; border: 2px solid {t['fault_fill']}; }}
 QFrame[role="callout"][tone="info"] {{ background-color: {t['info_bg']}; border: 1px solid {rgba(t['info'], 0.5)}; }}

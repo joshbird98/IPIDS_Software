@@ -21,11 +21,35 @@ simulator; none of it has been tried on the real hardware yet (see "Lab PC valid
    recipe builder's drafting; python-dotenv is no longer needed (the key is read from .env directly), but
    testing/test_api.py still uses it.
 7. Drafting in the recipe builder needs the Gemini key in `.env` in the SINDIE folder (the line
-   GEMINI_API_KEY=..., as the old assistant had it). Try it once: open the builder, type a request, Draft. The
-   model is gemini-flash-latest (config/recipe_ai.json); `python -m src.core.recipe_ai.cli draft "..."` runs a
-   draft from a terminal. Each draft is logged in SystemLogs/recipe_ai/.
+   GEMINI_API_KEY=..., as the old assistant had it). First `python -m src.core.recipe_ai.cli check` (or Test the
+   connection in the builder's Draft tab): it says whether this PC reaches the model, and how fast. Then try it
+   once: open the builder, type a request, Draft. The model is gemini-3.8-flash (config/recipe_ai.json);
+   `python -m src.core.recipe_ai.cli draft "..."` runs a draft from a terminal. Each draft is logged in
+   SystemLogs/recipe_ai/, and each request (with how long its answer took) in the HMI's log.
 
 ## Done
+- Josh's notes of 21 October 2026:
+  - The start-up recipe stopped in the simulation: "could not keep control of the einzel: stale: sent 0.73 s
+    ago". A recipe renews its control lease on each supply every second, and the Spellman service refuses any
+    command that reaches it more than 0.5 s after it was sent; one renewal reached it late, and the refusal
+    counted as losing control (over a long start-up that is thousands of renewals, so one slow moment was
+    enough). Now the services never refuse a lease command as too old (commands.py), the sequencer sends a
+    command refused as too old again, twice at most (port.py: it was never carried out, and is still
+    wanted), and a renewal refused for that keeps the lease.
+  - Drafting seemed to hang: google-genai gives every phase of a request one limit (120 s) and overrides a
+    client's own, so a PC that couldn't reach the service waited 2 minutes to say so; and the model thinks
+    before each answer while the line under the box only said "Waiting for ...". Now the service has 15 s to
+    accept the connection and timeout_s to answer (a hook on our own HTTP client); connection, proxy,
+    certificate and answer time-outs are told apart; the first wait says it often takes 10-60 s; each
+    request and its answer time go to the HMI's log; Test the connection (the Draft tab) and
+    `python -m src.core.recipe_ai.cli check` say what answered, how fast and where the key was read from.
+    The default model is now gemini-3.8-flash, the newest stable Flash (gemini-flash-latest can point to a
+    preview with tighter rate limits; it is the last fallback, after gemini-3.6-flash).
+  - The builder's look: the steps are drawn as a flow - a node per step on a line from the first to the
+    last, the block's icon in it, the steps of "Do steps at the same time" branching off it; grey nodes for
+    most steps, blue for the operator, violet for procedures (the HMI's own meanings), hollow for waits,
+    square for structure blocks; the blocks have the same icons, and the step form's heading too; the three
+    columns are panes (look.py, outline.py).
 - Josh's requests of 20 October 2026, evening:
   - AI drafting back in the recipe builder, rebuilt (src/core/recipe_ai, the builder's drafting.py). Not a
     chat: a box above the steps takes a request ("after step 3, wait for VG1 below 5e-6"; the selected step is

@@ -390,20 +390,37 @@ class _NoteItem(QFrame):
 
 
 class DraftPanel(QStackedWidget):
-    """The Draft tab: what drafting does (idle), a draft's changes, or a review's notes."""
+    """The Draft tab: what drafting does (idle) and a connection test, a draft's changes, or a
+    review's notes."""
     keep = pyqtSignal()
     discard = pyqtSignal()
     toggled = pyqtSignal(int, bool)
     fix = pyqtSignal(object)
     go = pyqtSignal(object)
     dismiss = pyqtSignal()
+    test = pyqtSignal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setObjectName("DraftPanel")
-        # idle
-        self.idle = QWidget()
-        idle = QVBoxLayout(self.idle)
+        # idle (scrolling: the tab can be made short)
+        self.idle = QScrollArea()
+        self.idle.setWidgetResizable(True)
+        self.idle.setFrameShape(QFrame.Shape.NoFrame)
+        idle_body = QWidget()
+        self.idle.setWidget(idle_body)
+        idle = QVBoxLayout(idle_body)
+        test = QHBoxLayout()
+        self.btn_test = QPushButton("Test the connection")
+        self.btn_test.setObjectName("DraftTest")
+        self.btn_test.setToolTip("Send the model the smallest request: whether this PC reaches it, and how fast it "
+                                 "answers")
+        self.btn_test.clicked.connect(self.test.emit)
+        self.lbl_test = _label("", "caption")
+        self.lbl_test.setObjectName("DraftTestResult")
+        test.addWidget(self.btn_test, 0, Qt.AlignmentFlag.AlignTop)
+        test.addWidget(self.lbl_test, 1)
+        idle.addLayout(test)
         self.lbl_idle = _label("", "hint")
         idle.addWidget(self.lbl_idle)
         idle.addStretch(1)
@@ -495,6 +512,12 @@ class DraftPanel(QStackedWidget):
     def show_idle(self, text: str):
         self.lbl_idle.setText(text)
         self.setCurrentWidget(self.idle)
+
+    def show_test(self, text: str, role: str = "caption", running: bool = False):
+        """The connection test: running (its button disabled meanwhile), or what it found."""
+        self.btn_test.setEnabled(not running)
+        self.lbl_test.setText(text)
+        set_role(self.lbl_test, role)
 
     # ------------------------------------------------------------------ a draft
     def show_draft(self, request: str, outcome, changes, kept: set, cost: str):

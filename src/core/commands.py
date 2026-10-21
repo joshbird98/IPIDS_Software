@@ -23,7 +23,11 @@ Produced on the client side:
 
 Freshness: a command whose `ts` is older than the service's max_age when the
 service gets to it is rejected as stale, so clicks made while a service (or
-the HMI) was frozen are not all applied in a burst when it recovers.
+the HMI) was frozen are not all applied in a burst when it recovers. Lease
+operations (src/core/leases.py) are exempt: a renewal handled late is harmless,
+and refusing one made a sequence lose control of what it drives (a recipe
+stopped because its einzel renewal reached a busy service 0.73 s after it was
+sent). The sequencer sends a command refused as stale again (src/sequencer/port.py).
 """
 import itertools
 import logging
@@ -35,6 +39,8 @@ import uuid
 import orjson
 import zmq
 
+from src.core.leases import LEASE_SUFFIX
+
 OK = "ok"
 ACCEPTED = "accepted"
 REJECTED = "rejected"
@@ -44,6 +50,7 @@ UNREACHABLE = "unreachable"
 SUCCESS = frozenset({OK, ACCEPTED})
 
 DEFAULT_MAX_AGE = 0.5      # seconds; matches the services' old MAX_CMD_AGE
+STALE = "stale:"           # how a refusal for being too old begins (src/sequencer/port.py sends it again)
 DEFAULT_TIMEOUT = 3.0      # seconds a client waits for a reply
 
 log = logging.getLogger("commands")
@@ -204,8 +211,9 @@ class CommandServer:
             if not cmd.tag:
                 cmd.reject("request has no tag")
                 continue
-            if self.max_age is not None and (cmd.ts <= 0 or cmd.age > self.max_age):
-                cmd.reject(f"stale: sent {cmd.age:.2f} s ago (limit {self.max_age:.2f} s)")
+            if (self.max_age is not None and not cmd.tag.endswith(LEASE_SUFFIX)
+                    and (cmd.ts <= 0 or cmd.age > self.max_age)):
+                cmd.reject(f"{STALE} sent {cmd.age:.2f} s ago (limit {self.max_age:.2f} s)")
                 continue
             fresh.append(cmd)
         self._pending = fresh

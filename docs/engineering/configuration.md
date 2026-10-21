@@ -32,15 +32,15 @@ The recipe builder's drafting (see [Drafting and reviewing with AI](../panels/re
 | Setting | Default | What it does |
 |---|---|---|
 | `enabled` | `true` | `false` hides drafting in the builder. |
-| `model` | `gemini-flash-latest` | The Gemini model. `gemini-flash-latest` is Google's name for its newest Flash model, so it doesn't stop working when a model is retired; a larger model (a Pro or flagship one) is slower and costs more per draft. |
-| `fallback_models` | `gemini-3.8-flash`, `gemini-2.5-flash` | Tried in turn, each once, if the model isn't found. |
+| `model` | `gemini-3.8-flash` | The Gemini model: Google's newest stable Flash model (October 2026). A larger model (a Pro or flagship one) is slower and costs more per draft. |
+| `fallback_models` | `gemini-3.6-flash`, `gemini-flash-latest` | Tried in turn, each once, if the model isn't found (retired). `gemini-flash-latest` is Google's name for its newest Flash model: it can be a preview, with tighter rate limits, so it comes last. |
 | `max_rounds` | 16 | Answers from the model in one draft before it is given up. |
 | `max_proposals` | 3 | Proposals with errors sent back to the model; after that the last is shown with its errors. |
-| `timeout_s` | 120 | For each answer from the service, in seconds. A request the service is too busy for, or that meets the key's rate limit, is tried twice more (after the wait the service asks for, if it is 30 s or less) before its message is shown. |
+| `timeout_s` | 120 | For each answer from the service, in seconds (the service has 15 s to accept the connection). A request the service is too busy for, or that meets the key's rate limit, is tried twice more (after the wait the service asks for, if it is 30 s or less) before its message is shown. |
 | `thinking_level` | `""` | `""` leaves it to the model; `low`, `medium` or `high` for Gemini 3 and later. |
 | `temperature` | `null` | `null` leaves it to the model (Google advises leaving it for Gemini 3). |
 
-A setting that isn't valid is logged and its default used. To see exactly what the model is told: `python -m src.core.recipe_ai.cli prompt`; to try a draft from a terminal: `python -m src.core.recipe_ai.cli draft "<request>" --recipe config/recipes/<file>`.
+A setting that isn't valid is logged and its default used. To see whether this PC reaches the model (and how fast it answers): `python -m src.core.recipe_ai.cli check`, or **Test the connection** in the builder's **Draft** tab. To see exactly what the model is told: `python -m src.core.recipe_ai.cli prompt`; to try a draft from a terminal: `python -m src.core.recipe_ai.cli draft "<request>" --recipe config/recipes/<file>`. Each request and how long its answer took are logged (`Recipe drafting: ...` in the HMI's log).
 
 ## The tag registry
 

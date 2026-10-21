@@ -12,6 +12,13 @@ else can drive it meanwhile and the operator sees what is in charge:
 If the operator takes control (or another sequence already holds the subsystem), the
 LeaseKeeper reports the loss to the job (on_lost), which pauses (a recipe) or stops (a scan).
 It does not claim that subsystem again until the job forgives the loss (a recipe on resume).
+A lease operation that reached its service late is not a loss (the services don't refuse one
+for that any more; an older one might): the lease is kept and renewed as usual.
+
+A command a service refused as stale - it reached the service later than the service's limit
+(0.5 s for the device services), because the service or this one was busy for a moment - was
+never carried out, and the job still wants it: the Dispatcher sends it again, STALE_RESENDS
+times at most, before the job sees the refusal.
 
 Which subsystem a tag belongs to is learned from the services' own telemetry: every
 DeviceService publishes "<subsystem>.permit" for each subsystem it controls and
@@ -22,11 +29,12 @@ import time
 
 import zmq
 
-from src.core.commands import REJECTED, UNREACHABLE, TIMEOUT, CommandTicket, route_for_tag
+from src.core.commands import REJECTED, STALE, UNREACHABLE, TIMEOUT, CommandTicket, route_for_tag
 from src.core.leases import LEASE_SUFFIX, TAKEN
 
 RENEW_EVERY_S = 1.0
 LEASE_TTL_S = 5.0
+STALE_RESENDS = 2           # a command refused as stale is sent again this many times at most
 _PERMIT = ".permit"
 _HOLDER = ".lease_holder"
 
@@ -40,25 +48,41 @@ class Dispatcher:
     def __init__(self, client):
         self.client = client
         self._tickets = {}
+        self._resent = {}           # ticket id -> times sent again after a stale refusal
 
     def send(self, route, tag, value, origin, holder=None, timeout=None) -> CommandTicket:
         ticket = CommandTicket(route, tag, value, origin, timeout, holder=holder)
-        try:
-            self.client.send(route, tag, value, origin=origin, timeout=timeout, cmd_id=ticket.id,
-                             ts=ticket.created, holder=holder)
-        except (zmq.ZMQError, KeyError, ValueError, TypeError) as e:
-            log.exception("Could not send %s = %r", tag, value)
-            ticket.resolve({"id": ticket.id, "status": UNREACHABLE, "reason": f"send failed: {e}", "tag": tag,
-                            "value": value, "subsystem": route, "origin": origin})
-            return ticket
-        self._tickets[ticket.id] = ticket
+        self._send(ticket, ticket.created)
         return ticket
+
+    def _send(self, ticket, ts):
+        try:
+            self.client.send(ticket.subsystem, ticket.tag, ticket.value, origin=ticket.origin, timeout=ticket.timeout,
+                             cmd_id=ticket.id, ts=ts, holder=ticket.holder)
+        except (zmq.ZMQError, KeyError, ValueError, TypeError) as e:
+            log.exception("Could not send %s = %r", ticket.tag, ticket.value)
+            self._resent.pop(ticket.id, None)
+            ticket.resolve({"id": ticket.id, "status": UNREACHABLE, "reason": f"send failed: {e}", "tag": ticket.tag,
+                            "value": ticket.value, "subsystem": ticket.subsystem, "origin": ticket.origin})
+            return
+        self._tickets[ticket.id] = ticket
 
     def pump(self, timeout_ms: int = 0):
         for result in self.client.poll(timeout_ms):
             ticket = self._tickets.pop(result.get("id"), None)
-            if ticket is not None:
-                ticket.resolve(result)
+            if ticket is None:
+                continue
+            resent = self._resent.get(ticket.id, 0)
+            if (result.get("status") == REJECTED and str(result.get("reason") or "").startswith(STALE)
+                    and resent < STALE_RESENDS):
+                # (never carried out, and still wanted: the service or this one was busy for a moment)
+                self._resent[ticket.id] = resent + 1
+                log.warning("%s = %r reached %s late (%s): sent again", ticket.tag, ticket.value, ticket.subsystem,
+                            result.get("reason"))
+                self._send(ticket, time.time())
+                continue
+            self._resent.pop(ticket.id, None)
+            ticket.resolve(result)
 
     @property
     def inflight(self) -> int:
@@ -69,6 +93,7 @@ class Dispatcher:
             ticket.resolve({"id": ticket.id, "status": TIMEOUT, "reason": "sequencer stopping", "tag": ticket.tag,
                             "value": ticket.value, "subsystem": ticket.subsystem, "origin": ticket.origin})
         self._tickets.clear()
+        self._resent.clear()
         self.client.close()
 
 
@@ -151,6 +176,8 @@ class LeaseKeeper:
             self._pending.remove(item)
             if op == "release" or ticket.ok:
                 continue
+            if ticket.status == REJECTED and ticket.reason.startswith(STALE):
+                continue        # (late every time it was sent: not a refusal of the lease - renewed as usual)
             if ticket.status == REJECTED and sub in self.held:
                 self.lose(sub, ticket.reason)
             # timeout / unreachable: the service is down or busy - keep holding, the renewals

@@ -20,8 +20,10 @@ KEY_HELP = ("add a line GEMINI_API_KEY=<your key> to the .env file in the SINDIE
 @dataclass
 class Settings:
     provider: str = "gemini"
-    model: str = "gemini-flash-latest"          # Google's alias for its newest Flash model
-    fallback_models: tuple = ("gemini-3.8-flash", "gemini-2.5-flash")   # tried in turn if the model isn't found
+    model: str = "gemini-3.8-flash"             # Google's newest stable Flash model (October 2026)
+    # tried in turn if the model isn't found: an older stable one, then the alias for the newest Flash
+    # (which can be a preview, with tighter rate limits - a last resort once these are retired)
+    fallback_models: tuple = ("gemini-3.6-flash", "gemini-flash-latest")
     max_rounds: int = 16            # answers from the model in one draft, before it is given up
     max_proposals: int = 3          # proposals with errors sent back to be fixed; then the last is shown as it is
     timeout_s: float = 120.0        # for one answer from the service
