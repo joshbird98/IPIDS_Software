@@ -367,7 +367,14 @@ class PlcMicroservice(DeviceService):
         try:
             raw_interface = self.client.db_read(DB_INTERFACE_NUM, 0, self.db_interface_size)
         except Exception as e:  # snap7 raises RuntimeError / S7Error / OSError subclasses
-            self._mark_disconnected(f"read failed: {e}")
+            reason = f"read failed: {e}"
+            if "out of range" in str(e).lower():
+                # The PLC is reachable but its DB10 is shorter than the registry says: the PC's copy of
+                # the interface doesn't match the PLC (see docs/how-it-works/plc.md, "DB10 layout")
+                reason += (f" - the PLC's DB{DB_INTERFACE_NUM} is shorter than the {self.db_interface_size} bytes "
+                           "config/system_tags.json describes: compare plc/generated/PLC_PC_Interface.scl with "
+                           "DB_PC_Interface in TIA Portal, then rebuild the registry")
+            self._mark_disconnected(reason)
             return
 
         # Decoding is ours, not the link's: a tag whose bytes can't be decoded (registry offset

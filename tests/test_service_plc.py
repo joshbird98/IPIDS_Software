@@ -270,6 +270,49 @@ def test_undecodable_tag_does_not_drop_the_connection(monkeypatch, caplog):
         svc.shutdown()
 
 
+def test_a_db10_shorter_than_the_registry_is_named(monkeypatch):
+    """The PLC refusing the read as out of range means its DB10 doesn't match the PC's copy of the
+    interface (the lab PC, 22 October 2026): the message says so, not just 'read failed'."""
+    monkeypatch.setenv("SINDIE_SIMULATE", "1")
+    from src.services import service_plc as sp
+    from src.sim import plc as simplc
+    simplc._PLC = None
+    svc = sp.PlcMicroservice()
+    try:
+        svc.client = sp._new_client()
+        svc.client.connect("sim", 0, 1)
+        svc.connected = True
+        said = []
+        svc.events.log_general = lambda message, **k: said.append(message)
+
+        def refused(*a):
+            raise RuntimeError("b' CPU : Address out of range'")
+        svc.client.db_read = refused
+        svc._read_and_parse_dbs()
+        assert not svc.connected
+        assert "is shorter than the" in said[-1] and "PLC_PC_Interface.scl" in said[-1]
+    finally:
+        svc.shutdown()
+
+
+def test_the_pcs_db10_matches_the_plc():
+    """DB_PC_Interface as the PLC holds it: 314 bytes, no Beamline_Steerer_Magnet block, Graphix 1's
+    flag at byte 278 and the Internal block at 294 (the PLC program export; on the lab PC on 22 October
+    2026 the PLC refused the 316-byte read that the block made). If DB10 changes in TIA Portal, change
+    plc/generated/PLC_PC_Interface.scl to match and this test with it."""
+    import os
+    from src.utils.build_registry import get_plc_tags_from_scl
+    root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+    tags = get_plc_tags_from_scl(os.path.join(root, "plc", "generated", "PLC_PC_Interface.scl"),
+                                 os.path.join(root, "config"), db_number=10)
+    sizes = {"BOOL": 1, "INT": 2, "DINT": 4, "REAL": 4, "DWORD": 4}
+    end = max(m["byte_offset"] + sizes.get(m.get("datatype"), 2) for m in tags.values())
+    assert end + end % 2 == 314
+    assert tags["ion_beam.facilities.graphix1.stat_comms_fail"]["byte_offset"] == 278
+    assert min(m["byte_offset"] for t, m in tags.items() if t.startswith("ion_beam.internal.")) == 294
+    assert not [t for t in tags if t.startswith("ion_beam.beamline.steerer_magnet.")]
+
+
 def test_bad_fault_map_entries_are_left_out(monkeypatch, tmp_path):
     monkeypatch.setenv("SINDIE_SIMULATE", "1")
     from src.services import service_plc as sp

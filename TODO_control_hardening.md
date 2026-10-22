@@ -43,6 +43,12 @@ simulator; none of it has been tried on the real hardware yet (see "Lab PC valid
     `--send-test` with the ntfy topic it prints open on a phone), then send SystemLogs/network_probe_<date>.txt.
 
 ## Done
+- 22 October 2026, at the lab PC: after the registry was rebuilt (step 1 above) the PLC service lost the PLC
+  at once: the PLC refused the 316-byte read of DB10 ("Address out of range"). The PLC's DB_PC_Interface is
+  314 bytes, without the Beamline_Steerer_Magnet block that plc/generated/PLC_PC_Interface.scl had at byte
+  278 (it matches the PLC program export; docs/how-it-works/plc.md, known issues). The block is commented
+  out in the .scl, so the registry gives 314 bytes and the PLC's offsets again; the PLC service's message
+  now says when DB10 is shorter than the registry. tests/test_service_plc.py pins the layout.
 - Josh's notes of 21 October 2026, afternoon ("the interlock overview and the launcher; the rest later"):
   - Interlocks panel (src/core/interlocks.py works it out, widgets/interlocks_widget.py draws it; help page
     docs/panels/interlocks.md): every permissive as a chain of live conditions - safety relay (the PLC's
@@ -513,10 +519,10 @@ simulator; none of it has been tried on the real hardware yet (see "Lab PC valid
       cleared), and after a fault reset the relay is refused until service_plc restarts (src/sim/plc.py:205);
       caesium "hot" at 50 degC and target minimum 0.5 kV instead of the PLC's 30 degC and 3 kV. (The machine
       state and the close permissive are modelled now: 21 October 2026.)
-    - service_plc: the steerer's and SMU's status flags are never written to the PLC although DB10 has
-      Beamline_Steerer_Magnet and word 4 has Str_Magnet_* bits; PLC_DATA publishes those never-written
-      ion_beam.beamline.steerer_magnet.stat_* tags (at 0) under the same names as the steerer service's own,
-      so caches see the two interleaved (service_plc.py:119, 468-546). The '"From_PC" in tag' test at :335
+    - service_plc: the steerer's and SMU's status flags are never written to the PLC although word 4 has
+      Str_Magnet_* bits. (The PLC's DB10 has no Beamline_Steerer_Magnet block after all: it was left out of
+      the PC's copy of the interface on 22 October 2026, which also stops PLC_DATA publishing never-written
+      steerer_magnet.stat_* tags under the steerer service's names.) The '"From_PC" in tag' test at :335
       never matches (registry tags are lower case).
     - Spellman: over-temperature and rail collapse (status bits 0x30) are folded into stat_fail ("failed to
       track setpoint"); the PLC's Unit*_OverTemp / Unit*_Supply_Rail bits can never be set (service_spellman_mpd.py:414).
