@@ -41,6 +41,12 @@ simulator; none of it has been tried on the real hardware yet (see "Lab PC valid
    tell Claude what it said.
 10. The network test for alerts and remote viewing: `python src/utils/network_probe.py` on the lab PC (and
     `--send-test` with the ntfy topic it prints open on a phone), then send SystemLogs/network_probe_<date>.txt.
+    Done 22 October 2026 (lab PC, no proxy): all 20 services reached - ntfy (test notification sent, HTTP 200),
+    Pushover, Telegram, healthchecks.io, a Teams/Power Automate host, Microsoft sign-in and Graph, Office 365
+    and Gmail SMTP on 587, GitLab, GitHub, Cloudflare Tunnel (TCP 7844), Tailscale (control and DERP), Gemini,
+    pip, Backblaze B2. The research share \\surrey.ac.uk\research\ibcfac2 didn't answer within 20 s (not
+    mapped, or needs signing in from Explorer first: to check before relying on it); the compactor's OneDrive
+    backup folder is readable. For later: alerts, remote viewing, housekeeping.
 
 ## Done
 - 22 October 2026, at the lab PC: after the registry was rebuilt (step 1 above) the PLC service lost the PLC
