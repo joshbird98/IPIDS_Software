@@ -24,6 +24,9 @@ for _r, (_c, _on, _off, _st) in {1: (1, 2, 3, 4), 2: (5, 6, 7, 8), 3: (9, 10, 11
     _RELAY_CH[str(_c)], _RELAY_ON[str(_on)], _RELAY_OFF[str(_off)], _RELAY_STATUS[str(_st)] = _r, _r, _r, _r
 
 
+SPIKE_EVERY_S, SPIKE_FOR_S = 6.0, 0.8     # vacuum_spike_source: VG1 at ~1 mbar this long, this often
+
+
 class FakeGraphix:
     def __init__(self):
         self.lock = threading.Lock()
@@ -49,8 +52,11 @@ class FakeGraphix:
     def pressure(self, node, ch):
         base = _BASE_PRESSURES.get((node, ch), 1e-6)
         t = time.monotonic() - self.t0
-        if (node, ch) == (10, 1) and "vacuum_vent_source" in injected_faults():
+        faults = injected_faults()
+        if (node, ch) == (10, 1) and "vacuum_vent_source" in faults:
             return min(1000.0, base * math.exp(min(t / 5.0, 60.0)))     # (no overflow after an hour)
+        if (node, ch) == (10, 1) and "vacuum_spike_source" in faults and t % SPIKE_EVERY_S < SPIKE_FOR_S:
+            return 1.0 * (1.0 + random.gauss(0, 0.05))      # a powdered target's burst: ~1 mbar, briefly
         drift = 1.0 + 0.08 * math.sin(t / 37.0 + node + ch)
         return base * drift * (1.0 + random.gauss(0, 0.01))
 

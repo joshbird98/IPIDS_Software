@@ -65,6 +65,22 @@ def test_a_live_gauge_reads_normally(panel):
     assert (g["status"].text(), g["status"].property("tone")) == ("HEALTHY", "ok")
 
 
+def test_a_spike_being_ridden_through_and_a_software_trip(panel):
+    """VG1 above its software trip point (src/core/software_trips.py): SPIKE while it is ridden through,
+    TRIPPED once it has lasted the ride-through - although its backstop relay is still closed."""
+    data = gauges_live(vg1=0.9)
+    panel.update_telemetry(dict(data, **{f"{VG1}.stat_riding_through": 1.0}))
+    g = panel.gauges[1]
+    assert (g["status"].text(), g["status"].property("tone")) == ("SPIKE", "warn")
+    assert "ride-through" in g["status"].toolTip()
+    panel.update_telemetry(dict(data, **{f"{VG1}.stat_riding_through": 0.0, f"{VG1}.stat_above_sp": 1.0}))
+    assert (g["status"].text(), g["status"].property("tone")) == ("TRIPPED", "fault")
+    assert not g["status"].toolTip()
+    # Reported above its set point (a backstop relay open) while a spike is still being ridden through
+    panel.update_telemetry(dict(data, **{f"{VG1}.stat_riding_through": 1.0, f"{VG1}.stat_above_sp": 1.0}))
+    assert g["status"].text() == "TRIPPED"
+
+
 def test_a_withdrawn_reading_keeps_its_last_value_marked_stale(panel):
     panel.update_telemetry(gauges_live(vg1=2.3e-7, vg2=4.0e-7))
     panel.clock.t += 12

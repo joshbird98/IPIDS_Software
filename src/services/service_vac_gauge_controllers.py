@@ -18,14 +18,22 @@ raises stat_relay_sp_mismatch (an alarm) and an ERROR event. A relay set point c
 off only, within the registry limits, on below off) changes what is expected until the
 service restarts and writes the config back.
 
+A gauge with a software trip (src/core/software_trips.py; VG1, for the spikes powdered targets give)
+is judged by its pressure instead of its relays, which are then only a hardware backstop set high:
+above its trip point, and not back down to its reset point within its ride-through, it is
+reported above its set point (and, if it rose rapidly, with a rapid rise) - so the PLC closes the
+gate valve and the relay opens. A shorter spike is ridden through and logged.
+
 A restart mustn't close the gate valve: until this run has judged the vacuum itself (the
 permissive given, or JUDGE_GRACE_S after the start-up check if it still isn't) stat_judged is 0,
 and service_plc keeps the previous run's judgment for the PLC meanwhile, for a limited time.
 """
+import math
 import time
 from typing import Dict, Optional
 
 from src.core import hard_caps
+from src.core.software_trips import parse as parse_trips
 from src.core.device_service import DeviceService
 from src.core.log_setup import setup_logging
 from src.core.os_helper import harden_windows_process
@@ -37,6 +45,12 @@ from src.drivers.graphix import PARAM_PRESSURE, GraphixLink
 PRESSURE_STALE_S = 3.0   # a gauge with no good reading for this long is published as unknown
 GV_STALE_S = 10.0        # ...and VG1 / VG2 without one for this long lose the gate-valve permissive (it used to
                          # keep its last value; longer than the display's limit, as a drop can close the valve)
+# A gauge with a software trip (src/core/software_trips.py) has no relay below its backstop to cover a
+# time without readings: without a good one for PRESSURE_STALE_S (shown STALE) it loses the permissive.
+TRIP_CLEAR_READS = 2     # an excursion ends only at this many readings in a row at or below the reset point
+                         # (one garbled or stale answer, which the driver can't tell, mustn't restart the clock)
+TRIP_WATCH_S = 0.3       # during a controller check (seconds of reads and writes, nothing published, while
+                         # service_plc holds the last judgment), the trip gauges are read and judged this often
 # Restarts. Until this run of the service has judged the vacuum for itself, its gate-valve permissive
 # isn't a judgment (VG1 / VG2 maybe not read well yet, relays maybe not confirmed), and service_plc
 # keeps the previous run's for a while (service_plc.py: VACUUM_HOLD_S) so a restart doesn't close the
@@ -75,7 +89,8 @@ TAG_MAP = {
     (20, 3): "ion_beam.endstation.vacuum_gauge_6",
 }
 GAUGE_FLAGS = ("stat_not_found", "stat_mismatch", "stat_rapid_rise", "stat_above_sp", "stat_approaching_sp",
-               "stat_relay_active", "stat_comms_fail")
+               "stat_relay_active", "stat_comms_fail",
+               "stat_riding_through")     # (a gauge with a software trip: above its trip point, not yet for long)
 GV_GAUGES = ((10, 1), (10, 2))  # VG1 and VG2: the gate-valve permissive is built from their relays
 RELAY_KINDS = ("ch", "on", "off")
 RELAY_KIND_NAMES = {"ch": "channel", "on": "on", "off": "off"}
@@ -145,6 +160,18 @@ class VacuumMicroservice(DeviceService):
         self._polling_since = None      # (monotonic) the end of the first start-up check
         self._judged = False            # this run has judged the gate-valve permissive (see JUDGED_TAG)
         self._relay_status_at = {}      # (node, relay) -> when its status was last read (monotonic)
+        # Software trips (src/core/software_trips.py): only those within their hard caps are used
+        self.trips = hard_caps.valid_trips(self.config)
+        parsed, self.trip_problems = parse_trips(self.config)
+        self.trip_problems += [f"{t.gauge}'s software trip is past a hard cap (src/core/hard_caps.py): its relays "
+                               "are judged as before" for k, t in parsed.items() if k not in self.trips]
+        self._excursion = {}            # gauge base -> {"since", "peak", "rise"} while above its trip point
+        self._tripped = {}              # gauge base -> reported above its set point by its software trip
+        self._trip_rise = {}            # gauge base -> it rose rapidly in the excursion that tripped it
+        self._backstop_open = {}        # (node, relay) -> a backstop relay open (read so, and corroborated)
+        self._backstop_reads = {}       # (node, relay) -> routine reads in a row that gave it open
+        self._low_reads = {}            # gauge base -> good readings in a row at or below its reset point
+        self._trips_watched_at = -1e9   # (monotonic) the last watch_trips
         self.build_relay_maps()
         self.gv_config_problems = self._find_gv_config_problems()
         self._gv_problems_reported = False
@@ -182,7 +209,7 @@ class VacuumMicroservice(DeviceService):
                             "off": relay_value("off", params.get("off_val"))}
                 # The cap is judged on what would be written: a hand-edited file may hold "0.7" (text),
                 # which the editor refuses as not a number but float() here would turn into 0.7
-                cap = hard_caps.relay_cap(node, ch)
+                cap = hard_caps.relay_cap(node, ch, (node, ch) in self.trips)
                 over = [k for k in ("on", "off") if expected[k] is not None and cap.breach(float(expected[k]))]
                 if over:            # a file edited past the editor: never written to the controller
                     self.relay_cap_problems[(node, relay)] = cap.explain(
@@ -197,6 +224,7 @@ class VacuumMicroservice(DeviceService):
     def read_retry(self, node, group, param, retries=5) -> Optional[str]:
         for _ in range(retries):
             self.heartbeat()
+            self.watch_trips()
             value = self.link.read(node, group, param)
             if value is not None:
                 return value
@@ -206,6 +234,7 @@ class VacuumMicroservice(DeviceService):
     def write_retry(self, node, group, param, value, retries=10) -> bool:
         for _ in range(retries):
             self.heartbeat()
+            self.watch_trips()
             status = self.link.write(node, group, param, value)
             if status == "ACK":
                 return True
@@ -267,6 +296,11 @@ class VacuumMicroservice(DeviceService):
     def enforce_startup_config(self):
         """Gauge names and relay set points as in vac_gauges_config.json (written only if they differ)."""
         if not self._gv_problems_reported:
+            for text in self.trip_problems:
+                self.events.log_general(f"Software trip not used: {text}", severity="ERROR")
+            for t in self.trips.values():
+                self.events.log_general(f"Software trip in use: {t.describe()}; its relays are only the hardware "
+                                        "backstop")
             self._gv_problems_reported = True
             if self.gv_config_problems:
                 self.events.log_general("Gate-valve permissive withheld: it judges VG1 and VG2 by their relays, and "
@@ -474,7 +508,12 @@ class VacuumMicroservice(DeviceService):
                        "vac_gauges_config.json)")
             return
         exp = self.relay_expected.get((node, relay))
-        cap = hard_caps.relay_cap(node, exp["ch"] if exp else self.relay_to_channel_map.get((node, relay)))
+        ch = exp["ch"] if exp else self.relay_to_channel_map.get((node, relay))
+        try:
+            backstop = (node, int(ch)) in self.trips
+        except (TypeError, ValueError):
+            backstop = False
+        cap = hard_caps.relay_cap(node, ch, backstop)
         if cap.breach(value):       # first, so the reason given is the cap's
             cmd.reject(cap.explain(f"node {node} relay {relay} {kind} point", value))
             return
@@ -528,6 +567,8 @@ class VacuumMicroservice(DeviceService):
         for base in self.tag_map.values():
             self.state[f"{base}.rb_pressure"] = None
             self.state[f"{base}.stat_comms_fail"] = 1.0
+            self.state[f"{base}.stat_riding_through"] = 0.0
+        self._excursion.clear()             # (no readings: a ride-through starts again from the next one)
         self.state["ion_beam.facilities.graphix1.stat_comms_fail"] = 1.0
         self.state["ion_beam.facilities.graphix2.stat_comms_fail"] = 1.0
         self.state["ion_beam.vacuum.gv_permissive_ready"] = 0.0
@@ -548,6 +589,11 @@ class VacuumMicroservice(DeviceService):
                     answered.add(node)
             self.read_slow_item(node, task, target)
         self._slow_idx = (self._slow_idx + 1) % len(self.slow_tasks)
+        now = time.monotonic()
+        for trip in self.trips.values():        # (a ride-through runs out even with no new reading)
+            base = self.tag_map.get(trip.key)
+            if base:
+                self.judge_trip(trip, base, now)
         self.withdraw_stale_relay_status()
         if self.silent_nodes & answered:
             self.recheck_returning_nodes(answered)
@@ -570,15 +616,22 @@ class VacuumMicroservice(DeviceService):
             self.state[f"{base}.stat_comms_fail"] = 1.0
             self._withdraw_if_stale(base, now)
             return False
+        trip = self.trips.get((node, ch))
         try:
-            p = float(raw)
+            p = float(raw.strip().rstrip(">"))
         except ValueError:          # an answer, but no pressure (a gauge switched off may answer so)
+            p = None
+        # Not a pressure either: nan / inf; and for the gauges that decide the gate valve, 0 or below
+        # (a stale "0" from another request would look like a perfect vacuum, and end an excursion)
+        if p is None or not math.isfinite(p) or (p <= 0 and (trip is not None or (node, ch) in GV_GAUGES)):
             self.log.debug("Unparseable pressure from node %s ch %s: %r", node, ch, raw)
             self._withdraw_if_stale(base, now)
             return True
         self.state[f"{base}.rb_pressure"] = p
         approaching = False
-        for relay in self.channel_to_relay_map.get((node, ch), []):
+        if trip is not None:            # near its software trip point, not its (backstop) relays'
+            approaching = trip.reset_mbar < p <= trip.trip_mbar
+        for relay in ([] if trip is not None else self.channel_to_relay_map.get((node, ch), [])):
             th = self.relay_thresholds.get((node, relay))
             if th and th["on_val"] < p <= th["on_val"] / 0.8:
                 approaching = True
@@ -592,7 +645,10 @@ class VacuumMicroservice(DeviceService):
             dp_dt = (p - hist["pressure"]) / (now - hist["time"])
             rapid = dp_dt > self.rise_limit and p > 1.0e-6 and "vacuum_gauge_4" not in base
             self.pressure_history[base] = {"pressure": p, "time": now}
-        self.state[f"{base}.stat_rapid_rise"] = 1.0 if rapid else 0.0
+        if trip is not None:
+            self.judge_trip(trip, base, now, p, rapid)
+        else:
+            self.state[f"{base}.stat_rapid_rise"] = 1.0 if rapid else 0.0
         self.state[f"{base}.stat_comms_fail"] = 0.0
         self._last_good_read[base] = now
         return True
@@ -634,7 +690,11 @@ class VacuumMicroservice(DeviceService):
             base = self.tag_map.get((node, ch)) if ch else None
             if base:
                 self.state[f"{base}.stat_relay_active"] = 1.0 if status == 1 else 0.0
-                self.state[f"{base}.stat_above_sp"] = 1.0 if status == 0 else 0.0
+                trip = self.trips.get((node, ch))
+                if trip is None:
+                    self.state[f"{base}.stat_above_sp"] = 1.0 if status == 0 else 0.0
+                else:                   # its backstop: open means far above (the hardware has acted already)
+                    self.judge_backstop(trip, base, node, target, status)
         else:   # relay_on / relay_off / relay_ch
             kind = task.split("_")[1]
             val = self.link.read(node, "4", RELAY_PARAMS[target][kind])
@@ -647,6 +707,97 @@ class VacuumMicroservice(DeviceService):
                     self.relay_reading(node, target, kind, val)
                     self.review_relay(node, target)
 
+    def judge_backstop(self, trip, base, node, relay, status):
+        """A backstop relay read open counts at once if its gauge agrees (above the relay's on point,
+        or no live reading), else at the next read that says open too (a garbled "0" on this bus
+        mustn't close the gate valve)."""
+        key = (node, relay)
+        n = self._backstop_reads[key] = self._backstop_reads.get(key, 0) + 1 if status == 0 else 0
+        p = self.state.get(f"{base}.rb_pressure")
+        on = (self.relay_thresholds.get(key) or {}).get("on_val")
+        agrees = p is None or on is None or p > on
+        was = self._backstop_open.get(key, False)
+        now_open = status == 0 and (agrees or n >= 2)
+        self._backstop_open[key] = now_open
+        if now_open and not was:
+            self.events.log_general(f"{trip.gauge}'s backstop relay {relay} (node {node}) is open: the pressure is "
+                                    f"above its high set point - {trip.gauge} reported above its set point",
+                                    severity="ERROR")
+        elif status == 0 and not now_open:
+            self.events.log_general(f"{trip.gauge}'s backstop relay {relay} (node {node}) read open once, with "
+                                    f"{trip.gauge} at {p:.1E} mbar: counted if the next read says so too",
+                                    severity="WARNING")
+        elif was and not now_open:
+            self.events.log_general(f"{trip.gauge}'s backstop relay {relay} (node {node}) is closed again")
+        self.judge_trip(trip, base, time.monotonic())
+
+    def watch_trips(self):
+        """A controller check (at start-up, or of a controller answering again) runs outside the
+        loop: seconds of reads and writes with nothing published, while service_plc holds the last
+        judgment of the vacuum. Between its reads and writes the gauges with a software trip (and
+        VG2, so that it isn't stale afterwards) are read and judged; a trip meanwhile is published at
+        once, as this run's own judgment, so the gate valve's permissive goes without waiting for
+        the check to end."""
+        now = time.monotonic()
+        if not self.trips or not self.link.connected or now - self._trips_watched_at < TRIP_WATCH_S:
+            return
+        self._trips_watched_at = now
+        for key in sorted(set(self.trips) | set(GV_GAUGES)):
+            self.read_pressure(*key)
+        for trip in self.trips.values():
+            base = self.tag_map.get(trip.key)
+            if base:
+                self.judge_trip(trip, base, time.monotonic())
+        if any(self._tripped.values()) or any(self._backstop_open.values()):
+            self.judge_gv_permissive()
+            self.state["timestamp"] = time.time()
+            self.publish()
+
+    def judge_trip(self, trip, base, now, p=None, rapid=False):
+        """A gauge with a software trip judged as its relay was, with an on-delay: an excursion
+        starts at a reading above trip_mbar and ends at one at or below reset_mbar (the relay's
+        hysteresis - a pressure hovering around the trip point doesn't restart the clock). One that
+        lasts ride_through_s is reported above its set point (with a rapid rise if it rose rapidly
+        meanwhile), and so to the PLC, until it ends; a shorter one is ridden through, and logged.
+        p: a new good reading (None: only the time has moved on - the clock runs on without readings)."""
+        ex = self._excursion.get(base)
+        tripped = self._tripped.get(base, False)
+        if p is not None and (p > trip.trip_mbar or (p > trip.reset_mbar and (ex is not None or tripped))):
+            self._low_reads[base] = 0
+            if ex is None:
+                ex = self._excursion[base] = {"since": now, "peak": p, "rise": rapid, "down": None}
+            else:
+                ex["peak"], ex["rise"], ex["down"] = max(ex["peak"], p), ex["rise"] or rapid, None
+        elif p is not None and p <= trip.reset_mbar:
+            low = self._low_reads[base] = self._low_reads.get(base, 0) + 1
+            if ex is not None and ex["down"] is None:
+                ex["down"] = now            # back down - once the next reading agrees
+            if low >= TRIP_CLEAR_READS:
+                if ex is not None and not tripped:
+                    self.events.log_general(f"{trip.gauge} spike ridden through: up to {ex['peak']:.1E} mbar for "
+                                            f"{ex['down'] - ex['since']:.1f} s (a software trip after "
+                                            f"{trip.ride_through_s:g} s)", severity="WARNING")
+                self._excursion.pop(base, None)
+                ex = None
+                if tripped:
+                    tripped = self._tripped[base] = False
+                    self._trip_rise.pop(base, None)
+                    self.events.log_general(f"{trip.gauge} back below {trip.reset_mbar:.1E} mbar: its software "
+                                            "trip has cleared (RESET FAULTS clears the PLC's latched fault)")
+        # (back down, awaiting the next reading: judged as ended then; if the next one is high again, not)
+        end = None if ex is None else (ex["down"] if ex["down"] is not None else now)
+        if ex is not None and not tripped and end - ex["since"] >= trip.ride_through_s:
+            tripped = self._tripped[base] = True
+            self._trip_rise[base] = ex["rise"]
+            self.events.log_general(f"{trip.gauge} above {trip.trip_mbar:.1E} mbar for {trip.ride_through_s:g} s (up to "
+                                    f"{ex['peak']:.1E} mbar): reported above its set point - the gate valve's "
+                                    "permissive goes, the PLC closes the gate valve and the safety relay opens",
+                                    severity="ERROR")
+        backstop = any(self._backstop_open.get((trip.node, r)) for r in self.channel_to_relay_map.get(trip.key, []))
+        self.state[f"{base}.stat_above_sp"] = 1.0 if tripped or backstop else 0.0
+        self.state[f"{base}.stat_rapid_rise"] = 1.0 if tripped and self._trip_rise.get(base) else 0.0
+        self.state[f"{base}.stat_riding_through"] = 1.0 if ex is not None and not tripped and not backstop else 0.0
+
     def withdraw_stale_relay_status(self):
         """A relay status not read for RELAY_STATUS_STALE_S (a controller that stopped answering)
         is published as unknown until it is read again."""
@@ -658,21 +809,31 @@ class VacuumMicroservice(DeviceService):
                 del self._relay_status_at[(node, relay)]
 
     def evaluate_gv_permissive(self):
+        self.judge_gv_permissive()
+        self.judge_relay_mismatch()
+
+    def judge_gv_permissive(self):
         now = time.monotonic()
 
-        def faulty(base):     # (no good reading for GV_STALE_S counts too - one garbled answer doesn't)
-            return not base or now - self._last_good_read.get(base, -1e9) > GV_STALE_S or any(
+        def faulty(key):     # (no good reading for GV_STALE_S counts too - one garbled answer doesn't)
+            base = self.tag_map.get(key)
+            stale = PRESSURE_STALE_S if key in self.trips else GV_STALE_S
+            return not base or now - self._last_good_read.get(base, -1e9) > stale or any(
                 self.state.get(f"{base}.stat_{f}", 0.0) == 1.0 for f in ("not_found", "mismatch", "above_sp",
                                                                           "rapid_rise"))
-        safe = (self.link.connected and not faulty(self.tag_map.get((10, 1))) and not faulty(self.tag_map.get((10, 2)))
-                and self.gv_relays_confirmed())
+        safe = (self.link.connected and not any(faulty(g) for g in GV_GAUGES) and self.gv_relays_confirmed())
         self.state["ion_beam.vacuum.gv_permissive_ready"] = 1.0 if safe else 0.0
-        if not self._judged and self._polling_since is not None and (
-                safe or time.monotonic() - self._polling_since >= JUDGE_GRACE_S):
+        # Judged: the permissive given, or JUDGE_GRACE_S after the start-up check - or at once on a
+        # software trip or a backstop open (a measurement, not a check still under way)
+        tripped = any(self._tripped.values()) or any(self._backstop_open.values())
+        if not self._judged and (tripped or self._polling_since is not None and (
+                safe or time.monotonic() - self._polling_since >= JUDGE_GRACE_S)):
             self._judged = True
             self.events.log_general("Vacuum judged: the gate-valve permissive is " + ("given" if safe else
                                     "withheld") + " on this run's own readings")
         self.state[JUDGED_TAG] = 1.0 if self._judged else 0.0
+
+    def judge_relay_mismatch(self):
         states = [self.relay_state(n, r) for n, r in self.relay_expected]
         if self.gv_config_problems or self.relay_cap_problems or "differs" in states or \
                 (self._relays_checked and None in states):

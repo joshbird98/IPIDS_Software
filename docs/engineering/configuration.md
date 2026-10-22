@@ -10,7 +10,7 @@ The configuration files in `config/` and what reads them, the tag registry built
 | `plc_config.json` | the PC's limits for the PLC's setpoints: extraction, the target (cathode), filament, thermionic, caesium oven, steering | the registry builder |
 | `fault_config.json` | the PLC fault words and their bits: name, severity, description | `service_plc`, `service_alarms`, the HMI, the event helper of every program (fault descriptions), `plc/build_plc_types.py` |
 | `mpd_config.json` | the Spellman buses and supplies: address, type, voltage range, current-limit range, the default current limit, and the software arc detection | `service_spellman_mpd`, the registry builder |
-| `vac_gauges_config.json` | for each gauge controller: the gauge names, and each relay's channel and on and off points; the rapid-rise threshold; which relays are wired into the safety relay's loop (`system_interlocks.safety_loop_relays`, below) | `service_vac_gauge_controllers`, the registry builder, the HMI's Interlocks panel (re-read within a few seconds of a change) |
+| `vac_gauges_config.json` | for each gauge controller: the gauge names, and each relay's channel and on and off points; the rapid-rise threshold; which relays are wired into the safety relay's loop (`system_interlocks.safety_loop_relays`, below); gauges judged by a software trip with a ride-through (`system_interlocks.software_trips`, below) | `service_vac_gauge_controllers`, the registry builder, the HMI's Interlocks panel (re-read within a few seconds of a change) |
 | `magnet_config.json`, `steerer_magnet_config.json` | maximum current, voltage and power; the coil resistance checks; the degauss steps and step time | the magnet services, the registry builder |
 | `smu_config.json` | the bias voltage range and the compliance current | `service_smu`, the registry builder |
 | `logger_config.json` | the logger's row rate, chunk interval and crash-journal interval | `service_logger` |
@@ -28,6 +28,22 @@ The per-machine files and `backups/` are not in git. The services read their fil
 ## The gauge relay in the safety relay's loop
 
 The gauge controller's set-point relay that is wired into the safety relay's hardwired loop is named in `vac_gauges_config.json` as `system_interlocks.safety_loop_relays`: a list of controller node and relay, such as `["10.4"]` for gauge controller 1 (node 10), relay 4. The [Interlocks](../panels/interlocks.md) panel uses it to rule that relay in or out when the safety relay won't close. It ships as `[]`, as the wiring hasn't been checked yet; meanwhile the panel checks every relay the file lists for node 10. The config editor refuses anything but a node and relay 1 to 6 that the file configures.
+
+## Software trips with a ride-through
+
+A gauge listed in `vac_gauges_config.json` under `system_interlocks.software_trips` is judged by the vacuum service rather than by its relays, so that short pressure spikes don't trip the machine (`src/core/software_trips.py`). It ships with VG1, for the spikes from powdered targets:
+
+```json
+"software_trips": {"VG1": {"trip_mbar": 8.0e-6, "reset_mbar": 5.5e-6, "ride_through_s": 2.5}}
+```
+
+- `trip_mbar`: a reading above this starts an excursion, as the relay's off point would open it.
+- `reset_mbar`: a reading at or below this ends it, as the relay's on point. At most `trip_mbar`.
+- `ride_through_s`: an excursion that lasts this long reports the gauge above its set point, until it ends: the PLC closes the gate valve and the safety relay opens (its fault stays latched until **RESET FAULTS**). A shorter one is ridden through and logged.
+
+The gauge's relays are then only a hardware backstop, and should be set above the spikes: VG1's relays 1 and 4 ship at 5 mbar on and 10 mbar off. The hard caps (below) hold the trip point to the gate valve's 1×10⁻⁵ mbar and the ride-through to 2.5 s, as approved; a backstop relay may go up to 20 mbar, but only while its gauge has a valid software trip. The config editor refuses an entry for a gauge that isn't VG1 to VG6, a value that isn't a number above 0, a reset above the trip point, or a gauge whose channel the file doesn't configure. The vacuum service reads the file when it starts, and writes the relays' set points to the controller then: restart it after a change (the config editor's **Save and restart** does). See [Riding through short spikes (VG1)](../panels/vacuum.md#riding-through-short-spikes-vg1).
+
+To go back to the relays, set the gauge's relays back to the gate valve's points in the config editor (for VG1, 5.5×10⁻⁶ mbar on and 8×10⁻⁶ mbar off): the relay then trips on every spike again, and the software trip, left in place, never acts first. Taking the entry out altogether is a hand edit of the file (the config editor changes values only), in the same change as the relays.
 
 ## Recipe drafting
 
@@ -77,6 +93,9 @@ Some values have a ceiling that no config file can raise. They are set in the co
 | What | Cap | Why |
 |---|---|---|
 | VG1 and VG2 relay on and off points | 1×10⁻⁵ mbar | they decide when the gate valve may open |
+| a gauge's software trip and reset points (`system_interlocks.software_trips`) | 1×10⁻⁵ mbar for VG1 and VG2, 1 mbar for the others | as its relays' |
+| a software trip's ride-through | 2.5 s | as approved (Josh Bird, October 2026) |
+| the relays of a gauge with a valid software trip (its backstop) | 20 mbar | above the spikes it rides through |
 | other gauge relay points | 1 mbar | |
 | every Spellman supply | ±22 kV | |
 | analyser magnet supply | 95 A, 25 V | |

@@ -135,7 +135,7 @@ def test_a_good_start_up_has_no_problems(catalog):
     ([{"type": "ROUTINE_CALL", "routine_name": "hv_conditioning", "parameters": {
         "cmd_tag": f"{EXT}.sp_requested_voltage", "rb_tag": f"{EXT}.rb_voltage", "enabled_tag": f"{EXT}.stat_enabled",
         "max_val": 15, "pressure_max": 9e-6, "pressure_recover": 2e-6}}], [RELAY_TRIP],
-     "the gauge's relay drops at 8.0e-06 mbar"),
+     "the gate valve's permissive goes at 8.0e-06 mbar"),
     ([{"type": "VERIFIED_ACTION", "target": f"{EXT}.sp_requested_voltage", "value": 5.0}], [],
      "it checks the command itself"),
     ([{"type": "PARALLEL", "steps": [dict(act(f"{MAG}.sp_requested_current", 5), step_id=11),

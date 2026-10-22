@@ -16,7 +16,8 @@ FILES = ("vac_gauges_config.json", "mpd_config.json", "magnet_config.json", "ste
 def over_caps():
     """Each capped file with values just past its caps."""
     vac = config_store.read("vac_gauges_config.json")
-    vac["10"]["relays"]["1"].update(on_val=7e-1, off_val=8e-1)     # VG1: the gate valve's
+    vac["10"]["relays"]["2"].update(on_val=7e-1, off_val=8e-1)     # VG2: the gate valve's
+    vac["10"]["relays"]["1"]["off_val"] = 25.0                     # VG1, a backstop (software trip): 20 mbar
     vac["10"]["relays"]["3"]["off_val"] = 2.0                      # VG3: the other relays'
     mpd = config_store.read("mpd_config.json")
     mpd["buses"][0]["devices"]["source_einzel"]["max_value"] = 25000.0
@@ -37,9 +38,10 @@ def test_each_cap_is_refused_with_its_reason():
     found = {name: {v.path: v.message for v in hard_caps.violations(name, data)}
              for name, data in over_caps().items()}
     vac = found["vac_gauges_config.json"]
-    assert set(vac) == {("10", "relays", "1", "on_val"), ("10", "relays", "1", "off_val"),
-                        ("10", "relays", "3", "off_val")}
-    assert "1e-05 mbar cap" in vac[("10", "relays", "1", "on_val")] and "gate valve" in vac[("10", "relays", "1", "on_val")]
+    assert set(vac) == {("10", "relays", "2", "on_val"), ("10", "relays", "2", "off_val"),
+                        ("10", "relays", "1", "off_val"), ("10", "relays", "3", "off_val")}
+    assert "1e-05 mbar cap" in vac[("10", "relays", "2", "on_val")] and "gate valve" in vac[("10", "relays", "2", "on_val")]
+    assert "20 mbar cap" in vac[("10", "relays", "1", "off_val")] and "backstop" in vac[("10", "relays", "1", "off_val")]
     assert "1 mbar cap" in vac[("10", "relays", "3", "off_val")]
     assert "22000 V cap" in found["mpd_config.json"][("buses", 0, "devices", "source_einzel", "max_value")]
     assert set(found["magnet_config.json"]) == {("max_current",), ("max_voltage",), ("degauss_steps_amps", 0)}
@@ -68,7 +70,8 @@ def test_the_registry_keeps_setpoint_limits_within_the_caps(tmp_path):
     for build in (br.get_vacuum_tags, br.get_spellman_tags, br.get_magnet_tags, br.get_steerer_magnet_tags,
                   br.get_smu_tags):
         tags.update(build(str(tmp_path)))
-    assert tags["ion_beam.facilities.graphix1.relay_1_on"]["max_val"] == pytest.approx(1e-5)
+    assert tags["ion_beam.facilities.graphix1.relay_1_on"]["max_val"] == pytest.approx(20.0)    # VG1: a backstop
+    assert tags["ion_beam.facilities.graphix1.relay_2_on"]["max_val"] == pytest.approx(1e-5)
     assert tags["ion_beam.facilities.graphix1.relay_3_off"]["max_val"] == pytest.approx(1.0)
     assert tags["ion_beam.facilities.graphix2.relay_1_on"]["max_val"] == pytest.approx(1.0)
     assert tags["ion_beam.source.einzel.sp_requested_voltage"]["max_val"] == pytest.approx(22.0)
@@ -167,3 +170,33 @@ def test_the_optics_panel_keeps_the_cap_in_its_tooltips():
     finally:
         w.deleteLater()
         app.processEvents()
+
+
+def test_a_software_trip_is_held_to_the_strict_caps():
+    """VG1's software trip (src/core/software_trips.py): its points at most the gate valve's 1e-05 mbar,
+    its ride-through at most the approved 2.5 s - and only a trip within them lets VG1's relays be a
+    20 mbar backstop."""
+    vac = config_store.read("vac_gauges_config.json")
+    assert set(hard_caps.valid_trips(vac)) == {(10, 1)}
+    for key, value, words in (("trip_mbar", 2e-5, "1e-05 mbar cap"), ("ride_through_s", 3.0, "2.5 s cap")):
+        bad = config_store.read("vac_gauges_config.json")
+        bad["system_interlocks"]["software_trips"]["VG1"][key] = value
+        found = {v.path: v.message for v in hard_caps.violations("vac_gauges_config.json", bad)}
+        assert words in found[("system_interlocks", "software_trips", "VG1", key)]
+        assert ("10", "relays", "1", "off_val") in found        # and VG1's relays are judged strictly again
+        assert hard_caps.valid_trips(bad) == {}
+    gone = config_store.read("vac_gauges_config.json")
+    del gone["system_interlocks"]["software_trips"]
+    assert any("1e-05 mbar cap" in v.message for v in hard_caps.violations("vac_gauges_config.json", gone))
+
+
+@pytest.mark.parametrize("value", ["8e-06", True, float("nan"), float("inf"), -1.0, 0, 10 ** 400, None])
+def test_a_software_trip_that_isnt_a_number_is_not_used(value):
+    """Whatever is in the file, no trip that isn't a finite number above 0 - and then VG1's relays are
+    held to the gate valve's cap again (nothing crashes on an integer too big for a float)."""
+    from src.core import config_checks
+    vac = config_store.read("vac_gauges_config.json")
+    vac["system_interlocks"]["software_trips"]["VG1"]["trip_mbar"] = value
+    assert hard_caps.valid_trips(vac) == {}
+    assert any("trip_mbar" in p for p in config_checks.check("vac_gauges_config.json", vac))
+    assert any("1e-05 mbar cap" in v.message for v in hard_caps.violations("vac_gauges_config.json", vac))

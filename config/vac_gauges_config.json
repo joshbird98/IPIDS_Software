@@ -1,7 +1,15 @@
 {
   "system_interlocks": {
     "rapid_rise_thresh_mb_s": 0.5,
-    "safety_loop_relays": []
+    "safety_loop_relays": [],
+    "software_trips": {
+      "_comment": "A gauge listed here is judged in software, so that short pressure spikes are ridden through (powdered targets, October 2026): above trip_mbar for ride_through_s without a break, it is reported above its set point (the PLC closes the gate valve, and the safety relay opens); clear again at or below reset_mbar. Its relays are then only the hardware backstop, and may be set as high as 20 mbar. Caps in src/core/hard_caps.py: trip and reset at most 1e-05 mbar for VG1 and VG2, ride_through_s at most 2.5 s.",
+      "VG1": {
+        "trip_mbar": 8e-6,
+        "reset_mbar": 5.5e-6,
+        "ride_through_s": 2.5
+      }
+    }
   },
   "10": {
     "channels": {
@@ -24,8 +32,8 @@
     "relays": {
       "1": {
         "channel": 1,
-        "on_val": 5.5e-6,
-        "off_val": 8e-6
+        "on_val": 5.0,
+        "off_val": 10.0
       },
       "2": {
         "channel": 2,
@@ -39,8 +47,8 @@
       },
       "4": {
         "channel": 1,
-        "on_val": 5.5e-6,
-        "off_val": 8e-6
+        "on_val": 5.0,
+        "off_val": 10.0
       },
       "5": {
         "channel": 2,

@@ -47,8 +47,40 @@ simulator; none of it has been tried on the real hardware yet (see "Lab PC valid
     pip, Backblaze B2. The research share \\surrey.ac.uk\research\ibcfac2 didn't answer within 20 s (not
     mapped, or needs signing in from Explorer first: to check before relying on it); the compactor's OneDrive
     backup folder is readable. For later: alerts, remote viewing, housekeeping.
+11. VG1's software trip (powdered targets' spikes; docs/panels/vacuum.md, "Riding through short spikes"):
+    `python src/utils/build_registry.py` (VG1's relay set points may now go to 20 mbar), then restart the
+    services (launcher: Stop services, Start services), with the source off and the gate valve closed. The
+    vacuum service writes VG1's relays 1 and 4 to 5 mbar on / 10 mbar off: check the Event Log says
+    "Software trip in use: VG1 ..." and that no "Gauge relay set points not confirmed" alarm comes up (on the
+    GRAPHIX front panel the relays' set points should read 5.0E+0 / 1.0E+1). Then run a powdered target: the
+    spikes should show SPIKE on VG1's card and "VG1 spike ridden through: up to ... for ... s" in the Event
+    Log, and the gate valve and safety relay stay put. If one is logged near 2.5 s, or the backstop relays
+    open, tell Claude what the Event Log said.
 
 ## Done
+- 22 October 2026, at the lab PC (Josh): powdered targets give VG1 short spikes to ~1 mbar for a few
+  readings, and VG1's relay in the safety relay's loop (at the gate valve's 8e-6 mbar) dropped the HV on each.
+  Approved: ride through spikes under 2.5 s, trip in software on a longer one. src/core/software_trips.py and
+  vac_gauges_config.json system_interlocks.software_trips: VG1 judged as its relay was (an excursion from a
+  reading above 8e-6 mbar to one at or below 5.5e-6), with an on-delay: one lasting 2.5 s trips; the vacuum service then reports VG1 above its set point (rapid rise if it
+  rose quickly), so the PLC latches the VG1 fault, closes the gate valve and the safety relay opens. Shorter
+  spikes are logged as ridden through (HMI chip SPIKE). VG1's relays 1 and 4 (which one is in the loop isn't
+  recorded yet - step 9) are now a hardware backstop at 5 / 10 mbar. hard_caps: trip points as the relays'
+  (1e-5 mbar for VG1/VG2), ride-through at most 2.5 s, a backstop relay at most 20 mbar and only with a valid
+  trip (else the strict cap again, so the gate valve is held). The ride-through's clock runs on through
+  failed reads; an excursion ends only at 2 readings in a row at or below reset (a stray answer on the bus
+  mustn't restart the clock); 0 / negative / nan answers aren't VG1 or VG2 readings; VG1 without a good
+  reading for 3 s loses the permissive (no relay below 10 mbar behind it); a backstop relay read open counts
+  at once only if VG1 agrees, else at the next read; during a controller check (start-up, a controller
+  answering again) VG1 is still read and a trip published at once, counting as this run's judgment.
+  Simulator fault vacuum_spike_source. An independent review was worked through before the commit.
+  Open, for Josh: while the vacuum service is silent - between a restart's old and new process (seconds), or
+  crashed / hung (the PLC service's hold, up to 60 s) - VG1 has only the 10 mbar backstop. Options: leave it
+  (restart the vacuum service with the source off), or a shorter hold while a software trip is in use (a
+  hung service then closes the gate valve sooner; a restart would too, unless it is quick).
+  Also to watch at the lab: whether the bursts reach VG2 through the open gate valve (VG2 has no
+  ride-through: relays at 6e-6, rapid rise on every reading), and the ridden-through durations in the Event
+  Log (an excursion lasts until VG1 is back at 5.5e-6, so a slow pump-down tail counts).
 - 22 October 2026, at the lab PC: after the registry was rebuilt (step 1 above) the PLC service lost the PLC
   at once: the PLC refused the 316-byte read of DB10 ("Address out of range"). The PLC's DB_PC_Interface is
   314 bytes, without the Beamline_Steerer_Magnet block that plc/generated/PLC_PC_Interface.scl had at byte

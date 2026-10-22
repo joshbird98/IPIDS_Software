@@ -31,6 +31,11 @@ GV_HOLD_TIP = ("The vacuum service is restarting or not sending data. Meanwhile 
                "PLC is told the vacuum is unknown, as without the hold: an open gate valve closes, and the "
                "safety relay drops.")
 
+SPIKE_TIP = ("Above its software trip point (vac_gauges_config.json, system_interlocks.software_trips). "
+             "A spike shorter than its ride-through is only logged in the Event Log. If it lasts the "
+             "ride-through, the gauge is reported above its set point: the gate valve closes and the "
+             "safety relay opens.")
+
 
 def _set(label, text: str, tone: str):
     label.setText(text)
@@ -173,7 +178,10 @@ class VacuumControlWidget(QWidget):
                 gauge["val"].setText(f"{pressure:.2e} mbar")
                 set_ink(gauge["val"], None)
                 _tip("", gauge["val"], gauge["status"])
-                _set(gauge["status"], *self._gauge_state(data, base, status or 0, not_found))
+                chip = self._gauge_state(data, base, status or 0, not_found)
+                _set(gauge["status"], *chip)
+                if chip[0] == "SPIKE":
+                    _tip(SPIKE_TIP, gauge["status"])
                 continue
             self._show_gauge_not_live(i, gauge, vac_connected, link_up, status, not_found)
 
@@ -189,6 +197,8 @@ class VacuumControlWidget(QWidget):
         if status != 0:
             return f"FAULT ({int(status)})", "fault"
         above_sp = data.get(f"{base}.stat_above_sp", False)
+        if data.get(f"{base}.stat_riding_through", False) and not above_sp:
+            return "SPIKE", "warn"          # above its software trip point, not yet for its ride-through
         if data.get(f"{base}.stat_relay_active", False) or above_sp:
             # Status 0 (online): the gauge's fail-safe relay set point
             if above_sp:

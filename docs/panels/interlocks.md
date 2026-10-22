@@ -64,7 +64,7 @@ The two door switches, the two ESOs and the key switch are wired in series in th
 
 Two other things in the loop can be seen from the PC, and the card rules them in or out:
 
-- **The gauge controller's set-point relay.** It closes when the gauge's pressure falls below its on point and opens when the pressure rises above its off point. The vacuum service reads each relay of gauge controller 1 about every 10 s. The card counts the relay as closed only on a current reading: read as closed within the last 25 s, with its gauge answering and the pressure no higher than the off point (and the relay's set points confirmed on the controller). A pressure above the off point counts as open, whatever was read before. Anything else counts as not known, for example a reading from before the vacuum service restarted.
+- **The gauge controller's set-point relay.** It closes when the gauge's pressure falls below its on point and opens when the pressure rises above its off point. The vacuum service reads each relay of gauge controller 1 about every 10 s. The card counts the relay as closed only on a current reading: read as closed within the last 25 s, with its gauge answering and the pressure no higher than the off point (and the relay's set points confirmed on the controller). A pressure above the off point counts as open, whatever was read before. Anything else counts as not known, for example a reading from before the vacuum service restarted. VG1's relays are only a backstop, at 10 mbar: its software trip closes the gate valve first, and a spike it rides through leaves them closed (see [Riding through short spikes (VG1)](vacuum.md#riding-through-short-spikes-vg1)).
 - **The magnet coolant switch.** The PLC has an input from it.
 
 When the relay has refused or tripped, a note says what that leaves. What the card can see is judged now: a gauge relay that is closed now isn't holding the loop open now, whatever it did when the relay refused.
@@ -85,7 +85,7 @@ If the gauge controller's relay in the loop is open, the card says so, with the 
 
 The PLC opens the source gate valve while **OPEN** is requested and all of these hold, and closes it when one goes:
 
-- **Vacuum good (the PC's flag):** the vacuum service's judgment that VG1 and VG2 are below their relays' set points, read recently, with their relays confirmed. When it isn't good, the card says why, for example `VG1 above its relay's set point (9.5E-06 mbar)` or `the vacuum service isn't sending data`. Through a restart of the vacuum service the PLC keeps its last judgment for up to 60 s; the card then says how long is left.
+- **Vacuum good (the PC's flag):** the vacuum service's judgment that VG1 and VG2 are below their set points (VG1: its software trip, with its 2.5 s ride-through), read recently, with their relays confirmed. When it isn't good, the card says why, for example `VG1 above its set point (9.5E-06 mbar)` or `the vacuum service isn't sending data`. Through a restart of the vacuum service the PLC keeps its last judgment for up to 60 s; the card then says how long is left.
 - **PC watchdog:** `PC_Watchdog_Timeout` not latched, and the PLC still receiving the watchdog.
 - **Gauge controllers' comms:** `Graphix_1_Comms_Fail` and `Graphix_2_Comms_Fail` not latched.
 - **VG1 healthy** and **VG2 healthy:** none of the gauge's faults latched (not found, type mismatch, above set point, rapid rise). These stay latched after the pressure recovers, until **RESET FAULTS**.

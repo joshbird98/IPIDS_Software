@@ -100,6 +100,7 @@ def get_vacuum_tags(config_dir):
     LEYBOLD_MIN_MBAR = 1.0e-10
     LEYBOLD_MAX_MBAR = 1000.0
 
+    backstops = hard_caps.valid_trips(vacuum_settings)      # gauges judged by a software trip
     for node_str, node_data in vacuum_settings.items():
         if not node_str.isdigit():
             continue
@@ -117,7 +118,12 @@ def get_vacuum_tags(config_dir):
                     continue
 
                 # Within the transducer's range, and its gauge's hard cap (src/core/hard_caps.py)
-                relay_max = min(LEYBOLD_MAX_MBAR, hard_caps.relay_cap(node_id, relay_params.get("channel")).high)
+                try:
+                    backstop = (node_id, int(relay_params.get("channel"))) in backstops
+                except (TypeError, ValueError):
+                    backstop = False
+                relay_max = min(LEYBOLD_MAX_MBAR,
+                                hard_caps.relay_cap(node_id, relay_params.get("channel"), backstop).high)
                 tags[f"{base_relay_tag}_on"] = {
                     "source": "service_vacuum", "datatype": "REAL", "writable": True,
                     "auto_controllable": True, "min_val": LEYBOLD_MIN_MBAR, "max_val": relay_max,

@@ -43,16 +43,21 @@ def machine(**changes) -> dict:
     return d
 
 
-def loop_config(wired=None) -> il.LoopConfig:
+def loop_config(wired=None, shipped=False) -> il.LoopConfig:
+    """The shipped vac_gauges_config.json - by default with VG1's relays (1 and 4) at the gate valve's
+    set points, as before VG1's software trip made them a high backstop (shipped=True)."""
     with open(config_path("vac_gauges_config.json"), encoding="utf-8") as f:
         cfg = json.load(f)
     cfg["system_interlocks"]["safety_loop_relays"] = wired or []
+    if not shipped:
+        for relay in ("1", "4"):
+            cfg["10"]["relays"][relay].update(on_val=5.5e-6, off_val=8e-6)
     return il.LoopConfig.parse(cfg)
 
 
-def overview(data, wired=None, **kw) -> il.Overview:
+def overview(data, wired=None, shipped=False, **kw) -> il.Overview:
     kw.setdefault("now", NOW)
-    return il.evaluate(data, loop_config(wired), **kw)
+    return il.evaluate(data, loop_config(wired, shipped), **kw)
 
 
 def cond(group: il.Group, label: str) -> il.Condition:
@@ -274,7 +279,7 @@ def test_why_the_vacuum_isnt_good():
                       "ion_beam.source.vacuum_gauge_1.stat_above_sp": 1.0,
                       "ion_beam.source.vacuum_gauge_1.rb_pressure": 9.5e-6})
     assert cond(overview(data).group("gv_open"), "Vacuum good").detail == \
-        "VG1 above its relay's set point (9.5E-06 mbar)"
+        "VG1 above its set point (9.5E-06 mbar)"
     data = machine(**{il.VAC_HOLD_LEFT: 42.0})
     assert "restart (42 s left)" in cond(overview(data).group("gv_open"), "Vacuum good").detail
 
@@ -438,3 +443,12 @@ def test_forced_cooling_left_on_after_a_cancelled_shutdown():
     assert cs.summary == "Can't heat: forced cooling is still on from a shutdown sequence (RESET FAULTS clears it)."
     unknown = cond(overview(machine(**{il.RELAY: 1.0, il.FORCE_COOLER: None})).group("cesium"), "No shutdown")
     assert unknown.state == il.UNKNOWN
+
+
+def test_a_backstop_relay_stays_closed_through_a_spike():
+    """With VG1's software trip (the shipped file) its relays are a backstop at 10 mbar: a spike to
+    1e-3 mbar leaves the loop's relay closed - the software trip, not the relay, acts on a long one."""
+    data = refused(**{f"{VG[1]}.rb_pressure": 1e-3})
+    vac = cond(overview(data, wired=["10.4"], shipped=True).group("relay"), "Gauge controller relay")
+    assert vac.state == il.OK and vac.detail == \
+        "closed: relay 4: VG1 at 1.0E-03 mbar (it opens above 1.0E+01)"

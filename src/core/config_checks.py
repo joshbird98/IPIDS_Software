@@ -263,6 +263,16 @@ def _two_digits(v: float) -> bool:
 
 def _check_vacuum(c: _Checker, d):
     c.num(d.get("system_interlocks", {}), "rapid_rise_thresh_mb_s", "system_interlocks", gt=0, le=1000)
+    # Software trips with a ride-through (src/core/software_trips.py); their caps are hard_caps'
+    from src.core.software_trips import parse
+    trips, problems = parse(d)
+    for text in problems:
+        c.bad(text)
+    for t in trips.values():
+        node_cfg = d.get(str(t.node))
+        if not isinstance(node_cfg, dict) or str(t.channel) not in (node_cfg.get("channels") or {}):
+            c.bad(f"system_interlocks.software_trips.{t.gauge}: controller {t.node} has no channel {t.channel} "
+                  "in this file")
     # The gauge controller relays wired into the safety relay's loop (the HMI's Interlocks panel), as
     # "node.relay"; an empty list until someone has checked the wiring (every relay of controller 10
     # is checked meanwhile)

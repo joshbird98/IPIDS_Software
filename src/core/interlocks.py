@@ -638,7 +638,7 @@ def _vacuum_reason(r: _Read) -> str:
     for name in ("VG1", "VG2"):
         base = GAUGES[name]
         if r.flag(f"{base}.stat_above_sp"):
-            reasons.append(f"{name} above its relay's set point ({r.pressure(base)})")
+            reasons.append(f"{name} above its set point ({r.pressure(base)})")
         elif r.num(f"{base}.rb_pressure") is None:
             reasons.append(f"{name} has no reading")
         for flag, text in (("stat_not_found", "not found"), ("stat_mismatch", "a gauge fault"),

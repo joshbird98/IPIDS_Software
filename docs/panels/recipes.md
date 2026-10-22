@@ -191,7 +191,7 @@ The builder checks the recipe as you edit it, with the checks the sequencer make
 | **an analogue reading** ... **is rarely exactly** ... | Use **is within ±**, **is at least** or **is at most**. |
 | **it checks the command itself** | A **Set a value and check it** step that checks its own command only shows that the command was received: check the status or reading it changes. |
 | **the thermionic (ioniser) current follows the filament** | Its readback doesn't follow its setpoint: don't wait for it. |
-| **it holds only above** ... **but the gauge's relay drops at** ... | A conditioning ramp that waits too long for the pressure loses the gate valve (and the safety relay) first. Hold below the relay's off point. |
+| **it holds only above** ... **but the gate valve's permissive goes at** ... | A conditioning ramp that waits too long for the pressure loses the gate valve (and the safety relay) first. Hold below the gauge's set point: its software trip point if it has one (VG1), else its relay's off point. |
 | **another step at the same time also drives the** ... | Two steps inside **Do steps at the same time** set the same thing: which value wins depends on timing. |
 | **this only asks for the safety relay** | Sending the relay enable by itself: **Bring the safety relay on** checks the vacuum and the gate valve and works with the operator's **START**. |
 | ... **isn't in the tag registry** (a reading) | If nothing reports it, the step fails after 10 s without a live value. |

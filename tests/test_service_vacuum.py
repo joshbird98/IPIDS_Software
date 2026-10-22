@@ -1,4 +1,6 @@
 """Vacuum gauge service against the simulated GRAPHIX controllers."""
+import time
+
 import pytest
 
 from src.core import commands as C
@@ -68,10 +70,38 @@ def test_relay_set_point_command(stack):
     assert r["status"] == C.REJECTED
 
 
+def relays_judge_vg1(tmp_path, monkeypatch):
+    """The config as it was before VG1's software trip (22 October 2026): VG1 judged by its relays at
+    5.5E-06 / 8.0E-06 mbar, like VG2 still is. The relay-checking tests below are written for it."""
+    import json
+    import shutil
+    from src.core import paths
+    with open(paths.config_path("vac_gauges_config.json"), encoding="utf-8") as f:
+        cfg = json.load(f)
+    cfg["system_interlocks"].pop("software_trips", None)
+    for relay in ("1", "4"):
+        cfg["10"]["relays"][relay].update(on_val=5.5e-6, off_val=8e-6)
+    folder = tmp_path / "config"
+    shutil.copytree(paths.CONFIG_DIR, folder, ignore=shutil.ignore_patterns("recipes", "backups"))
+    (folder / "vac_gauges_config.json").write_text(json.dumps(cfg), encoding="utf-8")
+    monkeypatch.setattr(paths, "CONFIG_DIR", str(folder))
+
+
 @pytest.fixture
-def idle(monkeypatch, fake_events):
+def idle(monkeypatch, fake_events, tmp_path):
     """The service built but not running: its relay checks driven directly against the simulated
-    controllers (whose answers a test can change)."""
+    controllers (whose answers a test can change). VG1 judged by its relays (relays_judge_vg1)."""
+    relays_judge_vg1(tmp_path, monkeypatch)
+    yield from _idle(monkeypatch, fake_events)
+
+
+@pytest.fixture
+def idle_trip(monkeypatch, fake_events):
+    """The same with the shipped config: VG1 judged by its software trip, its relays a backstop."""
+    yield from _idle(monkeypatch, fake_events)
+
+
+def _idle(monkeypatch, fake_events):
     monkeypatch.setenv("SINDIE_SIMULATE", "1")
     monkeypatch.delenv("SINDIE_SIM_FAULTS", raising=False)
     from src.sim import vacuum as simvac
@@ -353,7 +383,6 @@ def test_a_relay_status_not_read_lately_is_unknown(idle, monkeypatch):
     """Each relay's on/off status (the Interlocks panel rules the loop's gauge relay in or out with
     it) is withdrawn when it hasn't been read for a while, or the controllers can't be reached:
     never an old reading."""
-    import time
     import src.services.service_vac_gauge_controllers as vac
     svc, graphix, events = idle
     tag, at = vac.relay_status_tag(10, 4), vac.relay_read_at_tag(10, 4)
@@ -383,7 +412,7 @@ def test_config_values_past_a_hard_cap_are_never_written(monkeypatch, fake_event
     from src.core import config_store
     monkeypatch.setattr(vac.time, "sleep", lambda s: None)
     config = config_store.read("vac_gauges_config.json")
-    config["10"]["relays"]["1"].update(on_val=0.7, off_val=0.8)
+    config["10"]["relays"]["2"].update(on_val=0.7, off_val=0.8)      # VG2's (VG1 has a software trip)
     monkeypatch.setattr(vac.VacuumMicroservice, "load_config", lambda self, name, default: config)
     svc = vac.VacuumMicroservice()
     try:
@@ -394,7 +423,7 @@ def test_config_values_past_a_hard_cap_are_never_written(monkeypatch, fake_event
         monkeypatch.setattr(simvac.shared_graphix(), "write",
                             lambda node, group, param, value: written.append((node, param)) or real_write(node, group, param, value))
         check_all_relays(svc)
-        assert (10, "2") not in written and (10, "3") not in written         # relay 1's on / off untouched
+        assert (10, "6") not in written and (10, "7") not in written         # relay 2's on / off untouched
         assert svc.state[PERMISSIVE] == 0.0 and svc.state[MISMATCH] == 1.0
         assert "Hard cap" in errors(fake_events)[0] and "gate valve may open" in errors(fake_events)[0]
     finally:
@@ -402,7 +431,8 @@ def test_config_values_past_a_hard_cap_are_never_written(monkeypatch, fake_event
 
 
 @pytest.mark.parametrize("relay, values, gate_valve", [
-    ("1", {"on_val": "7e-1", "off_val": "8e-1"}, True),     # text, as a hand edit might leave it
+    ("2", {"on_val": "7e-1", "off_val": "8e-1"}, True),     # VG2; text, as a hand edit might leave it
+    ("1", {"on_val": 15.0, "off_val": 25.0}, True),         # VG1's backstop relay: past its 20 mbar cap
     ("3", {"on_val": 1.5, "off_val": 2.0}, False),         # VG3: the other relays' 1 mbar cap
 ])
 def test_config_values_past_a_cap_are_never_written(monkeypatch, fake_events, relay, values, gate_valve):
@@ -431,3 +461,166 @@ def test_config_values_past_a_cap_are_never_written(monkeypatch, fake_events, re
         assert svc.state[MISMATCH] == 1.0 and svc.state[PERMISSIVE] == (0.0 if gate_valve else 1.0)
     finally:
         svc.shutdown()
+
+
+# --- VG1's software trip: short spikes ridden through (powdered targets, Josh, 22 October 2026) ------
+VG1_BASE = "ion_beam.source.vacuum_gauge_1"
+
+
+def test_vg1_rides_through_a_short_spike_and_trips_on_a_long_one(idle_trip):
+    svc, graphix, events = idle_trip
+    trip = svc.trips[(10, 1)]
+    assert (trip.trip_mbar, trip.reset_mbar, trip.ride_through_s) == (8e-6, 5.5e-6, 2.5)
+
+    def at(t, p, rapid=False):
+        svc.judge_trip(trip, VG1_BASE, t, p, rapid)
+        return {k: svc.state[f"{VG1_BASE}.{k}"] for k in ("stat_above_sp", "stat_rapid_rise", "stat_riding_through")}
+
+    quiet = {"stat_above_sp": 0.0, "stat_rapid_rise": 0.0, "stat_riding_through": 0.0}
+    riding = dict(quiet, stat_riding_through=1.0)
+    assert at(0.0, 2e-7) == quiet
+    assert at(1.0, 1.0, rapid=True) == riding                       # a 1 mbar spike: not reported
+    assert at(2.4, 0.5) == riding
+    assert at(3.0, 3e-7) == riding                                  # back down - once the next reading agrees
+    assert at(3.4, 3e-7) == quiet
+    assert any("ridden through: up to 1.0E+00 mbar for 2.0 s" in e["message"] for e in events.events)
+    # Not down within 2.5 s: reported, with the rapid rise, even with no reading in between
+    at(10.0, 0.8, rapid=True)
+    assert at(12.4, None)["stat_above_sp"] == 0.0
+    assert at(12.6, None) == {"stat_above_sp": 1.0, "stat_rapid_rise": 1.0, "stat_riding_through": 0.0}
+    assert any("above 8.0E-06 mbar for 2.5 s" in m for m in errors(events))
+    assert at(14.0, 7e-6)["stat_above_sp"] == 1.0           # between the points: still tripped
+    assert at(15.0, 5e-6)["stat_above_sp"] == 1.0           # at or below the reset point once...
+    assert at(15.4, 5e-6) == quiet                          # ... and again: clear
+    assert any("back below 5.5E-06 mbar" in e["message"] for e in events.events)
+    # A slow rise over the trip point counts the same
+    at(20.0, 9e-6)
+    assert at(22.6, 9e-6) == {"stat_above_sp": 1.0, "stat_rapid_rise": 0.0, "stat_riding_through": 0.0}
+    at(23.0, 2e-7), at(23.4, 2e-7)
+    # The excursion ends only at the reset point, as the relay's hysteresis: a spike that settles
+    # between the points, or a pressure hovering about the trip point, trips after 2.5 s all the same
+    for start, readings in ((30.0, (1.0, 7e-6, 7e-6)), (40.0, (9e-6, 7.9e-6, 8.5e-6, 7.9e-6))):
+        for k, p in enumerate(readings):
+            assert at(start + 0.8 * k, p) == riding
+        assert at(start + 2.5, 7.5e-6)["stat_above_sp"] == 1.0
+        at(start + 3.0, 5.5e-6)
+        assert at(start + 3.4, 5.5e-6)["stat_above_sp"] == 0.0      # (at the reset point)
+    # One low reading (garbled, or stale: the driver can't tell) doesn't restart the clock
+    assert at(50.0, 1.0) == riding
+    assert at(50.8, 1e-7) == riding
+    assert at(51.2, 0.9) == riding
+    assert at(52.5, 0.9)["stat_above_sp"] == 1.0
+    at(53.0, 2e-7), at(53.4, 2e-7)
+    # A spike judged as over when it came down, if the next reading agrees
+    at(60.0, 1.0)
+    at(62.3, 2e-7)
+    assert at(62.7, 2e-7) == quiet
+    assert any("ridden through: up to 1.0E+00 mbar for 2.3 s" in e["message"] for e in events.events)
+
+
+def test_vg1_backstop_relay_open_reports_at_once(idle_trip):
+    """A backstop relay read open counts at once when VG1 agrees (above the relay's on point, or no
+    live reading); with VG1 reading low, at the next read that says open too."""
+    svc, graphix, events = idle_trip
+    svc.poll_device()
+    svc.read_slow_item(10, "relay_status", 1)
+    assert svc.state[f"{VG1_BASE}.stat_above_sp"] == 0.0
+    graphix.relay_closed[(10, 1)] = False
+    graphix.relays[(10, 1)]["on"] = graphix.relays[(10, 1)]["off"] = 1e-12     # (the simulated relay opens)
+    svc.read_slow_item(10, "relay_status", 1)               # VG1 reads ~2e-7: a garbled answer?
+    assert svc.state[f"{VG1_BASE}.stat_above_sp"] == 0.0 and not errors(events)
+    svc.read_slow_item(10, "relay_status", 1)
+    assert svc.state[f"{VG1_BASE}.stat_above_sp"] == 1.0
+    assert any("backstop relay 1" in m for m in errors(events))
+    svc.evaluate_gv_permissive()
+    assert svc.state["ion_beam.vacuum.gv_permissive_ready"] == 0.0
+    # Relay 4 open with VG1 above its on point: at once
+    svc.state[f"{VG1_BASE}.rb_pressure"] = 20.0
+    graphix.relay_closed[(10, 4)] = False
+    graphix.relays[(10, 4)]["on"] = graphix.relays[(10, 4)]["off"] = 1e-12
+    svc.read_slow_item(10, "relay_status", 4)
+    assert any("backstop relay 4" in m for m in errors(events))
+
+
+def test_vg1_relays_may_be_a_backstop_only_with_a_valid_trip(idle_trip):
+    """VG1's relays at 10 mbar are accepted (written, and confirmed) with its software trip; the
+    gate-valve permissive is given; without the trip they would be past the 1e-05 mbar cap."""
+    svc, graphix, events = idle_trip
+    check_all_relays(svc)
+    assert graphix.relays[(10, 1)]["off"] == 10.0 and not svc.relay_cap_problems
+    svc.poll_device()
+    assert svc.state["ion_beam.vacuum.gv_permissive_ready"] == 1.0
+    from src.core import hard_caps
+    cfg = dict(svc.config)
+    cfg["system_interlocks"] = {k: v for k, v in cfg["system_interlocks"].items() if k != "software_trips"}
+    assert [v for v in hard_caps.violations("vac_gauges_config.json", cfg) if "relay 1 off point" in v.message]
+
+
+def test_vg1_answers_that_are_no_pressure_are_not_readings(idle_trip):
+    """For VG1 and VG2 (the gate valve's gauges) 0, below 0, nan and inf aren't pressures: a stale
+    "0" meant for another request would look like a perfect vacuum. A trailing '>' is the GRAPHIX's."""
+    svc, graphix, events = idle_trip
+    replies = iter(["0", "-1.0E-07", "nan", "inf", "1.00E-07>"])
+    svc.link.read = lambda node, group, param: next(replies)
+    for _ in range(4):
+        svc.state[f"{VG1_BASE}.rb_pressure"] = None
+        assert svc.read_pressure(10, 1) is True and svc.state[f"{VG1_BASE}.rb_pressure"] is None
+    svc.read_pressure(10, 1)
+    assert svc.state[f"{VG1_BASE}.rb_pressure"] == pytest.approx(1e-7)
+
+
+def test_vg1_unread_for_3_s_loses_the_permissive(idle_trip, monkeypatch):
+    """With only a 10 mbar backstop behind it, VG1 without a good reading for 3 s (shown STALE)
+    loses the gate-valve permissive - VG2, with its relays, after 10 s as before."""
+    import src.services.service_vac_gauge_controllers as vac
+    svc, graphix, events = idle_trip
+    check_all_relays(svc)
+    assert svc.state[PERMISSIVE] == 1.0
+    clock = [time.monotonic()]
+    monkeypatch.setattr(vac.time, "monotonic", lambda: clock[0])
+    svc._last_good_read[VG1_BASE] = clock[0]
+    clock[0] += 2.9
+    svc.evaluate_gv_permissive()
+    assert svc.state[PERMISSIVE] == 1.0
+    clock[0] += 0.2
+    svc.evaluate_gv_permissive()
+    assert svc.state[PERMISSIVE] == 0.0
+
+
+def test_a_trip_during_a_controller_check_is_published_at_once(idle_trip, monkeypatch):
+    """A controller check (here node 20 answering again) runs outside the loop, with nothing
+    published - service_plc holds the last judgment meanwhile. VG1 is still read between its reads
+    and writes, and a trip is published at once, as this run's own judgment."""
+    import src.services.service_vac_gauge_controllers as vac
+    svc, graphix, events = idle_trip
+    check_all_relays(svc)
+    published = []
+    monkeypatch.setattr(svc, "publish", lambda: published.append(dict(svc.state)))
+    clock = [time.monotonic()]
+    monkeypatch.setattr(vac.time, "monotonic", lambda: clock[0])
+    monkeypatch.setattr(graphix, "pressure", lambda node, ch: 1.0 if (node, ch) == (10, 1) else 2e-7)
+    real_read = svc.link.read
+
+    def slow_read(node, group, param):          # each read of the check takes 0.4 s
+        if group == "4" or param == "5":
+            clock[0] += 0.4
+        return real_read(node, group, param)
+    monkeypatch.setattr(svc.link, "read", slow_read)
+    svc.check_node(20)
+    tripped = [d for d in published if d.get(f"{VG1_BASE}.stat_above_sp") == 1.0]
+    assert tripped and tripped[0][PERMISSIVE] == 0.0 and tripped[0]["ion_beam.vacuum.stat_judged"] == 1.0
+    assert any("above 8.0E-06 mbar for 2.5 s" in m for m in errors(events))
+
+
+def test_the_spike_fault_is_ridden_through_by_the_running_service(stack):
+    """The simulator's powdered-target bursts (VG1 at ~1 mbar for 0.8 s every 6 s): the gate-valve
+    permissive stays given throughout."""
+    svc, tap, client, mp = stack
+    tap.wait_for(lambda d: d.get(PERMISSIVE) == 1.0, timeout=15)
+    mp.setenv("SINDIE_SIM_FAULTS", "vacuum_spike_source")
+    d = tap.wait_for(lambda d: d.get(f"{VG1}.stat_riding_through") == 1.0, timeout=10)
+    assert d[PERMISSIVE] == 1.0 and d[f"{VG1}.rb_pressure"] > 0.1
+    end = time.time() + 7
+    while time.time() < end:
+        d = tap.wait_for(lambda d: True, timeout=2)
+        assert d[PERMISSIVE] == 1.0 and d[f"{VG1}.stat_above_sp"] == 0.0

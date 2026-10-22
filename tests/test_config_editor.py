@@ -155,7 +155,7 @@ def test_the_tick_box_gates_ok(app):
 
 def test_problems_block_the_save(env):
     dlg = open_file(env.make(), "vac_gauges_config.json")
-    widget_at(dlg, "10", "relays", "1", "on_val").setText("9e-06")     # above off_val 8e-06
+    widget_at(dlg, "10", "relays", "2", "on_val").setText("7e-06")     # above off_val 6e-06
     before = (env.cfg / "vac_gauges_config.json").read_text()
     dlg._save_and_restart()
     assert env.boxes[-1][0] == "warning" and "must be below" in env.boxes[-1][1]
@@ -335,20 +335,26 @@ def test_a_hard_cap_is_refused_and_shown_on_the_field(env):
     from src.gui.control.dialogs import config_editor_dialog as ced
     dlg = open_file(env.make(), "vac_gauges_config.json")
     before = (env.cfg / "vac_gauges_config.json").read_bytes()
-    widget_at(dlg, "10", "relays", "1", "on_val").setText("0.7")
-    widget_at(dlg, "10", "relays", "1", "off_val").setText("0.8")
+    widget_at(dlg, "10", "relays", "2", "on_val").setText("0.7")        # VG2: the gate valve's
+    widget_at(dlg, "10", "relays", "2", "off_val").setText("0.8")
     dlg._save_and_restart()
     kind, text = env.boxes[-1]
     assert kind == "warning" and "over a hard cap" in text and "gate valve may open" in text
     assert env.confirm["shown"] == []                                  # no confirmation offered at all
     assert (env.cfg / "vac_gauges_config.json").read_bytes() == before
-    field = widget_at(dlg, "10", "relays", "1", "on_val")
+    field = widget_at(dlg, "10", "relays", "2", "on_val")
     assert field.property("tone") == ced.CAP_TONE and "1e-05 mbar cap" in field.toolTip()
     field.setText("5.5e-06")
-    widget_at(dlg, "10", "relays", "1", "off_val").setText("1e-05")    # at the cap is allowed
+    widget_at(dlg, "10", "relays", "2", "off_val").setText("1e-05")    # at the cap is allowed
     dlg._save_and_restart()
     assert not field.property("tone") and env.boxes[-1][0] == "information" and "Saved" in env.boxes[-1][1]
-    assert cs.read("vac_gauges_config.json", str(env.cfg))["10"]["relays"]["1"]["off_val"] == 1e-05
+    assert cs.read("vac_gauges_config.json", str(env.cfg))["10"]["relays"]["2"]["off_val"] == 1e-05
+    # VG1's relays are a backstop behind its software trip: up to 20 mbar
+    widget_at(dlg, "10", "relays", "1", "off_val").setText("25")
+    dlg._save_and_restart()
+    kind, text = env.boxes[-1]
+    assert kind == "warning" and "over a hard cap" in text
+    assert "20 mbar cap" in widget_at(dlg, "10", "relays", "1", "off_val").toolTip()
 
 
 def test_history_wont_put_back_a_version_past_a_cap(env, monkeypatch):

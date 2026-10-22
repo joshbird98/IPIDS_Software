@@ -300,8 +300,9 @@ Texts in the panels that mean something is wrong or not known.
 | **RAPID RISE** | Vacuum System: a gauge card | The pressure rises faster than `rapid_rise_thresh_mb_s` in `config/vac_gauges_config.json`. The PLC latches `VG<n>_Rapid_Rise_Warn`. | Look for the cause: a leak, or a burst of gas such as a new filament degassing. |
 | **SENSOR OFF** | Vacuum System: a gauge card | The controller reports the gauge switched off (status 3). The PLC latches `VG<n>_Type_Mismatch` for it. | Switch the gauge on at the controller. |
 | `FAULT (<code>)` | Vacuum System: a gauge card | Another status code from the controller. The PLC latches `VG<n>_Type_Mismatch`. | Check the gauge and the controller. |
-| **TRIPPED** | Vacuum System: a gauge card | The gauge's relay is off: the pressure is above its set point. The PLC latches `VG<n>_Above_SP_Warn`. | Find why the pressure is up. |
-| **WARNING** | Vacuum System: a gauge card | The pressure is above the relay's on point by up to 25 %. The relay drops at its off point. | Watch the pressure. |
+| **TRIPPED** | Vacuum System: a gauge card | The gauge's relay is off: the pressure is above its set point. For VG1: above its software trip point and not back down to its reset point within the 2.5 s ride-through, or a backstop relay open. The PLC latches `VG<n>_Above_SP_Warn`. | Find why the pressure is up. |
+| **SPIKE** | Vacuum System: VG1's card | It went above its software trip point less than the 2.5 s ride-through ago, and isn't back down to its reset point yet. Nothing is reported to the PLC unless it lasts. | Watch the pressure. See [Riding through short spikes (VG1)](panels/vacuum.md#riding-through-short-spikes-vg1). |
+| **WARNING** | Vacuum System: a gauge card | The pressure is above the relay's on point by up to 25 %. The relay drops at its off point. For VG1: between its software trip's reset and trip points. | Watch the pressure. |
 | **STALE** *time*, the value greyed | Vacuum System: gauge cards, turbo | No live reading: the value shown is the last one read, *time* ago. The tooltip says why: the service isn't sending data, the controllers or the pump aren't answering, or no good reading from that gauge for 3 s. | Check the service in **Service Manager**, then the device. See [Readings that have stopped](panels/vacuum.md#readings-that-have-stopped). |
 | **NO READING** | Vacuum System: a gauge card | The vacuum service is running but hasn't had a reading from this gauge since the HMI started. | Check the gauge and its controller. |
 | **OFFLINE** | Vacuum System: gauge cards, turbo | No data from the vacuum or turbo service since the HMI started. | Check the service in **Service Manager**. |
@@ -727,28 +728,28 @@ Acknowledging the alarm doesn't reset the fault. Only **RESET FAULTS** does. The
 | `GRAPHIX_2_COMMS_FAIL` (bit 0.1) | `Graphix Unit 2 communication failure.` | As above. Alarm after 10 s. | As above. |
 | `VG1_NOT_FOUND` (bit 0.2) | `VG1 not found by controller.` | The controller reports no gauge on VG1's channel (status 5). | Check the gauge head and cable, then **RESET FAULTS**. |
 | `VG1_TYPE_MISMATCH` (bit 0.3) | `VG1 has unexpected gauge type.` | The controller reports a status other than OK or not found for VG1, including a gauge switched off (**SENSOR OFF**). | Check the gauge at the controller, then **RESET FAULTS**. |
-| `VG1_ABOVE_SP_WARN` (bit 0.4) | `VG1 pressure above setpoint.` | VG1's relay is off: its pressure is above the relay's set point. | Find why the pressure is up; once it is down, **RESET FAULTS**. |
-| `VG1_RAPID_RISE_WARN` (bit 0.5) | `VG1 rapid pressure rise.` | VG1's pressure rose faster than `rapid_rise_thresh_mb_s` over more than 0.5 s, above 1×10⁻⁶ mbar. | As above. |
+| `VG1_ABOVE_SP_WARN` (bit 0.4) | `VG1 pressure above setpoint.` | VG1's pressure went above its software trip point (8×10⁻⁶ mbar) and wasn't back down to its reset point (5.5×10⁻⁶ mbar) within its 2.5 s ride-through, or one of its backstop relays (10 mbar) is open. See [Riding through short spikes (VG1)](panels/vacuum.md#riding-through-short-spikes-vg1). | Find why the pressure is up; once it is down, **RESET FAULTS**. |
+| `VG1_RAPID_RISE_WARN` (bit 0.5) | `VG1 rapid pressure rise.` | As `VG1_ABOVE_SP_WARN`, and the pressure rose faster than `rapid_rise_thresh_mb_s` (over more than 0.5 s, above 1×10⁻⁶ mbar) during that time above the trip point. | As above. |
 | `VG2_NOT_FOUND` (bit 0.6) | `VG2 not found by controller.` | As for VG1. | As for VG1. |
 | `VG2_TYPE_MISMATCH` (bit 0.7) | `VG2 has unexpected gauge type.` | As for VG1. | As for VG1. |
-| `VG2_ABOVE_SP_WARN` (bit 1.0) | `VG2 pressure above setpoint.` | As for VG1. | As for VG1. |
-| `VG2_RAPID_RISE_WARN` (bit 1.1) | `VG2 rapid pressure rise.` | As for VG1. | As for VG1. |
+| `VG2_ABOVE_SP_WARN` (bit 1.0) | `VG2 pressure above setpoint.` | VG2's relay is off: its pressure is above the relay's set point. | As for VG1. |
+| `VG2_RAPID_RISE_WARN` (bit 1.1) | `VG2 rapid pressure rise.` | VG2's pressure rose faster than `rapid_rise_thresh_mb_s` over more than 0.5 s, above 1×10⁻⁶ mbar. | As for VG1. |
 | `VG3_NOT_FOUND` (bit 1.2) | `VG3 not found by controller.` | As for VG1. | As for VG1. |
 | `VG3_TYPE_MISMATCH` (bit 1.3) | `VG3 has unexpected gauge type.` | As for VG1. | As for VG1. |
-| `VG3_ABOVE_SP_WARN` (bit 1.4) | `VG3 pressure above setpoint.` | As for VG1. | As for VG1. |
-| `VG3_RAPID_RISE_WARN` (bit 1.5) | `VG3 rapid pressure rise.` | As for VG1. | As for VG1. |
+| `VG3_ABOVE_SP_WARN` (bit 1.4) | `VG3 pressure above setpoint.` | As for VG2. | As for VG1. |
+| `VG3_RAPID_RISE_WARN` (bit 1.5) | `VG3 rapid pressure rise.` | As for VG2. | As for VG1. |
 | `VG4_NOT_FOUND` (bit 1.6) | `VG4 not found by controller.` | As for VG1. | As for VG1. |
 | `VG4_TYPE_MISMATCH` (bit 1.7) | `VG4 has unexpected gauge type.` | As for VG1. | As for VG1. |
-| `VG4_ABOVE_SP_WARN` (bit 2.0) | `VG4 pressure above setpoint.` | As for VG1. | As for VG1. |
+| `VG4_ABOVE_SP_WARN` (bit 2.0) | `VG4 pressure above setpoint.` | As for VG2. | As for VG1. |
 | `VG4_RAPID_RISE_WARN` (bit 2.1) | `VG4 rapid pressure rise.` | The vacuum service never sets the rapid-rise flag for VG4. | |
 | `VG5_NOT_FOUND` (bit 2.2) | `VG5 not found by controller.` | As for VG1. | As for VG1. |
 | `VG5_TYPE_MISMATCH` (bit 2.3) | `VG5 has unexpected gauge type.` | As for VG1. | As for VG1. |
-| `VG5_ABOVE_SP_WARN` (bit 2.4) | `VG5 pressure above setpoint.` | As for VG1. | As for VG1. |
-| `VG5_RAPID_RISE_WARN` (bit 2.5) | `VG5 rapid pressure rise.` | As for VG1. | As for VG1. |
+| `VG5_ABOVE_SP_WARN` (bit 2.4) | `VG5 pressure above setpoint.` | As for VG2. | As for VG1. |
+| `VG5_RAPID_RISE_WARN` (bit 2.5) | `VG5 rapid pressure rise.` | As for VG2. | As for VG1. |
 | `VG6_NOT_FOUND` (bit 2.6) | `VG6 not found by controller.` | As for VG1. | Check VG6, then **RESET FAULTS**. |
 | `VG6_TYPE_MISMATCH` (bit 2.7) | `VG6 has unexpected gauge type.` | As for VG1. | As for VG1. |
-| `VG6_ABOVE_SP_WARN` (bit 3.0) | `VG6 pressure above setpoint.` | As for VG1. | As for VG1. |
-| `VG6_RAPID_RISE_WARN` (bit 3.1) | `VG6 rapid pressure rise.` | As for VG1. | As for VG1. |
+| `VG6_ABOVE_SP_WARN` (bit 3.0) | `VG6 pressure above setpoint.` | As for VG2. | As for VG1. |
+| `VG6_RAPID_RISE_WARN` (bit 3.1) | `VG6 rapid pressure rise.` | As for VG2. | As for VG1. |
 
 ## Events that need attention
 
@@ -763,6 +764,13 @@ The services also write events to the event log (`data/events.db`, and `SystemLo
 | `Vacuum service judging the vacuum again: the PLC follows its readings (gate valve permissive given)` (or `withheld`) | `service_plc` | The restarted vacuum service has judged the vacuum, and the hold has ended. | |
 | `No judgment of the vacuum from the vacuum service for 60 s: the PLC is now told the vacuum is unknown (gate valve permissive withdrawn)` | `service_plc` | The vacuum service didn't come back in time: an open gate valve closes and the safety relay drops. | Find why the vacuum service isn't running or starting: see [A service shows BACKOFF](troubleshooting.md#a-service-shows-backoff). |
 | `Vacuum judged: the gate-valve permissive is given on this run's own readings` (or `withheld`) | `service_vac_gauge_controllers` | The vacuum service, after starting, has judged the vacuum for itself. | |
+| `VG1 spike ridden through: up to <p> mbar for <t> s (a software trip after 2.5 s)` (WARNING) | `service_vac_gauge_controllers` | VG1 went above its software trip point and came back down to its reset point within the ride-through: nothing was reported to the PLC. | Nothing, if it is a powdered target. Many of them, or longer ones, are worth a look. |
+| `VG1 above <trip> mbar for 2.5 s (up to <p> mbar): reported above its set point - the gate valve's permissive goes, the PLC closes the gate valve and the safety relay opens` (ERROR) | `service_vac_gauge_controllers` | VG1's software trip. | Find why the pressure stayed up. Once VG1 is back below its reset point, **RESET FAULTS** and open the gate valve again. |
+| `VG1 back below <reset> mbar: its software trip has cleared (RESET FAULTS clears the PLC's latched fault)` | `service_vac_gauge_controllers` | The software trip has cleared. | **RESET FAULTS**. |
+| `VG1's backstop relay <n> (node 10) is open: the pressure is above its high set point - VG1 reported above its set point` (ERROR) | `service_vac_gauge_controllers` | A relay of VG1's, set above the spikes (10 mbar), is open: a gross loss of vacuum. If it is the relay in the safety relay's loop, the relay has opened already. | Find the leak. |
+| `VG1's backstop relay <n> (node 10) read open once, with VG1 at <p> mbar: counted if the next read says so too` (WARNING) | `service_vac_gauge_controllers` | The relay's state and VG1's pressure disagree: perhaps a garbled answer. The next read of the relay, about 10 s later, decides. | If it comes back often, check the relay's set points on the controller. |
+| `Software trip in use: VG1: above 8.0E-06 mbar for 2.5 s trips it (clear again at 5.5E-06 mbar); its relays are only the hardware backstop` | `service_vac_gauge_controllers` | At start-up. | |
+| `Software trip not used: <why>` (ERROR) | `service_vac_gauge_controllers` | An entry under `system_interlocks.software_trips` in `config/vac_gauges_config.json` that can't be used. Its gauge is judged by its relays, at the gate valve's cap: with relays set as a backstop, the vacuum service doesn't write them, and withholds the gate valve's permissive. | Fix the entry in the config editor. |
 | `<device> at <address> not reachable: <error>` | device services | The service can't connect to its device. It keeps trying. | Check the device. |
 | `Safety relay DE-ENERGISED (or its state unknown) - Spellman supplies unpowered, outputs reported disabled`, `No PLC telemetry - safety relay state unknown, treating as de-energised`, `Safety relay ENERGISED - Spellman supplies powered` | `service_spellman_mpd` | The relay as the Spellman service sees it. | |
 | `ARC DETECTED on <supply>: output collapsed to <v> kV, below 10% of the <sp> kV setpoint - latched until fault reset` (or `output current <i> uA above 500 uA`) | `service_spellman_mpd` | The software arc detection latched. | Find the cause, then **RESET FAULTS**. |

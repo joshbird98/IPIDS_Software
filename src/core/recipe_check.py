@@ -402,8 +402,8 @@ class _Checker:
         off = gauge_relay_off(gauge)
         mx = number(params.get("pressure_max", 5e-6))
         if off is not None and mx is not None and mx >= off:
-            self.add(WARNING, path, f"it holds only above {mx:.1e} mbar, but the gauge's relay drops at {off:.1e} mbar "
-                                    "and the gate valve closes with it: hold below that")
+            self.add(WARNING, path, f"it holds only above {mx:.1e} mbar, but the gate valve's permissive goes at "
+                                    f"{off:.1e} mbar on that gauge and the gate valve closes: hold below that")
 
     # ------------------------------------------------------------------ the order of the steps
     def _flatten(self, steps, base, file, report, depth=0):
@@ -592,13 +592,18 @@ _relay_off = {}
 
 
 def gauge_relay_off(tag) -> Optional[float]:
-    """The lowest relay off point set for VG1's or VG2's relays in vac_gauges_config.json (None if
-    unknown). Above it the relay drops, and the gate valve permissive with it."""
+    """Where the gate valve's permissive goes for VG1 or VG2 (None if unknown): the gauge's software
+    trip point if it has one (src/core/software_trips.py), else the lowest off point of its relays in
+    vac_gauges_config.json."""
     if not _relay_off:
         try:
             with open(paths.config_path("vac_gauges_config.json"), "r", encoding="utf-8") as f:
                 cfg = json.load(f)
+            trips = hard_caps.valid_trips(cfg)
             for node, channel, gauge in ((*hard_caps.GATE_VALVE_GAUGES[0], VG1), (*hard_caps.GATE_VALVE_GAUGES[1], VG2)):
+                if (node, channel) in trips:
+                    _relay_off[gauge] = trips[(node, channel)].trip_mbar
+                    continue
                 relays = (cfg.get(str(node), {}) or {}).get("relays") or {}
                 for relay in relays.values():
                     off = number(relay.get("off_val")) if isinstance(relay, dict) else None
