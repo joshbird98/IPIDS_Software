@@ -220,6 +220,11 @@ def _plot_panel(w):
     w.chk_log_y = QCheckBox("Log Y")
     w.chk_log_y.setToolTip("Logarithmic current axis (shows negative currents too: symmetric log).")
     w.chk_log_y.stateChanged.connect(w._toggle_log_y)
+    w.btn_figure = QPushButton("Export figure")
+    w.btn_figure.setToolTip("Draw the plot as it is framed now as thesis figures - PDF, SVG and PNG, at full "
+                            "and half text width, with a few variations - in a new folder under "
+                            "data/exports/mass_scan_figures/, with the data and the script that draws them.")
+    w.btn_figure.clicked.connect(w.export_figure)
     w.btn_clear = QPushButton("Clear")
     w.btn_clear.setToolTip("Clear the plot.")
     w.btn_clear.clicked.connect(w._clear_plot)
@@ -260,6 +265,7 @@ def _plot_panel(w):
     toolbar.addLayout(x_pair)
     toolbar.addWidget(w.chk_x_both)
     toolbar.addWidget(w.lbl_cursor, 1)
+    toolbar.addWidget(w.btn_figure)
     toolbar.addWidget(w.btn_clear)
     toolbar.addWidget(w.btn_toggle_analysis)
     layout.addLayout(toolbar)

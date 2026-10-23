@@ -2,6 +2,7 @@
 
     ui.py              layout
     axis.py            linear / symmetric-log current axis; the top x axis in the other unit
+    thesis_figure.py   Export figure: the plot as framed, as thesis figures (copied as make_figure.py)
     isotopes.py        isotopes and the molecular ions peaks are matched against
     peaks.py           peak finding, resolution and tails
     traces.py          trace files and the mass calibration fit

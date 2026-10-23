@@ -99,7 +99,8 @@ The mass goes with the square of the magnet current, so the ticks along the top 
 | **Log Y** | Logarithmic current axis. It is a symmetric log: negative currents have their own logarithmic region below zero, and the axis is linear within about 1 pA of zero. |
 | **AMU**, **Amps** | Plots against the mass, or against the measured magnet current (which needs no calibration). The part of the scan in view stays in view. |
 | **Both axes** | Shows the other unit along the top of the plot. |
-| Readout beside **Clear** | The mass and the magnet current under the pointer, for example `28.06 AMU = 24.371 A` (at 30 keV, with the default calibration). |
+| **Export figure** | Draws the plot as it is framed now as figures for a thesis or a report, in a new folder. See [Figures for a thesis](#figures-for-a-thesis). |
+| Readout beside **Export figure** | The mass and the magnet current under the pointer, for example `28.06 AMU = 24.371 A` (at 30 keV, with the default calibration). |
 | **Clear** | Clears the plot, the previous pass and the peaks. **Save trace** is then greyed out until the next finished pass or a loaded trace. |
 | Mouse wheel, drag | Zoom and pan. The current axis follows the data in the visible range. |
 | Double-click | When no scan is running: sets the magnet to the mass under the pointer, using the calibration and the beam energy recorded at the trace's last point (30 keV if there is none). On a current plot, to the current under the pointer. |
@@ -169,6 +170,43 @@ The isotope list is `isotope_db.json`, next to the panel's code, built with `pyt
 | **Save trace** | Saves the last finished pass, or the loaded trace, as a new file `base_YYYYmmdd_HHMMSS.csv` from the base export path. Greyed out until there is one. |
 
 A trace file has one row per point, with the columns `Timestamp` (when the file was written), `Requested_Magnet_A`, `Measured_Magnet_A`, `Measured_Beam_A`, `Target_kV` and `Extraction_kV`, and after a fit `Calib_k` and `Calib_I_off`. **Load trace...** needs at least `Measured_Magnet_A` and `Measured_Beam_A`. Without the two voltage columns it warns that the masses may use the default energy, and uses 30 keV. A loaded trace saved again keeps its measured current as the requested current and its whole beam energy under `Target_kV`.
+
+## Figures for a thesis
+
+**Export figure**, above the plot, draws the trace as you have framed it, as print-quality figures, with no questions asked. Frame it first: zoom and pan to the part of the scan you want, choose **AMU** or **Amps**, **Both axes**, **Log Y**, and press **Auto-detect peaks** if you want the peaks labelled. The figures are drawn in the background, a few seconds, and then the folder opens. The status line says where it is:
+
+`data/exports/mass_scan_figures/<trace>_<masses>amu/`, for example `MassScan_20261023_101500_26-31amu`. A scan not saved to a file is named by the time instead (`mass_scan_20261023_143501_26-31amu`). Exporting the same again makes a new folder (`_2` on the end); nothing is overwritten.
+
+| File | What it is |
+|---|---|
+| `mass_scan_full` | 150 mm wide (the thesis's `\textwidth`), framed as on the screen |
+| `mass_scan_half` | 72 mm wide (`0.48\textwidth`), for a subfigure; peak labels that would overlap are left out |
+| `mass_scan_full_log` or `mass_scan_full_linear` | Full width, with the other beam current scale (the log one starts a few decades under the highest point, and leaves out zero and negative currents) |
+| `mass_scan_full_by_current` or `mass_scan_full_by_mass` | Full width, against the other x quantity, over the same part of the scan |
+| `mass_scan_full_unlabelled` | Full width, without peak labels (only when there are some) |
+| `data.csv` | The points in view, and one either side: `Magnet_A`, `Mass_amu` (at each point's own beam energy), `Beam_A`, `Energy_keV` |
+| `peaks.csv` | The peaks found, with their labels as matplotlib text and as plain text |
+| `figure.json` | How the plot was framed, the calibration and where the data came from |
+| `caption.txt` | A draft caption, in LaTeX |
+| `README.txt` | What each file is, and the `\includegraphics` lines |
+| `make_figure.py` | The script that drew them: run it to draw them again |
+
+Each figure is a vector PDF, an SVG with its text kept as text (for Inkscape) and a PNG (2700 px wide at full width, 1600 px at half). The page of the PDF is the figure itself, with no margin, so `\includegraphics[width=\textwidth]{mass_scan_full.pdf}` (or `width=\linewidth` inside a `0.48\textwidth` subfigure) prints it at its own size, and its 9 pt text stays 9 pt. The style is the data viewer's publication figure: white background, Times New Roman, the colour-blind-safe blue line, ticks inside. On a log scale whose range you framed below zero, the current axis is a symmetric log, as on the screen. Peak labels sit above their peaks; in the full-width figures, labels that would overlap are lifted above one another, and the current axis is raised if the highest needs room.
+
+To use one, rename it by what it shows (`mass_scan_si_target.pdf`, say) into the figures folder of the part it belongs to, and keep `data.csv`, `peaks.csv`, `figure.json` and `make_figure.py` together under `analysis/` so it can be drawn again. `make_figure.py` needs only Python with numpy and matplotlib:
+
+```
+python make_figure.py                          every figure again
+python make_figure.py --only half              one of them
+python make_figure.py --xlim 26 31 --ylim 1e-12 3e-7
+python make_figure.py --sans --font-size 8 --mass-label "Mass (u)"
+python make_figure.py --no-labels
+```
+
+`--xlim` is in the x unit the plot was framed in; `--ylim` in A.
+
+> [!NOTE]
+> **Export figure** draws a figure from the data. To capture the panel itself as it looks on the screen, use **View** > **Capture GUI figure...** (F12; see [A tour of the HMI](../getting-started/screen-tour.md)).
 
 ## See also
 

@@ -58,6 +58,14 @@ simulator; none of it has been tried on the real hardware yet (see "Lab PC valid
     open, tell Claude what the Event Log said.
 
 ## Done
+- 23 October 2026 (Josh, for the thesis): Export figure on the Mass Scan panel - the trace as framed
+  (x range, AMU / Amps, Both axes, Log Y, peak labels) drawn with matplotlib into a new folder under
+  data/exports/mass_scan_figures/: full width (150 mm, \textwidth) and half width (72 mm, 0.48\textwidth),
+  the other current scale, the other x quantity, no labels; PDF (page = figure, 1:1 in LaTeX), SVG (text as
+  text) and PNG (2700 / 1600 px), following his figure notes; with data.csv (points in view), peaks.csv,
+  figure.json, a LaTeX caption draft, README and make_figure.py (the standalone script,
+  src/gui/control/widgets/mass_scan/thesis_figure.py) to draw them again. Drawn off the HMI's thread.
+  To check at the lab: the figures in Times New Roman, and a PDF dropped into the thesis.
 - 23 October 2026 (Josh): the Mass Scan plot's x axis in AMU or in magnet current (AMU / Amps toggles above
   the plot), with "Both axes" putting the other unit along the top (evenly spaced in its own unit: AMU goes
   with the square of the current) and a readout of the pointer in both; the choice is remembered (the HMI's

@@ -3,23 +3,28 @@ which holds the magnet and the SMU for it; this panel starts and stops it, draws
 they come (src/sequencer/points.py), and does the analysis: mass calibration, peaks and their
 resolution, loading and saving traces. The plot is against mass or against the measured magnet
 current, with the other unit on the top axis if wanted (set_x_axis)."""
+import importlib.util
 import logging
 import math
 import os
+import threading
 import time
+from datetime import datetime
 
 import numpy as np
 import pyqtgraph as pg
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import QObject, Qt, QUrl, pyqtSignal
+from PyQt6.QtGui import QDesktopServices
 from PyQt6.QtWidgets import (QApplication, QFileDialog, QInputDialog, QLabel, QMessageBox, QTableWidgetItem,
                              QWidget)
 
-from src.core import hard_caps
+from src.core import hard_caps, paths
+from src.core.export_data import git_version
 from src.core.mass_calibration import current_for_mass, mass_for_current
 from src.gui import theme
 from src.gui.control.sequencer_link import FETCH_ORIGIN, OFFLINE_TEXT, SequencerSlot
 from src.gui.control.widgets.mass_scan import isotopes, peaks, traces, ui
-from src.gui.control.widgets.mass_scan.axis import symlog
+from src.gui.control.widgets.mass_scan.axis import symlog, symlog_inv
 from src.gui.control.widgets.mass_scan.periodic_table import PeriodicTableDialog
 from src.gui.control.widgets.source_widget import setpoint_limits
 from src.gui.settings import gui_settings
@@ -35,6 +40,13 @@ X_UNITS = ("amu", "amps")       # the plot's x: mass, or the measured magnet cur
 X_MARGIN = {"amu": 2.0, "amps": 0.5}        # pan limits beyond the data, in the x unit
 X_EMPTY = {"amu": (0.0, 100.0), "amps": (0.0, 40.0)}
 SETTINGS = ("SurreyIonBeam", "SINDIE_HMI")  # (the HMI's own saved settings: the x axis is remembered)
+FIGURES_DIR = os.path.join(paths.EXPORTS_DIR, "mass_scan_figures")   # (backed up with exports/ each night)
+
+
+class _FigureSignals(QObject):
+    """From the thread drawing the figures back to the panel."""
+    done = pyqtSignal(str)
+    failed = pyqtSignal(str)
 
 
 def energy_ev(e_kev: float) -> float:
@@ -76,6 +88,12 @@ class PrecisionMassScannerWidget(QWidget):
         self.mass_db = isotopes.build_mass_db(isotopes.load_isotopes(), self.selected_elements)
         self.x_unit, self.x_both = "amu", False
         self._e_axis_ev = DEFAULT_ENERGY_EV   # the beam energy the two x units are converted at
+        self._found_peaks = []                # the peaks on the plot (auto-detect)
+        self._trace_path = None               # the file the trace on the plot is in, if any
+        self._figure_busy = False
+        self._figure_signals = _FigureSignals(self)
+        self._figure_signals.done.connect(self._figure_done)
+        self._figure_signals.failed.connect(self._figure_failed)
 
         ui.build(self)
         limits = setpoint_limits().get(SP_TAG)
@@ -143,6 +161,7 @@ class PrecisionMassScannerWidget(QWidget):
         self._passes_handled = max(0, (self.scan.get("passes_done") or 0) - 1)
         self._pass_fetch = None
         self._clear_plot()
+        self._trace_path = None
         self.lbl_data_source.setText("<b>Data Source:</b> Live Scan")
 
     def _follow_points(self):
@@ -215,6 +234,7 @@ class PrecisionMassScannerWidget(QWidget):
         self.btn_save_csv.setEnabled(True)
         saved = self.scan.get("file")
         exported = (self.scan.get("config") or {}).get("export")
+        self._trace_path = saved if saved and exported else None
         self.lbl_data_source.setText(f"<b>Data Source:</b> Saved as<br>{os.path.basename(saved)}" if saved and exported
                                      else "<b>Data Source:</b> Recent Scan (Unsaved)")
         self.lbl_data_source.setToolTip(saved if saved and exported else "")
@@ -465,6 +485,7 @@ class PrecisionMassScannerWidget(QWidget):
             self._run_peak_detection()
 
     def _clear_peaks(self):
+        self._found_peaks = []
         self.peak_table.setRowCount(0)
         self.peak_markers.setData([], [])
         self.tail_markers.setData([], [])
@@ -492,6 +513,7 @@ class PrecisionMassScannerWidget(QWidget):
             self.lbl_res.setText(f"<span style='color: {theme.tokens()['fault']}; font-weight: bold;'>"
                                  f"No peaks detected.</span>")
             return
+        self._found_peaks = found
         self.peak_table.setRowCount(len(found))
         amps = self._amps_for([p.amu for p in found])
         xs = self._plot_xs([p.amu for p in found])
@@ -558,7 +580,7 @@ class PrecisionMassScannerWidget(QWidget):
         except (OSError, ValueError, KeyError) as e:
             QMessageBox.critical(self, "Load Error", f"Failed to parse CSV:\n{e}")
             return
-        self.current_csv_path = path
+        self.current_csv_path = self._trace_path = path
         self._run_shown = self.scan.get("run", self._run_shown)    # a finished scan must not replace it
         self.amps_data, self.y_data, self.energy_data = trace.amps, trace.beam, trace.energy_kev
         self.last_scan_data = list(zip(trace.amps, trace.amps, trace.beam, trace.energy_kev,
@@ -589,6 +611,105 @@ class PrecisionMassScannerWidget(QWidget):
             return
         self.lbl_data_source.setText(f"<b>Data Source:</b> Saved as<br>{os.path.basename(path)}")
         self.lbl_data_source.setToolTip(path)
+        self._trace_path = path
+
+    # ================================================================== thesis figures
+    def export_figure(self):
+        """The plot as it is framed now, drawn as thesis figures in a new folder (thesis_figure.py:
+        full and half text width, the other current scale, the other x quantity, without labels),
+        with the data in view and the script that draws them. Drawn off the HMI's thread."""
+        if self._figure_busy:
+            return
+        if importlib.util.find_spec("matplotlib") is None:     # (in requirements.txt)
+            QMessageBox.critical(self, "Export figure", "Drawing the figures needs matplotlib "
+                                                        "(pip install -r requirements.txt).")
+            return
+        snapshot = self._figure_snapshot()
+        if snapshot is None:
+            QMessageBox.information(self, "Export figure", "There is no scan in view on the plot to export.")
+            return
+        folder, points, peaks, settings = snapshot
+        self._figure_busy = True
+        self.btn_figure.setEnabled(False)
+        self.lbl_status.setText("Status: drawing the figures...")
+
+        def work():
+            try:
+                from src.gui.control.widgets.mass_scan import thesis_figure
+                settings["software"] = git_version(paths.PROJECT_ROOT)
+                thesis_figure.export(folder, points, peaks, settings)
+                self._figure_signals.done.emit(folder)
+            except Exception as e:      # the panel must hear about any failure
+                log.exception("Mass scan figure export failed")
+                self._figure_signals.failed.emit(f"{type(e).__name__}: {e}")
+        threading.Thread(target=work, name="mass-scan-figure", daemon=True).start()
+
+    def _figure_snapshot(self):
+        """(folder, points, peaks, settings) for the plot as framed now, or None if no point is in
+        view. Points: the trace's points within the visible x range and one either side (so the
+        line reaches the frame), in scan order."""
+        view = self.plot_widget.getViewBox()
+        (x0, x1), (t0, t1) = view.viewRange()
+        xs = np.asarray(self._x(self.amps_data, self.amu_data), dtype=float)
+        if not len(xs):
+            return None
+        order = np.argsort(xs)
+        inside = np.nonzero((xs[order] >= x0) & (xs[order] <= x1))[0]
+        if not len(inside):
+            return None
+        keep = np.sort(order[max(0, inside[0] - 1):min(len(xs) - 1, inside[-1] + 1) + 1])
+        points = [(float(self.amps_data[i]), float(self.amu_data[i]), float(self.y_data[i]),
+                   float(self.energy_data[i])) for i in keep]
+        if self.chk_log_y.isChecked():
+            y0, y1 = (float(v) for v in symlog_inv([t0, t1]))
+            scale = "log" if y0 > 0 else "symlog"
+        else:
+            y0, y1, scale = float(t0), float(t1), "linear"
+        in_view = order[inside]
+        found = [p for p in self._found_peaks
+                 if x0 <= (float(self._amps_for([p.amu])[0]) if self.x_unit == "amps" else p.amu) <= x1]
+        amps = self._amps_for([p.amu for p in found]) if found else []
+        peaks = [{"amu": p.amu, "amps": float(a), "current": p.current, "html": p.match_html,
+                  "labelled": p.labelled} for p, a in zip(found, amps)]
+        energies = [e for e in (self.energy_data[i] for i in in_view) if e > 0]
+        now = datetime.now()
+        path = self._trace_path
+        stem = os.path.splitext(os.path.basename(path))[0] if path else f"mass_scan_{now:%Y%m%d_%H%M%S}"
+        lo, hi = sorted(self.convert_x(x, "amps", clamp=True) if self.x_unit == "amps" else x for x in (x0, x1))
+        name = f"{stem}_{max(lo, 0.0):.0f}-{hi:.0f}amu"         # (the masses framed)
+        folder, n = os.path.join(FIGURES_DIR, name), 2
+        while os.path.exists(folder):
+            folder, n = os.path.join(FIGURES_DIR, f"{name}_{n}"), n + 1
+        settings = {
+            "made": now.strftime("%Y-%m-%d %H:%M:%S"), "software": None,
+            "source": {"file": path, "description": (f"Trace {os.path.basename(path)}" if path else
+                                                     "A scan not saved to a file") +
+                       f", exported {now:%d %B %Y at %H:%M}"},
+            "calibration": {"k": self.sp_k_factor.value(), "i_off": self.sp_i_offset.value(),
+                            "source": self.calibration_source,
+                            "energy_kev_mean": float(np.mean(energies)) if energies else DEFAULT_ENERGY_EV / 1000.0,
+                            "energy_recorded": bool(energies)},
+            "screen": {"x_unit": self.x_unit, "top_axis": self.x_both, "y_scale": scale,
+                       "xlim": [float(min(x0, x1)), float(max(x0, x1))], "ylim": [min(y0, y1), max(y0, y1)]},
+            "points": len(points),
+        }
+        return folder, points, peaks, settings
+
+    def _figure_done(self, folder):
+        self._figure_busy = False
+        self.btn_figure.setEnabled(True)
+        self.lbl_status.setText(f"Status: figures saved in {folder}")
+        log.info("Mass scan figures saved in %s", folder)
+        self._show_folder(folder)
+
+    def _figure_failed(self, reason):
+        self._figure_busy = False
+        self.btn_figure.setEnabled(True)
+        self.lbl_status.setText("Status: the figures could not be drawn")
+        QMessageBox.critical(self, "Export figure", f"The figures could not be drawn:\n{reason}")
+
+    def _show_folder(self, folder):
+        QDesktopServices.openUrl(QUrl.fromLocalFile(folder))
 
     def _update_eta(self):
         step = self.sp_step.value()
