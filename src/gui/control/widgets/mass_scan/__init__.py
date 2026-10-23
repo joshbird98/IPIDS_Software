@@ -1,7 +1,7 @@
 """Mass Scan panel (src/gui/control/widgets/mass_scan/widget.py) and its parts:
 
     ui.py              layout
-    axis.py            linear / symmetric-log current axis
+    axis.py            linear / symmetric-log current axis; the top x axis in the other unit
     isotopes.py        isotopes and the molecular ions peaks are matched against
     peaks.py           peak finding, resolution and tails
     traces.py          trace files and the mass calibration fit

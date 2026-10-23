@@ -2,7 +2,7 @@
 
 The **Mass Scan** panel sweeps the analyser magnet current, measures the beam current on the Faraday cup at each step and draws the result as a mass spectrum. It also finds and names the peaks, measures the mass resolution, and holds the mass calibration that the HMI uses to set the magnet for a given mass.
 
-![The Mass Scan panel: sweep settings on the left, the spectrum in the middle, the mass calibration on the right](../images/panel-mass-scan.png)
+![The Mass Scan panel: sweep settings on the left, the spectrum in the middle (mass along the bottom, magnet current along the top), the mass calibration on the right](../images/panel-mass-scan.png)
 
 The panel has three parts side by side: the settings on the left, the plot in the middle and the analysis on the right. The **Setup** and **Analysis** buttons above the plot hide and show the two side parts. Drag a divider to share out the width; a divider you have moved stays where you put it.
 
@@ -79,7 +79,9 @@ The sequencer checks the settings again when it starts a scan. It refuses a star
 
 ## The plot
 
-The horizontal axis is the mass in AMU, worked out from the measured magnet current with the [mass calibration](#mass-calibration). The vertical axis is the beam current, labelled in pA, nA, µA, mA or A as needed.
+The horizontal axis is the mass in AMU, worked out from the measured magnet current with the [mass calibration](#mass-calibration), or the measured magnet current itself (**AMU** / **Amps** above the plot). With **Both axes** ticked, the axis along the top shows the other one: the magnet current above a mass plot, the mass above a current plot. The vertical axis is the beam current, labelled in pA, nA, µA, mA or A as needed.
+
+The mass goes with the square of the magnet current, so the ticks along the top are evenly spaced in their own unit but not on the screen: on a mass plot, the current's ticks spread apart as the mass rises. The top axis and the pointer readout convert at the scan's mean beam energy, with the calibration in use. A scan whose beam energy changed part way is only approximately right there; the points themselves are each plotted at their own energy.
 
 | What you see | Meaning |
 |---|---|
@@ -89,16 +91,21 @@ The horizontal axis is the mass in AMU, worked out from the measured magnet curr
 | Triangles | Peaks found by **Auto-detect peaks**. |
 | Red crosses | The beam current 0.5 AMU either side of each peak (its tails). |
 | Green stars | Calibration points. |
-| Labels above peaks | The isotope or molecule a peak was matched to, and its mass. Blue: one of the expected elements. Amber: something else. |
+| Labels above peaks | The isotope or molecule a peak was matched to, and its mass (on a current plot, the magnet current at the peak instead). Blue: one of the expected elements. Amber: something else. |
 
 | Control | What it does |
 |---|---|
 | **Setup**, **Analysis** | Hide or show the settings and the analysis. |
 | **Log Y** | Logarithmic current axis. It is a symmetric log: negative currents have their own logarithmic region below zero, and the axis is linear within about 1 pA of zero. |
+| **AMU**, **Amps** | Plots against the mass, or against the measured magnet current (which needs no calibration). The part of the scan in view stays in view. |
+| **Both axes** | Shows the other unit along the top of the plot. |
+| Readout beside **Clear** | The mass and the magnet current under the pointer, for example `28.06 AMU = 24.371 A` (at 30 keV, with the default calibration). |
 | **Clear** | Clears the plot, the previous pass and the peaks. **Save trace** is then greyed out until the next finished pass or a loaded trace. |
-| Mouse wheel, drag | Zoom and pan. The current axis follows the data in the visible mass range. |
-| Double-click | When no scan is running: sets the magnet to the mass under the pointer, using the calibration and the beam energy recorded at the trace's last point (30 keV if there is none). |
+| Mouse wheel, drag | Zoom and pan. The current axis follows the data in the visible range. |
+| Double-click | When no scan is running: sets the magnet to the mass under the pointer, using the calibration and the beam energy recorded at the trace's last point (30 keV if there is none). On a current plot, to the current under the pointer. |
 | **Ctrl** and left click | Adds a calibration point at the nearest peak (see [Mass calibration](#mass-calibration)). |
+
+The HMI remembers the choice of axis, on that PC, for the next time it starts.
 
 A double-click sends the magnet setpoint at once, without a second click. It goes as an ordinary operator command, so the magnet service refuses it if a sequence holds the magnet or the magnet is locked out. It also logs a purple user marker, **Manual Magnet Jump**, with the current.
 

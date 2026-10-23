@@ -58,6 +58,12 @@ simulator; none of it has been tried on the real hardware yet (see "Lab PC valid
     open, tell Claude what the Event Log said.
 
 ## Done
+- 23 October 2026 (Josh): the Mass Scan plot's x axis in AMU or in magnet current (AMU / Amps toggles above
+  the plot), with "Both axes" putting the other unit along the top (evenly spaced in its own unit: AMU goes
+  with the square of the current) and a readout of the pointer in both; the choice is remembered (the HMI's
+  settings). On a current plot the peaks, tails, calibration points and Ctrl+click sit at their currents,
+  the peak labels give the current, and a double-click sets that current. The top axis and the readout
+  convert at the scan's mean beam energy.
 - 22 October 2026, at the lab PC (Josh): powdered targets give VG1 short spikes to ~1 mbar for a few
   readings, and VG1's relay in the safety relay's loop (at the gate valve's 8e-6 mbar) dropped the HV on each.
   Approved: ride through spikes under 2.5 s, trip in software on a longer one. src/core/software_trips.py and

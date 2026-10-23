@@ -2,18 +2,20 @@
 build(w) creates the controls as attributes of the panel w and connects them to its methods."""
 import pyqtgraph as pg
 from PyQt6.QtCore import QEvent, QObject, Qt
-from PyQt6.QtWidgets import (QCheckBox, QDoubleSpinBox, QFormLayout, QFrame, QGroupBox, QHBoxLayout,
-                             QHeaderView, QLabel, QLineEdit, QPushButton, QScrollArea, QSpinBox, QSplitter,
-                             QTableWidget, QVBoxLayout, QWidget)
+from PyQt6.QtWidgets import (QButtonGroup, QCheckBox, QDoubleSpinBox, QFormLayout, QFrame, QGroupBox,
+                             QHBoxLayout, QHeaderView, QLabel, QLineEdit, QPushButton, QScrollArea, QSizePolicy,
+                             QSpinBox, QSplitter, QTableWidget, QVBoxLayout, QWidget)
 
 from src.gui import theme
 from src.gui.control.setpoint_box import SetpointBox
-from src.gui.control.widgets.mass_scan.axis import SmartCurrentAxis
+from src.gui.control.widgets.mass_scan.axis import OtherUnitAxis, SmartCurrentAxis
 from src.gui.style import set_role, set_tone
 from src.sequencer.mass_scan import DEFAULT_EXPORT, NPLC_RANGE
 
 PANEL_WIDTH = 280               # the side panels' starting width (drag the dividers to change it)
 PANEL_MIN_WIDTH = 210
+# The x axis: the plot against mass or against the measured magnet current (and the other on top)
+X_LABELS = {"amu": "Mass (AMU)", "amps": "Magnet current (A)"}
 
 
 def _spin(lo, hi, decimals, value, suffix="", step=None, tip="", box=None):
@@ -223,20 +225,55 @@ def _plot_panel(w):
     w.btn_clear.clicked.connect(w._clear_plot)
     w.btn_toggle_analysis = QPushButton("Analysis ▶")
     w.btn_toggle_analysis.clicked.connect(w._toggle_right_panel)
+    # X axis: mass or magnet current (one pair of toggles), and "Both": the other unit on top
+    w.btn_x_amu = QPushButton("AMU")
+    w.btn_x_amu.setToolTip("Plot against the mass (AMU), worked out from the magnet current with the mass "
+                           "calibration.")
+    w.btn_x_amps = QPushButton("Amps")
+    w.btn_x_amps.setToolTip("Plot against the measured magnet current (A): needs no calibration.")
+    w.x_unit_group = QButtonGroup(w)
+    w.x_unit_group.setExclusive(True)
+    for button, unit in ((w.btn_x_amu, "amu"), (w.btn_x_amps, "amps")):
+        button.setCheckable(True)
+        set_role(button, "toggle")
+        w.x_unit_group.addButton(button)
+        button.clicked.connect(lambda _checked, u=unit: w.set_x_axis(unit=u))
+    w.btn_x_amu.setChecked(True)
+    w.chk_x_both = QCheckBox("Both axes")
+    w.chk_x_both.setToolTip("Also label the top axis in the other unit (magnet current above a mass plot, "
+                            "mass above a current plot), at the scan's mean beam energy.")
+    w.chk_x_both.toggled.connect(lambda checked: w.set_x_axis(both=checked))
+    # Where the pointer is, in both units: takes the toolbar's spare room, and is cut short rather
+    # than widen the panel when there is none
+    w.lbl_cursor = QLabel("")
+    set_role(w.lbl_cursor, "readout-sm")
+    w.lbl_cursor.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+    w.lbl_cursor.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
+    w.lbl_cursor.setToolTip("The mass and magnet current under the pointer, at the scan's mean beam energy.")
     toolbar.addWidget(w.btn_toggle_ctrl)
     toolbar.addWidget(w.chk_log_y)
-    toolbar.addStretch()
+    toolbar.addSpacing(10)
+    x_pair = QHBoxLayout()
+    x_pair.setSpacing(0)                       # (the two toggles side by side, as one control)
+    x_pair.addWidget(w.btn_x_amu)
+    x_pair.addWidget(w.btn_x_amps)
+    toolbar.addLayout(x_pair)
+    toolbar.addWidget(w.chk_x_both)
+    toolbar.addWidget(w.lbl_cursor, 1)
     toolbar.addWidget(w.btn_clear)
     toolbar.addWidget(w.btn_toggle_analysis)
     layout.addLayout(toolbar)
 
     w.current_axis = SmartCurrentAxis(orientation='left')
-    w.plot_widget = pg.PlotWidget(axisItems={'left': w.current_axis})
+    w.top_axis = OtherUnitAxis(orientation='top')
+    w.plot_widget = pg.PlotWidget(axisItems={'left': w.current_axis, 'top': w.top_axis})
     # Y follows the data in the visible mass range (also after zooming in x)
     w.plot_widget.getViewBox().setAutoVisible(y=True)
-    w.plot_widget.setLabel('bottom', "Mass (AMU)")
+    w.plot_widget.setLabel('bottom', X_LABELS["amu"])
     w.plot_widget.setLabel('left', "Beam Current")
+    w.plot_widget.getPlotItem().hideAxis('top')
     w.plot_widget.scene().sigMouseClicked.connect(w._on_mouse_clicked)
+    w.plot_widget.scene().sigMouseMoved.connect(w._on_mouse_moved)
 
     # (colours: restyle(), now and after every theme switch)
     plot = w.plot_widget.plot

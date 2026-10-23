@@ -1,8 +1,10 @@
 """Mass Scan panel. The scan itself runs in the sequencer service (src/sequencer/mass_scan.py),
 which holds the magnet and the SMU for it; this panel starts and stops it, draws its points as
 they come (src/sequencer/points.py), and does the analysis: mass calibration, peaks and their
-resolution, loading and saving traces."""
+resolution, loading and saving traces. The plot is against mass or against the measured magnet
+current, with the other unit on the top axis if wanted (set_x_axis)."""
 import logging
+import math
 import os
 import time
 
@@ -20,6 +22,7 @@ from src.gui.control.widgets.mass_scan import isotopes, peaks, traces, ui
 from src.gui.control.widgets.mass_scan.axis import symlog
 from src.gui.control.widgets.mass_scan.periodic_table import PeriodicTableDialog
 from src.gui.control.widgets.source_widget import setpoint_limits
+from src.gui.settings import gui_settings
 from src.sequencer import protocol as P
 from src.sequencer.mass_scan import SP_TAG, export_csv
 
@@ -28,6 +31,10 @@ log = logging.getLogger("hmi.mass_scan")
 DEFAULT_ENERGY_EV = 30000.0     # when no beam energy was recorded
 MAGNET = "ion_beam.beamline.magnet"
 SMU = "ion_beam.beamline.faraday.smu"
+X_UNITS = ("amu", "amps")       # the plot's x: mass, or the measured magnet current
+X_MARGIN = {"amu": 2.0, "amps": 0.5}        # pan limits beyond the data, in the x unit
+X_EMPTY = {"amu": (0.0, 100.0), "amps": (0.0, 40.0)}
+SETTINGS = ("SurreyIonBeam", "SINDIE_HMI")  # (the HMI's own saved settings: the x axis is remembered)
 
 
 def energy_ev(e_kev: float) -> float:
@@ -67,6 +74,8 @@ class PrecisionMassScannerWidget(QWidget):
         self.selected_elements = set()
         self.calibration_source = "default values (not fitted this session)"
         self.mass_db = isotopes.build_mass_db(isotopes.load_isotopes(), self.selected_elements)
+        self.x_unit, self.x_both = "amu", False
+        self._e_axis_ev = DEFAULT_ENERGY_EV   # the beam energy the two x units are converted at
 
         ui.build(self)
         limits = setpoint_limits().get(SP_TAG)
@@ -77,6 +86,7 @@ class PrecisionMassScannerWidget(QWidget):
             box.setToolTip(hard_caps.note(SP_TAG))
         self._lock_ui(False)
         self._update_eta()
+        self._restore_x_axis()
 
     # ================================================================== the scan (sequencer)
     def _scan_settings(self) -> dict:
@@ -228,7 +238,122 @@ class PrecisionMassScannerWidget(QWidget):
             self._refresh_curves()
             self._update_plot_limits()
 
+    # ------------------------------------------------------------------ the x axis: mass or current
+    def set_x_axis(self, unit: str = None, both: bool = None, save: bool = True):
+        """The plot against mass ("amu") or the measured magnet current ("amps"); both: the other
+        unit on the top axis. The part of the scan in view stays in view."""
+        unit = unit if unit in X_UNITS else self.x_unit
+        both = self.x_both if both is None else bool(both)
+        old = self.x_unit
+        view = self.plot_widget.getViewBox()
+        x_auto = view.autoRangeEnabled()[0]
+        x0, x1 = view.viewRange()[0]
+        self.x_unit, self.x_both = unit, both
+        for button, u in ((self.btn_x_amu, "amu"), (self.btn_x_amps, "amps")):
+            button.blockSignals(True)
+            button.setChecked(u == unit)
+            button.blockSignals(False)
+        self.chk_x_both.blockSignals(True)
+        self.chk_x_both.setChecked(both)
+        self.chk_x_both.blockSignals(False)
+        other = "amps" if unit == "amu" else "amu"
+        self.plot_widget.getPlotItem().getAxis('bottom').setLabel(ui.X_LABELS[unit])
+        self.top_axis.setLabel(ui.X_LABELS[other])
+        if both:
+            self.plot_widget.getPlotItem().showAxis('top')
+        else:
+            self.plot_widget.getPlotItem().hideAxis('top')
+        self.top_axis.set_conversion(lambda x: self.convert_x(x, unit, clamp=True),
+                                     lambda v: self.convert_x(v, other))
+        if unit != old:
+            self._refresh_curves()
+            self._update_plot_limits()
+            self._conditional_peak_update()
+            self._update_calib_table()
+            try:
+                if x_auto or not (self.amps_data or self.ghost_amps):
+                    raise ValueError("auto")
+                a, b = sorted((self.convert_x(x0, old, clamp=True), self.convert_x(x1, old, clamp=True)))
+                view.setXRange(a, b, padding=0)
+            except ValueError:
+                view.enableAutoRange(axis=pg.ViewBox.XAxis, enable=True)
+        if save:
+            try:
+                st = gui_settings(*SETTINGS)
+                st.setValue("mass_scan/x_unit", unit)
+                st.setValue("mass_scan/x_both", both)
+            except Exception as e:      # a setting not saved is no reason to fail the switch
+                log.warning("Could not save the mass scan's x axis: %s", e)
+
+    def _restore_x_axis(self):
+        unit, both = "amu", True
+        try:
+            st = gui_settings(*SETTINGS)
+            unit = str(st.value("mass_scan/x_unit", unit))
+            both = st.value("mass_scan/x_both", both, type=bool)
+        except Exception as e:
+            log.warning("Could not read the mass scan's x axis: %s", e)
+        self.set_x_axis(unit if unit in X_UNITS else "amu", both, save=False)
+
+    def convert_x(self, x: float, from_unit: str, clamp: bool = False) -> float:
+        """A position in from_unit ("amu" / "amps") in the other unit, with the calibration, at the
+        scan's mean beam energy. Below the domain (a mass below 0, a current below -I_off, where
+        the mass would rise again): its edge with clamp, else ValueError."""
+        k, i_off, e = self.sp_k_factor.value(), self.sp_i_offset.value(), self._e_axis_ev
+        x = float(x)
+        if from_unit == "amu":
+            if x < 0:
+                if not clamp:
+                    raise ValueError(f"no current for a mass of {x}")
+                x = 0.0
+            return math.sqrt(x * e / k) - i_off
+        if x < -i_off:
+            if not clamp:
+                raise ValueError(f"{x} A is below -I_off")
+            x = -i_off
+        return mass_for_current(x, e, k, i_off)
+
+    def _x(self, amps: list, amu: list) -> list:
+        """The plot's x for these points: their magnet current or their mass."""
+        return amps if self.x_unit == "amps" else amu
+
+    def _amps_for(self, amus) -> np.ndarray:
+        """The magnet current that puts each mass through, at the beam energy of the scan where that
+        mass is (a peak, its tails)."""
+        amus = np.asarray(amus, dtype=float)
+        if self.amu_data:
+            data = np.asarray(self.amu_data, dtype=float)
+            order = np.argsort(data)
+            energies = np.array([energy_ev(e) for e in self.energy_data], dtype=float)
+            e = np.interp(amus, data[order], energies[order])
+        else:
+            e = np.full(amus.shape, self._e_axis_ev)
+        return np.sqrt(np.clip(amus, 0.0, None) * e / self.sp_k_factor.value()) - self.sp_i_offset.value()
+
+    def _plot_xs(self, amus) -> np.ndarray:
+        """Where masses (peaks, tails) go on the plot."""
+        return np.asarray(amus, dtype=float) if self.x_unit == "amu" else self._amps_for(amus)
+
+    def _on_mouse_moved(self, pos):
+        """The mass and magnet current under the pointer, in the toolbar."""
+        view = self.plot_widget.getViewBox()
+        if not view.sceneBoundingRect().contains(pos):
+            self.lbl_cursor.setText("")
+            return
+        x = view.mapSceneToView(pos).x()
+        try:
+            other = self.convert_x(x, self.x_unit)
+        except (ValueError, OverflowError):
+            self.lbl_cursor.setText("")
+            return
+        amu, amps = (x, other) if self.x_unit == "amu" else (other, x)
+        self.lbl_cursor.setText(f"{amu:.2f} AMU = {amps:.3f} A")
+
     def _refresh_curves(self):
+        valid = [e for e in self.energy_data + self.ghost_energy if e > 0]
+        self._e_axis_ev = energy_ev(float(np.mean(valid))) if valid else DEFAULT_ENERGY_EV
+        self.top_axis.refresh()
+
         def split(x_arr, y_arr):
             """The whole trace, and its negative stretches on their own (drawn red on top)."""
             if not x_arr or not y_arr:
@@ -239,10 +364,10 @@ class PrecisionMassScannerWidget(QWidget):
                 return x, y, [], []
             return x, y, x, np.where(y < 0, y, np.nan)
 
-        x, y, xn, yn = split(self.amu_data, self.y_data)
+        x, y, xn, yn = split(self._x(self.amps_data, self.amu_data), self.y_data)
         self.curve_live_pos.setData(x, y)
         self.curve_live_neg.setData(xn, yn)
-        x, y, xn, yn = split(self.ghost_amu, self.ghost_y)
+        x, y, xn, yn = split(self._x(self.ghost_amps, self.ghost_amu), self.ghost_y)
         self.curve_ghost_pos.setData(x, y)
         self.curve_ghost_neg.setData(xn, yn)
 
@@ -276,9 +401,10 @@ class PrecisionMassScannerWidget(QWidget):
         self.plot_widget.getViewBox().enableAutoRange(axis=pg.ViewBox.YAxis, enable=True)
 
     def _update_plot_limits(self):
-        all_x = self.amu_data + self.ghost_amu
+        all_x = self._x(self.amps_data, self.amu_data) + self._x(self.ghost_amps, self.ghost_amu)
         all_y = self.y_data + self.ghost_y
-        x_min, x_max = (min(all_x), max(all_x)) if all_x else (0.0, 100.0)
+        x_min, x_max = (min(all_x), max(all_x)) if all_x else X_EMPTY[self.x_unit]
+        margin = X_MARGIN[self.x_unit]
         # Pan/zoom limits: a margin around the data, in whichever y scale is shown
         if all_y:
             t = self._ty(np.array(all_y, dtype=float))
@@ -286,8 +412,8 @@ class PrecisionMassScannerWidget(QWidget):
         else:
             lo, hi = 0.0, float(self._ty(1e-6))
         span = (hi - lo) or 1.0
-        self.plot_widget.getViewBox().setLimits(xMin=max(0.0, x_min - 2.0), xMax=x_max + 2.0, yMin=lo - span,
-                                                yMax=hi + span)
+        self.plot_widget.getViewBox().setLimits(xMin=max(0.0, x_min - margin), xMax=x_max + margin,
+                                                yMin=lo - span, yMax=hi + span)
 
     def _recalculate_mass_axis(self):
         self.amu_data = [self._amu(a, e) for a, e in zip(self.amps_data, self.energy_data)]
@@ -367,21 +493,26 @@ class PrecisionMassScannerWidget(QWidget):
                                  f"No peaks detected.</span>")
             return
         self.peak_table.setRowCount(len(found))
-        tails_x, tails_y = [], []
+        amps = self._amps_for([p.amu for p in found])
+        xs = self._plot_xs([p.amu for p in found])
+        tails_amu, tails_y = [], []
         for row, peak in enumerate(found):
             if peak.labelled:
                 ink = theme.tokens()[MATCH_INK.get(peak.kind, "text_faint")]
+                where = f"{amps[row]:.2f} A" if self.x_unit == "amps" else f"{peak.amu:.1f}"
                 label = pg.TextItem(html=f"<div style='text-align: center; color: {ink}; font-size: 10pt; "
-                                         f"font-weight: bold;'>{peak.match_html}<br>({peak.amu:.1f})</div>",
+                                         f"font-weight: bold;'>{peak.match_html}<br>({where})</div>",
                                     anchor=(0.5, 1.2))
-                label.setPos(peak.amu, float(self._ty(peak.current)))
+                label.setPos(float(xs[row]), float(self._ty(peak.current)))
                 self.plot_widget.addItem(label)
                 self.peak_labels.append(label)
-            tails_x.extend([peak.amu - peaks.TAIL_OFFSET_AMU, peak.amu + peaks.TAIL_OFFSET_AMU])
+            tails_amu.extend([peak.amu - peaks.TAIL_OFFSET_AMU, peak.amu + peaks.TAIL_OFFSET_AMU])
             tails_y.extend([max(1e-15, peak.tail_left), max(1e-15, peak.tail_right)])
             match = QLabel(peak.match_html)
             match.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            self.peak_table.setItem(row, 0, QTableWidgetItem(f"{peak.amu:.2f}"))
+            mass = QTableWidgetItem(f"{peak.amu:.2f}")
+            mass.setToolTip(f"Magnet current {amps[row]:.3f} A")
+            self.peak_table.setItem(row, 0, mass)
             self.peak_table.setCellWidget(row, 1, match)
             tail = QTableWidgetItem(peaks.tail_text(peak.crosstalk_ppm))
             tail.setForeground(pg.mkColor(*peaks.tail_colour(peak.crosstalk_ppm, _rgb("ok"), _rgb("warn"),
@@ -389,8 +520,8 @@ class PrecisionMassScannerWidget(QWidget):
             self.peak_table.setItem(row, 2, tail)
         self.lbl_res.setText(f"<b>Avg Mass Resolution (M/ΔM):</b> <span style='color: {theme.tokens()['ok']};'>"
                              f"{peaks.average_resolution(found):.1f}</span>")
-        self.peak_markers.setData([p.amu for p in found], self._ty([p.current for p in found]))
-        self.tail_markers.setData(tails_x, self._ty(tails_y))
+        self.peak_markers.setData(xs, self._ty([p.current for p in found]))
+        self.tail_markers.setData(self._plot_xs(tails_amu), self._ty(tails_y))
 
     # ================================================================== panels, files, timing
     def _toggle_left_panel(self):
@@ -482,9 +613,10 @@ class PrecisionMassScannerWidget(QWidget):
                 self._add_calibration_point(view_box.mapSceneToView(pos).x())
             return
         if evt.double() and not self.scan.active:
-            evt.accept()                          # double-click: put the magnet on that mass
+            evt.accept()                          # double-click: put the magnet on that mass / current
             if view_box.sceneBoundingRect().contains(pos):
-                self.jump_to_mass(view_box.mapSceneToView(pos).x())
+                x = view_box.mapSceneToView(pos).x()
+                (self.jump_to_current if self.x_unit == "amps" else self.jump_to_mass)(x)
 
     def jump_to_mass(self, amu: float):
         e_kev = self.energy_data[-1] if self.energy_data else 30.0
@@ -493,16 +625,25 @@ class PrecisionMassScannerWidget(QWidget):
         except ValueError as e:
             self.lbl_status.setText(f"Status: no jump - {e}")
             return
+        self._jump(amps, amu)
+
+    def jump_to_current(self, amps: float):
+        """The magnet to a current picked on the plot against current (no calibration in the way)."""
+        amps = max(0.0, float(amps))
+        e_kev = self.energy_data[-1] if self.energy_data else 30.0
+        self._jump(amps, mass_for_current(amps, energy_ev(e_kev), self.sp_k_factor.value(), self.sp_i_offset.value()))
+
+    def _jump(self, amps: float, amu: float):
         self.cmd_thread.send_command("magnet", SP_TAG, float(amps), origin="hmi")
         self.lbl_status.setText(f"Status: Manual Jump to {amps:.3f} A ({amu:.1f} AMU)")
         self.event_helper.log_user_marker(time.time(), f"Manual Magnet Jump: {amps:.3f} A via Mass Scan", "#9C27B0")
 
     # ================================================================== calibration
-    def _add_calibration_point(self, click_amu):
+    def _add_calibration_point(self, click_x):
         if not self.amu_data:
             return
-        # Snap to the local maximum (within 5 points) nearest the click
-        i = int(np.abs(np.array(self.amu_data) - click_amu).argmin())
+        # Snap to the local maximum (within 5 points) nearest the click (a mass or a current)
+        i = int(np.abs(np.array(self._x(self.amps_data, self.amu_data)) - click_x).argmin())
         lo, hi = max(0, i - 5), min(len(self.y_data), i + 6)
         peak = lo + int(np.argmax(self.y_data[lo:hi]))
         amps, current_amu = self.amps_data[peak], self.amu_data[peak]
@@ -521,7 +662,8 @@ class PrecisionMassScannerWidget(QWidget):
             self.table_calib.setItem(i, 0, QTableWidgetItem(f"{pt['amps']:.3f}"))
             self.table_calib.setItem(i, 1, QTableWidgetItem(f"{pt['true_amu']:.2f}"))
         if self.calib_points:
-            self.calib_scatter.setData(x=np.array([p['amu_plot_x'] for p in self.calib_points], dtype=float),
+            key = "amps" if self.x_unit == "amps" else "amu_plot_x"
+            self.calib_scatter.setData(x=np.array([p[key] for p in self.calib_points], dtype=float),
                                        y=np.array([float(self._ty(p['peak_y'])) for p in self.calib_points]))
             self.calib_scatter.setVisible(True)
         else:

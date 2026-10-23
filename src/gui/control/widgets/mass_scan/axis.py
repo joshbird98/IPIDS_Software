@@ -1,4 +1,8 @@
-"""The Mass Scan plot's current axis: linear, or a symmetric log that keeps negative currents."""
+"""The Mass Scan plot's axes: the current axis, linear or a symmetric log that keeps negative
+currents; and the second x axis, which labels the plot's positions in the other unit (mass or
+magnet current)."""
+import math
+
 import numpy as np
 import pyqtgraph as pg
 
@@ -70,5 +74,70 @@ class SmartCurrentAxis(pg.AxisItem):
                     continue
                 strings.append(format_current(val))
             except (OverflowError, ValueError):
+                strings.append("")
+        return strings
+
+
+# --- The second x axis: the same positions in the other unit ---
+def decimals_for(spacing: float) -> int:
+    """Decimal places for tick labels `spacing` apart (2 -> 0, 0.5 -> 1, 0.02 -> 2)."""
+    if not spacing or not math.isfinite(spacing) or spacing <= 0:
+        return 0
+    return max(0, -math.floor(math.log10(spacing) + 1e-9))
+
+
+class OtherUnitAxis(pg.AxisItem):
+    """An x axis (the top one) labelling the plot's positions in another unit: the plot against
+    mass with the magnet current on top, or the other way round. Mass goes with the square of the
+    current, so these ticks are evenly spaced in their own unit, not on the screen.
+
+    to_other(x): a plot position in this axis's unit (clamped to its domain at the ends);
+    to_plot(v): the plot position of a value in this axis's unit (ValueError outside the domain:
+    no tick there). Either None: no ticks."""
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.enableAutoSIPrefix(False)
+        self.to_other = self.to_plot = None
+
+    def set_conversion(self, to_other, to_plot):
+        self.to_other, self.to_plot = to_other, to_plot
+        self.refresh()
+
+    def refresh(self):
+        """Redraw (the calibration or the beam energy behind the conversion changed)."""
+        self.picture = None
+        self.update()
+
+    def tickValues(self, minVal, maxVal, size):
+        if self.to_other is None or self.to_plot is None:
+            return []
+        lo, hi = sorted((minVal, maxVal))
+        try:
+            a, b = sorted((float(self.to_other(lo)), float(self.to_other(hi))))
+        except (ValueError, OverflowError, ZeroDivisionError):
+            return []
+        if not (math.isfinite(a) and math.isfinite(b)) or b <= a:
+            return []
+        levels = []
+        for spacing, values in super().tickValues(a, b, size):
+            positions = []
+            for v in values:
+                try:
+                    x = float(self.to_plot(v))
+                except (ValueError, OverflowError, ZeroDivisionError):
+                    continue
+                if math.isfinite(x) and lo <= x <= hi:
+                    positions.append(x)
+            levels.append((spacing, positions))      # (the spacing in this axis's own unit)
+        return levels
+
+    def tickStrings(self, values, scale, spacing):
+        places = decimals_for(spacing)
+        strings = []
+        for x in values:
+            try:
+                strings.append(f"{float(self.to_other(x)):.{places}f}")
+            except (TypeError, ValueError, OverflowError, ZeroDivisionError):
                 strings.append("")
         return strings
