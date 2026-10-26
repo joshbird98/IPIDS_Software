@@ -13,7 +13,7 @@ The numbers on the picture:
 3. **Values**: each channel's value, and the **Inspector**.
 4. **Export**: where exports go, and **Export snapshot...** (see [Exporting data and figures](exporting.md)).
 5. **Event markers**: which kinds of event are marked on the plots.
-6. The plots: up to four lanes, each with a legend giving its channels' labels and units. The lanes share one time axis, in local time, labelled under the bottom lane only; the labels show dates when zoomed out and seconds when zoomed in.
+6. The plots: up to four lanes, each with a legend giving its channels' labels and units. The lanes share one time axis, in local time, labelled under the bottom lane only; the labels show dates when zoomed out and seconds when zoomed in. The ticks fall on whole clock times: every minute, every 5 minutes, on the hour and so on.
 
 Drag the divider between the sidebar and the plots to make the sidebar wider or narrower, or hide the sidebar with **View > Sidebar**. The sidebar scrolls when the window is too short for it.
 

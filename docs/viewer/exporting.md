@@ -163,9 +163,10 @@ A screenshot of the software prints badly: a whole window shrunk to the width of
 |---|---|
 | **Capture** | What to capture: the part under the pointer and the parts that contain it (innermost first; over a plot, the plot), each panel in view in the HMI, the main areas of the window (in the data viewer, **Sidebar** and **Plot area**), or the whole window. The choice is outlined on the window. |
 | **Window size** | **As on screen**, or **Re-lay out window at** one of six sizes from 1024 x 640 to 1920 x 1080. The window takes the new size at once, so you can see what will be captured, and goes back afterwards. |
-| **Width on page** | The width the figure will print at: 2 cm to 40 cm, 16 cm at first. |
+| **Width on page** | The width the figure is drawn at: 2 cm to 40 cm, 16 cm at first. The thesis' figures are drawn 16 cm wide and included at the text width, 15 cm (`\includegraphics[width=\textwidth]`), so their text prints a little smaller than its size here; a capture at 16 cm matches them. |
 | **Trim empty margins (e.g. a stretched panel)** | Crops the capture to the area that differs from the background. Ticked at first. |
-| **Plot lines** | How wide the plot lines (the traces) print, in points, for a line 1 pixel wide on the screen; a line drawn 2 pixels wide prints twice as wide, and the legend's line samples match. While the dialog is open, the plots in what will be captured show their lines as wide as they will print. 0.75 pt at first; about 0.5 pt to 1 pt reads well on A4. At the bottom of the range, **Unchanged (hairline)**, the lines are left as they are: they print one pixel of the PDF or PNG wide (1/1200 inch in the PDF), too thin to see on paper. The dialog keeps the last value until the program closes. |
+| **Style** | **As on screen**, or **Thesis figure (Computer Modern)**: the plots drawn in the style of the thesis' own figures. See [Thesis figure style](#thesis-figure-style). The dialog keeps the last choice until the program closes. |
+| **Plot lines** | How wide the plot lines (the traces, and event markers) print, in points, for a line 1 pixel wide on the screen; a line drawn 2 pixels wide prints twice as wide, and the legend's line samples match. While the dialog is open, the plots in what will be captured show their lines as wide as they will print. 0.75 pt at first, and 1.5 pt on choosing the thesis style (the thesis figures' lines); about 0.5 pt to 1.5 pt reads well on A4. At the bottom of the range, **Unchanged (hairline)**, the lines are left as they are: they print one pixel of the PDF or PNG wide (1/1200 inch in the PDF), too thin to see on paper. The dialog keeps the last value until the program closes. |
 | **UI text prints at** | How big the window's text will print at that width: green at 7 pt or more, amber from 5 pt, red below 5 pt. Body text is usually 10 pt to 12 pt, and captions 8 pt to 10 pt. |
 | **Formats** | **PDF (vector)**, **SVG (vector)** and **PNG**, and the PNG's resolution: 150 dpi to 1200 dpi, 600 dpi at first. |
 | **Folder**, **Name** | Where the files go (`data/exports/figures` at first) and the start of their name. |
@@ -175,8 +176,20 @@ The files are `<Folder>/<Name>_<date>_<time>.pdf`, `.svg` and `.png`. The **GUI 
 - For legible text, capture one panel rather than the whole window, or re-lay out the window at a smaller size. Aim for text of at least 6 pt to 7 pt.
 - In the SVG, as in the PDF, the plot lines keep every reading however long the data viewer has been open, and stop at the edge of the plot. The **Screen snapshot (SVG)** of an export draws them the same way.
 - If the window can't shrink to the size chosen, the dialog says so: capture a single panel instead.
-- The capture is drawn in the current theme. For a white background, switch to **View > Theme > Light** first.
+- **As on screen**, the capture is drawn in the current theme: for a white background, switch to **View > Theme > Light** first. A thesis style draws the plots on white in either theme.
 - Qt can't put colour emoji into a PDF or SVG, so emoji on buttons and labels are missing there; the PNG has them. The dialog warns when the area has any.
+
+### Thesis figure style
+
+With **Style** set to **Thesis figure (Computer Modern)**, the plots in what is captured take the look of the thesis' own figures (the thesis repository's `analysis/common/thesis_style.py`), at their sizes on the page:
+
+- a white background, dark grey axes 0.8 pt wide with the ticks out and black numbers, and a light grey grid 0.6 pt wide behind the data, at the major ticks;
+- Computer Modern, as the thesis' text: 9.5 pt for axis titles, 8.5 pt for the numbers on the axes, the legend and event marker labels. The type is Latin Modern Roman, which comes with the software (`src/gui/assets/fonts`), so the computer needn't have it;
+- numbers written as in the thesis: a minus sign, and 1.6×10⁻⁷ (the power of ten raised) rather than 1.6e-07;
+- the channels in the light theme's colours, the thesis' (in the dark theme too); event markers keep their colours, darkened where needed to stand out on white, and are drawn as fine as the axes;
+- lanes lined up with one another: each side's axes as wide as the widest, with the room kept empty in a lane that has no axis there.
+
+What makes it the software's stays: the lanes, the legend's box, the clock-time axis and the event markers. Only the plots change: anything else captured (panels, buttons) is drawn as on screen. While the dialog is open, the window shows the style, so the text and lines on the screen are as big, relative to the plots, as they will print. The SVG names Latin Modern Roman with CMU Serif and cmr10 as alternatives, as the thesis' SVG figures do.
 
 ## See also
 

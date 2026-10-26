@@ -58,6 +58,25 @@ simulator; none of it has been tried on the real hardware yet (see "Lab PC valid
     open, tell Claude what the Event Log said.
 
 ## Done
+- 26 October 2026 (Josh: in F12 figures "the grid lines and axis become very hard to see"; wanted them
+  clearly the software's telemetry, legend and all, but in the thesis figures' style, as an option):
+  Style in the F12 dialog - As on screen, or Thesis figure (Computer Modern) (src/gui/thesis_style.py),
+  following the thesis repository's own figure style (analysis/common/thesis_style.py, source/style.py):
+  white, dark grey (#52514e) 0.8 pt axes with the ticks out and #0b0b0b numbers, a #e1e0d9 0.6 pt grid at
+  the major ticks behind the data (pyqtgraph's grid is its ticks drawn long, over the data), Latin Modern
+  Roman (bundled: src/gui/assets/fonts, GUST Font License) at 9.5 pt / 8.5 pt sized in pixels, minus signs
+  and 1.6×10⁻⁷ with the power drawn raised (Latin Modern has no superscript figures; matplotlib's cmr10 has
+  TeX's encoding above ASCII: µ came out as `), the light theme's series colours (= the thesis palette;
+  the dark theme's mapped slot for slot), event markers readable on white at the axes' weight, lanes lined
+  up (axes as wide as the widest; empty room where a lane has none). The legend keeps its box. Shown on the
+  window while the dialog is open; Plot lines goes to 1.5 pt with it; the SVG names Latin Modern Roman,
+  CMU Serif, cmr10 as the thesis' SVGs do. Width on page stays 16 cm (the thesis draws figures 16 cm wide
+  and includes them at 15 cm). Also: the viewer's time axis ticks on whole clock times (it used pyqtgraph's
+  decimal seconds from the viewer's start: 100 s apart, labelled 08:48, 08:50, 08:51, 08:53); every F12
+  SVG had its point-sized text 2.6 times too big (Qt's SVG writer turns points into units at its
+  resolution, which was the page's: now the screen's, the size on the page set by width/height); event
+  marker lines widen with Plot lines. Not done: the Publication figure and the Mass Scan's Export figure
+  still use Times New Roman (and Okabe-Ito / inward ticks), unlike the thesis repository's style.
 - 26 October 2026 (Josh: Plot lines at 2.5 pt "didn't seem any different", and the SVG's telemetry looked
   "blocky"): with the pointer over a plot, F12 offered the plot's inside (Qt's viewport, listed as "QWidget")
   first, and Plot lines looked for traces only inside what was captured - so it found none. The plot itself

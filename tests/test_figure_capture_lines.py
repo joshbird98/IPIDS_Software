@@ -284,7 +284,8 @@ def test_the_dialog_shows_the_lines_on_the_window_as_wide_as_they_will_print_the
         per_inch = dlg._w_px / (dlg.sp_width.value() / 2.54)
         assert "paint" in curve.__dict__ and dlg.lines.width_px == pytest.approx(per_inch / 72)
         assert pw.viewportUpdateMode() == QGraphicsView.ViewportUpdateMode.FullViewportUpdate
-        dlg.sp_width.setValue(8.0)                                          # half as wide on the page: twice
+        width = dlg.sp_width.value()
+        dlg.sp_width.setValue(width / 2)                                    # half as wide on the page: twice
         assert dlg.lines.width_px == pytest.approx(2 * per_inch / 72, rel=0.02)   # the window's pixels
         dlg.sp_line.setValue(0.0)                                           # "Unchanged (hairline)"
         assert "paint" not in curve.__dict__ and pw.viewportUpdateMode() == mode

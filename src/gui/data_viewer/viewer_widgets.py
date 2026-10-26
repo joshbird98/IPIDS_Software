@@ -1,4 +1,5 @@
 """Small pieces of the data viewer: the add-marker dialog and the plot axes."""
+import math
 from datetime import datetime
 
 import pyqtgraph as pg
@@ -61,6 +62,13 @@ class LogAxisItem(pg.AxisItem):
 
 
 class TimeAxisItem(pg.AxisItem):
+    """Clock time along the bottom: x is seconds from `offset` (the viewer's start, unix time)."""
+    # (major, minor) tick steps in seconds: whole clock times
+    CLOCK_STEPS = ((0.01, 0.002), (0.02, 0.005), (0.05, 0.01), (0.1, 0.02), (0.2, 0.05), (0.5, 0.1),
+                   (1, 0.2), (2, 0.5), (5, 1), (10, 2), (15, 5), (30, 5), (60, 10), (120, 30), (300, 60),
+                   (600, 120), (900, 300), (1800, 300), (3600, 600), (7200, 1800), (10800, 3600),
+                   (21600, 3600), (43200, 7200), (86400, 21600), (172800, 43200), (604800, 86400))
+
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.offset = 0.0
@@ -68,6 +76,25 @@ class TimeAxisItem(pg.AxisItem):
 
     def set_offset(self, offset):
         self.offset = offset
+
+    def tickSpacing(self, minVal, maxVal, size):
+        """Ticks on whole clock times (whole minutes, quarter hours, midnight...), about as many as
+        pyqtgraph would draw. Its own are decimal seconds from the viewer's start - 50 s or 100 s
+        apart, at no particular second - which the minute labels made 08:48, 08:50, 08:51, 08:53."""
+        levels = super().tickSpacing(minVal, maxVal, size)
+        if not levels or self._tickSpacing is not None:
+            return levels
+        want = levels[0][0]
+        major, minor = min(self.CLOCK_STEPS, key=lambda s: abs(math.log(s[0] / want)))
+        try:   # local clock time: hours and days start on the local hour and midnight
+            utc = datetime.fromtimestamp(self.offset + (minVal + maxVal) / 2).astimezone().utcoffset()
+            shift = self.offset + (utc.total_seconds() if utc else 0.0)
+        except (OverflowError, OSError, ValueError):
+            shift = self.offset
+        out = [(major, -shift % major)]
+        if self.style['maxTickLevel'] >= 1:
+            out.append((minor, -shift % minor))
+        return out
 
     def tickStrings(self, values, scale, spacing):
         # NEW: If this is an upper lane, return blank strings.
@@ -80,16 +107,16 @@ class TimeAxisItem(pg.AxisItem):
             try:
                 dt = datetime.fromtimestamp(v + self.offset)
                 if spacing >= 86400:
-                    fmt = '%Y-%m-%d'
+                    text = dt.strftime('%Y-%m-%d')
                 elif spacing >= 3600:
-                    fmt = '%b %d\n%H:%M'
+                    text = dt.strftime('%b %d\n%H:%M')
                 elif spacing >= 60:
-                    fmt = '%H:%M'
+                    text = dt.strftime('%H:%M')
                 elif spacing >= 1:
-                    fmt = '%H:%M:%S'
-                else:
-                    fmt = '%H:%M:%S.%f'
-                strings.append(dt.strftime(fmt))
+                    text = dt.strftime('%H:%M:%S')
+                else:   # tenths, or hundredths of a second
+                    text = dt.strftime('%H:%M:%S.%f')[:-5 if spacing >= 0.1 else -4]
+                strings.append(text)
             except (OverflowError, OSError, ValueError):  # timestamp outside the platform's range
                 strings.append("")
         return strings
