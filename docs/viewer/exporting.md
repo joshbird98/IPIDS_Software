@@ -161,18 +161,19 @@ A screenshot of the software prints badly: a whole window shrunk to the width of
 
 | Control | What it does |
 |---|---|
-| **Capture** | What to capture: the part under the pointer and the parts that contain it (innermost first), each panel in view in the HMI, the main areas of the window (in the data viewer, **Sidebar** and **Plot area**), or the whole window. The choice is outlined on the window. |
+| **Capture** | What to capture: the part under the pointer and the parts that contain it (innermost first; over a plot, the plot), each panel in view in the HMI, the main areas of the window (in the data viewer, **Sidebar** and **Plot area**), or the whole window. The choice is outlined on the window. |
 | **Window size** | **As on screen**, or **Re-lay out window at** one of six sizes from 1024 x 640 to 1920 x 1080. The window takes the new size at once, so you can see what will be captured, and goes back afterwards. |
 | **Width on page** | The width the figure will print at: 2 cm to 40 cm, 16 cm at first. |
 | **Trim empty margins (e.g. a stretched panel)** | Crops the capture to the area that differs from the background. Ticked at first. |
-| **Plot lines** | How wide the plot lines (the traces) print, in points, for a line 1 pixel wide on the screen; a line drawn 2 pixels wide prints twice as wide. 0.75 pt at first; about 0.5 pt to 1 pt reads well on A4. At the bottom of the range, **Unchanged (hairline)**, the lines are left as they are: they print one pixel of the PDF or PNG wide (1/1200 inch in the PDF), too thin to see on paper. The dialog keeps the last value until the program closes. |
+| **Plot lines** | How wide the plot lines (the traces) print, in points, for a line 1 pixel wide on the screen; a line drawn 2 pixels wide prints twice as wide, and the legend's line samples match. While the dialog is open, the plots in what will be captured show their lines as wide as they will print. 0.75 pt at first; about 0.5 pt to 1 pt reads well on A4. At the bottom of the range, **Unchanged (hairline)**, the lines are left as they are: they print one pixel of the PDF or PNG wide (1/1200 inch in the PDF), too thin to see on paper. The dialog keeps the last value until the program closes. |
 | **UI text prints at** | How big the window's text will print at that width: green at 7 pt or more, amber from 5 pt, red below 5 pt. Body text is usually 10 pt to 12 pt, and captions 8 pt to 10 pt. |
 | **Formats** | **PDF (vector)**, **SVG (vector)** and **PNG**, and the PNG's resolution: 150 dpi to 1200 dpi, 600 dpi at first. |
 | **Folder**, **Name** | Where the files go (`data/exports/figures` at first) and the start of their name. |
 
-The files are `<Folder>/<Name>_<date>_<time>.pdf`, `.svg` and `.png`. The **GUI figure saved** message lists them, with **Open folder** to open the folder.
+The files are `<Folder>/<Name>_<date>_<time>.pdf`, `.svg` and `.png`. The **GUI figure saved** message lists them, with **Open folder** to open the folder. With a **Plot lines** width, it also says how many plot lines were drawn that wide, or that the captured area has none.
 
 - For legible text, capture one panel rather than the whole window, or re-lay out the window at a smaller size. Aim for text of at least 6 pt to 7 pt.
+- In the SVG, as in the PDF, the plot lines keep every reading however long the data viewer has been open, and stop at the edge of the plot. The **Screen snapshot (SVG)** of an export draws them the same way.
 - If the window can't shrink to the size chosen, the dialog says so: capture a single panel instead.
 - The capture is drawn in the current theme. For a white background, switch to **View > Theme > Light** first.
 - Qt can't put colour emoji into a PDF or SVG, so emoji on buttons and labels are missing there; the PNG has them. The dialog warns when the area has any.

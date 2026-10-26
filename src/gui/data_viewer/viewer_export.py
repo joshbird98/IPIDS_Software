@@ -84,9 +84,12 @@ class ExportMixin:
         return pl.DataFrame({"timestamp": np.concatenate(x_parts), **{t: np.concatenate(v) for t, v in y_parts.items()}})
 
     def _render_screen_svg(self):
-        """Vector snapshot of the viewer exactly as shown (must run on the GUI thread)."""
+        """Vector snapshot of the viewer exactly as shown (must run on the GUI thread). The plot
+        lines go in in the snapshot's own pixels: given the plot's coordinates, Qt's SVG writer
+        rounds them to 6 significant figures - whole seconds, a day from the time axis' 0."""
         from PyQt6 import QtSvg
         from PyQt6.QtCore import QBuffer, QIODevice, QRectF
+        from src.gui.figure_capture import plot_lines
         prev_gl = pg.getConfigOption('useOpenGL')
         pg.setConfigOptions(useOpenGL=False)
         try:
@@ -100,8 +103,9 @@ class ExportMixin:
             generator.setViewBox(export_rect)
             painter = pg.QtGui.QPainter(generator)
             painter.fillRect(export_rect, self.layout_widget.backgroundBrush())
-            self.layout_widget.scene().render(painter, QRectF(0, 0, export_rect.width(), export_rect.height()),
-                                              export_rect)
+            with plot_lines(self.layout_widget):
+                self.layout_widget.scene().render(painter, QRectF(0, 0, export_rect.width(), export_rect.height()),
+                                                  export_rect)
             painter.end()
             data = bytes(buffer.data())
             buffer.close()

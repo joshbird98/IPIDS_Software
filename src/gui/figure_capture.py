@@ -22,9 +22,12 @@ What this does instead
 * Shows the printed size the UI text will have, so you can pick a framing
   that keeps it >= ~6-7 pt.
 * Draws the plot lines at a chosen width on the page (Plot lines, in pt for a
-  line 1 px wide on the screen): pyqtgraph's pens are cosmetic, their width in
-  the paint device's own pixels - 1/1200 inch in the PDF - so as they are, the
-  traces print a fraction of a hair wide.
+  line 1 px wide on the screen), shown on the window while the dialog is open:
+  pyqtgraph's pens are cosmetic, their width in the paint device's own pixels -
+  1/1200 inch in the PDF - so as they are, the traces print a fraction of a hair
+  wide. The lines are drawn in the window's pixels rather than the plot's own
+  coordinates, which Qt's SVG writer rounds to 6 significant figures (whole
+  seconds, for a trace a day from where the viewer's time axis starts).
 * No window title bar/frame, no mouse cursor.
 
 Use: press F12 with the mouse over the part you want (works in any viewer or
@@ -36,10 +39,12 @@ import os
 from contextlib import contextmanager
 from datetime import datetime
 
+import numpy as np
 from PyQt6.QtCore import QMarginsF, QPoint, QRect, QSizeF, Qt, QTimer, QUrl
 from PyQt6.QtGui import (QCursor, QDesktopServices, QImage, QKeySequence, QPageLayout, QPageSize,
-                         QPainter, QPdfWriter, QPen, QRegion, QShortcut)
-from PyQt6.QtWidgets import (QApplication, QCheckBox, QComboBox, QDialog, QDialogButtonBox,
+                         QPaintEngine, QPainter, QPainterPath, QPdfWriter, QPen, QRegion, QShortcut,
+                         QTransform)
+from PyQt6.QtWidgets import (QAbstractScrollArea, QApplication, QCheckBox, QComboBox, QDialog, QDialogButtonBox,
                              QDockWidget, QDoubleSpinBox, QFileDialog, QFormLayout, QGroupBox,
                              QHBoxLayout, QLabel, QLineEdit, QMainWindow, QPushButton, QRubberBand,
                              QSpinBox, QTabWidget, QVBoxLayout, QWidget)
@@ -68,32 +73,185 @@ def _paint(widget, painter, region):
     QWidget.render(widget, painter, QPoint(0, 0), region, _render_flags())
 
 
-@contextmanager
-def plot_lines(widget, device_px=None):
-    """While painting: every plot line (pyqtgraph curve) in widget drawn device_px of the paint
-    device's pixels wide for each screen pixel of its own width, so a 2 px trace stays twice a
-    1 px one; afterwards, the pens as they were. device_px None: leave them be."""
-    changed = []
-    try:
-        if device_px:
-            import pyqtgraph as pg
-            views = widget.findChildren(pg.GraphicsView)
-            if isinstance(widget, pg.GraphicsView):
-                views.insert(0, widget)
+class PlotLines:
+    """The plot lines (pyqtgraph curves) in a widget, painted by this class until remove():
+
+    * in the coordinates of the widget's own pixels, not the plot's. Qt's SVG writer keeps 6
+      significant figures of whatever coordinates it is given, and the viewer's x is seconds from
+      when it started, so a trace a day or more from there came out in whole-second steps;
+    * with width_px, that many of the widget's pixels wide for each pixel of the line's own width
+      (a 2 px trace stays twice a 1 px one), round-cornered, and the legend's line samples to
+      match. The capture scales the widget's pixels to the page, so the window shows, while this is
+      in place, the width the lines will print at.
+
+    Only how those items paint is replaced, on each item alone: nothing in the plot changes - not
+    its pens, data or ranges - so nothing pyqtgraph does to a curve (it re-applies a curve's own pen
+    whenever the plot re-ranges, which it may do in the middle of a paint) can undo it.
+    live: the window's own plots - repaint them whole while this is in place, so a line wider than
+    pyqtgraph allows for leaves no trail when it moves."""
+
+    def __init__(self, widget, width_px=None, live=False):
+        import pyqtgraph as pg
+        from pyqtgraph.graphicsItems.LegendItem import ItemSample
+        self.width_px = width_px or None
+        self.drawn = set()                    # the curves painted (ids)
+        self._items, self._modes = [], []
+        views = widget.findChildren(pg.GraphicsView)
+        inside = widget                       # the widget itself, or the plot it is part of (the view's
+        while inside is not None and not isinstance(inside, pg.GraphicsView):   # viewport, under the mouse)
+            inside = inside.parentWidget()
+        if inside is not None:
+            views.insert(0, inside)
+        self.views = views
+        scenes = []
+        for view in views:
+            scene = view.scene()
+            if scene is None or any(scene is s for s in scenes):
+                continue
+            scenes.append(scene)
+            for item in scene.items():
+                if isinstance(item, pg.PlotCurveItem):
+                    item.paint = self._curve_paint(item)
+                elif isinstance(item, ItemSample) and isinstance(getattr(item, "item", None),
+                                                                 (pg.PlotDataItem, pg.PlotCurveItem)):
+                    item.paint = self._sample_paint(item)       # (a line's sample: not a scatter's symbol)
+                else:
+                    continue
+                self._items.append(item)
+        if live:
+            from PyQt6.QtWidgets import QGraphicsView
             for view in views:
-                for item in view.scene().items():
-                    pen = getattr(item, "opts", {}).get("pen") if isinstance(item, pg.PlotCurveItem) else None
-                    if not isinstance(pen, QPen) or pen.style() == Qt.PenStyle.NoPen:
-                        continue
-                    thick = QPen(pen)
-                    thick.setCosmetic(True)
-                    thick.setWidthF(max(pen.widthF(), 1.0) * device_px)
-                    item.setPen(thick)
-                    changed.append((item, QPen(pen)))
-        yield
+                self._modes.append((view, view.viewportUpdateMode()))
+                view.setViewportUpdateMode(QGraphicsView.ViewportUpdateMode.FullViewportUpdate)
+                view.viewport().update()
+
+    def remove(self):
+        for item in self._items:
+            item.__dict__.pop("paint", None)
+        self._items = []
+        for view, mode in self._modes:
+            try:
+                view.setViewportUpdateMode(mode)
+                view.viewport().update()
+            except RuntimeError:              # (the plot has gone)
+                pass
+        self._modes = []
+
+    def pen(self, pen):
+        """What a line pyqtgraph would draw with pen is drawn with (in the widget's pixels)."""
+        if not self.width_px:
+            return pen                        # as it is: a cosmetic pen, its width in the device's pixels
+        wide = QPen(pen)
+        wide.setCosmetic(False)
+        wide.setWidthF(max(pen.widthF(), 1.0) * self.width_px)
+        wide.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
+        if pen.style() == Qt.PenStyle.SolidLine:   # (round ends would lengthen a dash)
+            wide.setCapStyle(Qt.PenCapStyle.RoundCap)
+        return wide
+
+    def _curve_paint(self, curve):
+        def paint(p, opt, widget=None):
+            o = curve.opts
+            pen, brush = o.get("pen"), o.get("brush")
+            fill = o.get("fillLevel") is not None and brush is not None and brush.style() != Qt.BrushStyle.NoBrush
+            if fill and o.get("fillOutline"):          # the line is the fill's edge: pyqtgraph's own paint
+                return type(curve).paint(curve, p, opt, widget)
+            shadow = o.get("shadowPen")
+            if fill or (shadow is not None and shadow.style() != Qt.PenStyle.NoPen):
+                o["pen"] = None                        # the fill under the line, the shadow behind it:
+                try:                                   # pyqtgraph's own paint, without the line
+                    type(curve).paint(curve, p, opt, widget)
+                finally:
+                    o["pen"] = pen
+            if pen is None or pen.style() == Qt.PenStyle.NoPen or curve.xData is None or len(curve.xData) == 0:
+                return
+            to_px = p.worldTransform()
+            export = getattr(curve, "_exportOpts", False)
+            aa = export.get("antialias", True) if export else o.get("antialias")
+            p.save()
+            p.setWorldTransform(QTransform())
+            if p.hasClipping() and p.paintEngine().type() == QPaintEngine.Type.SVG:
+                path = clip_path(curve.getPath(), to_px, p.clipBoundingRect())   # (Qt's SVG writer
+            else:                                                                 # leaves out clips)
+                path = to_px.map(curve.getPath())
+            p.setRenderHint(QPainter.RenderHint.Antialiasing, bool(aa or self.width_px))
+            if o.get("compositionMode") is not None:
+                p.setCompositionMode(o["compositionMode"])
+            p.setPen(self.pen(pen))
+            p.setBrush(Qt.BrushStyle.NoBrush)
+            p.drawPath(path)
+            p.restore()
+            self.drawn.add(id(curve))
+        return paint
+
+    def _sample_paint(self, sample):
+        def paint(p, *args):
+            opts = sample.item.opts
+            pen = opts.get("pen")
+            if not self.width_px or not isinstance(pen, QPen):
+                return type(sample).paint(sample, p, *args)
+            wide = self.pen(pen)
+            wide.setCapStyle(Qt.PenCapStyle.FlatCap)   # (the sample keeps its length)
+            opts["pen"] = wide
+            try:
+                type(sample).paint(sample, p, *args)
+            finally:
+                opts["pen"] = pen
+        return paint
+
+
+def clip_lines(xy, left, top, right, bottom):
+    """The parts of the polyline xy ((n, 2)) inside the rectangle (Liang-Barsky, each segment cut
+    where it crosses the edge), as one array of points with a row of NaN between the pieces."""
+    a, d = xy[:-1], np.diff(xy, axis=0)
+    t0, t1 = np.zeros(len(d)), np.ones(len(d))
+    keep = np.ones(len(d), bool)
+    with np.errstate(divide="ignore", invalid="ignore"):
+        for p, q in ((-d[:, 0], a[:, 0] - left), (d[:, 0], right - a[:, 0]),
+                     (-d[:, 1], a[:, 1] - top), (d[:, 1], bottom - a[:, 1])):
+            keep &= (p != 0) | (q >= 0)       # (along the edge: wholly in or wholly out)
+            r = q / p
+            t0 = np.where(p < 0, np.maximum(t0, r), t0)
+            t1 = np.where(p > 0, np.minimum(t1, r), t1)
+    i = np.nonzero(keep & (t0 <= t1))[0]
+    if not i.size:
+        return np.empty((0, 2))
+    start, end = a[i] + t0[i, None] * d[i], a[i] + t1[i, None] * d[i]
+    joined = np.zeros(i.size, bool)           # a segment carrying straight on from the one before
+    joined[1:] = (i[1:] == i[:-1] + 1) & (t1[i[:-1]] >= 1) & (t0[i[1:]] <= 0)
+    rows = np.where(joined, 1, 3)             # its end; or NaN, its start, its end
+    at = np.cumsum(rows) - 1
+    out = np.full((at[-1] + 1, 2), np.nan)
+    out[at] = end
+    out[at[~joined] - 1] = start[~joined]
+    return out
+
+
+def clip_path(path, transform, rect):
+    """path (straight lines only, as pyqtgraph's curves are) mapped by transform, with what falls
+    outside rect cut away."""
+    import pyqtgraph.functions as fn
+    out = QPainterPath()
+    for poly in path.toSubpathPolygons(transform):
+        xy = clip_lines(np.array(fn.ndarray_from_qpolygonf(poly), dtype=float),
+                        rect.left(), rect.top(), rect.right(), rect.bottom())
+        for piece in np.split(xy, np.nonzero(np.isnan(xy[:, 0]))[0]):
+            piece = piece[~np.isnan(piece[:, 0])]
+            if len(piece) > 1:
+                part = fn.create_qpolygonf(len(piece))
+                fn.ndarray_from_qpolygonf(part)[:] = piece
+                out.addPolygon(part)
+    return out
+
+
+@contextmanager
+def plot_lines(widget, width_px=None):
+    """PlotLines(widget, width_px) for the length of the with."""
+    lines = PlotLines(widget, width_px)
+    try:
+        yield lines
     finally:
-        for item, pen in changed:
-            item.setPen(pen)
+        lines.remove()
 
 
 def print_text_pt(widget, width_cm, width_px=None):
@@ -108,7 +266,6 @@ def print_text_pt(widget, width_cm, width_px=None):
 def content_rect(widget, pad_px=8, tol=10):
     """Bounding box (widget coords) of everything that differs from the background
     colour, plus padding - trims the empty space a stretched dock/panel leaves."""
-    import numpy as np
     pm = widget.grab()
     dpr = pm.devicePixelRatio() or 1.0
     img = pm.toImage().convertToFormat(QImage.Format.Format_RGB32)
@@ -133,20 +290,27 @@ def content_rect(widget, pad_px=8, tol=10):
 
 
 def render_widget(widget, out_base, width_cm=16.0, formats=("pdf", "svg", "png"), png_dpi=600, rect=None,
-                  line_pt=None):
+                  line_pt=None, stats=None):
     """Render `widget` (and its children) - or just `rect` of it - to vector PDF/SVG
     and a high-DPI PNG whose printed width is width_cm. line_pt: plot lines that wide on the
     page, in points, for each screen pixel of their width (None: as they are, which in the
-    PDF and PNG is the device's own pixel). Returns the files written."""
+    PDF and PNG is the device's own pixel). stats (a dict): gets "plot_lines", how many plot
+    lines were drawn. Returns the files written."""
     os.makedirs(os.path.dirname(out_base) or ".", exist_ok=True)
     rect = rect if rect is not None else widget.rect()
     region = QRegion(rect)
     w, h = rect.width(), rect.height()
     height_cm = width_cm * h / w
-    svg_dpi = int(round(w / (width_cm / 2.54)))          # SVG user units per inch: physical width = width_cm
+    per_inch = w / (width_cm / 2.54)                     # the widget's pixels per inch on the page
+    svg_dpi = int(round(per_inch))                       # SVG user units per inch: physical width = width_cm
+    with plot_lines(widget, line_pt * per_inch / 72.0 if line_pt else None) as lines:
+        written = _render(widget, out_base, rect, region, w, h, width_cm, height_cm, svg_dpi, formats, png_dpi)
+    if stats is not None:
+        stats["plot_lines"] = len(lines.drawn)
+    return written
 
-    def lines(device_dpi):
-        return plot_lines(widget, line_pt * device_dpi / 72.0 if line_pt else None)
+
+def _render(widget, out_base, rect, region, w, h, width_cm, height_cm, svg_dpi, formats, png_dpi):
     written = []
 
     if "pdf" in formats:
@@ -161,8 +325,7 @@ def render_widget(widget, out_base, width_cm=16.0, formats=("pdf", "svg", "png")
         p.setRenderHint(QPainter.RenderHint.TextAntialiasing)
         s = pdf.width() / w
         p.scale(s, s)
-        with lines(PDF_DPI):
-            _paint(widget, p, region)
+        _paint(widget, p, region)
         p.end()
         written.append(path)
 
@@ -176,8 +339,7 @@ def render_widget(widget, out_base, width_cm=16.0, formats=("pdf", "svg", "png")
         gen.setResolution(svg_dpi)
         gen.setTitle(widget.windowTitle() or type(widget).__name__)
         p = QPainter(gen)
-        with lines(svg_dpi):
-            _paint(widget, p, region)
+        _paint(widget, p, region)
         p.end()
         written.append(path)
 
@@ -193,8 +355,7 @@ def render_widget(widget, out_base, width_cm=16.0, formats=("pdf", "svg", "png")
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
         p.setRenderHint(QPainter.RenderHint.TextAntialiasing)
         p.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
-        with lines(png_dpi):
-            _paint(widget, p, region)
+        _paint(widget, p, region)
         p.end()
         img.save(path)
         written.append(path)
@@ -255,6 +416,9 @@ def capture_targets(window, hovered=None):
             return
         if min(wd.width(), wd.height()) < MIN_SIDE_PX and not wd.isWindow():
             return
+        area = wd.parentWidget()
+        if isinstance(area, QAbstractScrollArea) and area.viewport() is wd:
+            return     # a plot's (scroll area's) inside, under the mouse: the plot itself comes next
         seen.add(id(wd))
         out.append(wd)
 
@@ -321,8 +485,9 @@ class FigureCaptureDialog(QDialog):
         self.sp_line.setSpecialValueText("Unchanged (hairline)")
         self.sp_line.setValue(_last["line_pt"])
         self.sp_line.setToolTip("How wide the plot lines print, for a line 1 px wide on the screen (a 2 px line "
-                                "prints twice as wide). About 0.5 pt to 1 pt reads well on A4. At the bottom of "
-                                "the range, the lines are left as they are: a hairline in the PDF and PNG.")
+                                "prints twice as wide). While this dialog is open, the window shows them as wide "
+                                "as they will print. About 0.5 pt to 1 pt reads well on A4. At the bottom of the "
+                                "range, the lines are left as they are: a hairline in the PDF and PNG.")
         f.addRow("Plot lines", self.sp_line)
 
         self.lbl_text = QLabel()
@@ -371,10 +536,13 @@ class FigureCaptureDialog(QDialog):
         bb.rejected.connect(self.reject)
         lay.addWidget(bb)
 
+        self.lines = None            # the plot lines in the window, as wide as they will print
+        self._w_px = None
         self.cmb_target.currentIndexChanged.connect(self._update)
         self.cmb_size.currentIndexChanged.connect(self._apply_size)
         self.sp_width.valueChanged.connect(self._update)
         self.cb_trim.toggled.connect(self._update)
+        self.sp_line.valueChanged.connect(self._preview_lines)
         self._update()
 
     def _browse(self):
@@ -421,6 +589,8 @@ class FigureCaptureDialog(QDialog):
         self.band.show()
         # measured on the live (possibly re-laid-out) widget
         w_px = content_rect(wd).width() if self.cb_trim.isChecked() else wd.width()
+        self._w_px = w_px
+        self._preview_lines()
         font_pt = wd.font().pointSizeF() if wd.font().pointSizeF() > 0 else wd.font().pixelSize() * 0.75
         pt = font_pt * self.sp_width.value() / (w_px / SCREEN_DPI * 2.54)
         t = theme.tokens()
@@ -437,7 +607,21 @@ class FigureCaptureDialog(QDialog):
             safe = "".join(c if c.isalnum() else "_" for c in _describe(wd)).strip("_")[:40]
             self.ed_name.setText(safe or "gui")
 
+    def _preview_lines(self, *_):
+        """The plot lines in what will be captured, on the window, as wide as they will print (the
+        capture scales the window's pixels to the page, so that width in them is what prints)."""
+        if self.lines is not None:
+            self.lines.remove()
+            self.lines = None
+        line_pt = self.sp_line.value()
+        if line_pt and self._w_px:
+            per_inch = self._w_px / (self.sp_width.value() / 2.54)
+            self.lines = PlotLines(self.target(), line_pt * per_inch / 72.0, live=True)
+
     def done(self, r):
+        if self.lines is not None:   # the window's plot lines as they were
+            self.lines.remove()
+            self.lines = None
         self.band.hide()
         self.band.deleteLater()
         if r != QDialog.DialogCode.Accepted:
@@ -471,8 +655,9 @@ def capture(window, opts, notify=True):
                 QApplication.processEvents()
         base = os.path.join(opts["folder"], f"{opts['name']}_{datetime.now():%Y%m%d_%H%M%S}")
         rect = content_rect(wd) if opts.get("trim", True) else None
+        stats = {}
         files = render_widget(wd, base, opts["width_cm"], opts["formats"], opts["dpi"], rect=rect,
-                              line_pt=opts.get("line_pt"))
+                              line_pt=opts.get("line_pt"), stats=stats)
     finally:
         if opts["size"] is not None:
             window.resize(orig)
@@ -483,10 +668,15 @@ def capture(window, opts, notify=True):
             window.resize(size)
             if was_max0 and not window.isMaximized():
                 window.showMaximized()
-    logging.getLogger("figure_capture").info("Figure saved: %s", ", ".join(files))
+    n, line_pt = stats.get("plot_lines", 0), opts.get("line_pt")
+    note = ("" if not line_pt else f"Plot lines: {n} drawn {line_pt:g} pt wide." if n else
+            "Plot lines: there are none in the captured area, so the width changed nothing.")
+    logging.getLogger("figure_capture").info("Figure saved: %s%s", ", ".join(files), f" ({note})" if note else "")
     if notify and files:
         from PyQt6.QtWidgets import QMessageBox
         box = QMessageBox(QMessageBox.Icon.Information, "GUI figure saved", "\n".join(files), parent=window)
+        if note:
+            box.setInformativeText(note)
         btn = box.addButton("Open folder", QMessageBox.ButtonRole.ActionRole)
         box.addButton(QMessageBox.StandardButton.Close)
         btn.clicked.connect(lambda: QDesktopServices.openUrl(QUrl.fromLocalFile(os.path.dirname(files[0]))))

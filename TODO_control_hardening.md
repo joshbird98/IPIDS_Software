@@ -58,6 +58,17 @@ simulator; none of it has been tried on the real hardware yet (see "Lab PC valid
     open, tell Claude what the Event Log said.
 
 ## Done
+- 26 October 2026 (Josh: Plot lines at 2.5 pt "didn't seem any different", and the SVG's telemetry looked
+  "blocky"): with the pointer over a plot, F12 offered the plot's inside (Qt's viewport, listed as "QWidget")
+  first, and Plot lines looked for traces only inside what was captured - so it found none. The plot itself
+  now comes first, and its traces are found either way. The traces are drawn by figure_capture.PlotLines'
+  own paint, in the window's pixels rather than the plot's coordinates: Qt's SVG writer keeps 6 significant
+  figures of those, and the viewer's x is seconds from when it was opened, so after a day or so the SVG had
+  the traces in steps of a second or more. Nothing in the plot changes (pens, data, ranges), so pyqtgraph
+  re-applying a curve's own pen when the plot re-ranges mid-paint can't undo the width either. Also: the
+  dialog shows the width on the window while open, the legend's samples match, round line ends and corners,
+  SVG lines stop at the plot's edge (Qt's SVG writer leaves out clips), the saved message says how many lines
+  were widened, and Export's Screen snapshot (SVG) keeps every reading too.
 - 26 October 2026 (Josh): Shift on the Mass Scan panel (Beam current offset, under Load trace...) - up to
   20 pA either way added to every beam current shown, to take out the offset of the current measurement and
   tidy the graphs (a floor of red points on a log plot). Typed or stepped (0.5 pA), or Auto-zero: the median of the trace's quietest readings
@@ -69,7 +80,7 @@ simulator; none of it has been tried on the real hardware yet (see "Lab PC valid
 - 26 October 2026 (Josh): Plot lines in the F12 Capture GUI figure dialog (HMI and data viewer) - the traces
   printed at a chosen width in points (0.75 pt at first, per screen pixel of their width), in the PDF, SVG and
   PNG alike; pyqtgraph's pens are cosmetic, so they used to print one device pixel wide (1/1200 inch in the
-  PDF), too thin on A4. The pens are set only while painting and put back afterwards.
+  PDF), too thin on A4. (Reworked the same day, above.)
 - 23 October 2026 (Josh, for the thesis): Export figure on the Mass Scan panel - the trace as framed
   (x range, AMU / Amps, Both axes, Log Y, peak labels) drawn with matplotlib into a new folder under
   data/exports/mass_scan_figures/: full width (150 mm, \textwidth) and half width (72 mm, 0.48\textwidth),
