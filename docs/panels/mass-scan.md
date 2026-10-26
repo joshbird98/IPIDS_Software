@@ -110,6 +110,31 @@ The HMI remembers the choice of axis, on that PC, for the next time it starts.
 
 A double-click sends the magnet setpoint at once, without a second click. It goes as an ordinary operator command, so the magnet service refuses it if a sequence holds the magnet or the magnet is locked out. It also logs a purple user marker, **Manual Magnet Jump**, with the current.
 
+### Taking out the current offset
+
+With no beam on it, the Faraday cup does not read exactly zero: the measurement has an offset of a few picoamps, which drifts slowly. On a **Log Y** plot it shows as a floor of red points below zero, and it adds to the tails of every peak. **Shift** adds the same current to every reading on the plot to take it out: for a cup that reads −6 pA with no beam, set **6.0 pA**, or press **Auto-zero**. Both are in the analysis part, under **Load trace...**:
+
+| Control | What it does |
+|---|---|
+| **Shift:** (**Beam current offset**) | Adds the same current, up to 20 pA either way, to every reading on the plot. Type a value and press Enter, or step it by 0.5 pA; 0 for none. While it is not 0, the current axis says so, for example **Beam Current (shifted +6.0 pA)**. |
+| **Auto-zero** | Sets **Shift** so that the quietest readings of the trace on the plot, where no beam reached the cup, read zero. |
+
+**Auto-zero** works on the trace on the plot (the pass in progress, the last finished pass or a loaded trace; the previous pass if there is no other). It takes the lowest fifth of the readings, then every reading within three spreads of their median until they settle, and sets the shift to minus their median. The status line gives the result, for example **readings shifted by +6.0 pA (the quietest read -6.0 pA)**. It needs part of the scan where no beam reached the cup, such as the masses below the lightest peak. It refuses, with a message, when there are too few readings, or when the quietest readings are further from zero than the shift can go: on a trace that is all peak, they are the peak's flanks, not the offset. Set the shift by hand then.
+
+The shift applies to:
+
+- the plot: the pass, the previous pass, the peaks' markers and labels, and the calibration stars;
+- **Auto-detect peaks**: the peak heights and **Tail ±0.5**;
+- **Export figure**: the figures are drawn with it, and their caption says so.
+
+It does not change:
+
+- the readings themselves, **Save trace**, or the files the sequencer saves;
+- the figures' `data.csv` and `peaks.csv`, which keep the readings as measured (`figure.json` records the shift);
+- the other panels, the data viewer or the logs.
+
+The shift is not kept when the HMI closes: it starts at 0 every time. It stays as it is when you load another trace or a scan starts, so check it, or press **Auto-zero** again, for each trace. One shift takes out the offset's average over the scan, not its drift during a long scan.
+
 ## Mass calibration
 
 The panel converts magnet current to mass with:
@@ -159,7 +184,7 @@ A peak within 0.25 AMU of a whole mass is matched against the isotopes and molec
 
 The isotope list is `isotope_db.json`, next to the panel's code, built with `python src/utils/build_element_database.py` (which needs the `mendeleev` package). The lab PC has it. Without that file the panel uses a short built-in list (H, He, C, N, O, F, Ne, Si, P, S, Cl, Ar and Ge), and choosing any other element makes no difference.
 
-**Tail ±0.5** is the larger of the beam currents 0.5 AMU either side of the peak, in parts per million of the peak current: how much of this peak reaches its neighbours. It reads **< 1 ppm** below 1 ppm and **Overlapped** above 500 000 ppm. Its colour runs from green (up to 100 ppm) through amber (1000 ppm) to red (10 000 ppm and above).
+**Tail ±0.5** is the larger of the beam currents 0.5 AMU either side of the peak, in parts per million of the peak current: how much of this peak reaches its neighbours. It uses the readings with the **Shift** added, so take out the current offset first: on a 100 nA peak, an offset of 5 pA alone reads as 50 ppm. It reads **< 1 ppm** below 1 ppm and **Overlapped** above 500 000 ppm. Its colour runs from green (up to 100 ppm) through amber (1000 ppm) to red (10 000 ppm and above).
 
 ## Loading and saving traces
 
@@ -184,10 +209,10 @@ A trace file has one row per point, with the columns `Timestamp` (when the file 
 | `mass_scan_full_log` or `mass_scan_full_linear` | Full width, with the other beam current scale (the log one starts a few decades under the highest point, and leaves out zero and negative currents) |
 | `mass_scan_full_by_current` or `mass_scan_full_by_mass` | Full width, against the other x quantity, over the same part of the scan |
 | `mass_scan_full_unlabelled` | Full width, without peak labels (only when there are some) |
-| `data.csv` | The points in view, and one either side: `Magnet_A`, `Mass_amu` (at each point's own beam energy), `Beam_A`, `Energy_keV` |
-| `peaks.csv` | The peaks found, with their labels as matplotlib text and as plain text |
-| `figure.json` | How the plot was framed, the calibration and where the data came from |
-| `caption.txt` | A draft caption, in LaTeX |
+| `data.csv` | The points in view, and one either side: `Magnet_A`, `Mass_amu` (at each point's own beam energy), `Beam_A` (as measured, without the shift), `Energy_keV` |
+| `peaks.csv` | The peaks found, with their labels as matplotlib text and as plain text (`Beam_A` as measured) |
+| `figure.json` | How the plot was framed, the shift (`current_shift_A`), the calibration and where the data came from |
+| `caption.txt` | A draft caption, in LaTeX; it gives the shift, if there is one |
 | `README.txt` | What each file is, and the `\includegraphics` lines |
 | `make_figure.py` | The script that drew them: run it to draw them again |
 
@@ -201,9 +226,10 @@ python make_figure.py --only half              one of them
 python make_figure.py --xlim 26 31 --ylim 1e-12 3e-7
 python make_figure.py --sans --font-size 8 --mass-label "Mass (u)"
 python make_figure.py --no-labels
+python make_figure.py --shift-pA 6.5           another shift of the beam current
 ```
 
-`--xlim` is in the x unit the plot was framed in; `--ylim` in A.
+`--xlim` is in the x unit the plot was framed in; `--ylim` in A. The figures add the shift in `figure.json` to the beam currents in `data.csv` and `peaks.csv`; `--shift-pA` draws them with another.
 
 > [!NOTE]
 > **Export figure** draws a figure from the data. To capture the panel itself as it looks on the screen, use **View** > **Capture GUI figure...** (F12; see [A tour of the HMI](../getting-started/screen-tour.md)).

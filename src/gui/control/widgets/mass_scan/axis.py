@@ -24,6 +24,9 @@ def symlog_inv(t):
 
 
 def format_current(val: float) -> str:
+    # To 3 significant figures first: a tick a hair under a decade (the symlog round trip gives
+    # 9.99999e-7 A for 1 uA) reads "1 µA", not "1e+03 nA"
+    val = float(f"{val:.3g}")
     abs_val = abs(val)
     if abs_val == 0:
         return "0 A"

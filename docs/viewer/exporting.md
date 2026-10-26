@@ -165,6 +165,7 @@ A screenshot of the software prints badly: a whole window shrunk to the width of
 | **Window size** | **As on screen**, or **Re-lay out window at** one of six sizes from 1024 x 640 to 1920 x 1080. The window takes the new size at once, so you can see what will be captured, and goes back afterwards. |
 | **Width on page** | The width the figure will print at: 2 cm to 40 cm, 16 cm at first. |
 | **Trim empty margins (e.g. a stretched panel)** | Crops the capture to the area that differs from the background. Ticked at first. |
+| **Plot lines** | How wide the plot lines (the traces) print, in points, for a line 1 pixel wide on the screen; a line drawn 2 pixels wide prints twice as wide. 0.75 pt at first; about 0.5 pt to 1 pt reads well on A4. At the bottom of the range, **Unchanged (hairline)**, the lines are left as they are: they print one pixel of the PDF or PNG wide (1/1200 inch in the PDF), too thin to see on paper. The dialog keeps the last value until the program closes. |
 | **UI text prints at** | How big the window's text will print at that width: green at 7 pt or more, amber from 5 pt, red below 5 pt. Body text is usually 10 pt to 12 pt, and captions 8 pt to 10 pt. |
 | **Formats** | **PDF (vector)**, **SVG (vector)** and **PNG**, and the PNG's resolution: 150 dpi to 1200 dpi, 600 dpi at first. |
 | **Folder**, **Name** | Where the files go (`data/exports/figures` at first) and the start of their name. |

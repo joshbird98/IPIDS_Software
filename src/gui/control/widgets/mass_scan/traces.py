@@ -1,5 +1,5 @@
-"""Mass scan trace files (CSV, as the sequencer writes them: src/sequencer/mass_scan.py) and the
-mass calibration stored in them."""
+"""Mass scan trace files (CSV, as the sequencer writes them: src/sequencer/mass_scan.py), the
+mass calibration stored in them, and the zero of a trace's beam current."""
 import csv
 import math
 from dataclasses import dataclass, field
@@ -57,6 +57,31 @@ def save_calibration(path: str, k: float, i_off: float):
         row[k_idx], row[i_idx] = f"{k:.4f}", f"{i_off:.4f}"
     with open(path, "w", newline="") as f:
         csv.writer(f).writerows(rows)
+
+
+def estimate_zero(beam, min_points: int = 8):
+    """What the cup reads with no beam on it (the offset of the current measurement), from a
+    trace's beam currents: the median of its quietest readings. They start as the lowest fifth of
+    the readings and settle as every reading within three spreads (1.48 x the median absolute
+    deviation, at least 0.5 pA) of their median. None if fewer than min_points readings remain.
+    Assumes some of the trace saw no beam: on a trace that is all peak it returns the lowest of
+    the peak's flanks, which the panel refuses as too far from zero."""
+    y = np.asarray(beam, dtype=float)
+    y = y[np.isfinite(y)]
+    if y.size < min_points:
+        return None
+    quiet = np.sort(y)[:max(min_points, y.size // 5)]
+    zero = float(np.median(quiet))
+    for _ in range(20):
+        spread = max(1.4826 * float(np.median(np.abs(quiet - zero))), 0.5e-12)
+        quiet = y[np.abs(y - zero) <= 3.0 * spread]
+        if quiet.size < min_points:
+            return None
+        settled = float(np.median(quiet))
+        if settled == zero:
+            break
+        zero = settled
+    return zero
 
 
 def fit_calibration(points, i_off_now: float):

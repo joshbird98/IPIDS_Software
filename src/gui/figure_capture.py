@@ -21,6 +21,10 @@ What this does instead
   chosen size for the capture.
 * Shows the printed size the UI text will have, so you can pick a framing
   that keeps it >= ~6-7 pt.
+* Draws the plot lines at a chosen width on the page (Plot lines, in pt for a
+  line 1 px wide on the screen): pyqtgraph's pens are cosmetic, their width in
+  the paint device's own pixels - 1/1200 inch in the PDF - so as they are, the
+  traces print a fraction of a hair wide.
 * No window title bar/frame, no mouse cursor.
 
 Use: press F12 with the mouse over the part you want (works in any viewer or
@@ -29,11 +33,12 @@ Files go to data/exports/figures/<name>_<timestamp>.pdf/.svg/.png.
 """
 import logging
 import os
+from contextlib import contextmanager
 from datetime import datetime
 
 from PyQt6.QtCore import QMarginsF, QPoint, QRect, QSizeF, Qt, QTimer, QUrl
 from PyQt6.QtGui import (QCursor, QDesktopServices, QImage, QKeySequence, QPageLayout, QPageSize,
-                         QPainter, QPdfWriter, QRegion, QShortcut)
+                         QPainter, QPdfWriter, QPen, QRegion, QShortcut)
 from PyQt6.QtWidgets import (QApplication, QCheckBox, QComboBox, QDialog, QDialogButtonBox,
                              QDockWidget, QDoubleSpinBox, QFileDialog, QFormLayout, QGroupBox,
                              QHBoxLayout, QLabel, QLineEdit, QMainWindow, QPushButton, QRubberBand,
@@ -47,6 +52,9 @@ DEFAULT_DIR = os.path.join(PROJECT_ROOT, "data", "exports", "figures")
 SCREEN_DPI = 96.0           # Qt logical pixels per inch
 MIN_SIDE_PX = 120           # ignore tiny widgets when offering what to capture
 WINDOW_SIZES = [None, (1024, 640), (1280, 720), (1280, 800), (1440, 900), (1600, 900), (1920, 1080)]
+PDF_DPI = 1200
+LINE_PT = 0.75              # Plot lines at first: the printed width of a line 1 px wide on the screen
+_last = {"line_pt": LINE_PT}   # (the dialog starts where the last capture left it)
 
 
 # --------------------------------------------------------------------------- rendering
@@ -58,6 +66,34 @@ def _paint(widget, painter, region):
     # Call QWidget.render explicitly: QGraphicsView (pyqtgraph plots) overrides render()
     # with a different signature (painter, target QRectF, source QRect, mode).
     QWidget.render(widget, painter, QPoint(0, 0), region, _render_flags())
+
+
+@contextmanager
+def plot_lines(widget, device_px=None):
+    """While painting: every plot line (pyqtgraph curve) in widget drawn device_px of the paint
+    device's pixels wide for each screen pixel of its own width, so a 2 px trace stays twice a
+    1 px one; afterwards, the pens as they were. device_px None: leave them be."""
+    changed = []
+    try:
+        if device_px:
+            import pyqtgraph as pg
+            views = widget.findChildren(pg.GraphicsView)
+            if isinstance(widget, pg.GraphicsView):
+                views.insert(0, widget)
+            for view in views:
+                for item in view.scene().items():
+                    pen = getattr(item, "opts", {}).get("pen") if isinstance(item, pg.PlotCurveItem) else None
+                    if not isinstance(pen, QPen) or pen.style() == Qt.PenStyle.NoPen:
+                        continue
+                    thick = QPen(pen)
+                    thick.setCosmetic(True)
+                    thick.setWidthF(max(pen.widthF(), 1.0) * device_px)
+                    item.setPen(thick)
+                    changed.append((item, QPen(pen)))
+        yield
+    finally:
+        for item, pen in changed:
+            item.setPen(pen)
 
 
 def print_text_pt(widget, width_cm, width_px=None):
@@ -96,20 +132,27 @@ def content_rect(widget, pad_px=8, tol=10):
     return r
 
 
-def render_widget(widget, out_base, width_cm=16.0, formats=("pdf", "svg", "png"), png_dpi=600, rect=None):
+def render_widget(widget, out_base, width_cm=16.0, formats=("pdf", "svg", "png"), png_dpi=600, rect=None,
+                  line_pt=None):
     """Render `widget` (and its children) - or just `rect` of it - to vector PDF/SVG
-    and a high-DPI PNG whose printed width is width_cm. Returns the files written."""
+    and a high-DPI PNG whose printed width is width_cm. line_pt: plot lines that wide on the
+    page, in points, for each screen pixel of their width (None: as they are, which in the
+    PDF and PNG is the device's own pixel). Returns the files written."""
     os.makedirs(os.path.dirname(out_base) or ".", exist_ok=True)
     rect = rect if rect is not None else widget.rect()
     region = QRegion(rect)
     w, h = rect.width(), rect.height()
     height_cm = width_cm * h / w
+    svg_dpi = int(round(w / (width_cm / 2.54)))          # SVG user units per inch: physical width = width_cm
+
+    def lines(device_dpi):
+        return plot_lines(widget, line_pt * device_dpi / 72.0 if line_pt else None)
     written = []
 
     if "pdf" in formats:
         path = f"{out_base}.pdf"
         pdf = QPdfWriter(path)
-        pdf.setResolution(1200)
+        pdf.setResolution(PDF_DPI)
         pdf.setCreator("SINDIE figure capture")
         pdf.setPageLayout(QPageLayout(QPageSize(QSizeF(width_cm * 10, height_cm * 10), QPageSize.Unit.Millimeter),
                                       QPageLayout.Orientation.Portrait, QMarginsF(0, 0, 0, 0)))
@@ -118,7 +161,8 @@ def render_widget(widget, out_base, width_cm=16.0, formats=("pdf", "svg", "png")
         p.setRenderHint(QPainter.RenderHint.TextAntialiasing)
         s = pdf.width() / w
         p.scale(s, s)
-        _paint(widget, p, region)
+        with lines(PDF_DPI):
+            _paint(widget, p, region)
         p.end()
         written.append(path)
 
@@ -129,10 +173,11 @@ def render_widget(widget, out_base, width_cm=16.0, formats=("pdf", "svg", "png")
         gen.setFileName(path)
         gen.setSize(rect.size())
         gen.setViewBox(QRect(0, 0, w, h))
-        gen.setResolution(int(round(w / (width_cm / 2.54))))   # physical width = width_cm
+        gen.setResolution(svg_dpi)
         gen.setTitle(widget.windowTitle() or type(widget).__name__)
         p = QPainter(gen)
-        _paint(widget, p, region)
+        with lines(svg_dpi):
+            _paint(widget, p, region)
         p.end()
         written.append(path)
 
@@ -148,7 +193,8 @@ def render_widget(widget, out_base, width_cm=16.0, formats=("pdf", "svg", "png")
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
         p.setRenderHint(QPainter.RenderHint.TextAntialiasing)
         p.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
-        _paint(widget, p, region)
+        with lines(png_dpi):
+            _paint(widget, p, region)
         p.end()
         img.save(path)
         written.append(path)
@@ -266,6 +312,18 @@ class FigureCaptureDialog(QDialog):
         self.cb_trim = QCheckBox("Trim empty margins (e.g. a stretched panel)")
         self.cb_trim.setChecked(True)
         f.addRow("", self.cb_trim)
+
+        self.sp_line = QDoubleSpinBox()
+        self.sp_line.setRange(0.0, 5.0)
+        self.sp_line.setDecimals(2)
+        self.sp_line.setSingleStep(0.25)
+        self.sp_line.setSuffix(" pt")
+        self.sp_line.setSpecialValueText("Unchanged (hairline)")
+        self.sp_line.setValue(_last["line_pt"])
+        self.sp_line.setToolTip("How wide the plot lines print, for a line 1 px wide on the screen (a 2 px line "
+                                "prints twice as wide). About 0.5 pt to 1 pt reads well on A4. At the bottom of "
+                                "the range, the lines are left as they are: a hairline in the PDF and PNG.")
+        f.addRow("Plot lines", self.sp_line)
 
         self.lbl_text = QLabel()
         self.lbl_text.setWordWrap(True)
@@ -388,10 +446,12 @@ class FigureCaptureDialog(QDialog):
 
     def options(self):
         fm = tuple(f for f, cb in (("pdf", self.cb_pdf), ("svg", self.cb_svg), ("png", self.cb_png)) if cb.isChecked())
+        _last["line_pt"] = self.sp_line.value()
         # the dialog has already applied the size live; capture() restores afterwards
         return {"widget": self.target(), "size": None, "restore": self._orig,
                 "trim": self.cb_trim.isChecked(),
                 "width_cm": self.sp_width.value(), "formats": fm, "dpi": self.sp_dpi.value(),
+                "line_pt": self.sp_line.value() or None,
                 "folder": self.ed_dir.text(), "name": self.ed_name.text() or "gui"}
 
 
@@ -411,7 +471,8 @@ def capture(window, opts, notify=True):
                 QApplication.processEvents()
         base = os.path.join(opts["folder"], f"{opts['name']}_{datetime.now():%Y%m%d_%H%M%S}")
         rect = content_rect(wd) if opts.get("trim", True) else None
-        files = render_widget(wd, base, opts["width_cm"], opts["formats"], opts["dpi"], rect=rect)
+        files = render_widget(wd, base, opts["width_cm"], opts["formats"], opts["dpi"], rect=rect,
+                              line_pt=opts.get("line_pt"))
     finally:
         if opts["size"] is not None:
             window.resize(orig)

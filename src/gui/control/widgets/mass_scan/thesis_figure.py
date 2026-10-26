@@ -8,11 +8,14 @@ and restyled, long after the export, on any machine with numpy and matplotlib:
     python make_figure.py --only full                # one variant
     python make_figure.py --xlim 26 31 --ylim 1e-12 3e-7
     python make_figure.py --sans --font-size 8 --mass-label "Mass (u)"
+    python make_figure.py --shift-pA 6.5             # another shift of the beam current
 
 The folder holds what was on the plot when it was exported: data.csv (each point's magnet current,
 mass, beam current and beam energy, within the visible range), peaks.csv (the peaks found, if peak
 detection was on) and figure.json (how the plot was framed, the calibration, where the data came
-from). The variants (figure.json lists the ones made):
+from). The beam currents in data.csv and peaks.csv are the readings as measured; the figures add
+figure.json's current_shift_A to them (the panel's Shift, which takes out the offset of the
+current measurement). The variants (figure.json lists the ones made):
 
     full                  150 mm wide (\\textwidth), framed as on the screen
     half                  72 mm wide (0.48\\textwidth), for a subfigure
@@ -103,8 +106,20 @@ def write_csv(path, header, rows):
         w.writerows(rows)
 
 
+def shift_of(settings) -> float:
+    """The shift added to every beam current in the figures, in A (0 for folders made before it)."""
+    return float(settings.get("current_shift_A") or 0.0)
+
+
+def shifted(data, peaks, shift):
+    """Copies of data and peaks with shift (A) added to their beam currents: as the figures draw them."""
+    data = dict(data, Beam_A=np.asarray(data["Beam_A"], dtype=float) + shift)
+    return data, [dict(p, current=p["current"] + shift) for p in peaks]
+
+
 def read_folder(folder):
-    """-> (data {column: array}, peaks [dict], settings dict)."""
+    """-> (data {column: array}, peaks [dict], settings dict), the beam currents as measured (see
+    shifted())."""
     with open(os.path.join(folder, "figure.json"), encoding="utf-8") as f:
         settings = json.load(f)
     with open(os.path.join(folder, "data.csv"), newline="", encoding="utf-8") as f:
@@ -306,10 +321,14 @@ def render(data, peaks, settings, variant, out_base, formats=FORMATS, font="seri
 
 
 def render_folder(folder, only=None, formats=FORMATS, font="serif", font_size=9.0, mass_label=None,
-                  xlim=None, ylim=None, no_labels=False, prefix="mass_scan"):
+                  xlim=None, ylim=None, no_labels=False, prefix="mass_scan", shift_pa=None):
     """Every variant (or `only` one) from a figure folder. xlim / ylim: a new framing, in the
-    screen's x unit and in A. Returns the files written."""
+    screen's x unit and in A; shift_pa: another shift of the beam current, in pA. Returns the
+    files written."""
     data, peaks, settings = read_folder(folder)
+    if shift_pa is not None:
+        settings["current_shift_A"] = float(shift_pa) * 1e-12
+    data, peaks = shifted(data, peaks, shift_of(settings))
     if xlim:
         settings["screen"]["xlim"] = list(xlim)
     if ylim:
@@ -333,10 +352,13 @@ def caption_text(settings) -> str:
     span = (f"{lo:.1f} to {hi:.1f}~amu" if s["x_unit"] == "amu" else f"{lo:.2f} to {hi:.2f}~A")
     energy = (f"at a beam energy of {cal['energy_kev_mean']:.1f}~keV" if cal.get("energy_recorded", True) else
               f"taking a beam energy of {cal['energy_kev_mean']:.0f}~keV (none was recorded)")
+    shift = shift_of(settings) * 1e12
     return (f"Mass scan: the beam current on the Faraday cup against "
             f"{'mass' if s['x_unit'] == 'amu' else 'the analyser magnet current'}, {span}, {energy}. "
             f"Masses from the analyser magnet current $I$ with $m = k\\,(I + I_\\mathrm{{off}})^2/E$, "
-            f"$k = {cal['k']:.1f}$, $I_\\mathrm{{off}} = {cal['i_off']:.3f}$~A.")
+            f"$k = {cal['k']:.1f}$, $I_\\mathrm{{off}} = {cal['i_off']:.3f}$~A."
+            + (f" The beam current readings are shifted by ${shift:+.1f}$~pA, to take out the offset of the "
+               f"current measurement." if shift else ""))
 
 
 def readme_text(settings) -> str:
@@ -349,6 +371,9 @@ def readme_text(settings) -> str:
         f"Calibration: k = {settings['calibration']['k']:.2f}, I_off = {settings['calibration']['i_off']:.4f} A "
         f"({settings['calibration']['source']}); mean beam energy {settings['calibration']['energy_kev_mean']:.2f} keV"
         + ("" if settings["calibration"].get("energy_recorded", True) else " (none recorded: assumed)") + ".",
+        (f"Beam current: every reading shifted by {shift_of(settings) * 1e12:+.1f} pA in the figures, to take out "
+         "the offset of the current measurement (current_shift_A in figure.json; make_figure.py --shift-pA "
+         "draws them with another)." if shift_of(settings) else "Beam current: the readings as measured (no shift)."),
         "",
         "Figures (each as .pdf, .svg and .png):",
     ]
@@ -371,8 +396,10 @@ def readme_text(settings) -> str:
         "",
         "data.csv: the points within the visible range (and one either side), in scan order:",
         "  Magnet_A (measured magnet current), Mass_amu (from the calibration, at the point's own beam",
-        "  energy), Beam_A (Faraday cup current), Energy_keV (target + extraction; 0 if not recorded).",
-        "peaks.csv: the peaks the panel found (if peak detection was on), with their labels.",
+        "  energy), Beam_A (Faraday cup current as measured, before any shift), Energy_keV (target +",
+        "  extraction; 0 if not recorded).",
+        "peaks.csv: the peaks the panel found (if peak detection was on), with their labels (Beam_A as",
+        "  measured, too).",
         "caption.txt: a draft caption.",
     ]
     return "\n".join(lines) + "\n"
@@ -381,7 +408,8 @@ def readme_text(settings) -> str:
 def export(folder, points, peaks, settings, formats=FORMATS):
     """A new figure folder: data.csv, peaks.csv, figure.json, caption.txt, README.txt,
     make_figure.py (this file) and every variant. points: [(magnet A, mass amu, beam A, energy keV)];
-    peaks: [{amu, amps, current, html, labelled}]. Returns the figure files written."""
+    peaks: [{amu, amps, current, html, labelled}], beam currents as measured; the figures add
+    settings["current_shift_A"] (if any). Returns the figure files written."""
     os.makedirs(folder, exist_ok=True)
     write_csv(os.path.join(folder, "data.csv"), ["Magnet_A", "Mass_amu", "Beam_A", "Energy_keV"],
               [[f"{a:.6f}", f"{m:.6f}", f"{b:.6e}", f"{e:.4f}"] for a, m, b, e in points])
@@ -397,6 +425,7 @@ def export(folder, points, peaks, settings, formats=FORMATS):
             "Beam_A": np.array([p[2] for p in points], dtype=float),
             "Energy_keV": np.array([p[3] for p in points], dtype=float)}
     settings = dict(settings)
+    data, peak_rows = shifted(data, peak_rows, shift_of(settings))          # (as the figures draw them)
     settings["variants"] = variants(settings, data, peak_rows)
     with open(os.path.join(folder, "figure.json"), "w", encoding="utf-8") as f:
         json.dump(settings, f, indent=2)
@@ -424,11 +453,13 @@ def main():
     ap.add_argument("--sans", action="store_true", help="sans-serif text (default serif)")
     ap.add_argument("--mass-label", help='the mass axis title (default "Mass (amu)")')
     ap.add_argument("--no-labels", action="store_true", help="no peak labels")
+    ap.add_argument("--shift-pA", type=float, dest="shift_pa",
+                    help="add this to every beam current, in pA (default: the export's own shift, figure.json)")
     ap.add_argument("--formats", default=",".join(FORMATS))
     a = ap.parse_args()
     files = render_folder(a.folder, only=a.only, formats=tuple(a.formats.split(",")),
                           font="sans" if a.sans else "serif", font_size=a.font_size, mass_label=a.mass_label,
-                          xlim=a.xlim, ylim=a.ylim, no_labels=a.no_labels)
+                          xlim=a.xlim, ylim=a.ylim, no_labels=a.no_labels, shift_pa=a.shift_pa)
     print("\n".join(files) if files else "No figure made (is --only one of the variants in figure.json?)")
 
 

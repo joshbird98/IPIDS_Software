@@ -2,7 +2,10 @@
 which holds the magnet and the SMU for it; this panel starts and stops it, draws its points as
 they come (src/sequencer/points.py), and does the analysis: mass calibration, peaks and their
 resolution, loading and saving traces. The plot is against mass or against the measured magnet
-current, with the other unit on the top axis if wanted (set_x_axis)."""
+current, with the other unit on the top axis if wanted (set_x_axis). The beam current can be
+shifted, up to ui.SHIFT_LIMIT_PA either way, to take out the offset of the current measurement
+(set_current_shift, auto_zero): the plot, its peaks and its figures use the shifted readings, while
+the readings themselves (y_data, saved traces) are never changed."""
 import importlib.util
 import logging
 import math
@@ -24,7 +27,7 @@ from src.core.mass_calibration import current_for_mass, mass_for_current
 from src.gui import theme
 from src.gui.control.sequencer_link import FETCH_ORIGIN, OFFLINE_TEXT, SequencerSlot
 from src.gui.control.widgets.mass_scan import isotopes, peaks, traces, ui
-from src.gui.control.widgets.mass_scan.axis import symlog, symlog_inv
+from src.gui.control.widgets.mass_scan.axis import format_current, symlog, symlog_inv
 from src.gui.control.widgets.mass_scan.periodic_table import PeriodicTableDialog
 from src.gui.control.widgets.source_widget import setpoint_limits
 from src.gui.settings import gui_settings
@@ -94,6 +97,7 @@ class PrecisionMassScannerWidget(QWidget):
         self._figure_signals = _FigureSignals(self)
         self._figure_signals.done.connect(self._figure_done)
         self._figure_signals.failed.connect(self._figure_failed)
+        self.current_shift_a = 0.0            # added to every beam current shown (A); not kept between runs
 
         ui.build(self)
         limits = setpoint_limits().get(SP_TAG)
@@ -246,6 +250,46 @@ class PrecisionMassScannerWidget(QWidget):
         """Beam current -> plot y (symmetric log in the log view, see symlog())."""
         return symlog(y) if self.chk_log_y.isChecked() else np.asarray(y, dtype=float)
 
+    def _shifted(self, y) -> np.ndarray:
+        """Readings as the plot and its analysis use them: with the shift added."""
+        return np.asarray(y, dtype=float) + self.current_shift_a
+
+    # ------------------------------------------------------------------ the current shift (offset)
+    def set_current_shift(self, pa: float):
+        """Shift every beam current shown by pa picoamps (clamped to +-ui.SHIFT_LIMIT_PA, to the
+        box's 0.1 pA)."""
+        self.sp_shift.setValue(float(pa))         # -> _shift_changed (when the value changes)
+
+    def _shift_changed(self, pa: float):
+        self.current_shift_a = float(pa) * 1e-12
+        label = ui.Y_LABEL if not pa else f"{ui.Y_LABEL} (shifted {pa:+.1f} pA)"
+        self.plot_widget.setLabel('left', label)
+        self._refresh_curves()
+        self._update_plot_limits()
+        self._conditional_peak_update()
+        self._update_calib_table()
+
+    def auto_zero(self):
+        """The shift that makes the quietest readings of the trace on the plot average zero (see
+        traces.estimate_zero). Refused when too few readings are quiet, or when the quietest are
+        further from zero than the shift can go (a trace with no stretch without beam)."""
+        readings = self.y_data or self.ghost_y
+        zero = traces.estimate_zero(readings)
+        if zero is None:
+            QMessageBox.information(self, "Auto-zero", "There are too few readings on the plot to find where the "
+                                                       "cup reads zero. Set the shift by hand.")
+            return
+        if abs(zero) > ui.SHIFT_LIMIT_PA * 1e-12:
+            QMessageBox.information(self, "Auto-zero", f"The quietest readings are around {format_current(zero)}, "
+                                                       f"further from zero than the shift can go "
+                                                       f"({ui.SHIFT_LIMIT_PA:.0f} pA): this trace seems to have no "
+                                                       f"stretch without beam. Set the shift by hand.")
+            return
+        self.set_current_shift(-zero * 1e12)
+        self.lbl_status.setText(f"Status: readings shifted by {self.sp_shift.value():+.1f} pA (the quietest "
+                                f"read {zero * 1e12:+.1f} pA)")
+        log.info("Mass scan readings shifted by %+.1f pA (auto-zero)", self.sp_shift.value())
+
     def _amu(self, amps, e_kev):
         return mass_for_current(amps, energy_ev(e_kev), self.sp_k_factor.value(), self.sp_i_offset.value())
 
@@ -379,7 +423,7 @@ class PrecisionMassScannerWidget(QWidget):
             if not x_arr or not y_arr:
                 return [], [], [], []
             x = np.array(x_arr, dtype=float)
-            y = self._ty(np.array(y_arr, dtype=float))
+            y = self._ty(self._shifted(y_arr))
             if not np.any(y < 0):
                 return x, y, [], []
             return x, y, x, np.where(y < 0, y, np.nan)
@@ -427,7 +471,7 @@ class PrecisionMassScannerWidget(QWidget):
         margin = X_MARGIN[self.x_unit]
         # Pan/zoom limits: a margin around the data, in whichever y scale is shown
         if all_y:
-            t = self._ty(np.array(all_y, dtype=float))
+            t = self._ty(self._shifted(all_y))
             lo, hi = min(float(np.nanmin(t)), 0.0), max(float(np.nanmax(t)), 0.0)
         else:
             lo, hi = 0.0, float(self._ty(1e-6))
@@ -499,8 +543,8 @@ class PrecisionMassScannerWidget(QWidget):
         if len(self.amu_data) < 10:
             return
         try:
-            found = peaks.find(self.amu_data, self.y_data, self.sp_sensitivity.value(), self.sp_max_peaks.value(),
-                               self.mass_db)
+            found = peaks.find(self.amu_data, self._shifted(self.y_data), self.sp_sensitivity.value(),
+                               self.sp_max_peaks.value(), self.mass_db)
         except ImportError:
             self.btn_detect.setChecked(False)
             QMessageBox.critical(self, "Dependency Error", "scipy library required for peak detection. (pip install scipy)")
@@ -647,7 +691,8 @@ class PrecisionMassScannerWidget(QWidget):
     def _figure_snapshot(self):
         """(folder, points, peaks, settings) for the plot as framed now, or None if no point is in
         view. Points: the trace's points within the visible x range and one either side (so the
-        line reaches the frame), in scan order."""
+        line reaches the frame), in scan order. Points and peaks carry the readings as measured;
+        settings["current_shift_A"] is the shift the figures add to them, as on the screen."""
         view = self.plot_widget.getViewBox()
         (x0, x1), (t0, t1) = view.viewRange()
         xs = np.asarray(self._x(self.amps_data, self.amu_data), dtype=float)
@@ -669,8 +714,8 @@ class PrecisionMassScannerWidget(QWidget):
         found = [p for p in self._found_peaks
                  if x0 <= (float(self._amps_for([p.amu])[0]) if self.x_unit == "amps" else p.amu) <= x1]
         amps = self._amps_for([p.amu for p in found]) if found else []
-        peaks = [{"amu": p.amu, "amps": float(a), "current": p.current, "html": p.match_html,
-                  "labelled": p.labelled} for p, a in zip(found, amps)]
+        peaks = [{"amu": p.amu, "amps": float(a), "current": p.current - self.current_shift_a,    # (as measured)
+                  "html": p.match_html, "labelled": p.labelled} for p, a in zip(found, amps)]
         energies = [e for e in (self.energy_data[i] for i in in_view) if e > 0]
         now = datetime.now()
         path = self._trace_path
@@ -691,6 +736,7 @@ class PrecisionMassScannerWidget(QWidget):
                             "energy_recorded": bool(energies)},
             "screen": {"x_unit": self.x_unit, "top_axis": self.x_both, "y_scale": scale,
                        "xlim": [float(min(x0, x1)), float(max(x0, x1))], "ylim": [min(y0, y1), max(y0, y1)]},
+            "current_shift_A": self.current_shift_a,
             "points": len(points),
         }
         return folder, points, peaks, settings
@@ -785,7 +831,8 @@ class PrecisionMassScannerWidget(QWidget):
         if self.calib_points:
             key = "amps" if self.x_unit == "amps" else "amu_plot_x"
             self.calib_scatter.setData(x=np.array([p[key] for p in self.calib_points], dtype=float),
-                                       y=np.array([float(self._ty(p['peak_y'])) for p in self.calib_points]))
+                                       y=np.array([float(self._ty(self._shifted(p['peak_y'])))
+                                                   for p in self.calib_points]))
             self.calib_scatter.setVisible(True)
         else:
             # Dummy data: pyqtgraph's bounds calculation trips over an empty scatter

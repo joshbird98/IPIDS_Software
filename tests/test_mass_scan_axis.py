@@ -3,7 +3,7 @@
 import numpy as np
 import pytest
 
-from src.gui.control.widgets.mass_scan.axis import SmartCurrentAxis, symlog, symlog_inv
+from src.gui.control.widgets.mass_scan.axis import SmartCurrentAxis, format_current, symlog, symlog_inv
 
 
 def test_symlog_round_trip_and_sign():
@@ -12,6 +12,13 @@ def test_symlog_round_trip_and_sign():
     t = symlog(y)
     assert t[0] < t[1] < t[2] == 0.0 < t[3] < t[4] < t[5]
     assert symlog(1e-9) == pytest.approx(-symlog(-1e-9))
+
+
+def test_a_decade_tick_reads_as_its_decade():
+    """The symlog round trip puts 1 uA at 9.99999e-7 A: it reads 1 µA, not 1e+03 nA."""
+    assert format_current(float(symlog_inv(symlog(1e-6)))) == "1 µA"
+    assert [format_current(v) for v in (9.99999e-7, -9.999999e-13, 1e-6, 999e-9, 2.5e-11, 0.0)] == \
+        ["1 µA", "-1 pA", "1 µA", "999 nA", "25 pA", "0 A"]
 
 
 def test_axis_labels_decades_both_sides(scan):

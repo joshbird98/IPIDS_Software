@@ -16,6 +16,10 @@ PANEL_WIDTH = 280               # the side panels' starting width (drag the divi
 PANEL_MIN_WIDTH = 210
 # The x axis: the plot against mass or against the measured magnet current (and the other on top)
 X_LABELS = {"amu": "Mass (AMU)", "amps": "Magnet current (A)"}
+Y_LABEL = "Beam Current"
+# How far the beam current readings can be shifted, either way (to take out the offset of the
+# current measurement; the readings themselves are never changed)
+SHIFT_LIMIT_PA = 20.0
 
 
 def _spin(lo, hi, decimals, value, suffix="", step=None, tip="", box=None):
@@ -276,7 +280,7 @@ def _plot_panel(w):
     # Y follows the data in the visible mass range (also after zooming in x)
     w.plot_widget.getViewBox().setAutoVisible(y=True)
     w.plot_widget.setLabel('bottom', X_LABELS["amu"])
-    w.plot_widget.setLabel('left', "Beam Current")
+    w.plot_widget.setLabel('left', Y_LABEL)
     w.plot_widget.getPlotItem().hideAxis('top')
     w.plot_widget.scene().sigMouseClicked.connect(w._on_mouse_clicked)
     w.plot_widget.scene().sigMouseMoved.connect(w._on_mouse_moved)
@@ -317,6 +321,26 @@ def _analysis_panel(w):
     files.addWidget(w.btn_load_csv)
     files.addWidget(w.btn_save_csv)
     layout.addLayout(files)
+
+    # Shift: the same current added to every reading on the plot (and in its analysis and figures),
+    # to take out the offset of the current measurement; saved traces keep the readings as measured.
+    # (Here rather than above the plot, where it widened the toolbar past a narrow dock.)
+    offset = QGroupBox("Beam current offset")
+    offset_form = _form()
+    w.sp_shift = _spin(-SHIFT_LIMIT_PA, SHIFT_LIMIT_PA, 1, 0.0, " pA", step=0.5,
+                       tip=f"Adds this current (up to {SHIFT_LIMIT_PA:.0f} pA either way) to every reading on the "
+                           "plot, to take out the offset of the current measurement. Peaks, tails and exported "
+                           "figures use the shifted readings; saved traces keep them as measured. 0 for none.")
+    w.sp_shift.setKeyboardTracking(False)     # (a typed value applies on Enter, not at every key)
+    w.sp_shift.valueChanged.connect(w._shift_changed)
+    w.btn_auto_zero = QPushButton("Auto-zero")
+    w.btn_auto_zero.setToolTip("Sets the shift so that the quietest readings of the trace on the plot - where no "
+                               "beam reached the cup - average zero.")
+    w.btn_auto_zero.clicked.connect(w.auto_zero)
+    offset_form.addRow("Shift:", w.sp_shift)
+    offset_form.addRow(w.btn_auto_zero)
+    offset.setLayout(offset_form)
+    layout.addWidget(offset)
 
     calib = QGroupBox("Mass calibration")
     grid = _form()

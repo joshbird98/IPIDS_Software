@@ -58,6 +58,18 @@ simulator; none of it has been tried on the real hardware yet (see "Lab PC valid
     open, tell Claude what the Event Log said.
 
 ## Done
+- 26 October 2026 (Josh): Shift on the Mass Scan panel (Beam current offset, under Load trace...) - up to
+  20 pA either way added to every beam current shown, to take out the offset of the current measurement and
+  tidy the graphs (a floor of red points on a log plot). Typed or stepped (0.5 pA), or Auto-zero: the median of the trace's quietest readings
+  (traces.estimate_zero; refused when too few, or further from zero than 20 pA: a trace that is all peak).
+  The plot, peaks and Tail ±0.5, calibration stars and Export figure use the shifted readings, and the
+  current axis says so; the readings, saved traces and the figures' data.csv / peaks.csv stay as measured
+  (figure.json current_shift_A, in the caption; make_figure.py --shift-pA). Not kept between HMI runs.
+  Also: decade ticks on the log axis read "1 µA", not "1e+03 nA".
+- 26 October 2026 (Josh): Plot lines in the F12 Capture GUI figure dialog (HMI and data viewer) - the traces
+  printed at a chosen width in points (0.75 pt at first, per screen pixel of their width), in the PDF, SVG and
+  PNG alike; pyqtgraph's pens are cosmetic, so they used to print one device pixel wide (1/1200 inch in the
+  PDF), too thin on A4. The pens are set only while painting and put back afterwards.
 - 23 October 2026 (Josh, for the thesis): Export figure on the Mass Scan panel - the trace as framed
   (x range, AMU / Amps, Both axes, Log Y, peak labels) drawn with matplotlib into a new folder under
   data/exports/mass_scan_figures/: full width (150 mm, \textwidth) and half width (72 mm, 0.48\textwidth),
