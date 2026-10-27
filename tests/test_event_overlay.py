@@ -86,3 +86,35 @@ def test_clicking_a_label_or_line_opens_the_details_window():
             overlay.details.close()
         win.close()
         app.processEvents()
+
+
+def test_a_label_by_the_edge_of_the_plot_is_kept_inside_it():
+    """A label is centred on its line: near an edge of the plot it was cut in half (in the thesis'
+    viewer figure, a lone 's' of '4 events' at the left). It sits beside its line there instead."""
+    import pyqtgraph as pg
+    from PyQt6.QtWidgets import QApplication
+    from src.gui.data_viewer.event_overlay import EventOverlay
+    app = QApplication.instance() or QApplication([])
+    win = pg.GraphicsLayoutWidget()
+    plot = win.addPlot()
+    plot.setXRange(0, 100, padding=0)
+    win.resize(800, 400)
+    win.show()
+    app.processEvents()
+    t0 = 1_000_000.0
+    marker = {"color": "#00E5FF", "type": "USER_MARKER", "meta": "{}"}
+    events = {f"{t0 + 0.5:.3f}": dict(marker, text="A marker by the left edge"),
+              f"{t0 + 50.0:.3f}": dict(marker, text="One in the middle"),
+              f"{t0 + 99.5:.3f}": dict(marker, text="A marker by the right edge")}
+    overlay = EventOverlay(on_delete=lambda k: None)
+    try:
+        overlay.update([plot], None, events, t0, (0.0, 100.0))
+        app.processEvents()
+        box = plot.vb.sceneBoundingRect()
+        assert len(overlay.items) == 3
+        for item in overlay.items.values():
+            label = item["lines"][0].label
+            r = label.sceneBoundingRect()
+            assert label.isVisible() and box.left() - 1 <= r.left() and r.right() <= box.right() + 1
+    finally:
+        win.close()

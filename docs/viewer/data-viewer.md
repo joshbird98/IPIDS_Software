@@ -159,7 +159,7 @@ An export includes the events of the kinds ticked here: see [Exporting data and 
 
 ### How events are drawn
 
-- Each label is one line, shortened to 26 characters, in rows along the top of the first lane. Hover over a line or label for the time and full text.
+- Each label is one line, shortened to 26 characters, in rows along the top of the first lane, centred on its line; near the left or right edge of the plot it sits beside its line instead, so that it isn't cut off. Hover over a line or label for the time and full text.
 - Events closer together than about 6 pixels are drawn as one thicker line, labelled with their number (for example **12 events**) and coloured by the most important of them: an active fault first, then a watchdog drop, then a tolerance event or user marker. Hovering lists up to 15 of them. Zoom in to separate them.
 - A label that would overlap another label or the lane's legend is left off, but its line still shows the texts on hover and opens the details on a click.
 

@@ -55,28 +55,40 @@ def main():
     ap.add_argument("--theme", default="dark", choices=("dark", "light"))
     ap.add_argument("--port-offset", type=int, default=PORT_OFFSET)
     args = ap.parse_args()
+    run_offscreen(args.port_offset, SCREEN, lambda: Shooter(args.out, args.theme).run())
 
-    work = tempfile.mkdtemp(prefix="sindie_help_shots_")
+
+def run_offscreen(port_offset, screen, shoot, prefix="sindie_help_shots_", own_recipes=False):
+    """Start the simulated services on their own ports and in a temporary data folder, point this
+    process at them, offscreen on `screen` (a Qt offscreen screen configuration), and call shoot();
+    then stop the services, delete the folder and leave (it doesn't return). own_recipes: the
+    services and the HMI use a copy of config/recipes in that folder, for recipes written on the
+    way (gone with it)."""
+    work = tempfile.mkdtemp(prefix=prefix)
     screen_file = os.path.join(work, "screen.json")
     with open(screen_file, "w") as f:
         import json
-        json.dump(SCREEN, f)
-    os.environ.update(SINDIE_SIMULATE="1", SINDIE_PORT_OFFSET=str(args.port_offset),
+        json.dump(screen, f)
+    os.environ.update(SINDIE_SIMULATE="1", SINDIE_PORT_OFFSET=str(port_offset),
                       SINDIE_DATA_DIR=os.path.join(work, "data"), SINDIE_SETTINGS_DIR=os.path.join(work, "settings"),
                       QT_QPA_PLATFORM="offscreen")
+    if own_recipes:
+        recipes = os.path.join(work, "recipes")
+        shutil.copytree(os.path.join(ROOT, "config", "recipes"), recipes)
+        os.environ["SINDIE_RECIPES_DIR"] = recipes
     # (nothing from src is imported yet: paths.py reads SINDIE_REGISTRY once, at import, and the
     # registry is only built by run_simulation.py below)
-    manager_lock_port = 65432 - (args.port_offset % 60000)          # as src/core/network_map.py
+    manager_lock_port = 65432 - (port_offset % 60000)          # as src/core/network_map.py
     probe = socket.socket()
     try:
         probe.bind(("localhost", manager_lock_port))
     except OSError:
-        sys.exit(f"Port offset {args.port_offset} is in use (another run of this script?). Use --port-offset.")
+        sys.exit(f"Port offset {port_offset} is in use (another run of this script?). Use --port-offset.")
     finally:
         probe.close()
     print(f"Simulated services starting (data in {work}) ...")
     services = subprocess.Popen(
-        [sys.executable, "run_simulation.py", "--no-hmi", "--no-viewer", "--port-offset", str(args.port_offset)],
+        [sys.executable, "run_simulation.py", "--no-hmi", "--no-viewer", "--port-offset", str(port_offset)],
         cwd=ROOT, stdin=subprocess.PIPE, stdout=open(os.path.join(work, "services.log"), "w"),
         stderr=subprocess.STDOUT, text=True, env=dict(os.environ, PYTHONPATH=ROOT))
     try:
@@ -87,7 +99,7 @@ def main():
         os.environ["SINDIE_REGISTRY"] = registry
         os.environ["QT_QPA_PLATFORM"] = "offscreen:configfile=" + screen_file
         sys.path.insert(0, ROOT)
-        Shooter(args.out, args.theme).run()
+        shoot()
         code = 0
     except Exception:
         import traceback

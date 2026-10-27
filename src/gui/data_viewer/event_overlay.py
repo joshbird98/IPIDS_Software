@@ -312,15 +312,23 @@ class EventOverlay:
         for dkey, g in wanted.items():
             line = self.items[dkey]["lines"][0]
             xs = vb.mapViewToScene(QPointF(line.value(), 0)).x()
-            w = fm.horizontalAdvance(self.items[dkey]["text"]) + 10
-            if xs + w / 2 < rect.left() or xs - w / 2 > rect.right():
+            if xs < rect.left() or xs > rect.right():           # (its line isn't in view)
                 line.label.setVisible(False)
                 continue
             order.append((xs, dkey))
         order.sort()
+        sides = []                  # where a label sits on its line: centred, or beside it near an edge
         for xs, dkey in order:
             w = fm.horizontalAdvance(self.items[dkey]["text"]) + 10
-            spans.append((xs - w / 2, xs + w / 2))
+            if xs - w / 2 < rect.left():                        # (centred, it would be cut off)
+                sides.append(0.0)
+                spans.append((xs, xs + w))
+            elif xs + w / 2 > rect.right():
+                sides.append(1.0)
+                spans.append((xs - w, xs))
+            else:
+                sides.append(0.5)
+                spans.append((xs - w / 2, xs + w / 2))
         blocked = []
         if legend is not None and legend.isVisible() and getattr(legend, "items", None):
             lr = legend.sceneBoundingRect()
@@ -329,13 +337,14 @@ class EventOverlay:
                 if lr.top() < yc + ROW_PITCH_PX / 2 and lr.bottom() > yc - ROW_PITCH_PX / 2:
                     blocked.append((lr.left() - LABEL_GAP_PX, lr.right() + LABEL_GAP_PX, r))
         rows = place_labels(spans, n_rows, blocked)
-        for (xs, dkey), row in zip(order, rows):
+        for (xs, dkey), row, side in zip(order, rows, sides):
             label = self.items[dkey]["lines"][0].label
             if row is None:
                 label.setVisible(False)
                 continue
+            label.anchors = [(side, 0.5), (side, 0.5)]
             yc = FIRST_ROW_PX + row * ROW_PITCH_PX
-            label.setPosition(max(0.0, min(1.0, 1.0 - yc / rect.height())))
+            label.setPosition(max(0.0, min(1.0, 1.0 - yc / rect.height())))     # (applies the anchor too)
             label.setVisible(True)
 
     # ------------------------------------------------------------------ interaction

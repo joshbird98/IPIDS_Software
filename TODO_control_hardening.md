@@ -68,6 +68,34 @@ simulator; none of it has been tried on the real hardware yet (see "Lab PC valid
     to dots zoomed in, SystemLogs/viewer.log names the overlapping files ("Rows for the same times ...").
 
 ## Done
+- 27 October 2026, night (Josh, in the simulator on his laptop: after a recipe, the filament setpoint
+  read 28.009 A, "not under external control", and "29" typed over it with Enter did nothing, with no
+  note; then Start the simulator opened no windows at all). From his logs: the recipe hadn't finished
+  but failed (step 15: the thermionic current reached 57 mA of the 100 it waited for); six of his
+  filament entries were sent (28.5, 28.509, 28.538, 28.528, 28.0, 28.01 - the odd ones the box's arrows,
+  1 mA a click); the 28.009 he saw was one click down, never sent (the HMI logged it as not sent when
+  it closed), so his typing had gone to no box. Reproduced in the HMI: coming back to it by clicking a
+  box, after the control used last was hidden or locked while the HMI was in the background, the focus
+  keeping parked the keyboard on the window - the text selected in the box, the keys going nowhere.
+  Now a control just clicked keeps the keyboard (control_main._keep_focus_here, with the press point
+  from wheel_guard.last_press_at); digits or Enter that reach the window say so ("What you typed went
+  into no setpoint box..."); an entry not yet sent has a dashed amber outline; a value sent but not in
+  use 3 s later says Not taken, with the panel's likeliest reason (supply off, auto-emission, the
+  PLC's control mode); the filament's arrows step 10 mA. The simulator: its services outlive the HMI
+  and viewer until q in its own window, and run_simulation.py, started again, exited with a line in a
+  console that closed at once. It now asks: open the HMI and viewer on the running one, restart, stop,
+  or leave it. Also: the source panel's row is Caesium oven (as the interlocks panel), and the viewer
+  writes mbar and °C for the registry's mB and degC (legends, values, channel lists).
+- 27 October 2026, night (Josh's thesis: the operator interface figure, and figures for Appendix B.4
+  to B.6): src/utils/make_thesis_screenshots.py takes them from the simulator, as the help pictures
+  are, re-painted at 18 px per mm of their width in the thesis (2700 px across the text width): the
+  whole HMI during a run (a recipe holding the einzel, magnet and Faraday cup; auto-emission on the
+  filament), System Health counting down a refused relay, Alarms in three ISA-18.2 states, the source,
+  vacuum, optics, interlocks and mass-scan panels, the recipe running with the Automation bar, the
+  recipe builder, the configuration editor, and the viewer with its export dialog. Run it from the
+  thesis' analysis/platform/hmi_screenshots.py; about ten minutes. run_offscreen (make_help_screenshots)
+  can give the run its own copy of config/recipes. The viewer's event labels near the edge of a plot
+  now sit beside their line instead of being cut in half ("s" of "4 events" in the first picture).
 - 27 October 2026, evening (a review of Josh's first F12 thesis figures: drawn 22 cm and 20 cm wide, so
   their text printed at 6-7 pt; legends of raw tag names, "Source.Filament RB Power [W]", pressure in
   "mB"; no axis titles; "the traces are embedded as a JPEG"): in the thesis style the words are a
