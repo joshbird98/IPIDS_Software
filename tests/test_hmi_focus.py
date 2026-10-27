@@ -127,3 +127,71 @@ def test_a_control_locked_while_the_hmi_was_in_the_background(hmi):
     finally:
         away.close()
         away.deleteLater()
+
+
+def test_coming_back_by_clicking_a_box_gives_it_the_keyboard(hmi):
+    """October 2026 (Josh, in the simulator): back in the HMI by clicking the filament's setpoint box -
+    after the control he had used last was hidden while the HMI was in the background - the keyboard
+    was parked on the window: the box showed the text he selected, but "29" and Enter went nowhere,
+    with no message. A control the operator has just clicked keeps the keyboard."""
+    from PyQt6.QtCore import QPoint
+    from PyQt6.QtWidgets import QLineEdit
+    app, w, notices = hmi
+    sent = []
+    w.cmd_thread.send_command = lambda route, tag, value, *a, **k: sent.append((tag, value))
+    w.src_dock.raise_()
+    app.processEvents()
+    used_last = w.health_widget.btn_reset_faults
+    used_last.setEnabled(True)
+    used_last.setFocus(Qt.FocusReason.MouseFocusReason)
+    app.processEvents()
+    box = w.src_widget.psu_controls["Filament"]["sp_box"]
+    box.setEnabled(True)
+    box.show_setpoint(28.01)
+    away = QLineEdit()
+    try:
+        away.show()
+        away.activateWindow()
+        QTest.qWaitForWindowActive(away, 2000)
+        used_last.hide()                         # hidden meanwhile: Qt leaves the focus with it
+        edit = box.lineEdit()                    # the click that brings the HMI back, selecting the text
+        QTest.mousePress(edit, Qt.MouseButton.LeftButton, pos=QPoint(2, edit.height() // 2))
+        QTest.mouseMove(edit, QPoint(edit.width() - 2, edit.height() // 2))
+        QTest.mouseRelease(edit, Qt.MouseButton.LeftButton, pos=QPoint(edit.width() - 2, edit.height() // 2))
+        w.activateWindow()
+        QTest.qWaitForWindowActive(w, 2000)
+        app.processEvents()
+        assert QApplication.focusWidget() is box
+        box.lineEdit().selectAll()
+        for key in "29":
+            QTest.keyClick(QApplication.focusWidget(), key)
+        QTest.keyClick(QApplication.focusWidget(), Qt.Key.Key_Return)
+        assert sent == [("ion_beam.source.filament.sp_requested_current", 29.0)]
+    finally:
+        used_last.show()
+        away.close()
+        away.deleteLater()
+
+
+def test_typing_that_reaches_the_window_says_so(hmi):
+    """Digits or Enter with no box holding the keyboard (it was parked on the window, or a button has
+    it) went nowhere without a word: now a notice says so (once in a while, not for every key)."""
+    app, w, notices = hmi
+    w.setFocus(Qt.FocusReason.OtherFocusReason)
+    app.processEvents()
+    QTest.keyClicks(w, "29")
+    QTest.keyClick(w, Qt.Key.Key_Return)
+    lost = [n for n in notices if "went into no setpoint box" in n]
+    assert len(lost) == 1
+    btn = w.src_widget.psu_controls["Extraction"]["btn_enable"]      # a button takes no digits either
+    btn.setEnabled(True)
+    btn.setFocus(Qt.FocusReason.MouseFocusReason)
+    w._lost_keys_shown = 0.0
+    QTest.keyClicks(btn, "5")
+    assert len([n for n in notices if "went into no setpoint box" in n]) == 2
+
+
+def test_the_filament_steps_by_10_ma(hmi):
+    """Its arrows stepped 1 mA: nine clicks took it from 28.5 to 28.509 A (Oct 2026)."""
+    app, w, _ = hmi
+    assert w.src_widget.psu_controls["Filament"]["sp_box"].singleStep() == 0.01

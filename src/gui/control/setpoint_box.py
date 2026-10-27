@@ -25,9 +25,18 @@ Until the operator starts editing, the box follows the live setpoint (show_setpo
 not. While that isn't known - no telemetry yet, the service silent, or a value outside the box's
 range, which Qt would clamp - the box is empty and can't be stepped: a step from a number that
 isn't the real setpoint would send a wrong one. Typing a whole value still works.
+
+An entry not yet sent looks it (the "pending" property: a dashed amber outline), so a number typed
+and left - the window left before Enter, say - can't be taken for the setpoint in use. And a value
+sent is checked: if TAKE_S later the setpoint in use is still the one from before, not moving
+towards it, the operator is told it wasn't taken, with the panel's guess at why (why_not_taken) -
+the service may have accepted it and the device not applied it (the PLC zeroes the setpoint of a
+supply that is off; auto-emission sets the filament's). A setpoint that moves - a ramp - is left to
+get there.
 """
 import logging
 import math
+import time
 
 from PyQt6.QtCore import QEvent, Qt, pyqtSignal
 from PyQt6.QtGui import QValidator
@@ -41,6 +50,7 @@ _WINDOW_LEFT = (Qt.FocusReason.ActiveWindowFocusReason, Qt.FocusReason.PopupFocu
 _ENTER = (Qt.Key.Key_Return, Qt.Key.Key_Enter)
 _NO_STEPS = QAbstractSpinBox.StepEnabledFlag.StepNone
 LOCKED = "the box was locked while you were typing (its tooltip says why)"
+TAKE_S = 3.0            # a value sent and not in use this long after, nor on its way: not taken
 
 
 def _number(value):
@@ -67,6 +77,8 @@ class SetpointBox(QDoubleSpinBox):
         self._last_sent = None        # the operator's last value sent from here
         self._edited = False
         self._finishing = None        # (focus-out reason or None for Enter, typed, text ok, on screen, text)
+        self._sent = None             # (value, the live setpoint before, when) until it is in use
+        self.why_not_taken = None     # () -> str: the panel's guess at why a value sent wasn't taken
         self.lineEdit().textEdited.connect(self._mark_edited)
         self.editingFinished.connect(self._finished)
 
@@ -78,6 +90,7 @@ class SetpointBox(QDoubleSpinBox):
     def show_setpoint(self, value):
         """The live setpoint from telemetry (None, or anything not a number: not known)."""
         self._live = _number(value)
+        self._check_taken()
         if not self._edited:
             self._show_live()
 
@@ -92,6 +105,7 @@ class SetpointBox(QDoubleSpinBox):
         if not self._edited:
             return
         self._edited = False
+        self._show_pending(False)
         if self._follows_live:
             self._show_live()
         elif self._before_edit is not None:
@@ -217,6 +231,20 @@ class SetpointBox(QDoubleSpinBox):
             self._edited = True
             self._before_edit = self.value()        # (typed text isn't taken in until Enter / focus-out)
             self._live_at_edit = self._live
+            self._show_pending(True)
+
+    def _show_pending(self, pending: bool):
+        """An entry not sent yet looks it (the theme draws a dashed amber outline)."""
+        value = "yes" if pending else ""
+        if (self.property("pending") or "") != value:
+            self.setProperty("pending", value)
+            self.style().unpolish(self)
+            self.style().polish(self)
+            self.update()
+
+    def _tol(self, value: float) -> float:
+        """Values closer than this are the same setpoint, as the box shows it."""
+        return max(abs(value) * 1e-6, 0.5 * 10 ** -self.decimals())
 
     def _live_moved(self) -> bool:
         """The live setpoint changed while the operator was editing (it was known when they began) -
@@ -224,10 +252,45 @@ class SetpointBox(QDoubleSpinBox):
         was, now = self._live_at_edit, self._live
         if was is None or now is None:
             return False
-        tol = max(abs(was) * 1e-6, 0.5 * 10 ** -self.decimals())
+        tol = self._tol(was)
         if abs(now - was) <= tol:
             return False
         return self._last_sent is None or abs(now - self._last_sent) > tol
+
+    def _check_taken(self, now: float = None):
+        """The value last sent: in use, on its way (the setpoint moving) or still waited for; or, TAKE_S
+        after it was sent with the setpoint in use still the one from before, not taken - the operator
+        is told, with the panel's guess at why. Not judged when the setpoint before wasn't known, or the
+        box has been locked meanwhile (its tooltip says why)."""
+        if self._sent is None:
+            return
+        value, before, at = self._sent
+        live = self._live
+        if live is None or before is None:
+            if before is None:
+                self._sent = None
+            return
+        if abs(live - value) <= self._tol(value) or abs(live - before) > self._tol(before):
+            self._sent = None                       # in use; or moving - a ramp, or someone else's
+            return
+        now = time.monotonic() if now is None else now
+        if now - at < TAKE_S:
+            return
+        self._sent = None
+        if not self.isEnabled():
+            return
+        why = ""
+        if callable(self.why_not_taken):
+            try:
+                why = self.why_not_taken() or ""
+            except Exception:                       # (a guess at a reason must never break the box)
+                log.exception("why_not_taken failed")
+        message = (f"{self._name()}: {value:g} was sent, but {live:g} is still the setpoint in use "
+                   f"{TAKE_S:g} s later - it wasn't taken. "
+                   + (why[:1].upper() + why[1:] if why else "Check the Command Log and the panel's badges")
+                   + ".")
+        log.warning(message)
+        self.notice.emit(message)
 
     def _drop(self, why: str, typed: str = None):
         typed = self._typed() if typed is None else typed
@@ -258,7 +321,9 @@ class SetpointBox(QDoubleSpinBox):
             # own key handling - pasted from the context menu, say - and keeps its old number)
             value = self.valueFromText(text)
             self._edited = False
+            self._show_pending(False)
             self._last_sent = value
             if value != self.value():
                 self.setValue(value)
+            self._sent = (value, self._live, time.monotonic()) if self._follows_live else None
             self.committed.emit(value)

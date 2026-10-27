@@ -475,6 +475,7 @@ QLineEdit:disabled, QAbstractSpinBox:disabled, QComboBox:disabled, QDateTimeEdit
 QLineEdit[tone="fault"], QAbstractSpinBox[tone="fault"] {{ border: 2px solid {t['fault_fill']};
     background-color: {t['fault_bg']}; }}
 QLineEdit[tone="warn"], QAbstractSpinBox[tone="warn"] {{ border: 2px solid {t['warn_fill']}; }}
+QAbstractSpinBox[pending="yes"] {{ border: 2px dashed {t['warn_fill']}; }}
 QAbstractSpinBox {{ padding-right: 20px; }}
 QAbstractSpinBox::up-button, QAbstractSpinBox::down-button {{ subcontrol-origin: border; width: 18px;
     border: none; border-left: 1px solid {t['border_soft']}; background: transparent; }}

@@ -87,7 +87,7 @@ Switch the filament on first (**ENABLE**, then the confirming click): the PLC ze
 
 ## Caesium oven
 
-21. **Cooling off.** Make sure the oven's forced cooling is off: the button on the **Cesium oven** row reads **FORCED COOLING**, not **FORCED COOLING: ON**, and the row's second line doesn't say **cooling air on**.
+21. **Cooling off.** Make sure the oven's forced cooling is off: the button on the **Caesium oven** row reads **FORCED COOLING**, not **FORCED COOLING: ON**, and the row's second line doesn't say **cooling air on**.
 22. **Heat.**
     1. Switch the oven heater on: **HEATER ON**, then the confirming click.
     2. Type the oven setpoint, typically 100 to 150 °C.

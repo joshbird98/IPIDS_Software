@@ -68,7 +68,7 @@ A link to a section uses the heading's text in lower case, with spaces turned in
 
 **Voice.** Plain British English. Speak to the reader ("Press **RESET FAULTS**"), in the present tense and the active voice. Short sentences. Say what something does and when you would use it; leave out how hard it was to build.
 
-**Names on the screen.** Write a button, label or menu exactly as it appears, in bold: **ENABLE SAFETY RELAY**, **View > Reset layout**, **Acknowledge selected**. Write a panel by its title, in bold the first time on a page: the **Vacuum System** panel. In ordinary text use British spelling (caesium, colour, optimiser) even where the screen differs (the source panel's row is labelled **Cesium oven**).
+**Names on the screen.** Write a button, label or menu exactly as it appears, in bold: **ENABLE SAFETY RELAY**, **View > Reset layout**, **Acknowledge selected**. Write a panel by its title, in bold the first time on a page: the **Vacuum System** panel. In ordinary text use British spelling (caesium, colour, optimiser) even where the screen differs (the PLC's fault texts say **Cesium**, and a shutdown step **CESIUM COOLDOWN**).
 
 **Names in the code.** Tag names, file names, folders and commands go in `code`: `ion_beam.facilities.safety_relay_active`, `config/alarm_config.json`, `python run_simulation.py`.
 

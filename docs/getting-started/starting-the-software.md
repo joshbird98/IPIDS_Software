@@ -86,6 +86,8 @@ It starts the services, the HMI and the data viewer (the launcher's **Start the 
 
 The command window it was started from shows a menu for making things go wrong: the PLC lost, a safety relay trip, an einzel arc, the analyser magnet 10 % low, a gauge controller unreachable and more. Type a number to switch a fault on or off, `c` to clear them all and `q` to stop everything.
 
+Closing the HMI and the data viewer doesn't stop the simulator: its services carry on until `q` is typed in that window. Started again meanwhile (the launcher's **Start the simulator** too), it says the simulator is already running and asks: `o` opens its HMI and data viewer again, with the fault menu, `r` restarts it, `s` stops it and `q` leaves it running.
+
 The simulated machine starts as the real one does after a power-up: gate valve shut, safety relay off. Open the gate valve and switch the safety relay on before the supplies accept commands. How closely the simulator follows the real source is described in [The simulator](../how-it-works/simulator.md).
 
 Each program also takes `--sim` on its own, for example `python src/hmi.py --sim`. It then uses the simulator's devices, ports and data, so it never talks to the real machine. `main_launcher.py --sim` is a launcher for the simulator's system: its buttons start the simulator's services, HMI and data viewer.

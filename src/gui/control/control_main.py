@@ -120,6 +120,7 @@ class ControlMainWindow(QMainWindow):
         self.setFocus(Qt.FocusReason.OtherFocusReason)
         # ... nor after the focused control is locked or its panel goes away (see _keep_focus_here)
         self._focus_choice = None
+        self._lost_keys_shown = 0.0             # (keyPressEvent: typing that went into no control)
         QApplication.instance().focusChanged.connect(self._keep_focus_here)
         for dock in self.findChildren(QDockWidget):
             dock.visibilityChanged.connect(lambda visible, d=dock: self._panel_shown(d) if visible
@@ -133,9 +134,19 @@ class ControlMainWindow(QMainWindow):
         locks a whole panel) or hidden: the operator's next keys - Space, digits and Enter - would
         then act on a control they never chose. Park it on the window instead. With the window in
         the background Qt moves it without a word, and the keyboard lands there when the operator
-        comes back: then too."""
+        comes back: then too.
+
+        Never away from a control the operator has just clicked, though. Coming back to the HMI by
+        clicking a setpoint box, after the control they had used last was locked or hidden while the
+        HMI was in the background, used to park the keyboard on the window: the box showed the text
+        they selected, and the value they typed and their Enter went nowhere, with no message
+        (Josh, October 2026: the filament's "29")."""
         try:
             if new is None or new is self or not self.isAncestorOf(new):
+                return
+            pressed = wheel_guard.last_press_at(QApplication.instance())
+            if pressed is not None and new.rect().contains(new.mapFromGlobal(pressed)):
+                self._focus_choice = new        # the operator's choice: they just clicked it
                 return
             if old is not None and self.isAncestorOf(old):
                 if not old.isEnabled() or not old.isVisible():
@@ -153,6 +164,19 @@ class ControlMainWindow(QMainWindow):
     def _park_focus(self):
         self._focus_choice = None
         self.setFocus(Qt.FocusReason.OtherFocusReason)
+
+    def keyPressEvent(self, event):
+        """A value typed, or Enter, that reaches the window went into no control: the keyboard was
+        parked here (see _keep_focus_here), or the control holding it takes no text. Say so, rather
+        than nothing happening."""
+        text = event.text()
+        if (text and (text.isdigit() or text in ".,-")) or event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
+            now = time.monotonic()
+            if now - self._lost_keys_shown > 5.0:
+                self._lost_keys_shown = now
+                self._show_notice("What you typed went into no setpoint box: none had the keyboard. Click in "
+                                  "the box, then type the value and press Enter.")
+        super().keyPressEvent(event)
 
     def _panel_gone(self, dock):
         """A dock closed or switched away (Qt keeps a switched-away tab's widgets, and their focus,
@@ -184,10 +208,11 @@ class ControlMainWindow(QMainWindow):
             QMessageBox.warning(self, "SINDIE", problem)
 
     def _show_notice(self, message: str):
-        log.info("Setpoint not sent: %s", message)
+        taken = " was sent, but " in message          # (sent, and the setpoint in use didn't change)
+        log.info("Setpoint %s: %s", "not taken" if taken else "not sent", message)
         try:
-            InfoBar.warning("Not sent", message, orient=Qt.Orientation.Horizontal, isClosable=True,
-                            position=InfoBarPosition.TOP_RIGHT, duration=8000, parent=self)
+            InfoBar.warning("Not taken" if taken else "Not sent", message, orient=Qt.Orientation.Horizontal,
+                            isClosable=True, position=InfoBarPosition.TOP_RIGHT, duration=8000, parent=self)
         except Exception:  # a cosmetic pop-up must never take the HMI down
             log.exception("Could not show the setpoint notice")
 

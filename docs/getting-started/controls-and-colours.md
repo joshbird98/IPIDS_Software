@@ -40,7 +40,7 @@ The **ENABLE SAFETY RELAY** button works differently: see [System Health](../pan
 A setpoint box shows the live setpoint until you start to change it. To send a new value:
 
 - type it and press **Enter**, or move on to another control (Tab, or click another box or button); or
-- step it with the arrow keys, the box's own arrow buttons, or Page Up and Page Down, then press **Enter** or move on.
+- step it with the arrow keys, the box's own arrow buttons, or Page Up and Page Down, then press **Enter** or move on. On the source panel a step is the last digit shown (1 V on a kV supply), except the filament's: 0.01 A.
 
 Nothing else sends a value:
 
@@ -48,6 +48,12 @@ Nothing else sends a value:
 - The keyboard focus passing through a box sends nothing.
 - If you switch to another window part-way through typing, the entry waits for you to come back.
 - **Escape** throws the entry away.
+
+An entry you haven't sent yet has a dashed amber outline, so a number typed and left can't be taken for the setpoint in use: press **Enter** to send it, or **Escape** to go back to the setpoint.
+
+Clicking in a box gives it the keyboard. If what you type reaches no box (a control was locked and the keyboard went back to the window, say), a note at the top right says so: click in the box and type again.
+
+A value you send is checked too. If, 3 s later, the setpoint in use is still the one from before (and isn't on its way to yours, as a ramping supply's is), a **Not taken** note at the top right says so, with the likeliest reason: for example that the supply is off (the PLC zeroes the setpoint of a supply that is off) or that auto-emission is driving the filament.
 
 An entry is not sent, and a **Not sent** note appears at the top right of the HMI saying why, if:
 

@@ -442,6 +442,6 @@ class VacuumControlWidget(QWidget):
             self.btn_gv_close.setToolTip("Disabled: Gate valve is already closed.")
         elif not gv_close_perm:
             self.btn_gv_close.setToolTip(
-                "Disabled: Source must be cold (HV, Filament, and Cesium OFF) to close manually.")
+                "Disabled: Source must be cold (HV, Filament, and Caesium OFF) to close manually.")
         else:
             self.btn_gv_close.setToolTip("Click to command the gate valve CLOSED.")

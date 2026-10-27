@@ -10,6 +10,7 @@ The texts SINDIE shows when it refuses a command, greys out a control, drops a s
 | Pop-up at the top right of the HMI | A command that was not carried out: **Command refused**, **Command failed**, **No reply to command** or **Service not running**, with `<tag> = <value>: <result> - <reason>`. One pop-up per command and result every 5 s; it closes after 7 s. |
 | Tooltip of a greyed-out control | `Disabled: <reason>`. Hover over the control to read it. |
 | **Not sent** pop-up at the top right | A setpoint entry that was dropped, and why. |
+| **Not taken** pop-up at the top right | A setpoint sent that the device didn't take, and the likeliest reason. |
 | Status lines of the **Recipe Execution**, **Mass Scan** and **Optimiser** panels | Why a sequence was refused, stopped or failed. |
 | **Alarms** panel | The alarms raised by the alarm service, and the HMI's own alarm when that service isn't running. |
 | **PLC faults** list in the **System Health** panel | The latched PLC faults, as `<NAME>: <description>`. |
@@ -248,7 +249,7 @@ Every service publishes, for each subsystem it controls, whether it would accept
 | `Disabled: Gate valve hardware fault detected.` | **OPEN** and **CLOSE** (both read **FAULT LOCKOUT**) | `GateValve_Timeout` or `GateValve_Conflict` is latched. | Check the valve, its air and its limit switches, then press **RESET FAULTS**. |
 | `Disabled: Gate valve is already open.`, `Disabled: Gate valve is already closed.` | **OPEN**, **CLOSE** | | None needed. |
 | `Disabled: the PLC doesn't allow the valve to open. It needs VG1 and VG2 read, healthy and below their set points, and no VG1, VG2, GRAPHIX or watchdog fault latched (F1 for more).` | **OPEN** | The PLC's gate-valve open permissive (`ion_beam.source.chamber.stat_gv_open_permissive`) is false. | See [The gate valve does not open](troubleshooting.md#the-gate-valve-does-not-open). |
-| `Disabled: Source must be cold (HV, Filament, and Cesium OFF) to close manually.` | **CLOSE** | The gate valve's close permissive is false (see above). | Use **INITIATE SHUTDOWN**. |
+| `Disabled: Source must be cold (HV, Filament, and Caesium OFF) to close manually.` | **CLOSE** | The gate valve's close permissive is false (see above). | Use **INITIATE SHUTDOWN**. |
 | `Not available: the turbo service isn't sending data (stopped, restarting or not running).`, `Not available: the link to the pump's controller is down.`, `Not available: the pump isn't answering.` | **START PUMP** | The pump's readings aren't live (the chip reads **STALE** or **OFFLINE**). | Check `service_source_turbo` in **Service Manager**, then the pump's network bridge and the pump. |
 | `The pump is slowing down. It can be started again once it has stopped.` | **START PUMP** | The pump has been stopped, or has tripped, and is running down. | |
 | `Disabled: Hardware interlock or fault is active.` | source panel setpoint (badge **LOCKED**) | The PLC's lockout for the supply is set (`stat_lockout`). | Read the **PLC faults** list in **System Health**. |
@@ -342,8 +343,10 @@ A setpoint box sends only what you type or step, when you press Enter or move on
 | `<box>: '<entry>' is not a value - nothing sent. Type a value and press Enter, or Escape to go back to the setpoint.` | You pressed Enter on text that isn't a number: empty, or a lone `-`. The entry stays in the box. | Type a number and press Enter, or press Escape. |
 | `<box>: <entry> not sent - '<entry>' is not a value.` | You moved on from text that isn't a number. | Type a number. |
 | `<box>: <entry> not sent - the setpoint changed to <value> while you were typing - enter it again if you still want it.` | Something else set this setpoint (a recipe, a scan, another HMI) after you started typing. | Check the new setpoint, and enter yours again if you still want it. |
+| `What you typed went into no setpoint box: none had the keyboard. Click in the box, then type the value and press Enter.` | You typed digits or pressed Enter while no box had the keyboard: it was on the window (after a control was locked, or a panel changed) or on a button. Nothing was sent. Shown at most every 5 s. | Click in the box first. |
+| **Not taken**: `<box>: <value> was sent, but <in use> is still the setpoint in use 3 s later - it wasn't taken. <why>.` | The service accepted the value (or refused it: the Command Log says), but the setpoint in use didn't change. `<why>` is the panel's likeliest reason: `the <supply> supply is off, and the PLC zeroes the setpoint of a supply that is off - switch it on, then set it`; `auto-emission is on: the PLC sets the filament current itself - switch AUTO EMISSION off first`; `the PLC reports control mode <n> for it`; or `Check the Command Log and the panel's badges`. | Do what the reason says, then enter the value again. |
 
-Escape drops an entry without a note. If the HMI window loses the focus (another program, or a dialog), the entry waits until you come back. While a setpoint isn't known the box is empty and the arrow keys do nothing; you can still type a whole value. See [How the controls behave](getting-started/controls-and-colours.md).
+An entry not yet sent has a dashed amber outline. Escape drops an entry without a note. If the HMI window loses the focus (another program, or a dialog), the entry waits until you come back. While a setpoint isn't known the box is empty and the arrow keys do nothing; you can still type a whole value. See [How the controls behave](getting-started/controls-and-colours.md).
 
 ## Message boxes and banners in the HMI
 
@@ -351,6 +354,7 @@ Escape drops an entry without a note. If the HMI window loses the focus (another
 |---|---|---|---|
 | **Command refused**, **Command failed**, **No reply to command**, **Service not running** (**Command problem** otherwise): `<tag> = <value>: <result> - <reason>` | pop-up, top right | A command was not carried out. Refused and failed show in red, no reply and not running in amber. | See [Why a command was refused](#why-a-command-was-refused). |
 | **Not sent** | pop-up, top right | A setpoint entry was dropped. | See [Setpoint entries that were not sent](#setpoint-entries-that-were-not-sent). |
+| **Not taken** | pop-up, top right | A setpoint was sent but isn't in use 3 s later. | See [Setpoint entries that were not sent](#setpoint-entries-that-were-not-sent). |
 | **ALARM SERVICE NOT RUNNING**, with the alarm `The alarm service is not running - alarms are NOT being monitored. Restart it from the Service Manager panel.` | Alarms | No data from `service_alarms`. The HMI sounds this critical alarm itself; it can't be acknowledged. | Start `service_alarms` in **Service Manager**. **SILENCE** stops the sound meanwhile. |
 | `Alarms: waiting for the alarm service...` | Alarms | No alarm data yet since the HMI started. | Wait a few seconds. |
 | `SEQUENCER OFFLINE - The sequencer service is not running (see the Service Manager panel).` | Recipe Execution | No data from `service_sequencer`. | Start it in **Service Manager**. |

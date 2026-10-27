@@ -10,6 +10,7 @@ import zlib
 
 from src.gui import theme
 from src.gui.style import set_prop, set_role
+from src.gui.thesis_style import display_unit
 
 
 def _star(button, on: bool):
@@ -216,7 +217,7 @@ class ChannelSelectorDialog(QDialog):
         description = metadata.get('description', "")
 
         # Extract the unit and format it with brackets
-        unit = metadata.get('unit', "")
+        unit = display_unit(metadata.get('unit', ""))
         unit_str = f" [{unit}]" if unit else ""
 
         if in_fav_folder:
@@ -286,7 +287,7 @@ class ChannelSelectorDialog(QDialog):
             raw_text = item.text(1).strip()
 
             # Fetch the expected unit
-            unit = self.registry.get(full_tag, {}).get("unit", "")
+            unit = display_unit(self.registry.get(full_tag, {}).get("unit", ""))
             unit_str = f" [{unit}]" if unit else ""
 
             # STRIP the unit out if the user left it in the text box
@@ -410,7 +411,7 @@ class ChannelSelectorDialog(QDialog):
                     base_label = reg_data.get("default_label", tag.split('.')[-1])
 
                 # 3. Extract the unit dynamically
-                unit = reg_data.get("unit", "")
+                unit = display_unit(reg_data.get("unit", ""))
                 unit_str = f" [{unit}]" if unit else ""
 
                 # 4. Combine them for the display list
@@ -495,7 +496,7 @@ class ChannelSelectorDialog(QDialog):
             # falling back to a stripped version of the UI text just in case.
             clean_label = self.config.get(tag, {}).get('label')
             if not clean_label:
-                unit = self.registry.get(tag, {}).get("unit", "")
+                unit = display_unit(self.registry.get(tag, {}).get("unit", ""))
                 unit_str = f" [{unit}]" if unit else ""
                 raw_label = item.text(1)
                 clean_label = raw_label[:-len(unit_str)].strip() if (

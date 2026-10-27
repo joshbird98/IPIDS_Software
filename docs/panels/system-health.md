@@ -99,7 +99,7 @@ An accepted reset clears all six fault words, returns both step counters to 0, e
 ## Things to know
 
 - The PLC drives the traffic-light beacon: red while the safety relay is closed (on), green while it is open, amber while a PLC fault is latched. Spellman faults (**UNIT1_ARC_EXCEEDED** and the like) are latched and listed like the others but don't light the amber. The buzzer sounds for 3 s when the relay closes.
-- After **ABORT SHUTDOWN** the PLC can leave the caesium oven's cooling air on (the source panel's **Cesium oven** row says **cooling air on**) until **RESET FAULTS**.
+- After **ABORT SHUTDOWN** the PLC can leave the caesium oven's cooling air on (the source panel's **Caesium oven** row says **cooling air on**) until **RESET FAULTS**.
 - Closing the gate valve with the relay on trips the relay (see [Vacuum System](vacuum.md)).
 
 ## See also

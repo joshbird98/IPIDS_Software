@@ -24,7 +24,7 @@ As on the real machine, open the gate valve and energise the safety relay before
 
 The simulator can run on the lab PC while the real system is running, without touching it:
 
-- **Its own ports.** Every ZeroMQ port is moved up by 10000 (so `PLC_DATA` is on 15550), and the service manager's lock port moves too. It refuses to start if a service manager is already running on those ports.
+- **Its own ports.** Every ZeroMQ port is moved up by 10000 (so `PLC_DATA` is on 15550), and the service manager's lock port moves too. If a service manager is already running on those ports (a simulator started earlier), it doesn't start a second: it asks whether to open the HMI and data viewer on the one running, restart it, stop it or leave it.
 - **Its own data.** Data and logs go to `data_sim/` instead of `data/`: chunks, day files, `events.db`, `alarm_state.json`, and the logs in `data_sim/SystemLogs/`, with the console output of the manager, the HMI and the data viewer in `simulation_manager_console.log`, `simulation_hmi_console.log` and `simulation_viewer_console.log`.
 - **Its own tag registry.** At every start it builds `data_sim/system_tags.json` from the config files (keeping the hand-made labels of `config/system_tags.json`), so it always matches them even if `config/system_tags.json` hasn't been rebuilt since a pull.
 - **Its own services.** The service manager's start-up clean-up only kills leftover processes of its own installation, so it never stops the real services.

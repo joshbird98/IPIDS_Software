@@ -17,6 +17,7 @@ from src.core.live_buffer import break_gaps
 from src.gui import theme
 from src.gui.data_viewer.viewer_widgets import LogAxisItem, TimeAxisItem
 from src.gui.style import reserve_width, set_role, swatch
+from src.gui.thesis_style import display_unit
 
 SERIES_STYLES = (Qt.PenStyle.SolidLine, Qt.PenStyle.DashLine, Qt.PenStyle.DotLine)
 
@@ -184,7 +185,7 @@ class LanesMixin:
                 if cfg.get('selected') and cfg.get('lane') == tag:
                     val_lbl = QLabel("---")
                     set_role(val_lbl, "readout-sm")
-                    reserve_width(val_lbl, "-0.00e-00 mB")       # scientific notation and units fit
+                    reserve_width(val_lbl, "-0.00e-00 mbar")     # scientific notation and units fit
                     val_lbl.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
                     val_lbl.setSizePolicy(QSizePolicy.Policy.MinimumExpanding, QSizePolicy.Policy.Preferred)
 
@@ -343,10 +344,10 @@ class LanesMixin:
             return "---"
 
         # 1. Specific Override for Vacuum Pressure (Scientific Notation)
-        if base_unit == "mB":
-            # Use 'e' for scientific notation (e.g., 5.30e-07)
+        if base_unit in ("mB", "mbar"):
+            # Use 'e' for scientific notation (e.g., 5.30e-07 mbar: the registry's "mB")
             sci_fmt = "+.2e" if is_delta else ".2e"
-            return f"{value:{sci_fmt}} {base_unit}"
+            return f"{value:{sci_fmt}} mbar"
 
         # 2. General Float Format for everything else
         fmt = "+.2f" if is_delta else ".2f"
@@ -365,8 +366,8 @@ class LanesMixin:
             else:
                 return f"{value * 1e12:{fmt}} pA"
 
-        # 4. Fallback for standard non-scaled units (V, Hz, %, etc.)
-        return f"{value:{fmt}} {base_unit}"
+        # 4. Fallback for standard non-scaled units (V, Hz, %, etc.; the registry's degC as °C)
+        return f"{value:{fmt}} {display_unit(base_unit)}"
 
     def _sync_specific_viewbox(self, main_plot, right_viewbox):
         """Forces geometry alignment between a specific lane and its log axis."""
@@ -397,7 +398,7 @@ class LanesMixin:
             # live data the plots had no legend at all.
             if tag not in self._legend_tags:
                 label_text = cfg.get('label', tag)
-                unit = getattr(self, 'system_registry', {}).get(tag, {}).get("unit", "")
+                unit = display_unit(getattr(self, 'system_registry', {}).get(tag, {}).get("unit", ""))
                 unit_str = f" [{unit}]" if unit else ""
                 self.lane_legends[lane].addItem(c, name=f"{label_text}{unit_str}")
                 self._legend_tags.add(tag)

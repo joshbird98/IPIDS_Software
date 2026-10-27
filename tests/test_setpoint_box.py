@@ -389,3 +389,61 @@ def test_a_box_without_telemetry_goes_back_to_what_it_showed(app):
         assert r.sent == [pytest.approx(14.9)]
     finally:
         r.close()
+
+
+# --------------------------------------------------------------------------- not sent, not taken
+def test_an_entry_not_sent_yet_looks_it(rig):
+    """(Josh, 27 October 2026: a filament setpoint typed after a recipe "seemed to be ignored": a number
+    typed and left unsent mustn't look like the setpoint in use.)"""
+    rig.box.show_setpoint(28.0)
+    assert not rig.box.property("pending")
+    rig.type_in(rig.box, "29")
+    assert rig.box.property("pending") == "yes"
+    rig.key(Qt.Key.Key_Return)
+    assert not rig.box.property("pending") and rig.sent == [29.0]
+    rig.type_in(rig.box, "30")
+    rig.key(Qt.Key.Key_Escape)
+    assert not rig.box.property("pending")
+    rig.type_in(rig.box, "31")
+    rig.box.setEnabled(False)                                      # locked: dropped, and says so
+    assert not rig.box.property("pending")
+
+
+def test_a_value_sent_but_not_taken_is_reported(rig):
+    """Sent, and TAKE_S later the setpoint in use is still the one from before: the operator is told,
+    with the panel's guess at why. Taken, or on its way (a ramp), or locked meanwhile: nothing said."""
+    from src.gui.control import setpoint_box as sb
+    box = rig.box
+    box.why_not_taken = lambda: "the filament supply is off, and the PLC zeroes the setpoint of a supply that is off"
+    box.show_setpoint(28.0)
+    rig.type_in(box, "29")
+    rig.key(Qt.Key.Key_Return)
+    assert rig.sent == [29.0]
+    _value, before, at = box._sent
+    box.show_setpoint(28.0)                                        # not yet: still waited for
+    box._check_taken(now=at + sb.TAKE_S - 0.5)
+    assert rig.notices == []
+    box._check_taken(now=at + sb.TAKE_S + 0.1)
+    assert len(rig.notices) == 1
+    assert rig.notices[0].startswith("Extraction setpoint: 29 was sent, but 28 is still the setpoint in use")
+    assert "The filament supply is off" in rig.notices[0]
+    box._check_taken(now=at + 10)
+    assert len(rig.notices) == 1                                   # once
+    # taken
+    rig.type_in(box, "30")
+    rig.key(Qt.Key.Key_Return)
+    box.show_setpoint(30.0)
+    assert box._sent is None
+    # on its way: a ramp
+    rig.type_in(box, "40")
+    rig.key(Qt.Key.Key_Return)
+    box.show_setpoint(31.0)
+    assert box._sent is None
+    # locked meanwhile: its tooltip says why
+    box.show_setpoint(40.0)
+    rig.type_in(box, "50")
+    rig.key(Qt.Key.Key_Return)
+    at = box._sent[2]
+    box.setEnabled(False)
+    box._check_taken(now=at + 10)
+    assert len(rig.notices) == 1

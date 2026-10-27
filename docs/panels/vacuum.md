@@ -111,7 +111,7 @@ An amber chip under it, **VACUUM PERMISSIVE HELD:** *n* **s LEFT**, shows that t
 | **START PUMP** | Starts the source turbo pump, with one click. The turbo service first clears any fault the pump holds, then starts it. The button reads **RUNNING** and is greyed out while the pump runs up or turns at speed. It is greyed out, with the reason in its tooltip, while the pump is slowing down and while its readings aren't live. |
 | **RESET & START** | The same button after the pump has tripped: clears the fault and starts the pump. |
 | **OPEN** | Asks the PLC to open the gate valve. Available only while the PLC's open permissive is on and the valve isn't already open. Otherwise its tooltip says "Gate valve is already open." or "the PLC doesn't allow the valve to open" with what the permissive needs (below). |
-| **CLOSE** | Asks the PLC to close the gate valve. Available only while the PLC's close permissive is on and the valve isn't already closed. Otherwise its tooltip says "Gate valve is already closed." or "Source must be cold (HV, Filament, and Cesium OFF) to close manually." |
+| **CLOSE** | Asks the PLC to close the gate valve. Available only while the PLC's close permissive is on and the valve isn't already closed. Otherwise its tooltip says "Gate valve is already closed." or "Source must be cold (HV, Filament, and Caesium OFF) to close manually." |
 
 Both gate valve buttons read **OFFLINE** and are greyed out while the PLC link is down, and read **FAULT LOCKOUT** while a gate valve fault is latched (clear it with **RESET FAULTS** on the [System Health](system-health.md) panel). They act on one click, and no sequence can take them over: the gate valve can't be leased.
 

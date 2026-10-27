@@ -27,7 +27,7 @@ The hold-hot step lasts as long as the caesium takes to cool. While the sequence
 
 ## By hand
 
-1. **Cool the caesium.** On the **Cesium oven** row of the **TESS Ion Source Control** panel:
+1. **Cool the caesium.** On the **Caesium oven** row of the **TESS Ion Source Control** panel:
     - switch the heater off (click **HEATER ON** once);
     - switch forced cooling on (**FORCED COOLING**, which then reads **FORCED COOLING: ON**).
 2. **Wait about 20 minutes**, until the caesium temperature has levelled off near room temperature. The target and extraction currents fall with it.
@@ -45,7 +45,7 @@ While the caesium is still hot, the HMI won't let you switch the target, the fil
     - after **INITIATE SHUTDOWN**, the gate valve is shut (the PLC closes it).
 2. **Keep the caesium cooling on for at least 30 minutes.** It can be left on indefinitely without causing a fault, but it is best switched off after 30 minutes: click **FORCED COOLING: ON** once.
 
-    As the PLC program stands, while the safety relay is off the PLC keeps the cooling air on whatever you ask: the **Cesium oven** row still says **cooling air on**, and its tooltip says why. That does no harm. Stopping the air by itself once the caesium is cold would need a change to the PLC program.
+    As the PLC program stands, while the safety relay is off the PLC keeps the cooling air on whatever you ask: the **Caesium oven** row still says **cooling air on**, and its tooltip says why. That does no harm. Stopping the air by itself once the caesium is cold would need a change to the PLC program.
 3. Leave the services running. They keep logging the vacuum and the temperatures, and the alarms stay live.
 4. Add a marker in the **Experiment Logging** panel saying how you left the machine, for the next person.
 

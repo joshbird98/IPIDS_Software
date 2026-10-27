@@ -144,7 +144,9 @@ class IonSourceWidget(QWidget):
         sp_box.setSuffix(f" {pri_unit}")
         sp_box.setDecimals(decimals)
 
-        if decimals >= 3:
+        if name == "Filament":
+            sp_box.setSingleStep(0.01)      # (1 mA a click went nowhere: 28.509 A after nine, Oct 2026)
+        elif decimals >= 3:
             sp_box.setSingleStep(0.001)
         elif decimals == 2:
             sp_box.setSingleStep(0.01)
@@ -156,6 +158,7 @@ class IonSourceWidget(QWidget):
         # (The einzel's current limit is the Spellman service's job now: it sets one when the
         # supply holds none, whoever sets the voltage - this panel used to send 50 uA with each.)
         sp_box.committed.connect(lambda value, t=sp_tag: self._dispatch_command(t, value))
+        sp_box.why_not_taken = lambda n=name: self._why_not_taken(n)
 
         self.psu_controls[name] = {
             "lbl_rb": lbl_rb, "lbl_rb2": lbl_rb2, "sp_box": sp_box, "btn_enable": btn_enable, "arm": arm,
@@ -199,7 +202,7 @@ class IonSourceWidget(QWidget):
         self.lbl_body = lbl_rb
 
     def _build_cs_row(self, row):
-        lbl_name = QLabel("Cesium oven")
+        lbl_name = QLabel("Caesium oven")
         set_role(lbl_name, "title")
         lbl_rb, lbl_rb2 = _readback_labels("~000.0 °C [?]", "heater 100 % | cooling air on")
         lbl_rb.setText("--- °C")
@@ -219,7 +222,7 @@ class IonSourceWidget(QWidget):
             lambda *args, b=btn_cool: self._dispatch_command("ion_beam.source.cesium.cmd_force_cooling", b.isChecked()))
 
         sp_box = SetpointBox()
-        sp_box.setObjectName("Cesium setpoint")
+        sp_box.setObjectName("Caesium setpoint")
         sp_box.setRange(0.0, 200.0)
         self._apply_limits(sp_box, "ion_beam.source.cesium.sp_requested_temp")
         sp_box.setSuffix(" °C")
@@ -275,7 +278,23 @@ class IonSourceWidget(QWidget):
         else:
             btn.setToolTip(f"Click to ask the PLC to open the oven's cooling air (forced cooling). {why}")
 
+    def _why_not_taken(self, name: str) -> str:
+        """Why a setpoint sent from a supply's box may not have been taken (setpoint_box.py), from the
+        latest telemetry: the likeliest reason, or '' if none shows."""
+        data = getattr(self, "_data", None) or {}
+        base = self.psu_controls.get(name, {}).get("base_tag", "")
+        if name == "Filament" and data.get("ion_beam.source.thermionic.stat_auto_emission") == 1.0:
+            return "auto-emission is on: the PLC sets the filament current itself - switch AUTO EMISSION off first"
+        if base and "einzel" not in base and data.get(f"{base}.stat_enabled") == 0.0:
+            return (f"the {name.lower()} supply is off, and the PLC zeroes the setpoint of a supply that is off - "
+                    f"switch it on, then set it")
+        mode = data.get(f"{base}.ctrl_mode") if base else None
+        if mode:
+            return f"the PLC reports control mode {int(mode)} for it: it is driving it itself"
+        return ""
+
     def update_telemetry(self, data: dict):
+        self._data = data
         try:
             # Recompute lockout conditions based on raw telemetry
             sys_connected = bool(data.get("system.connected", False))
@@ -387,7 +406,7 @@ class IonSourceWidget(QWidget):
                 ctrl["arm"].show_state(None if stat_en is None else bool(stat_en),
                                        "State unknown: no current data from the PLC.")
                 ctrl["btn_enable"].setToolTip(
-                    f"Disabled: {comp_lock_reason}" if comp_lockout else "Click to toggle Cesium Heater PID control.")
+                    f"Disabled: {comp_lock_reason}" if comp_lockout else "Click to toggle Caesium Heater PID control.")
 
                 self._show_cooling(ctrl, data, base_tag, master_comms_lost, relay_active, auto_sdown)
 

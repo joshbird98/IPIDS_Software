@@ -15,7 +15,7 @@ The **Source power supplies** group has a row for each supply, and one for the s
 | **Target** | voltage, kV | current, mA, and power, W |
 | **Filament** | current, A | voltage, V, and power, W |
 | **Thermionic** | emission current, mA | voltage, V, and power, W |
-| **Cesium oven** | temperature, °C | heater duty cycle, % |
+| **Caesium oven** | temperature, °C | heater duty cycle, % |
 | **Source body** | temperature, °C | **PLC trips above 40 °C** |
 
 - The **Source body** row is a reading only, with no controls. Above 40 °C for 0.2 s the PLC latches **SRC_BODY_TEMP_HIGH**, switches off the extraction, target and filament, and starts a shutdown.
@@ -67,11 +67,11 @@ These are typical operating values for the TESS, not limits: the limits are the 
 | **Source Einzel** | 8 to 16 kV, tuned later on the beam | The current stays close to zero. A current above 50 µA points to failing einzel electrode insulators. |
 | **Filament** | 28 to 30 A | Hold a new filament, or one that has been at air, at 15 A first to degas it: the source pressure (VG1) spikes, then falls back to a low baseline. |
 | **Thermionic** | 100 to 150 mA | The emission current rises over about 15 s as the filament warms. **AUTO EMISSION** (optional) holds it at its setpoint, which keeps the ioniser power steady. |
-| **Cesium oven** | 100 to 150 °C | Reached and settled in about 15 minutes. Before heating, check that forced cooling is off: the button reads **FORCED COOLING**, not **FORCED COOLING: ON**. |
+| **Caesium oven** | 100 to 150 °C | Reached and settled in about 15 minutes. Before heating, check that forced cooling is off: the button reads **FORCED COOLING**, not **FORCED COOLING: ON**. |
 
 The beam energy is the extraction voltage plus the target voltage, for singly charged ions; **CALCULATE & SET AMPS** on the [Beamline Optics](beamline-optics.md) panel uses the same sum.
 
-Before start-up the source pressure should be below 5×10⁻⁷ mbar. When the safety relay first comes on, the **Source body** and **Cesium oven** temperatures read between 10 °C and room temperature, and every supply readback reads zero.
+Before start-up the source pressure should be below 5×10⁻⁷ mbar. When the safety relay first comes on, the **Source body** and **Caesium oven** temperatures read between 10 °C and room temperature, and every supply readback reads zero.
 
 ## When a control is greyed out
 

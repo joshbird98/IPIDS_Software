@@ -12,6 +12,9 @@ is built from the config files at every start, so it always matches them.
 This window then shows a menu for injecting faults (PLC lost, safety relay trip,
 Spellman arc, magnet sag, ...) to see how the services and the HMI react.
 Type q (or close this window) to stop everything.
+
+Closing only the HMI and the viewer leaves the simulated services running. Started again while
+they are, it says so and asks: open the HMI and viewer on them again, restart, stop, or leave them.
 """
 import argparse
 import contextlib
@@ -107,6 +110,53 @@ def _wait_for_services(timeout=90.0):
         sub.close(0)
 
 
+def _manager_running(lock_port) -> bool:
+    """Whether a service manager holds this system's lock port (it does while it runs)."""
+    probe = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    try:
+        probe.bind(("localhost", lock_port))
+    except OSError:
+        return True
+    finally:
+        probe.close()
+    return False
+
+
+def _already_running(offset):
+    """The simulator is running already: most often one whose HMI and viewer were closed but not
+    this window, so its services carried on. This used to exit with a line in its console window,
+    which closed at once: from the launcher, "Start the simulator" then seemed to do nothing at all
+    (Josh, October 2026). Say so, and ask. Returns 'open', 'restart', 'stop' or None (leave it)."""
+    print(f"The simulator is already running (ports offset by {offset}). Its services carry on when the HMI "
+          "and the viewer are closed, until q is typed in its own window, which may still be open.")
+    print("  o  open its HMI and data viewer again, with the fault menu here")
+    print("  r  restart it: stop it, then start afresh")
+    print("  s  stop it")
+    print("  q  leave it running")
+    choices = {"o": "open", "r": "restart", "s": "stop", "q": None}
+    while True:
+        try:
+            answer = input("> ").strip().lower()
+        except EOFError:
+            return None
+        if answer in choices:
+            return choices[answer]
+        print("?  (o, r, s or q)")
+
+
+def _stop_running():
+    """Stop a simulator this window didn't start: its manager stops every service, then itself; if it
+    doesn't answer, its processes are ended. '' once it has stopped, else what is wrong."""
+    from src.launcher import programs
+    problem = programs.stop_manager(timeout=30.0)
+    if problem:
+        print(f"{problem} - ending its processes instead")
+        programs.end_manager_processes()
+        time.sleep(1.0)
+        problem = "it is still running" if programs.manager_running() else ""
+    return problem
+
+
 def _menu(sim, procs):
     names = list(sim.FAULT_DESCRIPTIONS)
     closed = set()
@@ -152,29 +202,48 @@ def main():
     from src.core import paths
     from src.core.network_map import MANAGER_LOCK_PORT
 
-    probe = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    try:
-        probe.bind(("localhost", MANAGER_LOCK_PORT))
-    except OSError:
-        sys.exit(f"A service manager is already running on port offset {args.port_offset} "
-                 f"(another run_simulation.py?). Stop it first, or use --port-offset.")
-    finally:
-        probe.close()
+    attach = False                  # the services are already running: open the HMI and viewer on them
+    if _manager_running(MANAGER_LOCK_PORT):
+        choice = _already_running(args.port_offset)
+        if choice is None:
+            print("Left running.")
+            return
+        if choice == "open":
+            attach = True
+        else:
+            print("Stopping the simulator that is running...")
+            problem = _stop_running()
+            if problem:
+                sys.exit(f"Couldn't stop it: {problem}. End its python.exe processes in Task Manager, then "
+                         "start the simulator again.")
+            print("Stopped.")
+            if choice == "stop":
+                return
 
-    if not os.environ.get("SINDIE_REGISTRY", "").strip():       # (unless one was chosen on purpose)
+    registry = os.path.join(paths.DATA_DIR, "system_tags.json")
+    if os.environ.get("SINDIE_REGISTRY", "").strip():               # (one chosen on purpose)
+        pass
+    elif attach and os.path.exists(registry):
+        os.environ["SINDIE_REGISTRY"] = registry                    # the one the running services use
+    else:
         os.environ["SINDIE_REGISTRY"] = prepare_registry(paths.DATA_DIR)
     env = dict(os.environ, PYTHONPATH=ROOT + (os.pathsep + os.environ["PYTHONPATH"]
                                                if os.environ.get("PYTHONPATH") else ""))
     from src import sim
 
     os.makedirs(paths.LOG_DIR, exist_ok=True)
-    sim.set_faults(set())
     print(f"SINDIE simulation - data and logs in {paths.DATA_DIR}, ports offset by {args.port_offset}")
-    print("Starting the services (simulated devices)...")
-    procs = {"manager": _launch([sys.executable, os.path.join("src", "services", "service_manager.py"), "--sim"],
-                                os.path.join(paths.LOG_DIR, "simulation_manager_console.log"), env, new_group=True)}
+    if attach:
+        procs = {}
+        print("Opening the HMI and the data viewer on the simulator already running...")
+    else:
+        sim.set_faults(set())
+        print("Starting the services (simulated devices)...")
+        procs = {"manager": _launch([sys.executable, os.path.join("src", "services", "service_manager.py"),
+                                     "--sim"], os.path.join(paths.LOG_DIR, "simulation_manager_console.log"), env,
+                                    new_group=True)}
     try:
-        if not _wait_for_services():
+        if not attach and not _wait_for_services():
             print("Not every service came up - carrying on; check the services panel in the HMI.")
         if not args.no_hmi:
             procs["HMI"] = _launch([sys.executable, os.path.join("src", "hmi.py"), "--sim"],
@@ -193,7 +262,12 @@ def main():
         for name, proc in procs.items():
             if name != "manager" and proc.poll() is None:
                 proc.terminate()
-        _stop_manager(procs["manager"])
+        if "manager" in procs:
+            _stop_manager(procs["manager"])
+        else:                       # (opened on a simulator already running: q stops it all the same)
+            problem = _stop_running()
+            if problem:
+                print(f"The simulator's services couldn't be stopped: {problem}.")
         for proc in procs.values():
             try:
                 proc.wait(5)

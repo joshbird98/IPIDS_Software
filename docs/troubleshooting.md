@@ -349,7 +349,7 @@ Panels that are closed or behind a tab aren't refreshed; they catch up as soon a
 
 `python run_simulation.py` starts the service manager in simulation mode, waits for the services, then opens the HMI and the data viewer. Its own window then shows the fault menu.
 
-1. `A service manager is already running on port offset 10000 (another run_simulation.py?). Stop it first, or use --port-offset.`: another simulator is running. Stop it (type `q` in its window), or start this one with `--port-offset <n>`.
+1. `The simulator is already running (ports offset by 10000).`: one started earlier is still running, often one whose HMI and viewer were closed but not its own window (look for it behind the others). Answer `o` to open its HMI and data viewer again, `r` to restart it, `s` to stop it, or `q` to leave it. To run a second one beside it, start it with `--port-offset <n>`. (Before October 2026 it said `A service manager is already running on port offset 10000` and closed at once, so from the launcher nothing seemed to happen.)
 2. `Not every service came up - carrying on; check the services panel in the HMI.`: some services weren't **ONLINE** within 90 s. See [A service shows BACKOFF](#a-service-shows-backoff); the logs are in `data_sim/SystemLogs/`.
 3. `The service manager has stopped - see service_manager.log in data_sim/SystemLogs`: read that log.
 4. **A program stops at once** with a Python import error in its log: a package is missing. The packages are listed in `requirements.txt` (`pip install -r requirements.txt`).
