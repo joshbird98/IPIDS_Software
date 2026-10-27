@@ -21,6 +21,10 @@ What this does instead
   chosen size for the capture.
 * Shows the printed size the UI text will have, so you can pick a framing
   that keeps it >= ~6-7 pt.
+* In the thesis style (thesis_style.py), writes the figure's words as a figure
+  has them - plain legend names, the units on the axis titles, "Time of day" -
+  in a Figure text box where they can be changed; what is changed there is
+  remembered (data/figure_text.json) for the next capture of those channels.
 * Draws the plot lines at a chosen width on the page (Plot lines, in pt for a
   line 1 px wide on the screen), shown on the window while the dialog is open:
   pyqtgraph's pens are cosmetic, their width in the paint device's own pixels -
@@ -34,6 +38,7 @@ Use: press F12 with the mouse over the part you want (works in any viewer or
 HMI window), choose what to capture and the width on the page, Capture.
 Files go to data/exports/figures/<name>_<timestamp>.pdf/.svg/.png.
 """
+import json
 import logging
 import os
 from contextlib import contextmanager
@@ -45,24 +50,28 @@ from PyQt6.QtGui import (QColor, QCursor, QDesktopServices, QImage, QKeySequence
                          QPaintEngine, QPainter, QPainterPath, QPdfWriter, QPen, QRegion, QShortcut,
                          QTransform)
 from PyQt6.QtWidgets import (QAbstractScrollArea, QApplication, QCheckBox, QComboBox, QDialog, QDialogButtonBox,
-                             QDockWidget, QDoubleSpinBox, QFileDialog, QFormLayout, QGroupBox,
+                             QDockWidget, QDoubleSpinBox, QFileDialog, QFormLayout, QFrame, QGroupBox,
                              QHBoxLayout, QLabel, QLineEdit, QMainWindow, QPushButton, QRubberBand,
-                             QSpinBox, QTabWidget, QVBoxLayout, QWidget)
+                             QScrollArea, QSpinBox, QTabWidget, QVBoxLayout, QWidget)
 
+from src.core import paths
 from src.gui import theme
 from src.gui.style import set_role
-from src.gui.thesis_style import STYLES, SVG_FONTS, ThesisStyle, plot_items, plot_views
+from src.gui.thesis_style import (SMALL_PT, STYLES, SVG_FONTS, TEXT_WIDTH_CM, TITLE_PT, ThesisStyle, figure_texts,
+                                  plot_items, plot_views)
 from src.gui.thesis_style import LINE_PT as THESIS_LINE_PT
 from src.gui.thesis_style import WIDTH_CM
 from src.gui.thesis_style import AXIS_PT as MARKER_PT   # (event markers in a thesis figure: as fine as its axes)
 
 PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "../.."))
 DEFAULT_DIR = os.path.join(PROJECT_ROOT, "data", "exports", "figures")
+TEXTS_FILE = os.path.join(paths.DATA_DIR, "figure_text.json")   # thesis figure texts changed in the dialog
 SCREEN_DPI = 96.0           # Qt logical pixels per inch
 MIN_SIDE_PX = 120           # ignore tiny widgets when offering what to capture
 WINDOW_SIZES = [None, (1024, 640), (1280, 720), (1280, 800), (1440, 900), (1600, 900), (1920, 1080)]
 PDF_DPI = 1200
 LINE_PT = 0.75              # Plot lines at first: the printed width of a line 1 px wide on the screen
+TEXT_BOX_MAX_PX = 260       # Figure text: taller than this, its fields scroll
 _last = {"line_pt": LINE_PT, "style": None}   # (the dialog starts where the last capture left it)
 
 
@@ -289,6 +298,35 @@ def plot_lines(widget, width_px=None, colours=None, marker_px=None):
         lines.remove()
 
 
+@contextmanager
+def background_painted(widget):
+    """The graphics views in widget (pyqtgraph's plots) paint their backgrounds afresh for the length of
+    the with. They keep them as a picture of the whole plot area (QGraphicsView's CacheBackground,
+    pyqtgraph's choice) and paint that, so the PDF had an image in it - a blank white JPEG under the
+    traces, which are lines - and the SVG a PNG; painted afresh, the background is a filled rectangle."""
+    from PyQt6.QtWidgets import QGraphicsView
+    views = widget.findChildren(QGraphicsView)
+    inside = widget
+    while inside is not None and not isinstance(inside, QGraphicsView):
+        inside = inside.parentWidget()
+    if inside is not None and inside not in views:
+        views.insert(0, inside)
+    kept = []
+    for view in views:
+        kept.append((view, view.cacheMode()))
+        view.setCacheMode(QGraphicsView.CacheModeFlag.CacheNone)
+        view.resetCachedContent()
+    try:
+        yield
+    finally:
+        for view, mode in kept:
+            try:
+                view.setCacheMode(mode)
+                view.resetCachedContent()
+            except RuntimeError:              # (the view has gone)
+                pass
+
+
 def print_text_pt(widget, width_cm, width_px=None):
     """Size the widget's (application) font will have on paper at width_cm."""
     font_pt = widget.font().pointSizeF()
@@ -340,7 +378,7 @@ def render_widget(widget, out_base, width_cm=16.0, formats=("pdf", "svg", "png")
     per_inch = w / (width_cm / 2.54)                     # the widget's pixels per inch on the page
     to_px = per_inch / 72.0
     with plot_lines(widget, line_pt * to_px if line_pt else None, colours,
-                    marker_pt * to_px if marker_pt else None) as lines:
+                    marker_pt * to_px if marker_pt else None) as lines, background_painted(widget):
         written = _render(widget, out_base, rect, region, w, h, width_cm, height_cm, formats, png_dpi)
     if stats is not None:
         stats["plot_lines"] = len(lines.drawn)
@@ -402,6 +440,23 @@ def _render(widget, out_base, rect, region, w, h, width_cm, height_cm, formats, 
         img.save(path)
         written.append(path)
     return written
+
+
+def has_ui_text(widget):
+    """True if what is captured has text besides its plots' - labels, buttons, fields, tables - which a
+    thesis style leaves as on screen."""
+    from PyQt6.QtWidgets import (QAbstractButton, QAbstractItemView, QAbstractSpinBox, QGraphicsView,
+                                 QTabBar)
+    kinds = (QLabel, QAbstractButton, QLineEdit, QComboBox, QAbstractSpinBox, QGroupBox, QTabBar, QAbstractItemView)
+    for wd in [widget] + widget.findChildren(QWidget):
+        if not wd.isVisible() or not isinstance(wd, kinds):
+            continue
+        inside = wd.parentWidget()
+        while inside is not None and inside is not widget and not isinstance(inside, QGraphicsView):
+            inside = inside.parentWidget()
+        if not isinstance(inside, QGraphicsView):
+            return True
+    return False
 
 
 def has_emoji(widget):
@@ -480,6 +535,32 @@ def capture_targets(window, hovered=None):
     return out
 
 
+# --------------------------------------------------------------------------- figure texts, remembered
+def load_texts(path=None):
+    """The thesis figure texts changed in the dialog before ({FigureText.key: text}); {} if none."""
+    try:
+        with open(path or TEXTS_FILE, encoding="utf-8") as f:
+            data = json.load(f)
+        return {str(k): str(v) for k, v in data.get("texts", {}).items()}
+    except (OSError, ValueError, AttributeError, TypeError):
+        return {}
+
+
+def save_texts(texts, path=None):
+    path = path or TEXTS_FILE
+    try:
+        os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+        with open(path + ".tmp", "w", encoding="utf-8") as f:
+            json.dump({"texts": texts}, f, indent=1, ensure_ascii=False, sort_keys=True)
+        os.replace(path + ".tmp", path)
+    except OSError as e:
+        logging.getLogger("figure_capture").warning("Figure texts not remembered (%s): %s", path, e)
+
+
+def _elide(text, n=44):
+    return text if len(text) <= n else text[:n - 1] + "…"
+
+
 # --------------------------------------------------------------------------- dialog
 class FigureCaptureDialog(QDialog):
     def __init__(self, window, hovered=None):
@@ -492,7 +573,7 @@ class FigureCaptureDialog(QDialog):
         self.band = QRubberBand(QRubberBand.Shape.Rectangle, window)
 
         lay = QVBoxLayout(self)
-        f = QFormLayout()
+        f = self._form = QFormLayout()
         self.cmb_target = QComboBox()
         for wd in self.targets:
             self.cmb_target.addItem(f"{_describe(wd)}  -  {wd.width()} x {wd.height()} px")
@@ -548,6 +629,38 @@ class FigureCaptureDialog(QDialog):
                                 "as they will print. About 0.5 pt to 1 pt reads well on A4. At the bottom of the "
                                 "range, the lines are left as they are: a hairline in the PDF and PNG.")
         f.addRow("Plot lines", self.sp_line)
+
+        # the thesis figure's words: its axis titles and legend names (thesis_style.figure_texts)
+        self.box_text = QGroupBox("Figure text")
+        self.box_text.setToolTip(
+            "The thesis figure's axis titles and legend names, as a figure has them: the channels named plainly, "
+            "their units on the axis titles (mbar, not the software's mB), the time axis 'Time of day'. Change "
+            "any of them here: the window shows them. What you change is remembered for the next capture of "
+            "the same channels.")
+        self._text_scroll = QScrollArea()     # (many channels: the fields scroll, the dialog stays on the screen)
+        self._text_scroll.setWidgetResizable(True)
+        self._text_scroll.setFrameShape(QFrame.Shape.NoFrame)
+        inner = QWidget()
+        self.form_text = QFormLayout(inner)
+        self.form_text.setContentsMargins(0, 0, 0, 0)
+        self._text_scroll.setWidget(inner)
+        QVBoxLayout(self.box_text).addWidget(self._text_scroll)
+        self.box_text.hide()
+        f.addRow(self.box_text)
+        self._remembered = load_texts()       # changed in an earlier capture ({key: text})
+        self._edited = {}                     # changed in this dialog
+        self._rows, self._rows_for = {}, None  # key -> (FigureText, QLineEdit); for (target, style)
+        self._text_timer = QTimer(self)
+        self._text_timer.setSingleShot(True)
+        self._text_timer.setInterval(300)
+        self._text_timer.timeout.connect(self._preview)
+
+        self.lbl_thesis = QLabel()
+        self.lbl_thesis.setWordWrap(True)
+        self.lbl_thesis.setToolTip("The thesis' figures are included at the text width, 15 cm "
+                                   "(\\includegraphics[width=\\textwidth]): a figure drawn wider is shrunk, "
+                                   "and its text with it.")
+        f.addRow("In the thesis", self.lbl_thesis)
 
         self.lbl_text = QLabel()
         self.lbl_text.setWordWrap(True)
@@ -645,6 +758,7 @@ class FigureCaptureDialog(QDialog):
 
     def _update(self, *_):
         wd = self.target()
+        self._build_text_rows()
         # highlight the selection on the live window
         tl = wd.mapTo(self.window_, QPoint(0, 0)) if wd is not self.window_ else QPoint(0, 0)
         self.band.setGeometry(QRect(tl, wd.size()))
@@ -661,8 +775,23 @@ class FigureCaptureDialog(QDialog):
         if pt < 5:
             msg += " - too small: capture a smaller panel or a smaller window size"
         if self.cmb_style.currentData():
-            msg += "; the plots' text 9.5 pt and 8.5 pt, as in the thesis figures"
+            msg += f"; the plots' text {TITLE_PT:g} pt and {SMALL_PT:g} pt"
         self.lbl_text.setText(msg)
+        thesis = bool(self.cmb_style.currentData())
+        self._form.setRowVisible(self.lbl_thesis, thesis)
+        self._form.setRowVisible(self.lbl_text, not thesis or has_ui_text(wd))   # (plots only: In the thesis)
+        if thesis:
+            k = TEXT_WIDTH_CM / self.sp_width.value()
+            small, others = SMALL_PT * k, SMALL_PT * TEXT_WIDTH_CM / WIDTH_CM
+            col = t["ok"] if small >= 7.5 else (t["warn"] if small >= 6.5 else t["fault"])
+            text = (f"<b style='color:{col}'>axis titles {TITLE_PT * k:.1f} pt, numbers and legend {small:.1f} pt"
+                    f"</b>, included at the text width ({TEXT_WIDTH_CM:g} cm)")
+            if small < 7.5:
+                text += (f" - smaller than in the thesis' other figures ({others:.1f} pt): draw it "
+                         f"{WIDTH_CM:g} cm wide, as they are")
+            elif abs(self.sp_width.value() - WIDTH_CM) < 0.05:
+                text += ", as in the thesis' other figures"
+            self.lbl_thesis.setText(text)
         self.lbl_emoji.setText(
             "This area has emoji icons on buttons/labels. Qt can't embed colour emoji in PDF/SVG, so they "
             "will be missing there - the PNG (re-painted at the chosen dpi) shows them correctly."
@@ -680,6 +809,81 @@ class FigureCaptureDialog(QDialog):
         self._style_key = key
         self._update()                       # (the plots' text changes size, and with it the layout)
 
+    def _build_text_rows(self):
+        """Figure text: a field for each of the thesis figure's texts in what is captured
+        (thesis_style.figure_texts), holding what was chosen for it before - in this dialog, or in an
+        earlier capture - or else the plain text worked out for it. Built again for another target."""
+        key = self.cmb_style.currentData()
+        if self._rows_for == (id(self.target()), key):
+            return
+        self._rows_for = (id(self.target()), key)
+        while self.form_text.rowCount():
+            self.form_text.removeRow(0)
+        self._rows = {}
+        if not key:
+            self.box_text.hide()
+            return
+        self._unpreview()                     # (the names as the window has them)
+        for spec in figure_texts(self.target()):
+            if spec.key in self._rows:        # (one field for every time axis)
+                continue
+            ed = QLineEdit(self._edited.get(spec.key, self._remembered.get(spec.key, spec.default)))
+            ed.setPlaceholderText(spec.default if spec.kind == "legend" else "No title")
+            ed.setToolTip(f"Worked out: {spec.default or '(no title)'}" if spec.kind == "axis" else
+                          f"The legend's name for {spec.what}. Worked out: {spec.default}; left empty, that.")
+            ed.setProperty("figure_text", spec.key)
+            ed.textEdited.connect(self._text_edited)   # (a method, not a lambda: that would keep the dialog)
+            name = QLabel(_elide(spec.what))
+            name.setToolTip(spec.what)
+            self.form_text.addRow(name, ed)
+            self._rows[spec.key] = (spec, ed)
+        if self._rows:
+            b = QPushButton("Worked-out texts")
+            b.setToolTip("Every text here back to the one worked out from the channels' names and units.")
+            b.clicked.connect(self._reset_texts)
+            h = QHBoxLayout()
+            h.addStretch()
+            h.addWidget(b)
+            self.form_text.addRow(h)
+        inner = self._text_scroll.widget()
+        for wd in [inner] + inner.findChildren(QWidget):
+            wd.ensurePolished()               # (their size in the theme's style, before the dialog is shown)
+        self.form_text.invalidate()
+        self.form_text.activate()
+        self._text_scroll.setFixedHeight(min(self.form_text.sizeHint().height() + 2, TEXT_BOX_MAX_PX))
+        self.box_text.setVisible(bool(self._rows))
+        if self.isVisible():
+            QTimer.singleShot(0, self._fit_height)    # (once the layout has taken the box in)
+
+    def _text_edited(self, text):
+        key = self.sender().property("figure_text") if self.sender() is not None else None
+        if key:
+            self._edited[key] = text
+        self._text_timer.start()              # (the window shows it once the typing pauses)
+
+    def _reset_texts(self):
+        for k, (spec, ed) in self._rows.items():
+            ed.setText(spec.default)
+            self._edited[k] = spec.default
+        self._preview()
+
+    def texts(self):
+        """The figure texts chosen: those changed in an earlier capture, and the fields here."""
+        return {**self._remembered, **{k: ed.text() for k, (_spec, ed) in self._rows.items()}}
+
+    def _remember_texts(self):
+        """The fields that differ from the worked-out text, kept for the next capture (data/figure_text.json)."""
+        kept = dict(self._remembered)
+        for k, (spec, ed) in self._rows.items():
+            text = ed.text()
+            if text == spec.default or (spec.kind == "legend" and not text.strip()):
+                kept.pop(k, None)
+            else:
+                kept[k] = text
+        if kept != self._remembered:
+            save_texts(kept)
+            self._remembered = kept
+
     def _unpreview(self):
         for part in (self.lines, self.look):  # the window's plots as they were
             if part is not None:
@@ -696,13 +900,25 @@ class FigureCaptureDialog(QDialog):
         per_inch = self._w_px / (self.sp_width.value() / 2.54)
         key = self.cmb_style.currentData()
         if key:
-            self.look = look = ThesisStyle(self.target(), per_inch, key)
+            self.look = look = ThesisStyle(self.target(), per_inch, key, texts=self.texts())
             QTimer.singleShot(250, lambda: look.align() if self.look is look else None)   # (once laid out)
         line_pt = self.sp_line.value()
         if line_pt or self.look is not None:
             self.lines = PlotLines(self.target(), line_pt * per_inch / 72.0 if line_pt else None, live=True,
                                    colours=self.look.colour_for if self.look is not None else None,
                                    marker_px=MARKER_PT * per_inch / 72.0 if self.look is not None else None)
+
+    def _fit_height(self):
+        """Tall enough for everything at its width: Qt sizes a dialog of wrapping labels by its layout's
+        least height, which leaves the Figure text box short of its fields."""
+        lay = self.layout()
+        need = lay.heightForWidth(self.width()) if lay.hasHeightForWidth() else lay.sizeHint().height()
+        if self.height() < need:
+            self.resize(self.width(), need)
+
+    def showEvent(self, ev):
+        super().showEvent(ev)
+        self._fit_height()
 
     def done(self, r):
         self._unpreview()
@@ -716,12 +932,14 @@ class FigureCaptureDialog(QDialog):
         fm = tuple(f for f, cb in (("pdf", self.cb_pdf), ("svg", self.cb_svg), ("png", self.cb_png)) if cb.isChecked())
         _last["line_pt"] = self.sp_line.value()
         _last["style"] = self.cmb_style.currentData()
+        if self.cmb_style.currentData():
+            self._remember_texts()
         # the dialog has already applied the size live; capture() restores afterwards
         return {"widget": self.target(), "size": None, "restore": self._orig,
                 "trim": self.cb_trim.isChecked(),
                 "width_cm": self.sp_width.value(), "formats": fm, "dpi": self.sp_dpi.value(),
                 "line_pt": self.sp_line.value() or None, "style": self.cmb_style.currentData(),
-                "folder": self.ed_dir.text(), "name": self.ed_name.text() or "gui"}
+                "texts": self.texts(), "folder": self.ed_dir.text(), "name": self.ed_name.text() or "gui"}
 
 
 def _settle(widget):
@@ -758,7 +976,7 @@ def capture(window, opts, notify=True):
             for _ in range(2):
                 if look is not None:
                     look.remove()
-                look = ThesisStyle(wd, per_inch, opts["style"])
+                look = ThesisStyle(wd, per_inch, opts["style"], texts=opts.get("texts"))
                 _settle(wd)
                 look.align()
                 _settle(wd)

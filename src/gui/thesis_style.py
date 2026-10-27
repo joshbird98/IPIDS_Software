@@ -15,10 +15,17 @@ Fonts are given in pixels: a size in points is turned into pixels at the paint d
 which for Qt's SVG writer is not the screen's. The type is Latin Modern Roman (Computer Modern in
 Unicode), from the computer if it has it, else from src/gui/assets/fonts. It has no superscript
 figures, so an axis draws a number's power of ten itself (_draw_powers).
+
+The words are a figure's too (figure_texts): the legend names a channel plainly ("Filament power",
+not the viewer's "Source.Filament RB Power [W]"), its unit goes on the axis title ("Power (W)",
+"Pressure (mbar)" - the registry's "mB"), and the time axis is "Time of day". The capture dialog
+shows them, to be changed (texts=), and remembers them.
 """
+import html
 import math
 import os
 import re
+from dataclasses import dataclass
 
 from PyQt6.QtCore import QPointF, QRectF, Qt
 from PyQt6.QtGui import QBrush, QColor, QFont, QFontDatabase, QFontMetricsF, QPen, QTransform
@@ -34,8 +41,19 @@ TEXT_PT, TITLE_PT, SMALL_PT = 9.0, 9.5, 8.5   # other text; axis titles; the num
 AXIS_PT, TICK_LEN_PT, PAD_PT, GRID_PT, FRAME_PT = 0.8, 3.5, 3.5, 0.6, 0.5   # (matplotlib's ticks: 3.5 pt out)
 LINE_PT = 1.5                         # the plot lines, for a line 1 px wide on the screen
 WIDTH_CM = 16.0                       # drawn this wide, included at the text width (15 cm), as the others
+TEXT_WIDTH_CM = 15.0                  # the thesis' text width: \includegraphics[width=\textwidth]
 INK, INK2, MUTED, GRID, PAPER = "#0B0B0B", "#52514E", "#898781", "#E1E0D9", "#FFFFFF"
 _family = []
+
+# The registry's units as a figure writes them, and the quantity an axis of that unit is titled with
+DISPLAY_UNITS = {"mB": "mbar", "mb": "mbar", "degC": "°C", "Ohm": "Ω", "ohm": "Ω", "uA": "µA"}
+QUANTITIES = {"W": "Power", "kW": "Power", "mW": "Power", "A": "Current", "mA": "Current", "µA": "Current",
+              "nA": "Current", "pA": "Current", "V": "Voltage", "kV": "Voltage", "mV": "Voltage",
+              "mbar": "Pressure", "Pa": "Pressure", "°C": "Temperature", "K": "Temperature",
+              "Hz": "Frequency", "kHz": "Frequency", "Ω": "Resistance", "s": "Time"}
+# Words of the registry's names written out for a figure (the thesis' spelling)
+WORDS = {"Temp": "Temperature", "Cesium": "Caesium", "Ext": "Extraction", "Tgt": "Target", "Fil": "Filament"}
+TIME_TITLE = "Time of day"
 
 
 def font_family():
@@ -118,6 +136,141 @@ def tidy_number(text):
     return re.sub(r"^-(?=[\d.])", "−", text)
 
 
+# --------------------------------------------------------------------------- the words
+_UNIT_AT_END = re.compile(r"^(.*?)\s*\[([^\[\]]*)\]\s*$")
+
+
+def split_name(text):
+    """(name, unit) of a legend entry as the viewer writes it: "Source.Filament RB Power [W]" ->
+    ("Source.Filament RB Power", "W"); no unit in brackets at the end: (text, "")."""
+    m = _UNIT_AT_END.match(text or "")
+    return (m.group(1).strip(), m.group(2).strip()) if m else ((text or "").strip(), "")
+
+
+def display_unit(unit):
+    """A unit as a figure writes it: the registry's "mB" is mbar, "degC" °C."""
+    return DISPLAY_UNITS.get(unit, unit)
+
+
+def plain_label(name):
+    """A channel's name as a figure's legend gives it: "Source.Filament RB Power" -> "Filament power",
+    "Source.Thermionic SP Actual Current" -> "Thermionic current set point", "Bearing Temp" ->
+    "Bearing temperature". The registry's group before a full stop goes, and the reading's RB; a set
+    point (SP, "Actual" with it, "(Act)") says so at the end; a few short forms are written out; the
+    words after the first are in lower case, except abbreviations, names with figures in them (VG1)
+    and two-letter ones (Cs, Si)."""
+    head, dot, rest = (name or "").partition(".")
+    if dot and rest.strip() and head.strip() and " " not in head.strip():
+        name = rest
+    words, set_point = [], False
+    tokens = (name or "").replace("(Act)", " ").split()
+    for i, w in enumerate(tokens):
+        if w in ("RB", "Rb"):
+            continue
+        if w in ("SP", "Sp"):
+            set_point = True
+            continue
+        if w == "Actual" and i and tokens[i - 1] in ("SP", "Sp"):
+            continue
+        words.append(WORDS.get(w, w))
+    if set_point:
+        words += ["set", "point"]
+    out = []
+    for i, w in enumerate(words):
+        if i and len(w) > 2 and w[0].isupper() and w[1:].islower():
+            w = w.lower()
+        out.append(w)
+    if out:
+        out[0] = out[0][:1].upper() + out[0][1:]
+    return " ".join(out)
+
+
+@dataclass
+class FigureText:
+    """A text of a thesis figure: an axis' title or a legend's name for a channel."""
+    key: str            # what it is remembered by: "legend:<the name>", "axis:<side>:<names>", "axis:time"
+    what: str           # for the capture dialog: the name as the window has it, or "Lane 2, right axis"
+    default: str        # worked out from the names and their units
+    item: object        # the AxisItem, or the legend's LabelItem
+    kind: str           # "axis" or "legend"
+
+
+def _is_time_axis(ax):
+    import pyqtgraph as pg
+    return hasattr(ax, "hide_text") or isinstance(ax, pg.DateAxisItem)
+
+
+def _time_title(ax):
+    """"Time of day"; "Date and time" where the ticks are hours apart or more (the viewer then writes the
+    date too), "Date" where they are days apart."""
+    ticks = sorted(major_ticks(ax))
+    step = min((b - a for a, b in zip(ticks, ticks[1:])), default=0.0)
+    return "Date" if step >= 86400 else "Date and time" if step >= 3600 else TIME_TITLE
+
+
+def figure_texts(widget):
+    """The texts a thesis figure of widget's plots has: for each plot, top to bottom, the titles of its
+    axes with numbers and no title of their own (the quantity and unit of the channels on it, when
+    they share one: "Power (W)") and its legend's names (plain_label, with the unit when the axis'
+    title doesn't give it); last, the title of the time axis with the times under it ("Time of day")."""
+    import pyqtgraph as pg
+
+    def place(plot):
+        try:
+            view = plot.scene().views()[0]
+            at = view.mapToGlobal(view.mapFromScene(plot.sceneBoundingRect().topLeft()))
+            return at.y(), at.x()
+        except (IndexError, AttributeError, RuntimeError):
+            return 0, 0
+    plots = sorted((it for it in plot_items(widget) if isinstance(it, pg.PlotItem) and it.isVisible()), key=place)
+    out, time_axes = [], []
+    for n, plot in enumerate(plots):
+        lane = f"lane {n + 1}, " if len(plots) > 1 else ""
+
+        def where(side):
+            text = f"{lane}{side} axis"
+            return text[:1].upper() + text[1:]
+        legend = getattr(plot, "legend", None)
+        entries = []                          # (label item, its text, the view its curve is in)
+        for sample, label in (legend.items if legend is not None else []):
+            item = getattr(sample, "item", None)
+            view = item.getViewBox() if hasattr(item, "getViewBox") else None
+            entries.append((label, str(getattr(label, "text", "")), view))
+        titled = set()                        # (views whose axis' title gives their channels' unit)
+        for side in ("left", "right", "bottom"):
+            ax = plot.axes.get(side, {}).get("item")
+            if ax is None or ax.label is None or not ax.isVisible() or not ax.style.get("showValues", True):
+                continue
+            if ax.label.isVisible() and (ax.labelText or ax.labelUnits):
+                continue                      # (a title of its own: left as it is)
+            if _is_time_axis(ax):
+                if not getattr(ax, "hide_text", False):
+                    time_axes.append(ax)
+                continue
+            if side == "bottom":
+                continue
+            on = [(text, view) for _l, text, view in entries if view is not None and view is ax.linkedView()]
+            if not on:
+                continue
+            units = {display_unit(split_name(text)[1]) for text, _v in on}
+            unit = units.pop() if len(units) == 1 else ""
+            quantity = QUANTITIES.get(unit, "")
+            title = f"{quantity} ({unit})" if quantity else ""
+            if title:
+                titled.add(id(ax.linkedView()))
+            names = "|".join(sorted(text for text, _v in on))
+            out.append(FigureText(f"axis:{side}:{names}", where(side), title, ax, "axis"))
+        for label, text, view in entries:
+            name, unit = split_name(text)
+            plain = plain_label(name) or name
+            if unit and (view is None or id(view) not in titled):
+                plain += f" ({display_unit(unit)})"
+            out.append(FigureText(f"legend:{text}", text, plain, label, "legend"))
+    for ax in time_axes:                      # (the viewer writes the times under its bottom lane only)
+        out.append(FigureText("axis:time", "Time axis", _time_title(ax), ax, "axis"))
+    return out
+
+
 def _draw_powers(axis):
     """pyqtgraph's drawing of the axis, but with a tick label's power of ten raised and smaller."""
     def draw(p, axisSpec, tickSpecs, textSpecs):
@@ -193,9 +346,10 @@ class ThesisStyle:
     inch on the page, until remove(). colour_for(curve or marker line) gives the colour to draw it in
     (figure_capture.PlotLines): a channel in the light theme's colour for its place in its lane (the
     thesis' colours; the dark theme's are its light ones made for a dark background), an event marker
-    in its own, made to stand out on white."""
+    in its own, made to stand out on white. The axes' titles and the legends' names are figure_texts',
+    or texts' ({FigureText.key: text}; an empty title: none, an empty name: the plain one)."""
 
-    def __init__(self, widget, per_inch, style="thesis"):
+    def __init__(self, widget, per_inch, style="thesis", texts=None):
         import pyqtgraph as pg
         from pyqtgraph.graphicsItems.LegendItem import LegendItem
         self.per_inch, self.family = per_inch, font_family()
@@ -205,6 +359,15 @@ class ThesisStyle:
         for mode in ("light", "dark"):
             for i, c in enumerate(theme.tokens(mode)["series"]):
                 self._series.setdefault(QColor(c).rgb(), QColor(light[i % len(light)]))
+        texts = texts or {}
+        self.texts = figure_texts(widget)     # (from the names as the window has them, before they change)
+        self._titles, self._names = {}, {}
+        for f in self.texts:
+            chosen = texts.get(f.key)
+            if f.kind == "axis":
+                self._titles[id(f.item)] = f.default if chosen is None else chosen
+            else:
+                self._names[id(f.item)] = chosen or f.default
         try:
             items = plot_items(widget)
             self._plots = [it for it in items if isinstance(it, pg.PlotItem)]
@@ -312,6 +475,8 @@ class ThesisStyle:
         grid, label_font, label_style = ax.grid, QFont(ax.label.font()), dict(ax.labelStyle)
         fixed, room = (ax.fixedWidth, ax.fixedHeight), (ax.textWidth, ax.textHeight)
         own_strings, own_draw = ax.__dict__.get("tickStrings"), ax.__dict__.get("drawPicture")
+        own_title = (ax.labelText, ax.labelUnits, ax.labelUnitPrefix, ax.label.isVisible(), ax.autoSIPrefix,
+                     ax.autoSIPrefixScale)
 
         edge = self.pen(INK2, AXIS_PT)
         ax._pen, ax._tickPen, ax._textPen = edge, QPen(edge), QPen(QColor(INK))
@@ -337,6 +502,11 @@ class ThesisStyle:
             if host is not None:
                 lines = _GridLines(ax, host, self.pen(GRID, GRID_PT))
         ax.setGrid(False)
+        title = self._titles.get(id(ax))
+        if title is not None:                 # (pyqtgraph's SI prefix off: the numbers as they are, no "(x0.001)")
+            ax.autoSIPrefix, ax.autoSIPrefixScale = False, 1.0
+            ax.labelText, ax.labelUnits, ax.labelUnitPrefix = html.escape(title), "", ""
+            ax.label.setVisible(bool(title))
         ax._updateLabel()
 
         def undo():
@@ -348,6 +518,8 @@ class ThesisStyle:
             ax.textWidth, ax.textHeight = room
             ax.labelStyle = label_style
             ax.label.setFont(label_font)
+            ax.labelText, ax.labelUnits, ax.labelUnitPrefix, shown, ax.autoSIPrefix, ax.autoSIPrefixScale = own_title
+            ax.label.setVisible(shown)
             for name, own in (("tickStrings", own_strings), ("drawPicture", own_draw)):
                 if own is None:
                     ax.__dict__.pop(name, None)
@@ -360,8 +532,8 @@ class ThesisStyle:
     def _legend(self, legend):
         pen, brush = legend.opts["pen"], legend.opts["brush"]
         size, colour = legend.opts.get("labelTextSize"), legend.opts.get("labelTextColor")
-        entries = [(sample, label, QFont(label.item.font()), dict(label.opts), sample.minimumSize(), sample.maximumSize())
-                   for sample, label in legend.items]
+        entries = [(sample, label, QFont(label.item.font()), dict(label.opts), sample.minimumSize(), sample.maximumSize(),
+                    label.text) for sample, label in legend.items]
         before = max((label.item.boundingRect().height() for _s, label in legend.items), default=0.0)
         legend.setPen(self.pen(MUTED, FRAME_PT))   # (the software's box, kept; the thesis' have none)
         legend.setBrush(QBrush(QColor(PAPER)))
@@ -369,7 +541,8 @@ class ThesisStyle:
         legend.opts["labelTextSize"], legend.opts["labelTextColor"] = text_px, QColor(INK)
         for sample, label, *_rest in entries:
             label.item.setFont(self.font(SMALL_PT))
-            label.setText(label.text, color=INK, size=text_px)
+            name = self._names.get(id(label))
+            label.setText(label.text if name is None else html.escape(name), color=INK, size=text_px)
         after = max((label.item.boundingRect().height() for _s, label in legend.items), default=0.0)
         k = after / before if before > 0 and after > 0 else 1.0
         for sample, *_rest in entries:        # the line samples grow with the text (as long, for its size)
@@ -383,10 +556,10 @@ class ThesisStyle:
             legend.setPen(pen)
             legend.setBrush(brush)
             legend.opts["labelTextSize"], legend.opts["labelTextColor"] = size, colour
-            for sample, label, font, opts, low, high in entries:
+            for sample, label, font, opts, low, high, text in entries:
                 label.item.setFont(font)
                 label.opts = opts
-                label.setText(label.text)
+                label.setText(text)
                 sample.setMinimumSize(low)
                 sample.setMaximumSize(high)
             legend.layout.activate()

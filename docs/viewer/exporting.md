@@ -163,9 +163,11 @@ A screenshot of the software prints badly: a whole window shrunk to the width of
 |---|---|
 | **Capture** | What to capture: the part under the pointer and the parts that contain it (innermost first; over a plot, the plot), each panel in view in the HMI, the main areas of the window (in the data viewer, **Sidebar** and **Plot area**), or the whole window. The choice is outlined on the window. |
 | **Window size** | **As on screen**, or **Re-lay out window at** one of six sizes from 1024 x 640 to 1920 x 1080. The window takes the new size at once, so you can see what will be captured, and goes back afterwards. |
-| **Width on page** | The width the figure is drawn at: 2 cm to 40 cm, 16 cm at first. The thesis' figures are drawn 16 cm wide and included at the text width, 15 cm (`\includegraphics[width=\textwidth]`), so their text prints a little smaller than its size here; a capture at 16 cm matches them. |
+| **Width on page** | The width the figure is drawn at: 2 cm to 40 cm, 16 cm at first. The thesis' figures are drawn 16 cm wide and included at the text width, 15 cm (`\includegraphics[width=\textwidth]`), so their text prints a little smaller than its size here; a capture at 16 cm matches them. A capture drawn wider is shrunk more, and its text with it: at 22 cm its numbers print at under 6 pt. In the thesis style, **In the thesis** gives the sizes. |
 | **Trim empty margins (e.g. a stretched panel)** | Crops the capture to the area that differs from the background. Ticked at first. |
 | **Style** | **As on screen**, or **Thesis figure (Computer Modern)**: the plots drawn in the style of the thesis' own figures. See [Thesis figure style](#thesis-figure-style). The dialog keeps the last choice until the program closes. |
+| **Figure text** | In the thesis style: the figure's axis titles and legend names, to be changed. See [The figure's words](#the-figures-words). |
+| **In the thesis** | In the thesis style: how big the plots' text prints once the figure is included at the text width, 15 cm. Green at 7.5 pt or more for the numbers and legend (8.0 pt at 16 cm, as in the thesis' other figures), amber from 6.5 pt, red below. |
 | **Plot lines** | How wide the plot lines (the traces, and event markers) print, in points, for a line 1 pixel wide on the screen; a line drawn 2 pixels wide prints twice as wide, and the legend's line samples match. While the dialog is open, the plots in what will be captured show their lines as wide as they will print. 0.75 pt at first, and 1.5 pt on choosing the thesis style (the thesis figures' lines); about 0.5 pt to 1.5 pt reads well on A4. At the bottom of the range, **Unchanged (hairline)**, the lines are left as they are: they print one pixel of the PDF or PNG wide (1/1200 inch in the PDF), too thin to see on paper. The dialog keeps the last value until the program closes. |
 | **UI text prints at** | How big the window's text will print at that width: green at 7 pt or more, amber from 5 pt, red below 5 pt. Body text is usually 10 pt to 12 pt, and captions 8 pt to 10 pt. |
 | **Formats** | **PDF (vector)**, **SVG (vector)** and **PNG**, and the PNG's resolution: 150 dpi to 1200 dpi, 600 dpi at first. |
@@ -187,9 +189,25 @@ With **Style** set to **Thesis figure (Computer Modern)**, the plots in what is 
 - Computer Modern, as the thesis' text: 9.5 pt for axis titles, 8.5 pt for the numbers on the axes, the legend and event marker labels. The type is Latin Modern Roman, which comes with the software (`src/gui/assets/fonts`), so the computer needn't have it;
 - numbers written as in the thesis: a minus sign, and 1.6×10⁻⁷ (the power of ten raised) rather than 1.6e-07;
 - the channels in the light theme's colours, the thesis' (in the dark theme too); event markers keep their colours, darkened where needed to stand out on white, and are drawn as fine as the axes;
-- lanes lined up with one another: each side's axes as wide as the widest, with the room kept empty in a lane that has no axis there.
+- lanes lined up with one another: each side's axes as wide as the widest, with the room kept empty in a lane that has no axis there;
+- the words as a figure has them: see below.
 
 What makes it the software's stays: the lanes, the legend's box, the clock-time axis and the event markers. Only the plots change: anything else captured (panels, buttons) is drawn as on screen. While the dialog is open, the window shows the style, so the text and lines on the screen are as big, relative to the plots, as they will print. The SVG names Latin Modern Roman with CMU Serif and cmr10 as alternatives, as the thesis' SVG figures do.
+
+The PDF and SVG are lines and text only: no picture in them. (Until 27 October 2026 the plot's white background went in as a picture of itself, a JPEG in the PDF, under the traces, which were lines already.)
+
+#### The figure's words
+
+The thesis style writes the plots' words as a figure has them, rather than as the data viewer does:
+
+| | Data viewer | Thesis figure |
+|---|---|---|
+| Legend | `Source.Filament RB Power [W]`, `Source.Thermionic SP Actual Current [mA]`, `Source VG1 Pressure [mB]` | `Filament power`, `Thermionic current set point`, `Source VG1 pressure` |
+| Axis titles | none | `Power (W)`, `Current (mA)`, `Pressure (mbar)`; `Time of day` under the bottom lane |
+
+A channel's name loses the part before its full stop (`Source.`) and the reading's `RB`; a set point (`SP`, `SP Actual`, `SP (Act)`) says so at the end; `Temp` is written out, and `Cesium` spelled Caesium; the words after the first are in lower case, except abbreviations, names with figures in them (VG1) and two-letter ones (Cs). A name you gave the channel in **Configure channels** goes the same way: its words kept, those after the first in lower case. Its unit goes on the axis title, with the quantity it measures: watts are power, amperes current, volts voltage, mbar (the software's `mB`) pressure, °C temperature, hertz frequency, ohms resistance. An axis whose channels don't share one of those units has no title, and each name in its legend keeps its unit, as `Filament power (W)`. Axes that have a title of their own keep it. The time axis is `Date and time` when its ticks are hours apart (the viewer writes the date too), and `Date` when they are days apart. The unit is the one the software logs the channel in: a channel drawn with a multiplier (**Mult.** in **Configure channels**) is in other units, so correct its axis title.
+
+**Figure text** in the capture dialog has a field for each of these texts: change any of them, and the window shows it. An axis title left empty is left off; a legend name left empty is the worked-out one. What you change is remembered, in `data/figure_text.json`, for the next capture of the same channels (an axis title, for the same channels on that axis); **Worked-out texts** puts every field back, and forgets them.
 
 ## See also
 

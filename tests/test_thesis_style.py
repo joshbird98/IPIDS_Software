@@ -72,11 +72,12 @@ def state(lw):
             pens = [None if q is None else (q.color().name(), q.widthF(), q.isCosmetic())
                     for q in (it._pen, it._textPen, it._tickPen)]
             out.append((it.orientation, pens, style, it.grid, dict(it.labelStyle), it.fixedWidth, it.fixedHeight,
-                        "tickStrings" in it.__dict__, it.label.font().toString()))
+                        "tickStrings" in it.__dict__, it.label.font().toString(), it.labelText, it.labelUnits,
+                        it.label.isVisible(), it.autoSIPrefix))
         elif isinstance(it, LegendItem):
             out.append((it.opts["pen"].color().name(), it.opts["pen"].widthF(), it.opts["brush"].color().name(),
-                        [(dict(label.opts), label.item.font().toString(), sample.minimumSize(), sample.maximumSize())
-                         for sample, label in it.items]))
+                        [(dict(label.opts), label.item.font().toString(), sample.minimumSize(), sample.maximumSize(),
+                          label.text) for sample, label in it.items]))
         elif isinstance(it, pg.TextItem):
             out.append((it.textItem.font().toString(), it.color.name(), it.fill.color().name()))
     return out
@@ -339,3 +340,284 @@ def test_in_a_thesis_figure_markers_are_as_fine_as_the_axes(tmp_path):
     pw.close()
     marker, trace = line_runs(files[0])
     assert marker == pytest.approx(0.8 * 600 / 72, abs=1.5) and trace == pytest.approx(1.5 * 600 / 72, abs=1.5)
+
+
+# --------------------------------------------------------------------------- the figure's words
+def test_a_channel_named_as_a_figure_names_it():
+    """The registry's names as a thesis figure's legend gives them (Josh's figures of 27 October 2026 had
+    "Source.Filament RB Power [W]" and "Source VG1 Pressure [mB]" in their legends)."""
+    from src.gui.thesis_style import display_unit, plain_label, split_name
+    assert split_name("Source.Filament RB Power [W]") == ("Source.Filament RB Power", "W")
+    assert split_name("Source VG1 Pressure [mB]") == ("Source VG1 Pressure", "mB")
+    assert split_name("Trace") == ("Trace", "") and split_name("") == ("", "")
+    assert display_unit("mB") == "mbar" and display_unit("degC") == "°C" and display_unit("mA") == "mA"
+    for name, plain in (("Source.Filament RB Power", "Filament power"),
+                        ("Source.Thermionic RB Power", "Thermionic power"),
+                        ("Source.Thermionic RB Current", "Thermionic current"),
+                        ("Source.Thermionic SP Actual Current", "Thermionic current set point"),
+                        ("Source VG1 Pressure", "Source VG1 pressure"),
+                        ("Magnet Current SP (Act)", "Magnet current set point"),
+                        ("Bearing Temp", "Bearing temperature"),
+                        ("Source.Cesium RB Temp", "Caesium temperature"),
+                        ("Endstation RB Dose Count", "Endstation dose count"),
+                        ("Faraday Beam Current", "Faraday beam current"),
+                        ("Bombardment power", "Bombardment power"),          # (a name of Josh's own: as it is)
+                        ("Cs oven heater", "Cs oven heater"), ("PSU Voltage", "PSU voltage"), ("", "")):
+        assert plain_label(name) == plain, name
+
+
+@pytest.fixture
+def viewer_lanes():
+    """Two lanes as the viewer builds them (viewer_lanes.py): clock time along the bottom, written under the
+    lower lane only; each lane's log channels in a view of their own on a log axis on the right; the
+    legend's names as the viewer writes them, with the unit in brackets."""
+    app = _app()
+    import time
+    import pyqtgraph as pg
+    from src.gui import theme
+    from src.gui.data_viewer.viewer_widgets import LogAxisItem, TimeAxisItem
+    dark = theme.tokens("dark")["series"]
+    lw = pg.GraphicsLayoutWidget()
+    lw.resize(900, 560)
+    lw.setBackground("#161A1F")
+    x = np.linspace(-660, 0, 2000)
+    lanes = []
+    for i in range(2):
+        clock = TimeAxisItem(orientation="bottom")
+        clock.set_offset(time.mktime((2026, 10, 27, 8, 56, 0, 0, 0, -1)))
+        clock.hide_text = i == 0
+        log_axis = LogAxisItem(orientation="right")
+        p = lw.addPlot(row=i, col=0, axisItems={"bottom": clock, "right": log_axis})
+        p.showGrid(x=True, y=True, alpha=0.35)
+        right = pg.ViewBox()
+        p.scene().addItem(right)
+        log_axis.linkToView(right)
+        right.setXLink(p)
+        p.vb.sigResized.connect(lambda _, vb=right, plot=p: vb.setGeometry(plot.vb.sceneBoundingRect()))
+        lanes.append((p, right, log_axis, p.addLegend(offset=(10, 10))))
+    (top, right1, log1, legend1), (bottom, right2, log2, legend2) = lanes
+    log1.setVisible(False)
+    right1.setVisible(False)
+    fil = pg.PlotDataItem(x, 150 * (1 - np.exp(-(x + 660) / 120)), pen=pg.mkPen(dark[0], width=1))
+    thm = pg.PlotDataItem(x, 200 * (1 - np.exp(-(x + 600) / 200)), pen=pg.mkPen(dark[1], width=1))
+    for c, name in ((fil, "Source.Filament RB Power [W]"), (thm, "Source.Thermionic RB Power [W]")):
+        top.addItem(c)
+        legend1.addItem(c, name=name)
+    vg1 = pg.PlotDataItem(x, np.log10(2e-7 + 2e-7 * np.exp(-((x + 420) / 30) ** 2)), pen=pg.mkPen(dark[0], width=1))
+    right2.addItem(vg1)
+    legend2.addItem(vg1, name="Source VG1 Pressure [mB]")
+    bottom.getAxis("left").setStyle(showValues=False)
+    bottom.setXLink(top)
+    top.setXRange(-660, 0, padding=0)
+    lw.show()
+    for _ in range(3):
+        app.processEvents()
+    yield dict(lw=lw, top=top, bottom=bottom, legends=(legend1, legend2), log=log2)
+    lw.close()
+    lw.deleteLater()
+    app.processEvents()
+
+
+def test_the_figures_texts_are_worked_out_from_the_names_and_units(viewer_lanes):
+    from src.gui.thesis_style import figure_texts
+    texts = [(f.kind, f.key, f.what, f.default) for f in figure_texts(viewer_lanes["lw"])]
+    assert texts == [
+        ("axis", "axis:left:Source.Filament RB Power [W]|Source.Thermionic RB Power [W]", "Lane 1, left axis",
+         "Power (W)"),
+        ("legend", "legend:Source.Filament RB Power [W]", "Source.Filament RB Power [W]", "Filament power"),
+        ("legend", "legend:Source.Thermionic RB Power [W]", "Source.Thermionic RB Power [W]", "Thermionic power"),
+        ("axis", "axis:right:Source VG1 Pressure [mB]", "Lane 2, right axis", "Pressure (mbar)"),
+        ("legend", "legend:Source VG1 Pressure [mB]", "Source VG1 Pressure [mB]", "Source VG1 pressure"),
+        ("axis", "axis:time", "Time axis", "Time of day")]
+    viewer_lanes["top"].setXRange(-4 * 86400, 0, padding=0)             # days: the viewer writes the dates
+    settle(viewer_lanes["lw"])
+    assert figure_texts(viewer_lanes["lw"])[-1].default in ("Date", "Date and time")
+
+
+def test_a_thesis_figure_has_the_plain_names_and_axis_titles_then_the_window_has_its_own(viewer_lanes):
+    from src.gui.thesis_style import ThesisStyle
+    lw, top, bottom = viewer_lanes["lw"], viewer_lanes["top"], viewer_lanes["bottom"]
+    before = state(lw)
+    look = ThesisStyle(lw, per_inch=150.0)
+    try:
+        settle(lw)
+        names = [[label.text for _s, label in legend.items] for legend in viewer_legends(viewer_lanes)]
+        assert names == [["Filament power", "Thermionic power"], ["Source VG1 pressure"]]
+        titles = {(p is top, side): (ax.labelText, ax.label.isVisible())
+                  for p in (top, bottom) for side, ax in ((s, p.getAxis(s)) for s in ("left", "right", "bottom"))}
+        assert titles[(True, "left")] == ("Power (W)", True)
+        assert titles[(False, "right")] == ("Pressure (mbar)", True)
+        assert titles[(False, "bottom")] == ("Time of day", True)
+        assert not titles[(True, "bottom")][1] and not titles[(False, "left")][1]     # (no numbers there)
+        assert top.getAxis("left").label.font().family() == "Latin Modern Roman"
+    finally:
+        look.remove()
+    settle(lw)
+    assert state(lw) == before                                          # the viewer's names, no titles
+
+
+def viewer_legends(lanes):
+    return lanes["legends"]
+
+
+def test_the_figures_texts_can_be_changed(viewer_lanes):
+    """texts: a legend name of one's own, an axis title of one's own, no time axis title; a legend name left
+    empty is the worked-out one."""
+    from src.gui.thesis_style import ThesisStyle
+    lw, top, bottom = viewer_lanes["lw"], viewer_lanes["top"], viewer_lanes["bottom"]
+    texts = {"legend:Source.Thermionic RB Power [W]": "Bombardment power", "legend:Source VG1 Pressure [mB]": "",
+             "axis:left:Source.Filament RB Power [W]|Source.Thermionic RB Power [W]": "Heating power (W)",
+             "axis:time": "", "legend:a channel no longer shown": "x"}
+    look = ThesisStyle(lw, per_inch=150.0, texts=texts)
+    try:
+        legend1, legend2 = viewer_legends(viewer_lanes)
+        assert [label.text for _s, label in legend1.items] == ["Filament power", "Bombardment power"]
+        assert [label.text for _s, label in legend2.items] == ["Source VG1 pressure"]
+        assert top.getAxis("left").labelText == "Heating power (W)"
+        assert not bottom.getAxis("bottom").label.isVisible()
+    finally:
+        look.remove()
+
+
+def test_a_lane_of_mixed_units_keeps_them_in_its_legend():
+    """No one unit for the axis: no title, and each name says its unit."""
+    app = _app()
+    import pyqtgraph as pg
+    from src.gui.thesis_style import figure_texts
+    pw = pg.PlotWidget()
+    pw.addLegend()
+    pw.plot([0, 1], [0, 1], pen="b", name="Source.Filament RB Power [W]")
+    pw.plot([0, 1], [1, 0], pen="r", name="Source.Filament RB Current [A]")
+    pw.plot([0, 1], [1, 1], pen="g", name="Counts")
+    pw.show()
+    app.processEvents()
+    texts = {f.key: f.default for f in figure_texts(pw)}
+    pw.close()
+    assert texts == {"axis:left:Counts|Source.Filament RB Current [A]|Source.Filament RB Power [W]": "",
+                     "legend:Source.Filament RB Power [W]": "Filament power (W)",
+                     "legend:Source.Filament RB Current [A]": "Filament current (A)", "legend:Counts": "Counts"}
+
+
+def test_an_axis_title_doesnt_scale_the_numbers():
+    """pyqtgraph scales a titled axis' numbers below 1 into thousandths and writes "(x0.001)": not in a
+    thesis figure, whose title says its unit."""
+    app = _app()
+    import pyqtgraph as pg
+    from src.gui.thesis_style import ThesisStyle
+    pw = pg.PlotWidget()
+    pw.addLegend()
+    pw.plot([0, 1], [0.0, 0.5], pen="b", name="Beam current [A]")
+    pw.show()
+    app.processEvents()
+    left = pw.getAxis("left")
+    look = ThesisStyle(pw, per_inch=150.0)
+    try:
+        settle(pw)
+        assert left.labelText == "Current (A)" and left.autoSIPrefixScale == 1.0
+        assert "x0.001" not in left.labelString() and "(m" not in left.labelString()
+    finally:
+        look.remove()
+    assert left.autoSIPrefix and not left.label.isVisible()
+    pw.close()
+
+
+def test_the_pdf_is_all_lines_and_text_no_picture(tmp_path):
+    """The plot's background was painted from Qt's cached picture of it: a white JPEG the size of the plot
+    in the PDF (Josh's of 27 October 2026), a PNG in the SVG. Now a filled rectangle; the traces were lines
+    already."""
+    app = _app()
+    import pyqtgraph as pg
+    from src.gui.figure_capture import render_widget
+    pw = pg.PlotWidget()
+    pw.resize(500, 300)
+    pw.setBackground("w")
+    pw.plot(np.arange(200), np.sin(np.arange(200) / 10), pen="b")
+    pw.show()
+    app.processEvents()
+    pw.grab()                                                            # (Qt keeps the background's picture)
+    cache = pw.cacheMode()
+    render_widget(pw, str(tmp_path / "v"), width_cm=8.0, formats=("pdf", "svg"))
+    assert pw.cacheMode() == cache                                       # (the window's as it was)
+    pw.close()
+    svg = (tmp_path / "v.svg").read_text(encoding="utf-8")
+    assert "<image" not in svg and "<path" in svg
+    if shutil.which("pdfimages"):
+        listed = subprocess.run(["pdfimages", "-list", str(tmp_path / "v.pdf")], capture_output=True,
+                                text=True).stdout.splitlines()
+        assert len(listed) == 2, listed                                  # (the heading only)
+
+
+def _texts_dialog(monkeypatch, tmp_path, lanes):
+    from PyQt6.QtWidgets import QMainWindow
+    from src.gui import figure_capture as fc
+    monkeypatch.setattr(fc, "TEXTS_FILE", str(tmp_path / "figure_text.json"))
+    win = QMainWindow()
+    win.setCentralWidget(lanes["lw"])
+    win.resize(900, 600)
+    win.show()
+    _app().processEvents()
+    dlg = fc.FigureCaptureDialog(win, hovered=lanes["lw"].viewport())
+    return win, dlg
+
+
+def test_the_dialog_shows_the_figures_texts_to_change_and_remembers_them(monkeypatch, tmp_path, viewer_lanes):
+    from src.gui import figure_capture as fc
+    win, dlg = _texts_dialog(monkeypatch, tmp_path, viewer_lanes)
+    legend1, _legend2 = viewer_legends(viewer_lanes)
+    try:
+        assert dlg.box_text.isHidden()                                   # (as on screen: the window's own)
+        dlg.cmb_style.setCurrentIndex(dlg.cmb_style.findData("thesis"))
+        assert not dlg.box_text.isHidden()
+        fields = {k: ed.text() for k, (_spec, ed) in dlg._rows.items()}
+        assert fields["legend:Source.Filament RB Power [W]"] == "Filament power"
+        assert fields["axis:time"] == "Time of day" and fields["axis:right:Source VG1 Pressure [mB]"] == "Pressure (mbar)"
+        assert [label.text for _s, label in legend1.items] == ["Filament power", "Thermionic power"]   # (the window)
+        _spec, ed = dlg._rows["legend:Source.Thermionic RB Power [W]"]
+        ed.setText("Bombardment power")
+        ed.textEdited.emit("Bombardment power")
+        dlg._preview()                                                   # (as the pause after typing does)
+        assert [label.text for _s, label in legend1.items] == ["Filament power", "Bombardment power"]
+        opts = dlg.options()
+        assert opts["texts"]["legend:Source.Thermionic RB Power [W]"] == "Bombardment power"
+        assert fc.load_texts() == {"legend:Source.Thermionic RB Power [W]": "Bombardment power"}   # remembered
+    finally:
+        dlg.reject()
+        fc._last.update(line_pt=fc.LINE_PT, style=None)
+    assert [label.text for _s, label in legend1.items] == ["Source.Filament RB Power [W]",
+                                                           "Source.Thermionic RB Power [W]"]
+    # the next capture's dialog has it; Worked-out texts puts it back, and it is forgotten
+    dlg = fc.FigureCaptureDialog(win, hovered=viewer_lanes["lw"].viewport())
+    try:
+        dlg.cmb_style.setCurrentIndex(dlg.cmb_style.findData("thesis"))
+        assert dlg._rows["legend:Source.Thermionic RB Power [W]"][1].text() == "Bombardment power"
+        dlg._reset_texts()
+        assert dlg._rows["legend:Source.Thermionic RB Power [W]"][1].text() == "Thermionic power"
+        dlg.options()
+        assert fc.load_texts() == {}
+    finally:
+        dlg.reject()
+        fc._last.update(line_pt=fc.LINE_PT, style=None)
+    win.takeCentralWidget()
+    win.close()
+
+
+def test_the_dialog_says_how_big_the_text_will_be_in_the_thesis(monkeypatch, tmp_path, viewer_lanes):
+    """Josh's figures of 27 October 2026 were drawn 22 cm and 20 cm wide: included at the text width, their
+    numbers and legend printed at about 6 pt."""
+    from src.gui import figure_capture as fc
+    win, dlg = _texts_dialog(monkeypatch, tmp_path, viewer_lanes)
+    try:
+        dlg.cmb_style.setCurrentIndex(dlg.cmb_style.findData("thesis"))
+        assert "8.9 pt" in dlg.lbl_thesis.text() and "8.0 pt" in dlg.lbl_thesis.text()
+        assert "as in the thesis' other figures" in dlg.lbl_thesis.text()
+        dlg.sp_width.setValue(22.0)
+        text = dlg.lbl_thesis.text()
+        assert "6.5 pt" in text and "5.8 pt" in text and "draw it 16 cm wide" in text
+        assert not dlg._form.isRowVisible(dlg.lbl_text)                 # (only plots: the window's text no matter)
+        dlg.cmb_style.setCurrentIndex(0)
+        assert not dlg._form.isRowVisible(dlg.lbl_thesis) and dlg._form.isRowVisible(dlg.lbl_text)
+    finally:
+        dlg.reject()
+        fc._last.update(line_pt=fc.LINE_PT, style=None)
+    win.takeCentralWidget()
+    win.close()

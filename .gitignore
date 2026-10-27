@@ -21,6 +21,9 @@ data/events.db-wal
 # Alarm acknowledgements and shelves (service_alarms)
 data/alarm_state.json
 data/alarm_state.json.tmp
+# F12 capture: the thesis figure texts changed in its dialog (per machine)
+data/figure_text.json
+data/figure_text.json.tmp
 # Services stopped on purpose from the launcher (src/launcher/programs.py)
 data/launcher_state_*.json
 data/launcher_state_*.json.tmp

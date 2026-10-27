@@ -68,6 +68,17 @@ simulator; none of it has been tried on the real hardware yet (see "Lab PC valid
     to dots zoomed in, SystemLogs/viewer.log names the overlapping files ("Rows for the same times ...").
 
 ## Done
+- 27 October 2026, evening (a review of Josh's first F12 thesis figures: drawn 22 cm and 20 cm wide, so
+  their text printed at 6-7 pt; legends of raw tag names, "Source.Filament RB Power [W]", pressure in
+  "mB"; no axis titles; "the traces are embedded as a JPEG"): in the thesis style the words are a
+  figure's (thesis_style.figure_texts) - plain legend names ("Filament power", "Thermionic current set
+  point"), the unit on the axis title with its quantity ("Power (W)", "Pressure (mbar)"; mixed units: no
+  title, units in the legend), "Time of day" under the bottom lane - in a Figure text box in the dialog,
+  changed there with the window showing it, and remembered in data/figure_text.json. "In the thesis"
+  gives the plots' text size once included at the text width (red at 22 cm: 5.8 pt; 16 cm, the default and
+  the thesis' other figures': 8.0 pt). The traces were lines already: the JPEG was the plot's blank white
+  background, which Qt's graphics view paints from a cached picture; painted afresh during a capture, the
+  PDF and SVG have no pictures in them. The UI text size row is hidden for plots only, in the thesis style.
 - 27 October 2026, afternoon (Josh: the run-up draws 8 A for 6 minutes; "only trigger a warning if we have
   >1.2A for more than 15 minutes continuous", and a converter above 50 degC or a bearing above 65 degC
   should warn "regardless of ambient temperature"): the load guard's overload line is an absolute current,
