@@ -75,13 +75,16 @@ The pump's trip, error, warning and comms-failure flags also go to the PLC, whic
 
 ### The load guard
 
-Under the status chip, a second chip appears when the turbo's load guard has something to say: the pump working harder than normal at full speed, as when the valve to its backing pump is shut. Hover over it for the guard's text, with the readings.
+Under the status chip, a second chip appears when the turbo's load guard has something to say: the pump overloaded at full speed, as when the valve to its backing pump is shut, or running too hot. Hover over it for the guard's text, with the readings.
 
 | Chip | Colour | Meaning |
 |---|---|---|
-| **LOAD HIGH: SOURCE SHUTDOWN AT** *time* | amber | The current has been 0.3 A or more above normal for 2 minutes: check the valve between the pump and its backing pump, and the backing pump. Unless the current falls back, the source will be shut down at *time*. **LOAD HIGH: CHECK THE BACKING LINE** when it is running hot (or has its own warning) without an overload: no shutdown. |
+| **LOAD HIGH: SOURCE SHUTDOWN AT** *time* | amber | The current has been above 1.2 A for 15 minutes without a break (normally 0.8 A): check the valve between the pump and its backing pump, and the backing pump. Unless the current falls back, the source will be shut down at *time*. **LOAD HIGH: CHECK THE BACKING LINE** when the guard is set to raise alarms only (`shut_down_source` false). |
+| **TOO HOT: CHECK ITS COOLING** | amber | The bearing above 65 °C or the converter above 50 °C for a minute, at any speed: check the pump's cooling, and its backing line. A warning only. |
+| **PUMP WARNING: CHECK THE BACKING LINE** | amber | The pump's own warning, for a minute, without an overload. A warning only. |
+| **BACK TO NORMAL: ALARM CLEARING** | amber | The current and temperatures are back to normal; the alarm clears after 5 minutes so. |
 | **OVERLOADED: SOURCE SHUTDOWN AT** *time* | red | Still overloaded 10 minutes after the warning: a critical alarm. |
-| **PROTECTION TRIPPED: SOURCE SHUT DOWN** | red | The source is being shut down (it can't be aborted) and the caesium oven cooled. The turbo is left running. **RESET FAULTS** once its load is back to normal. |
+| **PROTECTION TRIPPED: SOURCE SHUT DOWN** | red | The source is being shut down (it can't be aborted) and the caesium oven cooled. The turbo is left running. **RESET FAULTS** once its current is back under 1.2 A. **PROTECTION TRIPPED: ALARMS ONLY** when the guard is set to raise alarms only: no shutdown. |
 
 See [The source turbo's load guard](../how-it-works/turbo-guard.md).
 

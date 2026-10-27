@@ -197,7 +197,7 @@ def test_the_turbos_temperatures_and_load_guard(panel):
     at = datetime(2026, 10, 26, 10, 45).timestamp()
     text = "Source turbo working harder than normal: the source will be shut down at 10:45 (in 20 min) ..."
     panel.update_telemetry({**live, f"{TURBO}.rb_guard_stage": 1.0, f"{TURBO}.guard_message": text,
-                            f"{TURBO}.guard_shutdown_at": at})
+                            f"{TURBO}.guard_shutdown_at": at, f"{TURBO}.guard_reason": "overload"})
     chip = panel.lbl_turbo_guard
     assert not chip.isHidden() and (chip.text(), chip.property("tone")) == ("LOAD HIGH: SOURCE SHUTDOWN AT 10:45", "warn")
     assert chip.toolTip().startswith(text) and "left running" in chip.toolTip()
@@ -205,8 +205,18 @@ def test_the_turbos_temperatures_and_load_guard(panel):
     assert (chip.text(), chip.property("tone")) == ("OVERLOADED: SOURCE SHUTDOWN AT 10:45", "fault")
     panel.update_telemetry({**live, f"{TURBO}.rb_guard_stage": 3.0})
     assert chip.text() == "PROTECTION TRIPPED: SOURCE SHUT DOWN"
-    panel.update_telemetry({**live, f"{TURBO}.rb_guard_stage": 1.0})       # running hot: no shutdown due
-    assert chip.text() == "LOAD HIGH: CHECK THE BACKING LINE"
+    panel.update_telemetry({**live, f"{TURBO}.rb_guard_stage": 3.0, f"{TURBO}.guard_shuts_down_source": 0.0})
+    assert chip.text() == "PROTECTION TRIPPED: ALARMS ONLY"
+    panel.update_telemetry({**live, f"{TURBO}.rb_guard_stage": 1.0, f"{TURBO}.guard_reason": "hot"})
+    assert (chip.text(), chip.property("tone")) == ("TOO HOT: CHECK ITS COOLING", "warn")
+    panel.update_telemetry({**live, f"{TURBO}.rb_guard_stage": 1.0, f"{TURBO}.guard_reason": "pump"})
+    assert chip.text() == "PUMP WARNING: CHECK THE BACKING LINE"
+    panel.update_telemetry({**live, f"{TURBO}.rb_guard_stage": 1.0, f"{TURBO}.guard_reason": "overload"})
+    assert chip.text() == "LOAD HIGH: CHECK THE BACKING LINE"         # (alarms only: no shutdown time)
+    panel.update_telemetry({**live, f"{TURBO}.rb_guard_stage": 1.0, f"{TURBO}.guard_reason": ""})
+    assert (chip.text(), chip.property("tone")) == ("BACK TO NORMAL: ALARM CLEARING", "warn")
+    panel.update_telemetry({**live, f"{TURBO}.rb_guard_stage": 1.0, f"{TURBO}.guard_reason": None})
+    assert chip.text() == "LOAD HIGH: CHECK THE BACKING LINE"         # (a turbo service without the reason)
     panel.update_telemetry({"pump.connected": False})                      # the turbo service gone: no guard
     assert chip.isHidden() and panel.lbl_turbo_temps.text() == "44 °C, 29 °C"
     assert panel.lbl_turbo_temps.property("ink") == "muted"

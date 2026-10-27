@@ -153,13 +153,15 @@ While a sequence runs, the source supplies are greyed out with `automated source
 
 ## The source turbo is overloaded
 
-The alarm `Source turbo working harder than normal: the source will be shut down at <time> ...`, and **LOAD HIGH** under the turbo in **Vacuum System**: the turbo's load guard sees its current above normal at full speed. The source vacuum can look perfectly good meanwhile.
+The alarm `Source turbo working harder than normal: the source will be shut down at <time> ...`, and **LOAD HIGH** under the turbo in **Vacuum System**: the turbo's load guard has seen its current above 1.2 A at full speed for 15 minutes without a break (normally 0.8 A). The source vacuum can look perfectly good meanwhile.
 
 1. **Check the valve between the source turbo and its backing pump.** On 26 October 2026 it had been shut by mistake: the current rose from 0.8 A to 1.2 A at once, and the pump failed 13 hours later. Open it, and the current falls back within a minute or so.
 2. **Check the backing pump**, and the backing line for a leak.
 3. **Leave the turbo running.** It is stopped only by hand, at the pump, by trained staff.
 
-If the current doesn't fall back, the source is shut down 20 minutes after the warning (the alarm gives the time), and the caesium oven cooled; that shutdown can't be aborted. Once the turbo's current is back to normal, press **RESET FAULTS**, then start the source again as usual. See [The source turbo's load guard](how-it-works/turbo-guard.md).
+If the current doesn't fall back, the source is shut down 20 minutes after the warning (the alarm gives the time), and the caesium oven cooled; that shutdown can't be aborted. Once the turbo's current is back under 1.2 A, press **RESET FAULTS**, then start the source again as usual. See [The source turbo's load guard](how-it-works/turbo-guard.md).
+
+**TOO HOT: CHECK ITS COOLING** under the turbo, with the alarm `Source turbo too hot: ...`: its bearing above 65 °C or its converter above 50 °C (normally 43 °C and 28 °C). Check the pump's cooling, then its backing line as above. Too hot on its own only warns; the source is shut down only for an overload.
 
 ## RESET FAULTS does not clear a fault
 

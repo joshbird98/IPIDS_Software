@@ -58,15 +58,30 @@ simulator; none of it has been tried on the real hardware yet (see "Lab PC valid
     open, tell Claude what the Event Log said.
 12. The source turbo's load guard (docs/how-it-works/turbo-guard.md): `python src/utils/build_registry.py`
     (its flags, the status word and the error code are logged from then on), then restart the services. The
-    turbo service's start-up event says "Load guard: normal 0.8 A, ...". Check the normal values in
-    config/turbo_guard.json against a quiet night at full speed in the data viewer (current, bearing,
-    converter). To try it without risk first: shut_down_source false (alarms only), and watch for warnings
-    that shouldn't be. Is the source turbo's backing line shared with another pump (the loadlock's)? A long
+    turbo service's start-up event says "Load guard: a warning after 15 min above 1.2 A at full speed ...".
+    Check the overload line (1.2 A) in config/turbo_guard.json against a quiet night at full speed in the
+    data viewer (0.7-0.8 A on 26 October), and that no bearing or converter reading in normal running comes
+    near 65 / 50 degC. To try it without risk first: shut_down_source false (alarms only), and watch for
+    warnings that shouldn't be. Is the source turbo's backing line shared with another pump (the loadlock's)? A long
     pump-down through it would raise the source turbo's current too (the guard waits while it falls back).
     The Voltage now reads 24.2 V (it showed the pump's 0.1 V units: 242). The viewer: if a line still turns
     to dots zoomed in, SystemLogs/viewer.log names the overlapping files ("Rows for the same times ...").
 
 ## Done
+- 27 October 2026, afternoon (Josh: the run-up draws 8 A for 6 minutes; "only trigger a warning if we have
+  >1.2A for more than 15 minutes continuous", and a converter above 50 degC or a bearing above 65 degC
+  should warn "regardless of ambient temperature"): the load guard's overload line is an absolute current,
+  overload_current_a 1.2 A, and the warning needs 15 min above it without a break (a dip of the minute's
+  median shorter than 1 min isn't a break; the run-up was already excluded: only at 98 % speed, 10 min
+  settled). Too hot is absolute too: bearing_limit_c 65, converter_limit_c 50, at any speed, warning after
+  1 min, never a shutdown on its own. Critical 10 min and the shutdown 20 min after the warning, as before.
+  The first version's current_margin_a, temp_margin_c, normal_bearing_c and normal_converter_c are reported
+  as no longer used. The vacuum panel's chip says why: LOAD HIGH, TOO HOT: CHECK ITS COOLING, PUMP WARNING:
+  CHECK THE BACKING LINE, BACK TO NORMAL: ALARM CLEARING. Replayed on 26 October: over 1.2 A from 10:44,
+  warning 10:59, critical 11:09, trip 11:19 - 12 h 01 min before the pump failed; the temperature limits
+  alone would have warned at 23:10 (the converter over 50 at 23:09; the bearing reached 65 but never
+  passed it). Also: an overload that ended before its warning no longer counts later (a too-hot pump that
+  then reported an error would have tripped as "the overloaded pump is failing").
 - 27 October 2026 (Josh: the backing valve of the source turbo shut by mistake on 26 October; the turbo
   failed 13 h later, the source went to ~1 mbar; "make the turbo pump service more robust in throwing early
   alarms", staged, then a controlled source shutdown that can't be aborted): the source turbo's load guard

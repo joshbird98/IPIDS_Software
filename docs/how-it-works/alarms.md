@@ -26,9 +26,9 @@ These are the rules in `config/alarm_config.json` as it is in the repository.
 | `vacuum.<gauge>.approaching_sp` | a gauge is approaching its relay set point | 3 | 2 s |
 | `vacuum.<gauge>.rapid_rise` | a gauge's pressure is rising rapidly | 2 | |
 | `vacuum.relay_set_points` | the gauge controllers' relay set points aren't confirmed against `config/vac_gauges_config.json` (for VG1 and VG2 this also holds the gate valve shut) | 2 | |
-| `turbo.source.load_warning` | the source turbo's load guard warns: working harder than normal (or running hot, or its own warning) for 2 min; see [The source turbo's load guard](turbo-guard.md) | 2 | |
+| `turbo.source.load_warning` | the source turbo's load guard warns: its current above 1.2 A at full speed for 15 min without a break; or too hot (bearing above 65 °C, converter above 50 °C), or its own warning, for 1 min; see [The source turbo's load guard](turbo-guard.md) | 2 | |
 | `turbo.source.load_critical` | the guard: still overloaded 10 min after the warning; the source will be shut down | 1 | |
-| `turbo.source.load_trip` | the guard has tripped: the source is shut down; latched until **RESET FAULTS** once the load is normal | 1 | |
+| `turbo.source.load_trip` | the guard has tripped: the source is shut down; latched until **RESET FAULTS** once the current is back under 1.2 A | 1 | |
 | `hv.<supply>.arc` | the Spellman service has latched an arc on a supply (output collapsed); latched until fault reset | 2 | |
 | `sequencer.<slot>.failed` | the last recipe, mass scan or optimiser run failed | 3 | |
 

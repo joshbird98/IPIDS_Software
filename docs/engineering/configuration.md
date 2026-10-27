@@ -16,7 +16,7 @@ The configuration files in `config/` and what reads them, the tag registry built
 | `logger_config.json` | the logger's row rate, chunk interval and crash-journal interval | `service_logger` |
 | `readback_tolerance.json` | the readback tolerance rules | `service_monitor`, which reloads it within a few seconds of a change |
 | `alarm_config.json` | the alarm rules and overrides | `service_alarms` |
-| `turbo_guard.json` | the source turbo's load guard: its normal readings, margins and stage times (below) | `service_source_turbo` |
+| `turbo_guard.json` | the source turbo's load guard: its overload line, temperature limits and stage times (below) | `service_source_turbo` |
 | `system_tags.json` | the tag registry, generated (below) | the device services, the logger, the sequencer, the HMI, the data viewer |
 | `recipes/` | the recipes (in git) | the HMI's recipe panel and builder, `service_sequencer` |
 | `recipe_templates/` | the recipe builder's templates (in git): start-up, shutdowns, mass scan, degauss, HV conditioning | the recipe builder's **New** |
@@ -48,9 +48,9 @@ To go back to the relays, set the gauge's relays back to the gate valve's points
 
 ## The source turbo's load guard
 
-`turbo_guard.json` sets the turbo service's load guard, which warns when the source turbo works harder than normal at full speed and, if its current doesn't fall back, shuts the source down (see [The source turbo's load guard](../how-it-works/turbo-guard.md), which lists every setting). The values it ships with are the pump's on 26 October 2026: normal 0.8 A, bearing 43 °C, converter 28 °C; a warning at 0.3 A over for 2 minutes, critical 10 minutes later, the source shut down 20 minutes after the warning unless the current is falling back. Keys starting with `_` are notes.
+`turbo_guard.json` sets the turbo service's load guard, which warns when the source turbo is overloaded at full speed or runs too hot and, if its current doesn't fall back, shuts the source down (see [The source turbo's load guard](../how-it-works/turbo-guard.md), which lists every setting). The values it ships with: a warning once the current has been above 1.2 A for 15 minutes without a break at full speed (normally 0.8 A, as on 26 October 2026), or the bearing above 65 °C or the converter above 50 °C for a minute; critical 10 minutes after the warning; the source shut down 20 minutes after the warning unless the current is falling back. Keys starting with `_` are notes.
 
-The config editor checks each value against its range (for example `normal_current_a` 0.1 to 10 A, `trip_after_s` 60 s to 4 h) and that the critical alarm comes before the trip; the turbo service uses the default for a value with a problem, and logs `turbo_guard.json: <problem> - its default is used`. Set `shut_down_source` to false to have the stages and alarms without the shutdown, for instance while trying new normal values. Changing the file in the config editor restarts the turbo service; a trip it has already made stays (in `data/turbo_guard_state.json`) until **RESET FAULTS**.
+The config editor checks each value against its range (for example `overload_current_a` 0.2 to 10 A, `trip_after_s` 60 s to 4 h), that the overload line is above the normal current, and that the critical alarm comes before the trip. The turbo service uses the default for a value with a problem, and logs `turbo_guard.json: <problem> - its default is used`; a setting of the first version (`current_margin_a`, `temp_margin_c`, `normal_bearing_c`, `normal_converter_c`) is logged as no longer used, and ignored. Set `shut_down_source` to false to have the stages and alarms without the shutdown, for instance while trying a new overload line. Changing the file in the config editor restarts the turbo service; a trip it has already made stays (in `data/turbo_guard_state.json`) until **RESET FAULTS**.
 
 ## Recipe drafting
 

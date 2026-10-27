@@ -8,7 +8,8 @@ parameters the service checks as already configured (so no flash write).
 Injected faults (SINDIE_SIM_FAULTS): turbo_disconnect, turbo_error, turbo_backing_closed (the valve
 to the backing pump shut, as on 26 October 2026, but faster: the current up 0.4 A at once, then
 0.1 A a minute, the temperatures following; the pump's overload warning from 4.5 A and an overload
-failure at 6 A, 48 minutes in - its load guard trips the source 22 minutes in).
+failure at 6 A, 48 minutes in - its load guard warns about 16 minutes in, over 1.2 A for 15, and
+trips the source about 36 minutes in).
 
 At full speed it reads as the real pump did on 26 October 2026: 0.8 A, bearing 43 degC, converter
 28 degC, 24.2 V (P4 is in 0.1 V).

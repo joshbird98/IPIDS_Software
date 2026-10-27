@@ -5,7 +5,7 @@ the pump not answering, no good reading from a gauge) keeps its last value, grey
 chip saying how long ago it was read; the tooltips say why. The turbo pump can only be started
 here: it is stopped by hand, at the pump, by trained staff, never from the software. Under the
 pump, its load guard (src/core/turbo_guard.py), when it has something to say: working harder than
-normal, overloaded (with the time the source will be shut down), or tripped.
+normal (with the time the source will be shut down), too hot, its own warning, overloaded, tripped.
 """
 import logging
 import time
@@ -27,11 +27,11 @@ GAUGE_LOCATIONS = {1: "source", 2: "beamline", 3: "beamline", 4: "endstation", 5
 TURBO = "ion_beam.source.turbo_pump"
 TURBO_START_TIP = ("Start the source turbo pump. It is stopped only by hand, at the pump, by trained staff: "
                    "never from the software.")
-TURBO_GUARD_TIP = ("The turbo's load guard (config/turbo_guard.json) watches its current and temperatures at "
-                   "full speed. Working harder than normal - as with the valve to its backing pump shut - it "
-                   "warns; if the current doesn't fall back it shuts the source down (the PLC's shutdown "
-                   "sequence, which can't then be aborted) and cools the caesium oven, hours before the pump "
-                   "would fail. The turbo itself is left running.")
+TURBO_GUARD_TIP = ("The turbo's load guard (config/turbo_guard.json) watches its current at full speed, and its "
+                   "temperatures. The current staying high - as with the valve to its backing pump shut - or a "
+                   "bearing or converter too hot, and it warns; if the current doesn't fall back it shuts the source "
+                   "down (the PLC's shutdown sequence, which can't then be aborted) and cools the caesium oven, "
+                   "hours before the pump would fail. The turbo itself is left running.")
 GV_HOLD = "ion_beam.source.chamber.vac_hold_left_s"
 GV_HOLD_TIP = ("The vacuum service is restarting or not sending data. Meanwhile the PLC keeps the vacuum "
                "service's last judgment of the vacuum: the gate valve's permissive and the gauge flags as "
@@ -315,13 +315,21 @@ class VacuumControlWidget(QWidget):
             self.lbl_turbo_guard.hide()
             return
         at = data.get(f"{TURBO}.guard_shutdown_at")
-        when = datetime.fromtimestamp(at).strftime("%H:%M") if at else None
+        when = f"SOURCE SHUTDOWN AT {datetime.fromtimestamp(at).strftime('%H:%M')}" if at else "CHECK THE BACKING LINE"
+        reason = data.get(f"{TURBO}.guard_reason")      # (None: a turbo service from before it was sent)
         if stage >= 3:
-            text, tone = "PROTECTION TRIPPED: SOURCE SHUT DOWN", "fault"
+            acts = data.get(f"{TURBO}.guard_shuts_down_source") != 0.0
+            text, tone = "PROTECTION TRIPPED: " + ("SOURCE SHUT DOWN" if acts else "ALARMS ONLY"), "fault"
         elif stage >= 2:
-            text, tone = "OVERLOADED: " + (f"SOURCE SHUTDOWN AT {when}" if when else "CHECK THE BACKING LINE"), "fault"
+            text, tone = f"OVERLOADED: {when}", "fault"
+        elif reason == "hot":
+            text, tone = "TOO HOT: CHECK ITS COOLING", "warn"
+        elif reason == "pump":
+            text, tone = "PUMP WARNING: CHECK THE BACKING LINE", "warn"
+        elif reason == "":
+            text, tone = "BACK TO NORMAL: ALARM CLEARING", "warn"     # (it clears after clear_after_s)
         else:
-            text, tone = "LOAD HIGH: " + (f"SOURCE SHUTDOWN AT {when}" if when else "CHECK THE BACKING LINE"), "warn"
+            text, tone = f"LOAD HIGH: {when}", "warn"
         _set(self.lbl_turbo_guard, text, tone)
         _tip(f"{data.get(f'{TURBO}.guard_message') or ''}\n\n{TURBO_GUARD_TIP}".strip(), self.lbl_turbo_guard)
         self.lbl_turbo_guard.show()

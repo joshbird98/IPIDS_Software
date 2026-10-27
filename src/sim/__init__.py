@@ -48,7 +48,7 @@ FAULT_DESCRIPTIONS = {
     "smu_disconnect": "SMU unreachable",
     "turbo_disconnect": "turbo pump bridge unreachable",
     "turbo_error": "turbo pump run-up error",
-    "turbo_backing_closed": "valve to the turbo's backing pump shut: its load climbs (guard: source shutdown in ~22 min)",
+    "turbo_backing_closed": "valve to the turbo's backing pump shut: its load climbs (guard: source shutdown in ~36 min)",
     "vacuum_disconnect": "gauge controller bridge unreachable",
     "vacuum_vent_source": "source vacuum (VG1) rises to atmosphere",
     "vacuum_spike_source": "source vacuum (VG1) spikes to ~1 mbar for 0.8 s every 6 s (ridden through)",

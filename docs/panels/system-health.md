@@ -87,7 +87,7 @@ At present a safety relay trip doesn't start a shutdown sequence by itself: the 
 
 ## Resetting faults
 
-**RESET FAULTS** asks the PLC to clear every latched fault, and the Spellman service to clear its software arc latches (it also sends a fault clear to each Spellman supply it can reach). It also resets the source turbo's load guard after a trip, once the turbo's current is back to normal; while it is still overloaded the turbo service refuses, with the readings (see [The source turbo's load guard](../how-it-works/turbo-guard.md)).
+**RESET FAULTS** asks the PLC to clear every latched fault, and the Spellman service to clear its software arc latches (it also sends a fault clear to each Spellman supply it can reach). It also resets the source turbo's load guard after a trip, once the turbo's current is back under 1.2 A; while it is still overloaded the turbo service refuses, with the readings (see [The source turbo's load guard](../how-it-works/turbo-guard.md)).
 
 The PLC accepts the reset only while it is receiving the PC's watchdog, and not during **GRACE PERIOD (75% EXTR)**, **HOLD HOT PHASE**, **FILAMENT RAMP DOWN** or the cool-down after a remote I/O loss. It takes the request either way, so a refused reset does nothing and says nothing: check the **PLC faults** list afterwards.
 

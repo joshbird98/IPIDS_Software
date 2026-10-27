@@ -16,8 +16,8 @@ from src.core.network_map import TOPIC_SRC_TURBO_DATA, ZMQ_PORT_SRC_TURBO_PUB
 from tests.service_harness import ServiceThread, TelemetryTap
 
 B = "ion_beam.source.turbo_pump"
-FAST = tg.GuardConfig(settle_s=0.0, smooth_s=2.0, warn_after_s=2.0, critical_after_s=2.0, trip_after_s=5.0,
-                      pump_warning_trip_s=60.0, falling_window_s=60.0, clear_after_s=2.0)
+FAST = tg.GuardConfig(overload_current_a=1.0, settle_s=0.0, smooth_s=2.0, warn_after_s=2.0, critical_after_s=2.0,
+                      trip_after_s=5.0, pump_warning_trip_s=60.0, falling_window_s=60.0, clear_after_s=2.0)
 
 
 @pytest.fixture

@@ -9,9 +9,10 @@ by hand, at the pump (a stop command is refused). A start or reset is not sent t
 running without a fault, as the reset word carries a stop.
 
 Its load guard (src/core/turbo_guard.py, set in config/turbo_guard.json) warns of an overload -
-the backing valve closed, as on 26 October 2026 - hours before the pump fails, and if the load
-doesn't fall back trips: stat_load_trip, on which service_plc shuts the source down. Its state is
-kept in data/turbo_guard_state.json, so a trip (and an overload's clock) survives a restart.
+the backing valve closed, as on 26 October 2026 - hours before the pump fails, and of the pump
+running too hot; if the current doesn't fall back it trips: stat_load_trip, on which service_plc
+shuts the source down. Its state is kept in data/turbo_guard_state.json, so a trip (and an
+overload's clock) survives a restart.
 """
 import json
 import os
@@ -155,7 +156,7 @@ class TurbovacMicroservice(DeviceService):
         self._error_code = None
         guard_config, problems = tg.parse(self.load_config(tg.CONFIG_FILE, {}))
         for problem in problems:
-            self.events.log_general(f"{tg.CONFIG_FILE}: {problem} - its default is used", severity="WARNING")
+            self.events.log_general(f"{tg.CONFIG_FILE}: {problem}", severity="WARNING")    # (it says what is used)
         self.guard = tg.TurboGuard(guard_config)
         self.guard_state_file = os.path.join(paths.DATA_DIR, GUARD_STATE)
         self.guard.restore(self._load_guard_state())
@@ -368,6 +369,7 @@ class TurbovacMicroservice(DeviceService):
             self.state[f"{b}.{flag}"] = 1.0 if stage == at else 0.0
         self.state[f"{b}.rb_guard_stage"] = float(stage)
         self.state[f"{b}.guard_message"] = g.message if g.config.enabled else ""
+        self.state[f"{b}.guard_reason"] = g.reason if g.config.enabled and stage != tg.NORMAL else ""
         self.state[f"{b}.guard_shutdown_at"] = g.shutdown_at
         self.state[f"{b}.guard_enabled"] = 1.0 if g.config.enabled else 0.0
         self.state[f"{b}.guard_shuts_down_source"] = 1.0 if g.config.shut_down_source else 0.0
