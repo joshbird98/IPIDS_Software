@@ -58,7 +58,7 @@ If the controller reports why there's no reading, the chip shows that instead (*
 
 ## Source turbo pump
 
-The **Source turbo pump** group shows the pump's **Speed** in Hz, its motor **Current** in A, and a status chip.
+The **Source turbo pump** group shows the pump's **Speed** in Hz, its motor **Current** in A, its **Bearing, converter** temperatures in °C, and a status chip.
 
 | Chip | Colour | Meaning |
 |---|---|---|
@@ -72,6 +72,18 @@ The **Source turbo pump** group shows the pump's **Speed** in Hz, its motor **Cu
 | **OFFLINE** | dashed outline | No data from the turbo service since the HMI started. Speed and current show dashes. |
 
 The pump's trip, error, warning and comms-failure flags also go to the PLC, which latches them as faults (**SRC_TURBO_TRIP** and the like) until **RESET FAULTS**.
+
+### The load guard
+
+Under the status chip, a second chip appears when the turbo's load guard has something to say: the pump working harder than normal at full speed, as when the valve to its backing pump is shut. Hover over it for the guard's text, with the readings.
+
+| Chip | Colour | Meaning |
+|---|---|---|
+| **LOAD HIGH: SOURCE SHUTDOWN AT** *time* | amber | The current has been 0.3 A or more above normal for 2 minutes: check the valve between the pump and its backing pump, and the backing pump. Unless the current falls back, the source will be shut down at *time*. **LOAD HIGH: CHECK THE BACKING LINE** when it is running hot (or has its own warning) without an overload: no shutdown. |
+| **OVERLOADED: SOURCE SHUTDOWN AT** *time* | red | Still overloaded 10 minutes after the warning: a critical alarm. |
+| **PROTECTION TRIPPED: SOURCE SHUT DOWN** | red | The source is being shut down (it can't be aborted) and the caesium oven cooled. The turbo is left running. **RESET FAULTS** once its load is back to normal. |
+
+See [The source turbo's load guard](../how-it-works/turbo-guard.md).
 
 ## Source gate valve
 

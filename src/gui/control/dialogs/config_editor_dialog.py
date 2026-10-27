@@ -55,6 +55,7 @@ CONFIG_TO_SERVICE = {
     "mpd_config.json": "service_spellman_mpd",
     "vac_gauges_config.json": "service_vac_gauge_controllers",
     "plc_config.json": "service_plc",
+    "turbo_guard.json": "service_source_turbo",       # (a trip it has made stays, in data/turbo_guard_state.json)
     # drafting's settings: read each time a recipe builder window opens
     "recipe_ai.json": BUILDER,
 }

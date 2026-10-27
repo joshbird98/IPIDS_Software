@@ -9,6 +9,11 @@ the safety relay is off (enables of relay-powered supplies), and - mirroring the
 off the target or ioniser while the cesium is hot. Control leases as for every device service
 (src/core/leases.py); the system controls (relay, shutdown, fault reset) and the gate valve can
 never be leased.
+
+The source turbo protection: when the turbo's load guard trips (service_source_turbo, src/core/
+turbo_guard.py), this service shuts the source down - INITIATE SHUTDOWN and the caesium oven's
+forced cooling - and refuses to abort it until it has finished, and to switch the relay or the
+source's supplies on until the trip is reset.
 """
 import json
 import logging
@@ -48,6 +53,19 @@ VAC_GAUGES = ("ion_beam.source.vacuum_gauge_1", "ion_beam.beamline.vacuum_gauge_
 VAC_UNKNOWN = {"ion_beam.source.chamber.stat_vac_ok_for_gv": False,       # no vacuum service: the PLC is told
                "ion_beam.facilities.graphix1.stat_comms_fail": True,        # the vacuum is unknown
                "ion_beam.facilities.graphix2.stat_comms_fail": True}
+# The source turbo's load guard (service_source_turbo, src/core/turbo_guard.py) trips on an overload that
+# doesn't fall back - the valve to its backing pump shut, as on 26 October 2026. Its trip shuts the source
+# down here: INITIATE SHUTDOWN (the PLC's sequence) and the caesium oven's forced cooling. From then until
+# that sequence has finished, ABORT SHUTDOWN, withdrawing the request and switching the forced cooling off
+# are refused; and while the trip stands (RESET FAULTS, once the turbo's load is back to normal) so is
+# switching the safety relay or the source's supplies on. The turbo itself is never stopped.
+TURBO = "ion_beam.source.turbo_pump"
+TURBO_TRIP, TURBO_TRIP_ACTS = f"{TURBO}.stat_load_trip", f"{TURBO}.guard_shuts_down_source"
+SOURCE_SHUTDOWN, CANCEL_SHUTDOWN = "ion_beam.system.cmd_source_shutdown", "ion_beam.system.cmd_cancel_shutdown"
+RELAY_ENABLE = "ion_beam.system.cmd_enable_safety"
+FORCE_COOLING = "ion_beam.source.cesium.cmd_force_cooling"
+TURBO_PROTECTION = "ion_beam.system.turbo_protection"   # published: 1 while it holds the source down
+TURBO_RETRY_S = 30.0       # INITIATE SHUTDOWN sent again this often until the PLC's sequence runs
 MAX_CMD_AGE = 0.5  # TTL: Reject incoming commands older than 500ms
 RECONNECT_DELAYS = (1.0, 2.0, 5.0, 10.0)  # seconds between PLC connection attempts (backs off, then stays at 10 s)
 
@@ -184,6 +202,9 @@ class PlcMicroservice(DeviceService):
         self._vac_judged_at = None      # (monotonic) when
         self._vac_holding = None        # why the PLC is being given that judgment still, or None
         self.state[VAC_HOLD_LEFT] = 0.0
+        self._turbo_trip = False        # the source turbo's load guard has tripped (its last telemetry)
+        self._turbo_shutdown = None     # the shutdown that trip started, until it has finished: a dict
+        self.state[TURBO_PROTECTION] = 0.0
 
     def _evaluate_word_faults(self):
         """Log each PLC fault bit's edges (from the 32-bit fault words) to the event log.
@@ -535,6 +556,7 @@ class PlcMicroservice(DeviceService):
 
                 if "TURBO" in topic_str:
                     base = "ion_beam.source.turbo_pump"
+                    self._note_turbo_guard(payload)
                     pending_updates[f"{base}.stat_comms_fail"] = flag(f"{base}.stat_comms_fail")
                     pending_updates[f"{base}.stat_error"] = flag(f"{base}.stat_error", False)
                     pending_updates[f"{base}.stat_warning"] = flag(f"{base}.stat_warning", False)
@@ -702,6 +724,7 @@ class PlcMicroservice(DeviceService):
         self._evaluate_word_faults()
         now = time.time()
         if self.connected:
+            self._run_turbo_protection()
             self._clear_stale_gv_request()
         if self.connected and now - self.last_heartbeat >= HEARTBEAT_INTERVAL:
             self._increment_watchdog()
@@ -710,6 +733,99 @@ class PlcMicroservice(DeviceService):
     def publish_unknown(self):
         self._drain_external_telemetry()
         self.state[VAC_HOLD_LEFT] = 0.0          # (nothing is being given to the PLC)
+        self._publish_turbo_protection()
+
+    # ------------------------------------------------------------------ source turbo protection
+    def _note_turbo_guard(self, payload: dict):
+        """The source turbo's load guard, from its telemetry: a trip starts the source shutdown."""
+        v = payload.get(TURBO_TRIP)
+        if v is None:
+            return                      # unknown (or a turbo service without the guard): no change
+        tripped = v == 1.0 and payload.get(TURBO_TRIP_ACTS, 1.0) != 0.0     # (alarms only: nothing to do)
+        if tripped and not self._turbo_trip:
+            self._turbo_shutdown = {"at": time.time(), "requested_at": None, "seen_running": False,
+                                    "cooling": False}
+            if not self.connected:
+                self.events.log_general("Source turbo protection tripped: the source will be shut down as soon as "
+                                        "the PLC is back", severity="ERROR", event_type="TURBO_GUARD")
+        elif not tripped and self._turbo_trip:
+            self.events.log_general("Source turbo protection reset: the safety relay and the source's supplies may "
+                                    "be switched on again" + (" once its shutdown has finished"
+                                                              if self._turbo_shutdown else ""),
+                                    event_type="TURBO_GUARD")
+        self._turbo_trip = tripped
+        self._publish_turbo_protection()
+
+    def _publish_turbo_protection(self):
+        self.state[TURBO_PROTECTION] = 1.0 if (self._turbo_trip or self._turbo_shutdown is not None) else 0.0
+
+    def _run_turbo_protection(self):
+        """For the turbo protection's trip: the caesium oven's forced cooling, and INITIATE SHUTDOWN (sent
+        again every TURBO_RETRY_S until the PLC's sequence runs). It holds until that sequence has
+        finished - or at once, if the source was already off."""
+        p = self._turbo_shutdown
+        s, now = self.state, time.time()
+        relay = s.get("ion_beam.facilities.safety_relay_active")
+        if p is None or relay is None:          # (no reading of the relay yet: wait for one)
+            self._publish_turbo_protection()
+            return
+        steps = [s.get("ion_beam.system.remote_shutdown_step") or 0, s.get("ion_beam.system.pc_shutdown_step") or 0]
+        running = s.get("ion_beam.system.src_auto_sdown") == 1.0 or max(steps) > 0
+        if not p["cooling"] and (p.get("cooling_tried") is None or now - p["cooling_tried"] >= TURBO_RETRY_S):
+            ok, why = self._write_tag(FORCE_COOLING, True)
+            p["cooling"], p["cooling_tried"] = ok, now
+            if not ok:
+                self.events.log_general(f"Source turbo protection: the caesium oven's forced cooling couldn't be "
+                                        f"switched on ({why}) - trying again in {TURBO_RETRY_S:.0f} s",
+                                        severity="ERROR", event_type="TURBO_GUARD")
+        if running:
+            if not p["seen_running"]:
+                self.events.log_general("Source turbo protection: the PLC's source shutdown sequence is running "
+                                        "(it can't be aborted until it has finished)", severity="WARNING",
+                                        event_type="TURBO_GUARD")
+            p["seen_running"] = True
+        elif p["seen_running"] or relay != 1.0:
+            if p["cooling"]:
+                if p["seen_running"]:
+                    text = "the source shutdown has finished"
+                elif p["requested_at"] is not None:
+                    text = "the source is off: its safety relay has opened"
+                else:
+                    text = "the source was already off (safety relay open); the caesium oven's forced cooling is on"
+                self.events.log_general(f"Source turbo protection: {text}", severity="WARNING",
+                                        event_type="TURBO_GUARD")
+                self._turbo_shutdown = None
+        elif p["requested_at"] is None or now - p["requested_at"] >= TURBO_RETRY_S:
+            again = p["requested_at"] is not None
+            ok, why = self._write_tag(SOURCE_SHUTDOWN, True)
+            p["requested_at"] = now
+            if not ok:
+                text = f"INITIATE SHUTDOWN couldn't be sent ({why}) - trying again in {TURBO_RETRY_S:.0f} s"
+            elif again:
+                text = "INITIATE SHUTDOWN sent again: the PLC's shutdown sequence hasn't started"
+            else:
+                text = "INITIATE SHUTDOWN sent to the PLC and the caesium oven's forced cooling switched on"
+            if not again or self.throttle.ready("turbo-shutdown-retry") is not None:
+                self.events.log_general(f"Source turbo protection: {text}", severity="WARNING" if ok and not again
+                                        else "ERROR", event_type="TURBO_GUARD")
+        self._publish_turbo_protection()
+
+    def _turbo_refusal(self, tag: str, value):
+        """Why the source turbo protection forbids this command now (None if it doesn't)."""
+        if self._turbo_shutdown is not None:
+            if (tag == CANCEL_SHUTDOWN and value) or (tag == SOURCE_SHUTDOWN and not value):
+                return ("the source turbo protection started this shutdown: it can't be aborted (the turbo's load "
+                        "guard tripped - see the alarms)")
+            if tag == FORCE_COOLING and not value:
+                return ("the source turbo protection is cooling the caesium oven: the forced cooling stays on until "
+                        "its shutdown has finished")
+        if self._turbo_trip or self._turbo_shutdown is not None:
+            base, _, leaf = tag.rpartition(".")
+            if (tag == RELAY_ENABLE and value) or (leaf == "cmd_enable" and value and base in SHUTDOWN_SUBSYSTEMS):
+                return ("the source turbo protection has tripped: the source stays off until RESET FAULTS, once the "
+                        "turbo's load is back to normal" + (" and the source shutdown has finished"
+                                                            if self._turbo_shutdown is not None else ""))
+        return None
 
     # ------------------------------------------------------------------ permits / commands
     def permit(self, subsystem: str):
@@ -720,6 +836,8 @@ class PlcMicroservice(DeviceService):
             return False, "the PLC reports lost communication with the PC (watchdog)"
         if subsystem in UNLEASABLE:
             return True, ""
+        if subsystem in SHUTDOWN_SUBSYSTEMS and (self._turbo_trip or self._turbo_shutdown is not None):
+            return False, "source turbo protection tripped: RESET FAULTS once the turbo's load is back to normal"
         if subsystem in RELAY_SUBSYSTEMS and s.get("ion_beam.facilities.safety_relay_active") != 1.0:
             return False, "safety relay de-energised"
         if subsystem in SOURCE_DECK and (s.get("ion_beam.system.remote_io_lost") == 1.0
@@ -769,7 +887,7 @@ class PlcMicroservice(DeviceService):
             cmd.reject(f"locked out: {subsystem} is in automatic control mode {mode} "
                        f"({MODE_NAMES.get(mode, 'PLC controlled')})")
             return
-        refusal = self._cesium_hold_refusal(tag, value)
+        refusal = self._turbo_refusal(tag, value) or self._cesium_hold_refusal(tag, value)
         if refusal:
             cmd.reject(refusal)
             return
@@ -829,11 +947,15 @@ class PlcMicroservice(DeviceService):
                 for service in self.last_seen:
                     if service in topic_str:
                         self.last_seen[service] = self.clock()
-                if "VACUUM" in topic_str:
+                if "VACUUM" in topic_str or "TURBO" in topic_str:
                     try:
-                        self._note_vacuum_judgment(orjson.loads(msg))
+                        payload = orjson.loads(msg)
                     except ValueError:
-                        pass
+                        continue
+                    if "VACUUM" in topic_str:
+                        self._note_vacuum_judgment(payload)
+                    else:
+                        self._note_turbo_guard(payload)
         except zmq.Again:
             pass
 

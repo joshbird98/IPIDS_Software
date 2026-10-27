@@ -206,7 +206,9 @@ A lost PC watchdog also latches `PC_Watchdog_Timeout`, which takes away the gate
 | 10 Hold hot | HOLD HOT PHASE | **INITIATE SHUTDOWN** (`ion_beam.system.cmd_source_shutdown`), with the relay closed and both sequences at 0 | Extraction and thermionic off; Faraday cup in; forced cooling. Sweeping: target at least 3 kV, filament at most 15 A. | 11 when the caesium isn't hot; 0 on **ABORT SHUTDOWN** (`cmd_cancel_shutdown`) |
 | 11 Ramp down | FILAMENT RAMP DOWN | from 10 | Target setpoint 0; filament ramps down at 1 A/s. | 0 at 0 A, with target and filament off, the gate valve closed and the relay enable dropped |
 
-The HMI offers **ABORT SHUTDOWN** only at step 10, and **INITIATE SHUTDOWN** only with no shutdown sequence running, the relay closed, and a supply on or the source not cold. The step comments in the interface block list only steps 0, 1, 2, 3 and 99.
+The HMI offers **ABORT SHUTDOWN** only at step 10, and **INITIATE SHUTDOWN** only with no shutdown sequence running, the relay closed, and a supply on or the source not cold.
+
+**The source turbo protection** starts this scenario from the PC: when the source turbo's load guard trips (see [The source turbo's load guard](turbo-guard.md)), `service_plc` writes **INITIATE SHUTDOWN** and `ion_beam.source.cesium.cmd_force_cooling`, if the relay is closed and no sequence is running, again every 30 s until the sequence runs. Until it has finished, the PLC service refuses **ABORT SHUTDOWN** (`cmd_cancel_shutdown`), `cmd_source_shutdown` false and the forced cooling off; until the trip is reset, the relay enable and the source supplies' switch-ons. The PLC program itself is unchanged: an abort written straight to the PLC would still end step 10. The step comments in the interface block list only steps 0, 1, 2, 3 and 99.
 
 ## Arc quench
 

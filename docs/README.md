@@ -55,6 +55,7 @@ In the HMI, press **F1** with the mouse over a panel to open that panel's page. 
     - [The PLC program](how-it-works/plc.md)
     - [Services and messaging](how-it-works/services.md)
     - [Alarm handling](how-it-works/alarms.md)
+    - [The source turbo's load guard](how-it-works/turbo-guard.md)
     - [Data logging and storage](how-it-works/data-logging.md)
     - [The simulator](how-it-works/simulator.md)
 - **Engineering**

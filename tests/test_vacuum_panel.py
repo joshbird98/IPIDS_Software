@@ -184,3 +184,29 @@ def test_the_gate_valve_group_shows_the_vacuum_hold(panel):
     assert "restarting" in panel.lbl_gv_hold.toolTip()
     panel.update_telemetry({**plc, "ion_beam.source.chamber.vac_hold_left_s": 0.0})
     assert not panel.lbl_gv_hold.isVisibleTo(panel)
+
+
+def test_the_turbos_temperatures_and_load_guard(panel):
+    """The bearing and converter temperatures, and under the pump the load guard's stage with the time the
+    source will be shut down - nothing while all is well (src/core/turbo_guard.py)."""
+    from datetime import datetime
+    live = {**turbo_live(1000.0, 1.2), f"{TURBO}.rb_temp_bearing": 44.0, f"{TURBO}.rb_temp_converter": 29.0,
+            f"{TURBO}.rb_guard_stage": 0.0, f"{TURBO}.guard_message": "", f"{TURBO}.guard_shutdown_at": None}
+    panel.update_telemetry(live)
+    assert panel.lbl_turbo_temps.text() == "44 °C, 29 °C" and panel.lbl_turbo_guard.isHidden()
+    at = datetime(2026, 10, 26, 10, 45).timestamp()
+    text = "Source turbo working harder than normal: the source will be shut down at 10:45 (in 20 min) ..."
+    panel.update_telemetry({**live, f"{TURBO}.rb_guard_stage": 1.0, f"{TURBO}.guard_message": text,
+                            f"{TURBO}.guard_shutdown_at": at})
+    chip = panel.lbl_turbo_guard
+    assert not chip.isHidden() and (chip.text(), chip.property("tone")) == ("LOAD HIGH: SOURCE SHUTDOWN AT 10:45", "warn")
+    assert chip.toolTip().startswith(text) and "left running" in chip.toolTip()
+    panel.update_telemetry({**live, f"{TURBO}.rb_guard_stage": 2.0, f"{TURBO}.guard_shutdown_at": at})
+    assert (chip.text(), chip.property("tone")) == ("OVERLOADED: SOURCE SHUTDOWN AT 10:45", "fault")
+    panel.update_telemetry({**live, f"{TURBO}.rb_guard_stage": 3.0})
+    assert chip.text() == "PROTECTION TRIPPED: SOURCE SHUT DOWN"
+    panel.update_telemetry({**live, f"{TURBO}.rb_guard_stage": 1.0})       # running hot: no shutdown due
+    assert chip.text() == "LOAD HIGH: CHECK THE BACKING LINE"
+    panel.update_telemetry({"pump.connected": False})                      # the turbo service gone: no guard
+    assert chip.isHidden() and panel.lbl_turbo_temps.text() == "44 °C, 29 °C"
+    assert panel.lbl_turbo_temps.property("ink") == "muted"

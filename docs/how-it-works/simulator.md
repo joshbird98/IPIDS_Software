@@ -50,6 +50,7 @@ The fault menu lists the faults with their numbers. Type a number to switch that
 | `smu_disconnect` | the SMU can't be reached |
 | `turbo_disconnect` | the turbo pump's bridge can't be reached |
 | `turbo_error` | the turbo pump reports a run-up error |
+| `turbo_backing_closed` | the valve to the turbo's backing pump shut: its current goes up 0.4 A at once, then 0.1 A a minute, and its temperatures follow; its overload warning from 4.5 A, an overload failure at 6 A (48 min in). The load guard warns after 2 min and trips the source after 22 min. Clearing the fault opens the valve again: the current falls back within a minute or so |
 | `vacuum_disconnect` | the gauge controllers' bridge can't be reached |
 | `vacuum_vent_source` | the source vacuum (VG1) rises to atmosphere |
 | `vacuum_spike_source` | VG1 spikes to about 1 mbar for 0.8 s every 6 s, as with a powdered target: VG1's software trip rides each one through (**SPIKE**, then `VG1 spike ridden through` in the event log) |

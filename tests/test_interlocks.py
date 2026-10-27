@@ -452,3 +452,13 @@ def test_a_backstop_relay_stays_closed_through_a_spike():
     vac = cond(overview(data, wired=["10.4"], shipped=True).group("relay"), "Gauge controller relay")
     assert vac.state == il.OK and vac.detail == \
         "closed: relay 4: VG1 at 1.0E-03 mbar (it opens above 1.0E+01)"
+
+
+def test_the_source_turbo_protection_is_named_on_the_relay():
+    """service_plc refuses ENABLE SAFETY RELAY while the source turbo protection holds the source down."""
+    plain = il.evaluate(machine(), now=NOW).group("relay")
+    assert not any("turbo" in text for text, _ in plain.notes)
+    why = "Source turbo protection tripped at 10:45: ..."
+    held = il.evaluate(machine(**{il.TURBO_PROTECTION: 1.0, il.TURBO_GUARD_TEXT: why}), now=NOW).group("relay")
+    text, tone = held.notes[0]
+    assert tone == "warn" and "source turbo protection has tripped" in text and why in text

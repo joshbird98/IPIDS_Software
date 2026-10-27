@@ -7,9 +7,17 @@ status word are read every cycle and the slower values round-robin, one per cycl
 The software can start the pump and reset its faults, but never stop it: trained staff stop it
 by hand, at the pump (a stop command is refused). A start or reset is not sent to a pump already
 running without a fault, as the reset word carries a stop.
+
+Its load guard (src/core/turbo_guard.py, set in config/turbo_guard.json) warns of an overload -
+the backing valve closed, as on 26 October 2026 - hours before the pump fails, and if the load
+doesn't fall back trips: stat_load_trip, on which service_plc shuts the source down. Its state is
+kept in data/turbo_guard_state.json, so a trip (and an overload's clock) survives a restart.
 """
+import json
+import os
 import time
 
+from src.core import paths, turbo_guard as tg
 from src.core.device_service import DeviceService
 from src.core.log_setup import Throttle, setup_logging
 from src.core.os_helper import harden_windows_process
@@ -27,7 +35,7 @@ STOP_REFUSED = ("the source turbo pump is never stopped from the software: train
 PNU_HW_VER = 1
 PNU_SERIAL = 2
 PNU_ACT_FREQ = 3        # Hz
-PNU_ACT_VOLT = 4        # V
+PNU_ACT_VOLT = 4        # 0.1 V (the intermediate circuit voltage: 242 is 24.2 V)
 PNU_ACT_CURR = 5        # 0.1 A
 PNU_SAVE = 8
 PNU_CONV_TEMP = 11      # degC
@@ -46,6 +54,11 @@ STRATEGY = ((PNU_X201_FUNC, 19, AK_WRITE_16), (PNU_RELAY_X1, 4, AK_WRITE_FIELD_1
             (PNU_VENT_ON_FREQ, 500, AK_WRITE_16), (PNU_VENT_OFF_FREQ, 5, AK_WRITE_16),
             (PNU_USS_WATCHDOG, 0, AK_WRITE_16))
 NACK = (7, 8)
+# Status word (ZSW) bits, from Leybold's "Serial Interfaces for TURBOVAC i/iX"
+ZSW_READY, ZSW_ERROR, ZSW_TEMP_WARNING, ZSW_TURNING = 1 << 0, 1 << 3, 1 << 7, 1 << 11
+ZSW_OVERLOAD_WARNING, ZSW_WARNING = 1 << 13, 1 << 14
+GUARD_STATE = "turbo_guard_state.json"
+GUARD_SAVE_S = 60.0     # an overload's clock is saved this often (a trip at once)
 
 TURBO_ERROR_DICT = {
     0: "No Error",
@@ -138,6 +151,20 @@ class TurbovacMicroservice(DeviceService):
                            ("volts", PNU_ACT_VOLT), ("amps", PNU_ACT_CURR), ("op_hours", PNU_OP_HOURS),
                            ("warnings", PNU_WARN_BITS), ("error", PNU_ERR_CODE)]
         self._slow_idx = 0
+        self._warning_bits = None           # the last warning word and error code read (logged when they change)
+        self._error_code = None
+        guard_config, problems = tg.parse(self.load_config(tg.CONFIG_FILE, {}))
+        for problem in problems:
+            self.events.log_general(f"{tg.CONFIG_FILE}: {problem} - its default is used", severity="WARNING")
+        self.guard = tg.TurboGuard(guard_config)
+        self.guard_state_file = os.path.join(paths.DATA_DIR, GUARD_STATE)
+        self.guard.restore(self._load_guard_state())
+        if self.guard.stage != tg.NORMAL:
+            self.events.log_general(f"Source turbo guard restored as {tg.STAGE_NAMES[self.guard.stage]}"
+                                    + (f": {self.guard.message}" if self.guard.message else ""),
+                                    severity="WARNING", event_type="TURBO_GUARD")
+        self._guard_saved = (None, 0.0)
+        self._publish_guard()
 
     def _report_link_problem(self, message):
         if (n := self.throttle.ready(f"link-{message.split(':')[0]}")) is not None:
@@ -255,7 +282,8 @@ class TurbovacMicroservice(DeviceService):
     def publish_unknown(self):
         self.state["system.connected"] = 0.0
         for key in ("rb_speed_hz", "rb_speed_pct", "stat_ready", "stat_turning", "stat_error", "stat_warning",
-                    "stat_trip", "rb_temp_bearing", "rb_temp_converter", "rb_voltage", "rb_current"):
+                    "stat_trip", "rb_temp_bearing", "rb_temp_converter", "rb_voltage", "rb_current",
+                    "rb_status_word"):
             self.state[f"{BASE_TAG}.{key}"] = None
         self.state[f"{BASE_TAG}.stat_comms_fail"] = 1.0
 
@@ -272,8 +300,10 @@ class TurbovacMicroservice(DeviceService):
             self.state[f"{b}.stat_error"] = 1.0 if error_active else 0.0
             self.state[f"{b}.stat_warning"] = 1.0 if zsw & (1 << 14) else 0.0
             self.state[f"{b}.stat_trip"] = 1.0 if (error_active and not ready) else 0.0
+            self.state[f"{b}.rb_status_word"] = float(zsw)      # (which bit means at speed is still to check)
             if self._max_hz > 0:
                 self.state[f"{b}.rb_speed_pct"] = round((raw_hz / self._max_hz) * 100, 1)
+            self._run_guard(zsw)
         else:
             self.comms_ok = ak_hz in NACK      # a NACK is still an answer
         comms_fail = not self.link.connected or not self.comms_ok
@@ -293,20 +323,101 @@ class TurbovacMicroservice(DeviceService):
         elif task == "conv_temp":
             self.state[f"{b}.rb_temp_converter"] = float(val)
         elif task == "volts":
-            self.state[f"{b}.rb_voltage"] = float(val)
+            self.state[f"{b}.rb_voltage"] = round(val * 0.1, 1)     # (was published in 0.1 V: 242 for 24.2 V)
         elif task == "amps":
-            self.state[f"{b}.rb_current"] = val * 0.1
+            self.state[f"{b}.rb_current"] = round(val * 0.1, 1)
         elif task == "op_hours":
             self.state["system.service_hours"] = round(val * 0.01, 2)
         elif task == "warnings":
             active = [desc for bit, desc in TURBO_WARNING_DICT.items() if val & (1 << bit)]
             self._most_recent_warning_desc = ", ".join(active) if active else "None"
+            if val != self._warning_bits:
+                if active:
+                    self.events.log_general(f"Source turbo reports: {self._most_recent_warning_desc} "
+                                            f"(warning bits {val:#06x})", severity="WARNING")
+                elif self._warning_bits:
+                    self.events.log_general("Source turbo: its warnings have cleared")
+                self._warning_bits = val
         elif task == "error":
             self.state[f"{b}.stat_error_code"] = float(val)
             self._most_recent_error_desc = TURBO_ERROR_DICT.get(val, f"Unknown Error ({val})")
+            if self._error_code is not None and val != self._error_code and val:
+                self.events.log_general(f"Source turbo error {val}: {self._most_recent_error_desc}",
+                                        severity="ERROR")
+            self._error_code = val
+
+    # ------------------------------------------------------------------ load guard
+    def _run_guard(self, zsw: int):
+        b, s = BASE_TAG, self.state
+        reading = tg.Reading(speed_pct=s.get(f"{b}.rb_speed_pct"), current_a=s.get(f"{b}.rb_current"),
+                             bearing_c=s.get(f"{b}.rb_temp_bearing"), converter_c=s.get(f"{b}.rb_temp_converter"),
+                             pump_warning=bool(zsw & (ZSW_WARNING | ZSW_OVERLOAD_WARNING | ZSW_TEMP_WARNING)),
+                             pump_error=bool(zsw & ZSW_ERROR), turning=bool(zsw & ZSW_TURNING))
+        for severity, text in self.guard.update(time.time(), reading):
+            self.events.log_general(text, severity=severity, event_type="TURBO_GUARD")
+        self._publish_guard()
+        self._save_guard()
+
+    def _publish_guard(self):
+        """The stage as one flag each (one alarm each: the warning's goes when the critical one comes),
+        the text and the shutdown time for the alarm and the Vacuum panel."""
+        b, g = BASE_TAG, self.guard
+        stage = g.stage if g.config.enabled else tg.NORMAL
+        for flag, at in (("stat_load_warning", tg.WARNING), ("stat_load_critical", tg.CRITICAL),
+                         ("stat_load_trip", tg.TRIPPED)):
+            self.state[f"{b}.{flag}"] = 1.0 if stage == at else 0.0
+        self.state[f"{b}.rb_guard_stage"] = float(stage)
+        self.state[f"{b}.guard_message"] = g.message if g.config.enabled else ""
+        self.state[f"{b}.guard_shutdown_at"] = g.shutdown_at
+        self.state[f"{b}.guard_enabled"] = 1.0 if g.config.enabled else 0.0
+        self.state[f"{b}.guard_shuts_down_source"] = 1.0 if g.config.shut_down_source else 0.0
+
+    def _load_guard_state(self):
+        try:
+            with open(self.guard_state_file, "r") as f:
+                return json.load(f)
+        except FileNotFoundError:
+            return None
+        except (OSError, ValueError) as e:
+            self.events.log_general(f"Source turbo guard: {self.guard_state_file} not read ({e})", severity="WARNING")
+            return None
+
+    def _save_guard(self, force: bool = False):
+        """At each change of stage, and every minute while an overload's clock runs."""
+        g, now = self.guard, time.time()
+        stage, at = self._guard_saved
+        if not force and stage == g.stage and (g.stage not in (tg.WARNING, tg.CRITICAL) or now - at < GUARD_SAVE_S):
+            return
+        try:
+            os.makedirs(os.path.dirname(self.guard_state_file), exist_ok=True)
+            tmp = self.guard_state_file + ".tmp"
+            with open(tmp, "w") as f:
+                json.dump(g.dump(), f)
+            os.replace(tmp, self.guard_state_file)
+            self._guard_saved = (g.stage, now)
+        except OSError as e:
+            if (n := self.throttle.ready("guard-save")) is not None:
+                self.events.log_general(f"Source turbo guard: its state not saved ({e}) - a restart would lose "
+                                        f"it{Throttle.suffix(n)}", severity="WARNING")
+
+    def reset_faults(self, cmd):
+        """RESET FAULTS (System Health): clears a tripped load guard once the current is back to normal."""
+        if self.guard.stage != tg.TRIPPED:
+            cmd.ok("nothing to reset here")
+            return
+        done, why = self.guard.reset(answering=self.link.connected and self.comms_ok)
+        if not done:
+            cmd.reject(why)
+            return
+        self.events.log_general(f"Source turbo protection reset ({cmd.origin})", severity="WARNING",
+                                event_type="TURBO_GUARD")
+        self._publish_guard()
+        self._save_guard(force=True)
+        cmd.ok(why)
 
     def run(self):
-        self.events.log_general("Starting USS daemon" + (" (SIMULATED PUMP)" if simulation_enabled() else ""))
+        self.events.log_general("Starting USS daemon" + (" (SIMULATED PUMP)" if simulation_enabled() else "")
+                                + f". Load guard: {self.guard.config.describe()}")
         super().run()
 
 

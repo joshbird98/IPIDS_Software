@@ -339,7 +339,7 @@ class LanesMixin:
 
     def _format_with_si_prefix(self, value: float, base_unit: str, is_delta: bool = False) -> str:
         """Dynamically scales base units to a readable SI prefix string or scientific notation."""
-        if value is None:
+        if value is None or not np.isfinite(value):     # no reading (was 'nan pA')
             return "---"
 
         # 1. Specific Override for Vacuum Pressure (Scientific Notation)

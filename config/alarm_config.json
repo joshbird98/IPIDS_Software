@@ -68,6 +68,30 @@
     },
     {
       "kind": "flag",
+      "tag": "ion_beam.source.turbo_pump.stat_load_warning",
+      "id": "turbo.source.load_warning",
+      "priority": 2,
+      "message_key": "ion_beam.source.turbo_pump.guard_message",
+      "message": "Source turbo working harder than normal - check the valve to its backing pump, and the backing pump"
+    },
+    {
+      "kind": "flag",
+      "tag": "ion_beam.source.turbo_pump.stat_load_critical",
+      "id": "turbo.source.load_critical",
+      "priority": 1,
+      "message_key": "ion_beam.source.turbo_pump.guard_message",
+      "message": "Source turbo still overloaded - the source will be shut down unless its current falls back"
+    },
+    {
+      "kind": "flag",
+      "tag": "ion_beam.source.turbo_pump.stat_load_trip",
+      "id": "turbo.source.load_trip",
+      "priority": 1,
+      "message_key": "ion_beam.source.turbo_pump.guard_message",
+      "message": "Source turbo protection tripped: the source shut down and the caesium oven cooled - RESET FAULTS once the turbo's load is back to normal"
+    },
+    {
+      "kind": "flag",
       "match": "*.stat_above_sp",
       "id": "vacuum.{path}.above_sp",
       "priority": 2,

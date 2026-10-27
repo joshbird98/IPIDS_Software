@@ -42,7 +42,10 @@ from src.core.network_map import (ZMQ_PORT_VACUUM_PUB, ZMQ_PORT_VACUUM_CMD, TOPI
                                   NOISY_RACK_WAVESHARE_IP, NOISY_RACK_WAVESHARE_PORT)
 from src.drivers.graphix import PARAM_PRESSURE, GraphixLink
 
-PRESSURE_STALE_S = 3.0   # a gauge with no good reading for this long is published as unknown
+PRESSURE_STALE_S = 3.0   # a gauge with no good reading for this long is published as unknown; with no
+                         # answer at all for this long, as not answering (stat_comms_fail). On this noisy bus
+                         # about one read in seven goes unanswered, at random (26 October 2026): the flag
+                         # used to follow every one, flickering on about every 3 s
 GV_STALE_S = 10.0        # ...and VG1 / VG2 without one for this long lose the gate-valve permissive (it used to
                          # keep its last value; longer than the display's limit, as a drop can close the valve)
 # A gauge with a software trip (src/core/software_trips.py) has no relay below its backstop to cover a
@@ -146,6 +149,7 @@ class VacuumMicroservice(DeviceService):
         self.rise_limit = float(self.config.get("system_interlocks", {}).get("rapid_rise_thresh_mb_s", 5.0e-5))
         self.pressure_history: Dict[str, Dict[str, float]] = {}
         self._last_good_read: Dict[str, float] = {}
+        self._last_answer: Dict[str, float] = {}         # (any answer, a pressure or not)
         self.relay_to_channel_map = {}
         self.channel_to_relay_map = {}
         self.relay_thresholds = {}
@@ -613,9 +617,12 @@ class VacuumMicroservice(DeviceService):
             return raw is not None
         now = time.monotonic()
         if raw is None:
-            self.state[f"{base}.stat_comms_fail"] = 1.0
+            if now - self._last_answer.get(base, -1e9) > PRESSURE_STALE_S:
+                self.state[f"{base}.stat_comms_fail"] = 1.0
             self._withdraw_if_stale(base, now)
             return False
+        self._last_answer[base] = now
+        self.state[f"{base}.stat_comms_fail"] = 0.0     # (it answered, whether with a pressure or not)
         trip = self.trips.get((node, ch))
         try:
             p = float(raw.strip().rstrip(">"))

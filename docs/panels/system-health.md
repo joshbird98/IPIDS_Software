@@ -30,13 +30,16 @@ The same faults are alarms on the [Alarms](alarms.md) panel, where you acknowled
 | **PRESS PANEL START (5s)** | The same button while the PLC waits for START: it counts down to **(1s)**, with an amber bar that shrinks as the time runs out. Clicking it withdraws the request. |
 | **DISABLE SAFETY RELAY** | The same button while the relay is on and the source is cold: one click switches the relay off. |
 | **RELAY ENERGIZED (LOCKED)** | The same button, greyed out, while the relay is on and the source is hot or at high voltage: "You cannot drop the safety relay while the source is hot or active. Run a shutdown first." |
-| **RESET FAULTS** | Sends a fault reset to the PLC and to the Spellman service. Available whenever the PLC link is up; the PLC decides whether to accept it (see [Resetting faults](#resetting-faults)). |
+| **RESET FAULTS** | Sends a fault reset to the PLC, the Spellman service and the turbo service. Available whenever the PLC link is up; the PLC decides whether to accept it (see [Resetting faults](#resetting-faults)). |
 | **INITIATE SHUTDOWN** | Starts the PLC's operator shutdown of the source, with one click and no confirmation. Available only with the safety relay on, no shutdown sequence running, and a supply on or the source hot. |
-| **ABORT SHUTDOWN** | Cancels the operator shutdown. Available only during **SHUTDOWN SEQ: HOLD HOT PHASE**. |
+| **ABORT SHUTDOWN** | Cancels the operator shutdown. Available only during **SHUTDOWN SEQ: HOLD HOT PHASE**, and not for a shutdown the source turbo protection started: "Disabled: the source turbo protection started this shutdown, and it can't be aborted." |
 
 The source counts as cold when the gate valve's close permissive is on: extraction and target (cathode) below 0.15 kV, filament and caesium not hot (see [Vacuum System](vacuum.md)).
 
 All the buttons are greyed out while the PLC link is down. No sequence can take them over (they can't be leased), and a recipe can't send a fault reset.
+
+> [!IMPORTANT]
+> When the source turbo's load guard trips, the PLC service shuts the source down: **INITIATE SHUTDOWN**, and the caesium oven's forced cooling. Until that shutdown has finished **ABORT SHUTDOWN** is greyed out and refused, and the shutdown chip ends **- SOURCE TURBO PROTECTION**. Until the trip is reset, **ENABLE SAFETY RELAY** is greyed out and refused too: "the source turbo protection has tripped: the source stays off until RESET FAULTS, once the turbo's load is back to normal". See [The source turbo's load guard](../how-it-works/turbo-guard.md).
 
 ## Switching on the safety relay
 
@@ -84,7 +87,7 @@ At present a safety relay trip doesn't start a shutdown sequence by itself: the 
 
 ## Resetting faults
 
-**RESET FAULTS** asks the PLC to clear every latched fault, and the Spellman service to clear its software arc latches (it also sends a fault clear to each Spellman supply it can reach).
+**RESET FAULTS** asks the PLC to clear every latched fault, and the Spellman service to clear its software arc latches (it also sends a fault clear to each Spellman supply it can reach). It also resets the source turbo's load guard after a trip, once the turbo's current is back to normal; while it is still overloaded the turbo service refuses, with the readings (see [The source turbo's load guard](../how-it-works/turbo-guard.md)).
 
 The PLC accepts the reset only while it is receiving the PC's watchdog, and not during **GRACE PERIOD (75% EXTR)**, **HOLD HOT PHASE**, **FILAMENT RAMP DOWN** or the cool-down after a remote I/O loss. It takes the request either way, so a refused reset does nothing and says nothing: check the **PLC faults** list afterwards.
 

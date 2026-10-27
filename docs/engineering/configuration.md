@@ -16,6 +16,7 @@ The configuration files in `config/` and what reads them, the tag registry built
 | `logger_config.json` | the logger's row rate, chunk interval and crash-journal interval | `service_logger` |
 | `readback_tolerance.json` | the readback tolerance rules | `service_monitor`, which reloads it within a few seconds of a change |
 | `alarm_config.json` | the alarm rules and overrides | `service_alarms` |
+| `turbo_guard.json` | the source turbo's load guard: its normal readings, margins and stage times (below) | `service_source_turbo` |
 | `system_tags.json` | the tag registry, generated (below) | the device services, the logger, the sequencer, the HMI, the data viewer |
 | `recipes/` | the recipes (in git) | the HMI's recipe panel and builder, `service_sequencer` |
 | `recipe_templates/` | the recipe builder's templates (in git): start-up, shutdowns, mass scan, degauss, HV conditioning | the recipe builder's **New** |
@@ -44,6 +45,12 @@ A gauge listed in `vac_gauges_config.json` under `system_interlocks.software_tri
 The gauge's relays are then only a hardware backstop, and should be set above the spikes: VG1's relays 1 and 4 ship at 5 mbar on and 10 mbar off. The hard caps (below) hold the trip point to the gate valve's 1×10⁻⁵ mbar and the ride-through to 2.5 s, as approved; a backstop relay may go up to 20 mbar, but only while its gauge has a valid software trip. The config editor refuses an entry for a gauge that isn't VG1 to VG6, a value that isn't a number above 0, a reset above the trip point, or a gauge whose channel the file doesn't configure. The vacuum service reads the file when it starts, and writes the relays' set points to the controller then: restart it after a change (the config editor's **Save and restart** does). See [Riding through short spikes (VG1)](../panels/vacuum.md#riding-through-short-spikes-vg1).
 
 To go back to the relays, set the gauge's relays back to the gate valve's points in the config editor (for VG1, 5.5×10⁻⁶ mbar on and 8×10⁻⁶ mbar off): the relay then trips on every spike again, and the software trip, left in place, never acts first. Taking the entry out altogether is a hand edit of the file (the config editor changes values only), in the same change as the relays.
+
+## The source turbo's load guard
+
+`turbo_guard.json` sets the turbo service's load guard, which warns when the source turbo works harder than normal at full speed and, if its current doesn't fall back, shuts the source down (see [The source turbo's load guard](../how-it-works/turbo-guard.md), which lists every setting). The values it ships with are the pump's on 26 October 2026: normal 0.8 A, bearing 43 °C, converter 28 °C; a warning at 0.3 A over for 2 minutes, critical 10 minutes later, the source shut down 20 minutes after the warning unless the current is falling back. Keys starting with `_` are notes.
+
+The config editor checks each value against its range (for example `normal_current_a` 0.1 to 10 A, `trip_after_s` 60 s to 4 h) and that the critical alarm comes before the trip; the turbo service uses the default for a value with a problem, and logs `turbo_guard.json: <problem> - its default is used`. Set `shut_down_source` to false to have the stages and alarms without the shutdown, for instance while trying new normal values. Changing the file in the config editor restarts the turbo service; a trip it has already made stays (in `data/turbo_guard_state.json`) until **RESET FAULTS**.
 
 ## Recipe drafting
 

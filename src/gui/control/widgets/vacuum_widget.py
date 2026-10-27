@@ -3,10 +3,13 @@
 A gauge or the pump without a live reading (its service stopped or restarting, a controller or
 the pump not answering, no good reading from a gauge) keeps its last value, greyed, with a STALE
 chip saying how long ago it was read; the tooltips say why. The turbo pump can only be started
-here: it is stopped by hand, at the pump, by trained staff, never from the software.
+here: it is stopped by hand, at the pump, by trained staff, never from the software. Under the
+pump, its load guard (src/core/turbo_guard.py), when it has something to say: working harder than
+normal, overloaded (with the time the source will be shut down), or tripped.
 """
 import logging
 import time
+from datetime import datetime
 
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, QLabel, QPushButton, QFrame, QGroupBox,
@@ -24,6 +27,11 @@ GAUGE_LOCATIONS = {1: "source", 2: "beamline", 3: "beamline", 4: "endstation", 5
 TURBO = "ion_beam.source.turbo_pump"
 TURBO_START_TIP = ("Start the source turbo pump. It is stopped only by hand, at the pump, by trained staff: "
                    "never from the software.")
+TURBO_GUARD_TIP = ("The turbo's load guard (config/turbo_guard.json) watches its current and temperatures at "
+                   "full speed. Working harder than normal - as with the valve to its backing pump shut - it "
+                   "warns; if the current doesn't fall back it shuts the source down (the PLC's shutdown "
+                   "sequence, which can't then be aborted) and cools the caesium oven, hours before the pump "
+                   "would fail. The turbo itself is left running.")
 GV_HOLD = "ion_beam.source.chamber.vac_hold_left_s"
 GV_HOLD_TIP = ("The vacuum service is restarting or not sending data. Meanwhile the PLC keeps the vacuum "
                "service's last judgment of the vacuum: the gate valve's permissive and the gauge flags as "
@@ -97,24 +105,29 @@ class VacuumControlWidget(QWidget):
         turbo_group = QGroupBox("Source turbo pump")
         tl = QGridLayout(turbo_group)
         tl.setColumnStretch(1, 1)
-        for row, text in enumerate(("Speed", "Current")):
+        for row, text in enumerate(("Speed", "Current", "Bearing, converter")):
             cap = QLabel(text)
             set_role(cap, "caption")
             tl.addWidget(cap, row, 0)
         self.lbl_turbo_speed = QLabel("--- Hz")
         self.lbl_turbo_current = QLabel("--- A")
-        for row, lbl in enumerate((self.lbl_turbo_speed, self.lbl_turbo_current)):
+        self.lbl_turbo_temps = QLabel("--- °C, --- °C")
+        for row, lbl in enumerate((self.lbl_turbo_speed, self.lbl_turbo_current, self.lbl_turbo_temps)):
             set_role(lbl, "readout-sm")
             tl.addWidget(lbl, row, 1)
         self.lbl_turbo_status = chip("OFFLINE", "unknown")
+        self.lbl_turbo_guard = chip("", "warn")         # the load guard, when it has something to say
+        self.lbl_turbo_guard.setWordWrap(True)
+        self.lbl_turbo_guard.hide()
 
         self.btn_turbo_start = QPushButton("START PUMP")
         self.btn_turbo_start.setToolTip(TURBO_START_TIP)
         self.btn_turbo_start.clicked.connect(
             lambda checked=False: self.cmd_thread.send_command("src_turbo", f"{TURBO}.cmd_enable", True))
 
-        tl.addWidget(self.lbl_turbo_status, 2, 0, 1, 2)
-        tl.addWidget(self.btn_turbo_start, 3, 0, 1, 2)
+        tl.addWidget(self.lbl_turbo_status, 3, 0, 1, 2)
+        tl.addWidget(self.lbl_turbo_guard, 4, 0, 1, 2)
+        tl.addWidget(self.btn_turbo_start, 5, 0, 1, 2)
         self.ctrl_grid.add(turbo_group)
 
     def _init_gv_ui(self):
@@ -235,6 +248,7 @@ class VacuumControlWidget(QWidget):
             _set(gauge["status"], "OFFLINE" if not vac_connected else "NO READING", "unknown")
 
     def _update_turbo(self, data: dict, turbo_connected: bool):
+        self._show_turbo_guard(data)
         link_up = turbo_connected and bool(data.get("SRC_TURBO_DATA/system.connected"))
         answering = link_up and not data.get(f"{TURBO}.stat_comms_fail")
         t_speed = data.get(f"{TURBO}.rb_speed_hz") if answering else None
@@ -260,9 +274,14 @@ class VacuumControlWidget(QWidget):
             self.last.update("turbo_current", t_current)
         if "turbo_current" in self.last:
             self.lbl_turbo_current.setText(f"{self.last.value('turbo_current'):.2f} A")
-        for lbl in (self.lbl_turbo_speed, self.lbl_turbo_current):
+        temps = [data.get(f"{TURBO}.rb_temp_bearing"), data.get(f"{TURBO}.rb_temp_converter")]
+        if None not in temps:
+            self.last.update("turbo_temps", tuple(temps))
+        if "turbo_temps" in self.last:
+            self.lbl_turbo_temps.setText("{:.0f} °C, {:.0f} °C".format(*self.last.value("turbo_temps")))
+        for lbl in (self.lbl_turbo_speed, self.lbl_turbo_current, self.lbl_turbo_temps):
             set_ink(lbl, None)
-        _tip("", self.lbl_turbo_speed, self.lbl_turbo_current, self.lbl_turbo_status)
+        _tip("", self.lbl_turbo_speed, self.lbl_turbo_current, self.lbl_turbo_temps, self.lbl_turbo_status)
 
         _tip(TURBO_START_TIP, self.btn_turbo_start)
         direction = self._turbo_direction(t_speed)
@@ -288,6 +307,25 @@ class VacuumControlWidget(QWidget):
             self.btn_turbo_start.setEnabled(True)
             self.btn_turbo_start.setText("START PUMP")
 
+    def _show_turbo_guard(self, data: dict):
+        """LOAD HIGH / OVERLOADED / PROTECTION TRIPPED under the pump, with the guard's text as its tooltip;
+        nothing while all is well (or the turbo service isn't sending data)."""
+        stage = data.get(f"{TURBO}.rb_guard_stage")
+        if not stage:
+            self.lbl_turbo_guard.hide()
+            return
+        at = data.get(f"{TURBO}.guard_shutdown_at")
+        when = datetime.fromtimestamp(at).strftime("%H:%M") if at else None
+        if stage >= 3:
+            text, tone = "PROTECTION TRIPPED: SOURCE SHUT DOWN", "fault"
+        elif stage >= 2:
+            text, tone = "OVERLOADED: " + (f"SOURCE SHUTDOWN AT {when}" if when else "CHECK THE BACKING LINE"), "fault"
+        else:
+            text, tone = "LOAD HIGH: " + (f"SOURCE SHUTDOWN AT {when}" if when else "CHECK THE BACKING LINE"), "warn"
+        _set(self.lbl_turbo_guard, text, tone)
+        _tip(f"{data.get(f'{TURBO}.guard_message') or ''}\n\n{TURBO_GUARD_TIP}".strip(), self.lbl_turbo_guard)
+        self.lbl_turbo_guard.show()
+
     def _turbo_direction(self, speed: float):
         """'up', 'down' or None: which way the speed has last moved (by 1 Hz or more)."""
         now = time.monotonic()
@@ -299,16 +337,18 @@ class VacuumControlWidget(QWidget):
         return self._turbo_dir
 
     def _show_turbo_not_live(self, why: str):
-        """The last speed and current, greyed, with STALE; nothing to press."""
-        for key, lbl, unit, fmt in (("turbo_speed", self.lbl_turbo_speed, "Hz", "{:.0f}"),
-                                    ("turbo_current", self.lbl_turbo_current, "A", "{:.2f}")):
+        """The last speed, current and temperatures, greyed, with STALE; nothing to press."""
+        for key, lbl, show, none in (
+                ("turbo_speed", self.lbl_turbo_speed, lambda v: f"{v:.0f} Hz", "--- Hz"),
+                ("turbo_current", self.lbl_turbo_current, lambda v: f"{v:.2f} A", "--- A"),
+                ("turbo_temps", self.lbl_turbo_temps, lambda v: f"{v[0]:.0f} °C, {v[1]:.0f} °C", "--- °C, --- °C")):
             set_ink(lbl, "muted")
             if key in self.last:
-                lbl.setText(f"{fmt.format(self.last.value(key))} {unit}")
+                lbl.setText(show(self.last.value(key)))
                 _tip(f"Not live: {why}.\nThe last reading, at {self.last.read_at(key)} "
                      f"({age_text(self.last.age(key))} ago).", lbl)
             else:
-                lbl.setText(f"--- {unit}")
+                lbl.setText(none)
                 _tip(f"No reading: {why}.", lbl)
         if "turbo_speed" in self.last:
             _set(self.lbl_turbo_status, stale_text(self.last.age("turbo_speed")), "unknown")

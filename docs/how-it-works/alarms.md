@@ -26,6 +26,9 @@ These are the rules in `config/alarm_config.json` as it is in the repository.
 | `vacuum.<gauge>.approaching_sp` | a gauge is approaching its relay set point | 3 | 2 s |
 | `vacuum.<gauge>.rapid_rise` | a gauge's pressure is rising rapidly | 2 | |
 | `vacuum.relay_set_points` | the gauge controllers' relay set points aren't confirmed against `config/vac_gauges_config.json` (for VG1 and VG2 this also holds the gate valve shut) | 2 | |
+| `turbo.source.load_warning` | the source turbo's load guard warns: working harder than normal (or running hot, or its own warning) for 2 min; see [The source turbo's load guard](turbo-guard.md) | 2 | |
+| `turbo.source.load_critical` | the guard: still overloaded 10 min after the warning; the source will be shut down | 1 | |
+| `turbo.source.load_trip` | the guard has tripped: the source is shut down; latched until **RESET FAULTS** once the load is normal | 1 | |
 | `hv.<supply>.arc` | the Spellman service has latched an arc on a supply (output collapsed); latched until fault reset | 2 | |
 | `sequencer.<slot>.failed` | the last recipe, mass scan or optimiser run failed | 3 | |
 
@@ -108,7 +111,7 @@ The alarm service saves its state to `data/alarm_state.json` at most every 2 s a
 - `overrides`: changes to single alarms, by id or by a pattern such as `plc.*_Comms_Fail`. Patterns apply first, then an exact id. An override can set `priority`, `message`, `delay_on`, `delay_off`, `group` and `suppressed_by`, and `"enabled": false` removes the alarm altogether.
 - `first_out_groups` (`plc`) and `shelve_max_minutes` (480).
 
-Common keys of a rule: `priority` (1 to 4), `delay_on` and `delay_off` (seconds), `group`, and `suppressed_by` (alarm id patterns). Every key is described at the top of `src/alarms/rules.py`. The alarm service reads the file when it starts: changing it in the HMI's config editor restarts the alarm service. See [Configuration files and the config editor](../engineering/configuration.md).
+Common keys of a rule: `priority` (1 to 4), `delay_on` and `delay_off` (seconds), `group`, and `suppressed_by` (alarm id patterns). A `flag` rule can also have `message_key`: a text in the telemetry used as the message while the alarm is active (the source turbo's load guard's says what is happening and when the source will be shut down). Every key is described at the top of `src/alarms/rules.py`. The alarm service reads the file when it starts: changing it in the HMI's config editor restarts the alarm service. See [Configuration files and the config editor](../engineering/configuration.md).
 
 > [!NOTE]
 > Which alarms turn out to be nuisances, and which priorities suit the lab, is for the lab to decide. A shelf lasts at most 480 minutes: to change an alarm for good, change its rule or add an override in `config/alarm_config.json`.

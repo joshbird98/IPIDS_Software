@@ -144,11 +144,22 @@ To recover: clear the cause, let any shutdown sequence reach **FINAL KILL** or *
 | **CESIUM COOLDOWN** | Step 2: a hardware abort (`Src_Coolant_Flow_Low`, `Src_Body_Temp_High`, `Cesium_Oven_OverTemp`, `Filament_OverCurrent` or a sustained arc), or step 1 ran out. | Extraction off; the gate valve closed, so the relay opens; forced cooling. | Find the cause in the **PLC faults** list; the first-out alarm is marked with a star. Let the oven cool: see the warning below. |
 | **FINAL KILL** | Step 3, once the caesium isn't hot and the filament is at 0 A. | Kills the relay; target, filament and thermionic off. | Clear the cause, then press **RESET FAULTS**. |
 | **LATCHED SAFE (RESET REQ)** | Step 99: the sequence has ended. | Holds everything off. | Clear the cause, then press **RESET FAULTS**. |
+| **HOLD HOT PHASE - SOURCE TURBO PROTECTION** | Step 10, started by the source turbo protection: the turbo's load guard tripped (alarm `Source turbo protection tripped at ...`). | The operator shutdown, which can't be aborted; the caesium oven force-cooled. | See [The source turbo is overloaded](#the-source-turbo-is-overloaded). |
 
 While a sequence runs, the source supplies are greyed out with `automated source shutdown in progress`, and the PLC drives them in mode 1 (badge **AUTO**; the caesium oven's badge reads **HEATING**, although the PLC holds it at 20 °C). See [Shutting down](procedures/beam-shut-down.md).
 
 > [!WARNING]
 > **RESET FAULTS** during **CESIUM COOLDOWN** ends the cool-down at once, with the caesium possibly still hot. Wait for **FINAL KILL** or **LATCHED SAFE (RESET REQ)**.
+
+## The source turbo is overloaded
+
+The alarm `Source turbo working harder than normal: the source will be shut down at <time> ...`, and **LOAD HIGH** under the turbo in **Vacuum System**: the turbo's load guard sees its current above normal at full speed. The source vacuum can look perfectly good meanwhile.
+
+1. **Check the valve between the source turbo and its backing pump.** On 26 October 2026 it had been shut by mistake: the current rose from 0.8 A to 1.2 A at once, and the pump failed 13 hours later. Open it, and the current falls back within a minute or so.
+2. **Check the backing pump**, and the backing line for a leak.
+3. **Leave the turbo running.** It is stopped only by hand, at the pump, by trained staff.
+
+If the current doesn't fall back, the source is shut down 20 minutes after the warning (the alarm gives the time), and the caesium oven cooled; that shutdown can't be aborted. Once the turbo's current is back to normal, press **RESET FAULTS**, then start the source again as usual. See [The source turbo's load guard](how-it-works/turbo-guard.md).
 
 ## RESET FAULTS does not clear a fault
 
@@ -297,6 +308,8 @@ The logger writes the latest value of every channel 20 times a second. A gap, a 
 4. **The disk wouldn't take the data.** See [The disk is filling up](#the-disk-is-filling-up). Up to 2 h of data waits in memory; beyond that the oldest is dropped.
 5. **The last minutes are missing from the history.** The logger writes a file every 15 minutes. The viewer asks it to write what it holds when the viewer starts; if that isn't confirmed (`Logger flush not confirmed - the last minutes of history may be missing until its next flush` in `SystemLogs/viewer.log`), those minutes appear after the logger's next file.
 6. **In live view**, samples more than 2 s apart are drawn with a break.
+
+A line that turned into separate dots when zoomed in (and was whole zoomed out) was rows from a second log file for the same minutes - a copy, or files left behind - falling between a channel's readings. The viewer now draws through those; it names such files once in `SystemLogs/viewer.log`: `Rows for the same times (<from> to <to>) come from more than one file: <files>`. If one is a copy, move it out of `data/parquet_logs` or `data/daily_logs`.
 
 See [Data logging and storage](how-it-works/data-logging.md).
 

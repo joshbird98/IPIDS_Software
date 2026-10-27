@@ -10,7 +10,9 @@ config/alarm_config.json:
        "message": "{device}: ...", "priority": 3, "active_when": 1.0}
                                    one alarm per telemetry tag matching the pattern ({path}: the tag
                                    without "ion_beam." and its last part; {device}: the same, readable);
-                                   "tag" instead of "match" for one tag
+                                   "tag" instead of "match" for one tag; "message_key": a text in the
+                                   telemetry used as the message while the alarm is active (the
+                                   source turbo's guard says what is happening and when)
       {"kind": "stale", "topic": "PLC_DATA", "id": "comms.plc", "message": "..."}
                                    a service has stopped publishing
       {"kind": "services"}         a service the manager runs is not running
@@ -58,6 +60,19 @@ DEFAULT_CONFIG = {
          "delay_on": 5, "message": "{device}: communication lost", "suppressed_by": ["comms.facilities.graphix*"]},
         {"kind": "flag", "match": "*.stat_comms_fail", "exclude": ["*.vacuum_gauge_*"], "id": "comms.{path}",
          "priority": 3, "delay_on": 5, "message": "{device}: communication lost"},
+        # The source turbo's load guard (src/core/turbo_guard.py): its text says what, and when the source
+        # will be shut down
+        {"kind": "flag", "tag": "ion_beam.source.turbo_pump.stat_load_warning", "id": "turbo.source.load_warning",
+         "priority": 2, "message_key": "ion_beam.source.turbo_pump.guard_message",
+         "message": "Source turbo working harder than normal - check the valve to its backing pump, and the "
+                    "backing pump"},
+        {"kind": "flag", "tag": "ion_beam.source.turbo_pump.stat_load_critical", "id": "turbo.source.load_critical",
+         "priority": 1, "message_key": "ion_beam.source.turbo_pump.guard_message",
+         "message": "Source turbo still overloaded - the source will be shut down unless its current falls back"},
+        {"kind": "flag", "tag": "ion_beam.source.turbo_pump.stat_load_trip", "id": "turbo.source.load_trip",
+         "priority": 1, "message_key": "ion_beam.source.turbo_pump.guard_message",
+         "message": "Source turbo protection tripped: the source shut down and the caesium oven cooled - RESET "
+                    "FAULTS once the turbo's load is back to normal"},
         {"kind": "flag", "match": "*.stat_above_sp", "id": "vacuum.{path}.above_sp", "priority": 2,
          "message": "{device}: pressure above its set point"},
         {"kind": "flag", "match": "*.stat_approaching_sp", "id": "vacuum.{path}.approaching_sp", "priority": 3,
@@ -207,8 +222,12 @@ class AlarmRules:
             names = {"device": device_name(prefix), "path": short_path(prefix), "tag": tag}
             value = cache.get_fresh(tag)
             condition = None if value is None else value == rule.get("active_when", 1.0)
-            out.append(self._common(rule, AlarmDef(rule["id"].format(**names),
-                                                   rule.get("message", "{device}").format(**names), 3, condition)))
+            message = rule.get("message", "{device}").format(**names)
+            if condition and rule.get("message_key"):
+                text = cache.get_fresh(rule["message_key"])
+                if isinstance(text, str) and text.strip():
+                    message = text
+            out.append(self._common(rule, AlarmDef(rule["id"].format(**names), message, 3, condition)))
         return out
 
     def _stale(self, rule, cache, now):

@@ -433,12 +433,20 @@ def _check_alarms(c: _Checker, d):
             c.bad(f"rules[{i}].kind: {kind!r} is not one of {', '.join(sorted(RULE_KINDS))}")
         else:
             _alarm_fields(c, rule, f"rules[{i}]")
+            if "message_key" in rule and not (isinstance(rule["message_key"], str) and rule["message_key"].strip()):
+                c.bad(f"rules[{i}].message_key: must be a telemetry tag (text)")
     for alarm_id, o in (d.get("overrides") or {}).items():
         w = f"overrides.{alarm_id}"
         if not isinstance(o, dict):
             c.bad(f"{w}: must be an object")
             continue
         _alarm_fields(c, o, w)
+
+
+def _check_turbo_guard(c: _Checker, d):
+    from src.core import turbo_guard
+    for problem in turbo_guard.parse(d)[1]:
+        c.bad(problem)
 
 
 CHECKS = {
@@ -453,4 +461,5 @@ CHECKS = {
     "readback_tolerance.json": _check_tolerance,
     "fault_config.json": _check_faults,
     "alarm_config.json": _check_alarms,
+    "turbo_guard.json": _check_turbo_guard,
 }

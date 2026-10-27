@@ -314,7 +314,8 @@ def test_no_relay_for_a_gate_valve_gauge_withholds_the_permissive(monkeypatch, f
 
 def test_a_stale_gate_valve_gauge_withholds_the_permissive(idle, monkeypatch):
     """No good reading of VG1 or VG2 for GV_STALE_S counts against the permissive (it used to keep
-    its last value); one garbled answer doesn't."""
+    its last value); one garbled answer doesn't - nor does it flag the gauge as not answering (on the
+    real bus about one read in seven goes unanswered: the flag flickered on every 3 s or so)."""
     svc, graphix, events = idle
     import src.services.service_vac_gauge_controllers as vac
     check_all_relays(svc)
@@ -324,10 +325,16 @@ def test_a_stale_gate_valve_gauge_withholds_the_permissive(idle, monkeypatch):
                         None if (node, group) == (10, "1") else real_read(node, group, param))
     svc.read_pressure(10, 1)                                 # one failed read
     svc.evaluate_gv_permissive()
-    assert svc.state[PERMISSIVE] == 1.0 and svc.state[f"{VG1}.stat_comms_fail"] == 1.0
-    svc._last_good_read[VG1] -= vac.GV_STALE_S + 1          # ...and none since
+    assert svc.state[PERMISSIVE] == 1.0 and svc.state[f"{VG1}.stat_comms_fail"] == 0.0
+    svc._last_answer[VG1] -= vac.PRESSURE_STALE_S + 0.1      # no answer for 3 s: not answering
+    svc.read_pressure(10, 1)
+    assert svc.state[f"{VG1}.stat_comms_fail"] == 1.0
+    svc._last_good_read[VG1] -= vac.GV_STALE_S + 1          # ...and no reading for longer
     svc.evaluate_gv_permissive()
     assert svc.state[PERMISSIVE] == 0.0
+    monkeypatch.setattr(graphix, "read", real_read)
+    svc.read_pressure(10, 1)                                 # answering again
+    assert svc.state[f"{VG1}.stat_comms_fail"] == 0.0
 
 
 def test_a_controller_that_doesnt_answer_is_left_out_of_the_check(idle, monkeypatch):

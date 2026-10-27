@@ -60,6 +60,8 @@ LEVEL_ON, LEVEL_ATTENTION, LEVEL_FAULT, LEVEL_NORMAL, LEVEL_AUTO, LEVEL_UNKNOWN 
 # --- Tags (docs/how-it-works/plc.md) ------------------------------------------------------------
 RELAY = "ion_beam.facilities.safety_relay_active"
 ENABLE = "ion_beam.system.cmd_enable_safety"
+TURBO_PROTECTION = "ion_beam.system.turbo_protection"     # service_plc: the source turbo protection holds the source
+TURBO_GUARD_TEXT = "ion_beam.source.turbo_pump.guard_message"
 TIMER, TIMER_TOTAL = "ion_beam.system.safety_timer_elapsed_ms", "ion_beam.system.safety_timer_total_ms"
 AIR = "ion_beam.facilities.stat_air_press_ok"
 SRC_COOLANT = "ion_beam.facilities.stat_src_coolant_ok"
@@ -574,6 +576,10 @@ def _relay_group(r: _Read, loop: LoopConfig, close_permissive: Optional[bool]) -
             g.summary = "The PLC's conditions hold: press ENABLE SAFETY RELAY, then START."
         if not waiting:
             g.notes += [(text, "warn") for text in _loop_diagnosis(refused, tripped, first, vac, mag)]
+    if r.flag(TURBO_PROTECTION):
+        g.notes.insert(0, ("The source turbo protection has tripped: the PC refuses ENABLE SAFETY RELAY (and the "
+                           "source's supplies) until RESET FAULTS, once the turbo's load is back to normal. "
+                           + str(r.d.get(TURBO_GUARD_TEXT) or ""), "warn"))
     if permissive is not None and plc_says is not None and plc_says != permissive and not r.step():
         said = f"{MACHINE_STATES.get(int(state), 'state')} (machine state {int(state)})"
         g.disagree = (f"The PLC says {said}, but by the conditions listed its enable "

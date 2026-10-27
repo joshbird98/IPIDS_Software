@@ -227,3 +227,21 @@ def test_shipped_config_parses():
     config = load_config()
     kinds = {r["kind"] for r in config["rules"]}
     assert {"plc_faults", "flag", "stale", "services", "sequencer"} <= kinds
+
+
+def test_the_source_turbo_guard_alarms_say_what_and_when():
+    """One alarm per stage of the turbo's load guard, each with the guard's own text while active (what,
+    and when the source will be shut down), the rule's when not; the shipped config has them too."""
+    clock = Clock()
+    cache = TelemetryCache(clock=clock)
+    b = "ion_beam.source.turbo_pump"
+    text = "Source turbo still overloaded: the source will be shut down at 10:45 (in 10 min) unless ..."
+    cache.ingest("SRC_TURBO_DATA", {f"{b}.stat_load_warning": 0.0, f"{b}.stat_load_critical": 1.0,
+                                    f"{b}.stat_load_trip": 0.0, f"{b}.guard_message": text})
+    for config in (None, load_config()):
+        d = defs(rules_with(clock, config), cache, clock)
+        critical, warning, trip = (d[f"turbo.source.load_{x}"] for x in ("critical", "warning", "trip"))
+        assert critical.condition is True and critical.priority == 1 and critical.message == text
+        assert warning.condition is False and warning.priority == 2 and warning.message.startswith(
+            "Source turbo working harder than normal - check")
+        assert trip.condition is False and trip.priority == 1 and "RESET FAULTS" in trip.message

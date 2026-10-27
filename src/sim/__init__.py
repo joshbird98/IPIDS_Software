@@ -20,6 +20,7 @@ process through the environment variable SINDIE_SIM_FAULTS. Known faults:
     magnet_disconnect   magnet PSU unreachable     magnet_sag          magnet delivers 10 % low
     steerer_disconnect  steerer PSU unreachable    smu_disconnect      SMU unreachable
     turbo_disconnect    turbo bridge unreachable   turbo_error         turbo run-up error
+    turbo_backing_closed  the valve to the turbo's backing pump shut: its current and temperatures climb
     vacuum_disconnect   gauge bridge unreachable   vacuum_vent_source  VG1 rises to atmosphere
     vacuum_spike_source VG1 at ~1 mbar for 0.8 s every 6 s (a powdered target's bursts)
     safety_loop_open    a door, ESO or key switch open in the safety relay's hardwired loop
@@ -47,6 +48,7 @@ FAULT_DESCRIPTIONS = {
     "smu_disconnect": "SMU unreachable",
     "turbo_disconnect": "turbo pump bridge unreachable",
     "turbo_error": "turbo pump run-up error",
+    "turbo_backing_closed": "valve to the turbo's backing pump shut: its load climbs (guard: source shutdown in ~22 min)",
     "vacuum_disconnect": "gauge controller bridge unreachable",
     "vacuum_vent_source": "source vacuum (VG1) rises to atmosphere",
     "vacuum_spike_source": "source vacuum (VG1) spikes to ~1 mbar for 0.8 s every 6 s (ridden through)",

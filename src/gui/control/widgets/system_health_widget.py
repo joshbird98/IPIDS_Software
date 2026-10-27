@@ -7,6 +7,8 @@ from src.gui import theme
 from src.gui.reflow import ReflowGrid
 from src.gui.style import chip, set_role, set_tone
 
+TURBO_PROTECTION = "ion_beam.system.turbo_protection"   # service_plc: the source turbo protection holds the source
+
 
 class SystemHealthWidget(QWidget):
     """Centralized widget for Master Safety, Shutdown Sequences, and Active Faults."""
@@ -26,9 +28,11 @@ class SystemHealthWidget(QWidget):
 
     def _reset_faults(self, *args):
         # The PLC latches, plus the Spellman service's software arc latches (which previously
-        # could only be cleared by restarting that service: the reset only ever went to the PLC)
+        # could only be cleared by restarting that service: the reset only ever went to the PLC),
+        # and the source turbo's load guard once its load is back to normal
         self.cmd_thread.send_command("plc", "ion_beam.system.cmd_fault_reset", True)
         self.cmd_thread.send_command("spellman", "ion_beam.system.cmd_fault_reset", True)
+        self.cmd_thread.send_command("src_turbo", "ion_beam.system.cmd_fault_reset", True)
 
     def _init_safety_ui(self):
         safety_group = QGroupBox("Master safety && sequence control")
@@ -99,6 +103,7 @@ class SystemHealthWidget(QWidget):
         self._update_comms_and_safety_state(data, master_comms_lost, relay_active)
         self._update_shutdown_labels(active_step, auto_sdown, master_comms_lost)
         self._update_safety_controls(data, relay_active, active_step, master_comms_lost)
+        self._show_turbo_protection(data, master_comms_lost, relay_active)
         self._update_fault_list(data, master_comms_lost)
 
     def _update_comms_and_safety_state(self, data: dict, master_comms_lost: bool, relay_active: bool):
@@ -133,7 +138,25 @@ class SystemHealthWidget(QWidget):
             self.lbl_safety_state.setText("SAFETY: DE-ENERGIZED")
             set_tone(self.lbl_safety_state, "ok")
 
+    def _show_turbo_protection(self, data: dict, master_comms_lost: bool, relay_active: bool):
+        """While the source turbo protection holds the source down (service_plc), ABORT SHUTDOWN and
+        ENABLE SAFETY RELAY are refused: say so on them, and on the shutdown state."""
+        if master_comms_lost or not data.get(TURBO_PROTECTION):
+            return
+        why = data.get("ion_beam.source.turbo_pump.guard_message") or ""
+        self.lbl_shutdown_state.setText(self.lbl_shutdown_state.text() + " - SOURCE TURBO PROTECTION")
+        set_tone(self.lbl_shutdown_state, "fault")
+        self.lbl_shutdown_state.setToolTip(why)
+        self.btn_cancel_shutdown.setEnabled(False)
+        self.btn_cancel_shutdown.setToolTip("Disabled: the source turbo protection started this shutdown, and it "
+                                            "can't be aborted.\n\n" + why)
+        if not relay_active:
+            self.btn_enable_safety.setEnabled(False)
+            self.btn_enable_safety.setToolTip("Disabled: the source turbo protection has tripped. The source stays off "
+                                              "until RESET FAULTS, once the turbo's load is back to normal.\n\n" + why)
+
     def _update_shutdown_labels(self, active_step: int, auto_sdown: bool, master_comms_lost: bool):
+        self.lbl_shutdown_state.setToolTip("")
         if master_comms_lost:
             self.lbl_shutdown_state.setText("SHUTDOWN SEQ: UNKNOWN")
             set_tone(self.lbl_shutdown_state, "unknown")

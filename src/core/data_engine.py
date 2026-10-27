@@ -11,6 +11,44 @@ from datetime import datetime
 
 log = logging.getLogger("data_engine")
 
+BRIDGE_MIN_S = 0.25     # missing values between two of a channel's readings this close are held over...
+BRIDGE_MAX_S = 1.0      # ...or up to 3 of its usual sample spacings apart, but never further than this
+
+
+def bridge_short_gaps(ts, values, min_gap=BRIDGE_MIN_S, max_gap=BRIDGE_MAX_S):
+    """A channel's values with short runs of missing ones (NaN) between two of its readings
+    filled with the reading before (a zero-order hold, as the logger itself keeps values
+    between messages).
+
+    Rows from a second file for the same minutes - one without the channel, or another
+    logger's - put a missing value between every two readings; the plot breaks its line
+    at each one (connect='finite') and draws nothing but dots. Runs longer than the
+    channel's own spacing allows stay missing: real gaps, such as the logger's NaN once a
+    source has been silent for 1 s.
+    """
+    v = np.asarray(values, dtype=np.float64)
+    n = len(v)
+    if n < 3:
+        return v
+    finite = np.isfinite(v)
+    fi = np.flatnonzero(finite)
+    if len(fi) < 2 or len(fi) == n:
+        return v
+    apart = np.diff(np.asarray(ts, dtype=np.float64)[fi])
+    limit = min(max(min_gap, 3.0 * float(np.median(apart))), max_gap)
+    runs = np.flatnonzero((np.diff(fi) > 1) & (apart <= limit))
+    if not len(runs):
+        return v
+    edges = np.zeros(n + 1, dtype=np.int64)
+    edges[fi[runs] + 1] += 1        # each run starts after one reading and ends at the next
+    edges[fi[runs + 1]] -= 1
+    fill = np.cumsum(edges[:-1]) > 0
+    last = np.maximum.accumulate(np.where(finite, np.arange(n), 0))
+    out = v.copy()
+    out[fill] = v[last[fill]]
+    return out
+
+
 class TimeSeriesEngine:
     def __init__(self, data_root_dir):
         self.data_root_dir = data_root_dir
@@ -26,6 +64,7 @@ class TimeSeriesEngine:
         # NEW: The Active Chunk Mart
         self.chunk_mart = {}
         self._unreadable_chunks = set()
+        self._overlaps_reported = set()     # sets of files already named by _note_overlaps
 
     RAW_MAX_SPAN = 86400            # <= this: raw rows
     MACRO_1M_MAX_SPAN = 20 * 86400  # <= this: 1-minute rollups from disk
@@ -148,14 +187,17 @@ class TimeSeriesEngine:
         if not target_files:
             return empty
         fetch_cols = ["timestamp"] + list(selected_tags)
-        lfs = []
+        lfs, sources = [], []
         for f in target_files:
             try:
                 if f in self.chunk_mart:
                     df = self.chunk_mart[f]
-                    lfs.append(df.lazy().select([c for c in fetch_cols if c in df.columns]))
+                    scan = df.lazy().select([c for c in fetch_cols if c in df.columns])
                 else:
-                    lfs.append(self.get_safe_scan(f, fetch_cols))
+                    scan = self.get_safe_scan(f, fetch_cols)
+                # which file each row came from, to name files that overlap (_note_overlaps)
+                lfs.append(scan.with_columns(pl.lit(len(sources), dtype=pl.Int32).alias("_src")))
+                sources.append(f)
             except (OSError, pl.exceptions.PolarsError) as e:     # its rows are missing from the plot
                 self._unreadable(f, e)
         if not lfs:
@@ -189,12 +231,50 @@ class TimeSeriesEngine:
                 vals[t] = v
             return ts_arr, vals
 
-        df = lf.select(["timestamp"] + present).sort("timestamp").collect()
+        df = lf.select(["timestamp", "_src"] + present).sort("timestamp").collect()
         if df.height == 0:
             return empty
+        if len(sources) > 1:
+            self._note_overlaps(df, sources)
+        if df["timestamp"].is_duplicated().any():
+            # The same rows from two files (e.g. chunks the compactor couldn't delete once it
+            # had made the day file): one row per time, each channel's reading from whichever has it
+            df = df.group_by("timestamp").agg(
+                [pl.col(t).cast(pl.Float64).fill_nan(None).drop_nulls().first() for t in present]
+            ).sort("timestamp")
         ts_arr = df["timestamp"].to_numpy()
-        vals = {t: df[t].cast(pl.Float64).to_numpy() for t in present}
+        # Rows of another file in between a channel's readings mustn't chop its line into dots
+        vals = {t: bridge_short_gaps(ts_arr, df[t].cast(pl.Float64).to_numpy()) for t in present}
         return ts_arr, vals
+
+    def _note_overlaps(self, df, sources):
+        """Log, once for each set of files, rows for the same times coming from more than one
+        file. The logger's files follow on from each other, so this means a copy, chunks left
+        behind after compaction, or a second logger - the plot merges them either way."""
+        spans = df.group_by("_src").agg(pl.col("timestamp").min().alias("lo"),
+                                        pl.col("timestamp").max().alias("hi")).sort("lo")
+        if spans.height < 2:
+            return
+        lo, hi, src = spans["lo"].to_numpy(), spans["hi"].to_numpy(), spans["_src"].to_numpy()
+        involved, start, end = set(), None, None
+        for i in range(1, len(lo)):
+            j = int(np.argmax(hi[:i]))
+            if lo[i] < hi[j]:
+                involved.update((int(src[i]), int(src[j])))
+                start = lo[i] if start is None else min(start, lo[i])
+                end = max(end or 0.0, min(hi[i], hi[j]))
+        if not involved:
+            return
+        names = tuple(sorted(os.path.basename(sources[i]) for i in involved))
+        if names in self._overlaps_reported:
+            return
+        self._overlaps_reported.add(names)
+        clock = "%Y-%m-%d %H:%M:%S"
+        log.warning("Rows for the same times (%s to %s) come from more than one file: %s. The plot "
+                    "merges them. If one is a copy, or another logger's, move it out of parquet_logs "
+                    "or daily_logs in %s.",
+                    datetime.fromtimestamp(start).strftime(clock), datetime.fromtimestamp(end).strftime(clock),
+                    ", ".join(names), self.data_root_dir)
 
     def _scan_macro_1m(self, start_ts, end_ts, selected_tags, files_1m):
         """1-minute rollups for [start, end] read lazily from the per-day

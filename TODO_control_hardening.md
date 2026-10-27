@@ -56,8 +56,43 @@ simulator; none of it has been tried on the real hardware yet (see "Lab PC valid
     spikes should show SPIKE on VG1's card and "VG1 spike ridden through: up to ... for ... s" in the Event
     Log, and the gate valve and safety relay stay put. If one is logged near 2.5 s, or the backstop relays
     open, tell Claude what the Event Log said.
+12. The source turbo's load guard (docs/how-it-works/turbo-guard.md): `python src/utils/build_registry.py`
+    (its flags, the status word and the error code are logged from then on), then restart the services. The
+    turbo service's start-up event says "Load guard: normal 0.8 A, ...". Check the normal values in
+    config/turbo_guard.json against a quiet night at full speed in the data viewer (current, bearing,
+    converter). To try it without risk first: shut_down_source false (alarms only), and watch for warnings
+    that shouldn't be. Is the source turbo's backing line shared with another pump (the loadlock's)? A long
+    pump-down through it would raise the source turbo's current too (the guard waits while it falls back).
+    The Voltage now reads 24.2 V (it showed the pump's 0.1 V units: 242). The viewer: if a line still turns
+    to dots zoomed in, SystemLogs/viewer.log names the overlapping files ("Rows for the same times ...").
 
 ## Done
+- 27 October 2026 (Josh: the backing valve of the source turbo shut by mistake on 26 October; the turbo
+  failed 13 h later, the source went to ~1 mbar; "make the turbo pump service more robust in throwing early
+  alarms", staged, then a controlled source shutdown that can't be aborted): the source turbo's load guard
+  (src/core/turbo_guard.py, config/turbo_guard.json, docs/how-it-works/turbo-guard.md). At full speed, on
+  60 s medians: the current 0.3 A over normal (0.8 A) for 2 min - or the bearing/converter 5 degC over, or
+  the pump's own warning (those only warn) - WARNING (alarm priority 2, the shutdown time in its text);
+  10 min later CRITICAL (priority 1); 20 min after the warning (10 min after the pump's own warning, if
+  sooner) TRIPPED unless the current's excess has fallen 30 % from its 10-min peak, or at once if the
+  overloaded pump errors or slows. service_plc acts on the trip: INITIATE SHUTDOWN (resent every 30 s until
+  the sequence runs) and the caesium oven's forced cooling; refuses ABORT SHUTDOWN / withdrawing it / cooling
+  off until that sequence has finished, and the relay and source supplies until RESET FAULTS (which the turbo
+  service accepts once the current is normal). The turbo is never stopped. Trip and overload clock saved
+  in data/turbo_guard_state.json. Replayed on 26 October: warning 10:25, critical 10:35, trip 10:45 - 12 h 35
+  min before the pump failed; nothing from the rod change or the night. Vacuum panel: the temperatures, and
+  LOAD HIGH / OVERLOADED / PROTECTION TRIPPED with the shutdown time; System Health greys ABORT SHUTDOWN and
+  ENABLE SAFETY RELAY with the reason; Interlocks says so too; RESET FAULTS goes to the turbo service as
+  well. Alarm flag rules take a message_key (the guard's live text). Simulator fault turbo_backing_closed.
+  Also: the turbo's voltage read 240 V for 24 V (P4 is in 0.1 V); its raw status word (rb_status_word) and
+  error code are logged, and its warnings (P227) and errors are events. The gauges' comms-fail flags no
+  longer flicker: on the noisy GRAPHIX bus about one read in seven goes unanswered, at random, and the flag
+  followed each one (true 20 % of the time, every 2-3 s); it now means no answer for 3 s, as the pressure's
+  STALE. The viewer: zoomed in, lines turned to dots when a second file held rows for the same minutes (a
+  missing value between every two readings: 40 rows/s, the source turbo's channels in Josh's screenshot
+  drawn as 2813 dots each); short runs of missing values between a channel's readings are now held over (not
+  across a real gap: the logger's NaN after 1 s of silence), rows duplicated across files merged, and the
+  files named once in the viewer's log. The sidebar's "nan pA" now reads ---.
 - 26 October 2026 (Josh: in F12 figures "the grid lines and axis become very hard to see"; wanted them
   clearly the software's telemetry, legend and all, but in the thesis figures' style, as an option):
   Style in the F12 dialog - As on screen, or Thesis figure (Computer Modern) (src/gui/thesis_style.py),
@@ -657,6 +692,9 @@ simulator; none of it has been tried on the real hardware yet (see "Lab PC valid
     - The config editor's password is written in the source (control_main.py, _show_config_editor).
     - The Vacuum panel shows AT SPEED / RUNNING whenever the TURBOVAC's status bit 0 is set (vacuum_widget.py)
       - check what bit 0 means on the real pump (the simulator now sets it only at full speed, src/sim/turbo.py).
+      On 26 October 2026 bit 0 (stat_ready) was 0 all day at 1000 Hz: the panel's AT SPEED came from its
+      >= 990 Hz rule. Leybold's manual: bit 0 "Ready for operation", bit 10 "Normal operation" (?). The raw
+      status word is logged now (rb_status_word): read bits 0 and 10 from it at full speed and decide.
     - PLC: a PC watchdog timeout closes the gate valve at once, so the relay drops (intended, Josh, October
       2026: without the PC the vacuum is unknown); so GRACE PERIOD's 75 % extraction hold acts on supplies
       without power - the step could be simplified.
@@ -674,8 +712,7 @@ simulator; none of it has been tried on the real hardware yet (see "Lab PC valid
       "ADAM_DATA/system...", so every card would stay OFFLINE even with the ADAM working (current_monitor_widget.py:91).
     - Data viewer: the export and F12 folders are fixed to data/exports, ignoring SINDIE_DATA_DIR and --sim, so
       simulator exports land in the machine's folder (backed up to OneDrive) (viewer_main.py:290,
-      figure_capture.py:46; paths.EXPORTS_DIR exists); an unknown value shows as "nan" in Values and the
-      Inspector (viewer_lanes.py:340); Delete removes the "Default" profile (viewer_profiles.py:118 - the
+      figure_capture.py:46; paths.EXPORTS_DIR exists); Delete removes the "Default" profile (viewer_profiles.py:118 - the
       protecting context menu at :104 is never connected); the follow-live tooltip says zooming stops
       following (only a drag does); config_manager.py's plot_settings.json functions are dead code.
     - Small: the SHUTDOWN SEQ chip keeps old text with src_auto_sdown on at step 0 or an unknown step
