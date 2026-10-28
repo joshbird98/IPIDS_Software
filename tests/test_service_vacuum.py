@@ -569,29 +569,71 @@ def test_vg1_answers_that_are_no_pressure_are_not_readings(idle_trip):
     svc, graphix, events = idle_trip
     replies = iter(["0", "-1.0E-07", "nan", "inf", "1.00E-07>"])
     svc.link.read = lambda node, group, param: next(replies)
-    for _ in range(4):
+    for _ in range(2):                  # (each read that gives no pressure is made again at once)
         svc.state[f"{VG1_BASE}.rb_pressure"] = None
         assert svc.read_pressure(10, 1) is True and svc.state[f"{VG1_BASE}.rb_pressure"] is None
     svc.read_pressure(10, 1)
     assert svc.state[f"{VG1_BASE}.rb_pressure"] == pytest.approx(1e-7)
 
 
-def test_vg1_unread_for_3_s_loses_the_permissive(idle_trip, monkeypatch):
-    """With only a 10 mbar backstop behind it, VG1 without a good reading for 3 s (shown STALE)
-    loses the gate-valve permissive - VG2, with its relays, after 10 s as before."""
+def test_vg1_unread_for_6_s_loses_the_permissive(idle_trip, monkeypatch):
+    """With only a 10 mbar backstop behind it, VG1 without a good reading for 6 s loses the gate-valve
+    permissive; it shows STALE from 3 s - VG2, with its relays, after 10 s as before. (It was 3 s: on
+    the lab's bus VG1 went that long unread a few times a day with the vacuum fine, and each time with
+    the safety relay on, the gate valve began to close and the relay dropped - October 2026.)"""
     import src.services.service_vac_gauge_controllers as vac
     svc, graphix, events = idle_trip
     check_all_relays(svc)
     assert svc.state[PERMISSIVE] == 1.0
     clock = [time.monotonic()]
     monkeypatch.setattr(vac.time, "monotonic", lambda: clock[0])
-    svc._last_good_read[VG1_BASE] = clock[0]
-    clock[0] += 2.9
+    svc._last_good_read[VG1_BASE] = svc._last_answer[VG1_BASE] = clock[0]
+    monkeypatch.setattr(graphix, "read", lambda node, group, param: None)      # no answers from now on
+    clock[0] += 3.1
+    svc.read_pressure(10, 1)
+    svc.evaluate_gv_permissive()
+    assert svc.state[f"{VG1_BASE}.rb_pressure"] is None                         # STALE...
+    assert svc.state[f"{VG1_BASE}.stat_comms_fail"] == 1.0 and svc.state[PERMISSIVE] == 1.0   # ...still given
+    clock[0] += 2.8
     svc.evaluate_gv_permissive()
     assert svc.state[PERMISSIVE] == 1.0
     clock[0] += 0.2
     svc.evaluate_gv_permissive()
     assert svc.state[PERMISSIVE] == 0.0
+
+
+def test_a_vg1_read_that_fails_is_made_again_at_once(idle_trip, monkeypatch):
+    """About one read in five fails on the lab's bus, at random: VG1's (the gauge with a software trip,
+    whose permissive goes after 6 s without a good reading) is made again at once, once. Other gauges'
+    aren't: each retry is bus time, and they have their relays."""
+    svc, graphix, events = idle_trip
+    real_read, attempts, replies = graphix.read, [], {}
+
+    def read(node, group, param):
+        if param == "29":
+            attempts.append((node, int(group)))
+            queue = replies.get((node, int(group)))
+            if queue:
+                return queue.pop(0)
+        return real_read(node, group, param)
+    monkeypatch.setattr(graphix, "read", read)
+    replies[(10, 1)] = [None]                                   # no answer, then a pressure
+    assert svc.read_pressure(10, 1) is True
+    assert attempts == [(10, 1)] * 2 and 1e-8 < svc.state[f"{VG1_BASE}.rb_pressure"] < 1e-5
+    first = svc._last_good_read[VG1_BASE]
+    attempts.clear()
+    replies[(10, 1)] = ["0"]                                    # an answer that isn't a pressure, then one
+    svc.read_pressure(10, 1)
+    assert attempts == [(10, 1)] * 2 and svc._last_good_read[VG1_BASE] >= first
+    attempts.clear()
+    replies[(10, 1)] = [None, None]                             # both fail: no third try
+    good = svc._last_good_read[VG1_BASE]
+    assert svc.read_pressure(10, 1) is False
+    assert attempts == [(10, 1)] * 2 and svc._last_good_read[VG1_BASE] == good
+    attempts.clear()
+    replies[(10, 2)] = [None]                                   # VG2: once
+    assert svc.read_pressure(10, 2) is False
+    assert attempts == [(10, 2)]
 
 
 def test_a_trip_during_a_controller_check_is_published_at_once(idle_trip, monkeypatch):
@@ -631,3 +673,34 @@ def test_the_spike_fault_is_ridden_through_by_the_running_service(stack):
     while time.time() < end:
         d = tap.wait_for(lambda d: True, timeout=2)
         assert d[PERMISSIVE] == 1.0 and d[f"{VG1}.stat_above_sp"] == 0.0
+
+
+def test_the_permissive_holds_through_the_lab_bus_dropouts(stack):
+    """The lab's gauge bus loses about one read in five, and now and then answers nothing for a few
+    seconds: VG1 went 3 s without a good reading a few times a day, which dropped the safety relay with
+    the vacuum fine (October 2026). Simulated (vacuum_lossy_bus, here a 3.5 s silence 2.5 s in, as the
+    longest gaps seen): VG1 goes longer than the old 3 s without a good reading, and the gate-valve
+    permissive holds throughout."""
+    import threading
+    svc, tap, client, mp = stack
+    from src.sim import vacuum as simvac
+    mp.setattr(simvac, "LOSSY_SILENT_EVERY_S", 6.0)
+    mp.setattr(simvac, "LOSSY_SILENT_FOR_S", 3.5)
+    tap.wait_for(lambda d: d.get(PERMISSIVE) == 1.0, timeout=15)
+    mp.setenv("SINDIE_SIM_FAULTS", "vacuum_lossy_bus")
+    worst, stop = [0.0], threading.Event()
+
+    def watch_vg1():                    # the longest VG1 has gone without a good reading
+        while not stop.is_set():
+            last = svc._last_good_read.get(VG1)
+            if last is not None:
+                worst[0] = max(worst[0], time.monotonic() - last)
+            time.sleep(0.02)
+    watcher = threading.Thread(target=watch_vg1, daemon=True)
+    watcher.start()
+    try:
+        assert tap.holds_for(lambda d: d[PERMISSIVE] == 1.0, 8.0)
+    finally:
+        stop.set()
+        watcher.join(1)
+    assert 3.2 < worst[0] < 6.0

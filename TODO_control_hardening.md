@@ -66,8 +66,32 @@ simulator; none of it has been tried on the real hardware yet (see "Lab PC valid
     pump-down through it would raise the source turbo's current too (the guard waits while it falls back).
     The Voltage now reads 24.2 V (it showed the pump's 0.1 V units: 242). The viewer: if a line still turns
     to dots zoomed in, SystemLogs/viewer.log names the overlapping files ("Rows for the same times ...").
+13. VG1 unread (28 October 2026): pull, then restart the services (launcher: Stop services, Start services);
+    nothing to configure. VG1 now keeps the gate valve's permissive for 6 s without a good reading (3 s
+    before), and a failed VG1 read is made again at once. Over the next days of running, the relay should
+    no longer drop with the vacuum fine: in the data viewer, ion_beam.source.chamber.stat_vac_ok_for_gv
+    shouldn't dip with VG1 low (it did two to ten times a day, for about 0.5 s). If the relay still drops,
+    send the day's telemetry and events.db.
 
 ## Done
+- 28 October 2026 (Josh: the safety relay still dropped while running after VG1's ride-through went in,
+  on 22 October; his supervisor sent the events and telemetry). Every drop since then - 23 October 14:46
+  and 17:25, 27 October 16:33, 28 October 11:00 and 12:25 - had the same cause, and it wasn't the vacuum
+  (VG1 at 4-7E-07 mbar): VG1 had gone 3 s without a good reading on the gauge bus, which loses about one
+  read in five (and now and then a few seconds' worth), so the vacuum service withdrew the gate valve's
+  permissive (0308421 made it 3 s for VG1, 10 s before); the PLC switched the source supplies off and
+  began to close the valve; 0.2-0.35 s later the valve left its open switch, the relay permissive went and
+  the relay opened (Safety_Relay_Tripped); 0.4-0.5 s after the drop the next VG1 reading brought the
+  permissive back. The telemetry shows it for four of the five (27 October's isn't in the day files; its
+  events show the vacuum service silent just before). It happened 26 times from 22 to 28 October, two to
+  ten a day, mostly with the relay off; no such gap reached 4 s. Now (Josh): VG1 keeps the permissive
+  for 6 s without a good reading (TRIP_STALE_S; it still shows STALE from 3 s), and a VG1 read that gives
+  no pressure is made again at once (TRIP_READ_RETRIES; the other gauges aren't retried). Simulator fault
+  vacuum_lossy_bus: one read in five lost, and 4 s with no answers every minute. The two drops on 22
+  October before the change (15:54, 15:55) were different: the PC's vacuum flag and the PLC's permissive
+  held, so the hardwired loop opened - as Josh found then, VG1's relay at 8E-06 in the loop on spikes.
+  Also seen (not changed): after two of the drops (23 October 17:25:43, 28 October 11:00:21) the gate
+  valve opened again by itself about a second after it began to close - see the gate-valve item under To do.
 - 27 October 2026, night (Josh, in the simulator on his laptop: after a recipe, the filament setpoint
   read 28.009 A, "not under external control", and "29" typed over it with Enter did nothing, with no
   note; then Start the simulator opened no windows at all). From his logs: the recipe hadn't finished
@@ -594,7 +618,11 @@ simulator; none of it has been tried on the real hardware yet (see "Lab PC valid
      controller unplugged), then restore it. It must stay shut until OPEN is pressed again: the PLC service
      clears cmd_open_gv once the valve has been shut by its interlock for 3 s (decided Oct 2026; the
      simulated PLC re-opened it by itself otherwise). Check the real PLC agrees (its seq_cmd_open_gv), and
-     that OPEN afterwards opens it;
+     that OPEN afterwards opens it. Seen on the machine (VG1 unread, 23 and 28 October 2026): with the
+     permissive gone for 0.5 s, cmd_open_gv read 0 meanwhile and 1 again with the permissive, and the valve,
+     not yet shut, opened again by itself ~1 s later (twice of four; the other two shut and stayed shut).
+     The PLC service's clear needs the valve shut for 3 s, so a short loss isn't covered: find out what sets
+     cmd_open_gv back (the PLC's standing request, or the PC's batched write - plc.md, known issues);
    - unplug a device: service stays ONLINE with comms-fail (no restart loop); SMU reconnect behaviour as above;
    - turbo start/stop; logger journal file appears in data/parquet_logs; tolerance rules sensible;
    - closing the gate valve with the relay on: relay drops, supplies show off, Safety_Relay_Tripped shows,

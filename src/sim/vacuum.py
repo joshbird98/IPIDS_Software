@@ -5,7 +5,9 @@ controllers with plausible pumped-down pressures that wander slightly, relay
 set points taken from vac_gauges_config.json (so the service's start-up
 'enforce config' step finds everything already matching), and accepts writes.
 
-Injected faults (SINDIE_SIM_FAULTS): vacuum_disconnect, vacuum_vent_source (VG1 rises to atmosphere).
+Injected faults (SINDIE_SIM_FAULTS): vacuum_disconnect, vacuum_vent_source (VG1 rises to atmosphere),
+vacuum_spike_source (a powdered target's bursts), vacuum_lossy_bus (the lab's bus: reads lost at
+random, and now and then a few seconds with no answers at all).
 """
 import json
 import math
@@ -25,6 +27,12 @@ for _r, (_c, _on, _off, _st) in {1: (1, 2, 3, 4), 2: (5, 6, 7, 8), 3: (9, 10, 11
 
 
 SPIKE_EVERY_S, SPIKE_FOR_S = 6.0, 0.8     # vacuum_spike_source: VG1 at ~1 mbar this long, this often
+# vacuum_lossy_bus, as the lab's bus in October 2026: about one read in five lost, at random, and spells
+# with no answers at all (VG1 went 3-4 s without a good reading a few times a day). Each lost read costs
+# the driver's timeout. The spells come LOSSY_SILENT_FOR_S long at the end of every LOSSY_SILENT_EVERY_S
+# from when the fault is first seen.
+LOSSY_LOSS = 0.2
+LOSSY_SILENT_EVERY_S, LOSSY_SILENT_FOR_S = 60.0, 4.0
 
 
 class FakeGraphix:
@@ -124,10 +132,22 @@ class FakeGraphixLink:
     """Drop-in for src.drivers.graphix.GraphixLink talking to the shared simulated controllers."""
 
     def __init__(self, ip=None, port=None, timeout=0.3):
-        self.ip, self.port = ip, port
+        self.ip, self.port, self.timeout = ip, port, timeout
         self.connected = False
         self.stats = {}
         self.graphix = shared_graphix()
+        self._lossy_since = None        # (monotonic) when vacuum_lossy_bus was first seen, while it lasts
+
+    def _bus_loses(self) -> bool:
+        """vacuum_lossy_bus: this read is lost (in a silent spell, or one of the random ones)."""
+        if "vacuum_lossy_bus" not in injected_faults():
+            self._lossy_since = None
+            return False
+        now = time.monotonic()
+        if self._lossy_since is None:
+            self._lossy_since = now
+        t = (now - self._lossy_since) % LOSSY_SILENT_EVERY_S
+        return t >= LOSSY_SILENT_EVERY_S - LOSSY_SILENT_FOR_S or random.random() < LOSSY_LOSS
 
     def connect(self):
         if "vacuum_disconnect" in injected_faults():
@@ -139,6 +159,9 @@ class FakeGraphixLink:
 
     def read(self, node, group, param):
         if not self.connected:
+            return None
+        if self._bus_loses():
+            time.sleep(self.timeout)            # the driver waits out its timeout for the answer
             return None
         value = self.graphix.read(node, group, param)
         if value is None and "vacuum_disconnect" in injected_faults():

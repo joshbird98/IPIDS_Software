@@ -54,6 +54,7 @@ The fault menu lists the faults with their numbers. Type a number to switch that
 | `vacuum_disconnect` | the gauge controllers' bridge can't be reached |
 | `vacuum_vent_source` | the source vacuum (VG1) rises to atmosphere |
 | `vacuum_spike_source` | VG1 spikes to about 1 mbar for 0.8 s every 6 s, as with a powdered target: VG1's software trip rides each one through (**SPIKE**, then `VG1 spike ridden through` in the event log) |
+| `vacuum_lossy_bus` | the gauge bus loses reads as the lab's did in October 2026: one in five at random, each after the driver's 0.3 s timeout, and for 4 s at the end of every minute (from when the fault is set) none at all. VG1 is read again at once when a read fails; it shows **STALE** towards the end of each silence, and the gate valve's permissive holds (it goes after 6 s without a good reading) |
 | `safety_loop_open` | a door, an ESO or the key switch is open in the safety relay's hardwired loop: the relay won't close (refused after 5 s), and a closed relay opens (tripped) |
 | `air_low` | the compressed air pressure switch opens: the gate valve closes and the relay drops |
 

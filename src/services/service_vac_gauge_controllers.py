@@ -22,7 +22,9 @@ A gauge with a software trip (src/core/software_trips.py; VG1, for the spikes po
 is judged by its pressure instead of its relays, which are then only a hardware backstop set high:
 above its trip point, and not back down to its reset point within its ride-through, it is
 reported above its set point (and, if it rose rapidly, with a rapid rise) - so the PLC closes the
-gate valve and the relay opens. A shorter spike is ridden through and logged.
+gate valve and the relay opens. A shorter spike is ridden through and logged. Such a gauge loses
+the permissive after TRIP_STALE_S without a good reading, and a read of it that fails is made again
+at once: on this bus about one read in five fails.
 
 A restart mustn't close the gate valve: until this run has judged the vacuum itself (the
 permissive given, or JUDGE_GRACE_S after the start-up check if it still isn't) stat_judged is 0,
@@ -49,7 +51,15 @@ PRESSURE_STALE_S = 3.0   # a gauge with no good reading for this long is publish
 GV_STALE_S = 10.0        # ...and VG1 / VG2 without one for this long lose the gate-valve permissive (it used to
                          # keep its last value; longer than the display's limit, as a drop can close the valve)
 # A gauge with a software trip (src/core/software_trips.py) has no relay below its backstop to cover a
-# time without readings: without a good one for PRESSURE_STALE_S (shown STALE) it loses the permissive.
+# time without readings: without a good one for TRIP_STALE_S it loses the permissive (it shows STALE from
+# PRESSURE_STALE_S), and a read of it that gives no pressure is made again at once.
+TRIP_STALE_S = 6.0       # 3 s (PRESSURE_STALE_S) from 22 to 28 October 2026. The lab's bus loses about one read
+                         # in five: VG1 went 3 s without a good reading two to ten times a day with the vacuum
+                         # fine (2-7E-07 mbar), and each time the safety relay was on, the gate valve began to
+                         # close and the relay dropped (Safety_Relay_Tripped; four times on 23 and 28 October).
+                         # None of those gaps reached 4 s. 6 s, with the retry (Josh, 28 October 2026)
+TRIP_READ_RETRIES = 1    # a failed read of a gauge with a software trip is made again at once, this many times
+READ_GOOD, READ_ANSWERED = "good", "answered"       # what one read of a pressure gave (or None: no answer)
 TRIP_CLEAR_READS = 2     # an excursion ends only at this many readings in a row at or below the reset point
                          # (one garbled or stale answer, which the driver can't tell, mustn't restart the clock)
 TRIP_WATCH_S = 0.3       # during a controller check (seconds of reads and writes, nothing published, while
@@ -608,19 +618,33 @@ class VacuumMicroservice(DeviceService):
         self.evaluate_gv_permissive()
 
     def read_pressure(self, node, ch) -> bool:
-        """True if the controller answered. (Times here are monotonic: a clock step mustn't make a
-        gauge look stale - that can drop the gate-valve permissive - or rising.)"""
+        """True if the controller answered. A gauge with a software trip (VG1) is read again at once
+        when a read gives no pressure (TRIP_READ_RETRIES): about one read in five fails on this bus, at
+        random, and its gate-valve permissive goes after TRIP_STALE_S without a good reading."""
+        tries = 1 + (TRIP_READ_RETRIES if (node, ch) in self.trips else 0)
+        answered = False
+        for _ in range(tries):
+            got = self._read_pressure_once(node, ch)
+            if got == READ_GOOD:
+                return True
+            answered = answered or got == READ_ANSWERED
+        return answered
+
+    def _read_pressure_once(self, node, ch) -> Optional[str]:
+        """One read of a gauge: READ_GOOD (a pressure, judged and published), READ_ANSWERED (an answer
+        that isn't a pressure) or None (no answer). (Times here are monotonic: a clock step mustn't make
+        a gauge look stale - that can drop the gate-valve permissive - or rising.)"""
         base = self.tag_map.get((node, ch))
         self.heartbeat()            # with both controllers silent a poll takes ~2.6 s of timeouts
         raw = self.link.read(node, str(ch), str(PARAM_PRESSURE))
         if base is None:
-            return raw is not None
+            return None if raw is None else READ_ANSWERED
         now = time.monotonic()
         if raw is None:
             if now - self._last_answer.get(base, -1e9) > PRESSURE_STALE_S:
                 self.state[f"{base}.stat_comms_fail"] = 1.0
             self._withdraw_if_stale(base, now)
-            return False
+            return None
         self._last_answer[base] = now
         self.state[f"{base}.stat_comms_fail"] = 0.0     # (it answered, whether with a pressure or not)
         trip = self.trips.get((node, ch))
@@ -633,7 +657,7 @@ class VacuumMicroservice(DeviceService):
         if p is None or not math.isfinite(p) or (p <= 0 and (trip is not None or (node, ch) in GV_GAUGES)):
             self.log.debug("Unparseable pressure from node %s ch %s: %r", node, ch, raw)
             self._withdraw_if_stale(base, now)
-            return True
+            return READ_ANSWERED
         self.state[f"{base}.rb_pressure"] = p
         approaching = False
         if trip is not None:            # near its software trip point, not its (backstop) relays'
@@ -658,7 +682,7 @@ class VacuumMicroservice(DeviceService):
             self.state[f"{base}.stat_rapid_rise"] = 1.0 if rapid else 0.0
         self.state[f"{base}.stat_comms_fail"] = 0.0
         self._last_good_read[base] = now
-        return True
+        return READ_GOOD
 
     def _withdraw_if_stale(self, base, now):
         """Occasional garbled reads are normal on this bus; only after a few seconds without a good
@@ -824,7 +848,7 @@ class VacuumMicroservice(DeviceService):
 
         def faulty(key):     # (no good reading for GV_STALE_S counts too - one garbled answer doesn't)
             base = self.tag_map.get(key)
-            stale = PRESSURE_STALE_S if key in self.trips else GV_STALE_S
+            stale = TRIP_STALE_S if key in self.trips else GV_STALE_S
             return not base or now - self._last_good_read.get(base, -1e9) > stale or any(
                 self.state.get(f"{base}.stat_{f}", 0.0) == 1.0 for f in ("not_found", "mismatch", "above_sp",
                                                                           "rapid_rise"))
