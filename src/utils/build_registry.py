@@ -31,7 +31,14 @@ def clean_node_name(node_str):
     return " ".join(s.split()).title(), unit
 
 
+PLC_SOURCE = "service_plc_snap7"
+
+
 def apply_existing_overrides(new_tags, existing_registry):
+    """Fields edited by hand in an existing registry (labels, units, scaling...) are kept. A PLC tag's
+    data type isn't: it comes from the PLC interface (plc/generated/PLC_PC_Interface.scl), and the PC
+    must read and write it as the PLC holds it - one kept from an older registry would after the PLC
+    program changed a type (October 2026). A type that changes is printed."""
     preserved_fields = [
         "datatype", "unit", "default_scale", "multiplier",
         "description", "default_label", "short_name"
@@ -41,6 +48,11 @@ def apply_existing_overrides(new_tags, existing_registry):
             existing_data = existing_registry[tag_name]
             for field in preserved_fields:
                 if field in existing_data:
+                    if field == "datatype" and tag_data.get("source") == PLC_SOURCE:
+                        if existing_data[field] != tag_data.get(field):
+                            print(f"{tag_name}: data type {existing_data[field]} in the registry, "
+                                  f"{tag_data.get(field)} in the PLC interface: now {tag_data.get(field)}")
+                        continue
                     tag_data[field] = existing_data[field]
     return new_tags
 

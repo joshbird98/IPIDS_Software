@@ -19,7 +19,7 @@ The services do the work and hold the machine's state. The HMI and the data view
 
 | Control | What it does |
 |---|---|
-| **Services** chip | The services as the service manager reports them: **13 OF 13 ONLINE** (green), fewer (amber, with which are waiting below it), **STARTING**, **NOT ANSWERING** (the service manager runs but hasn't reported for a while), **STOPPING...**, **NOT RUNNING** (red) or **STOPPED** (stopped on purpose with **Stop services...**, with when and by whom). |
+| **Services** chip | The services as the service manager reports them: **13 OF 13 ONLINE** (green), fewer (amber, with which are waiting below it), **STARTING**, **NOT ANSWERING** (the service manager runs but hasn't reported for a while), **STOPPING...**, **NOT RUNNING** (red), **STOPPED** (stopped on purpose with **Stop services...**, with when and by whom), **UPDATING...** or **HELD** (after an update that didn't finish: see [When the services are HELD](#when-the-services-are-held)). |
 | **Start services** | Starts the service manager in the background, with no command window to close by mistake. It starts every service, as before. It runs on its own, not as part of the launcher, so closing the launcher (or stopping it in PyCharm) leaves it running. Greyed out while it runs. |
 | **Stop services...** | Stops every service and the service manager, after you have read what that does and typed `STOP` (see [Stopping](#stopping)). |
 | **Keep the services running** | Starts the service manager whenever it isn't running: at once when ticked, and again if it stops, after 5 s, then 30 s, then every 2 minutes. A service manager it has just started gets 30 s to come up before it is started again. Services stopped on purpose stay stopped: see [Stopping](#stopping). |
@@ -96,16 +96,17 @@ To update:
 
 1. Press **Update...**. It checks GitHub again and lists what is in the new version, newest first.
 2. Read **Before it can start**. The update waits until:
-    - the PLC reports the safety relay off and the source cold (extraction and target off, filament and caesium cold), and no recipe, mass scan or optimiser is running; or the services have been stopped for at least a minute, so that the PLC has switched the relay off itself;
-    - the HMI and the data viewer are closed: they would carry on with the version before.
+    - the PLC reports the safety relay off and the source cold (extraction and target off, filament and caesium cold), and no recipe, mass scan or optimiser is running; or the services have been stopped for at least a minute, so that the PLC has switched the relay off itself (with no SINDIE service left running without the service manager: one could still be keeping the relay on);
+    - the HMI and the data viewer are closed: they would carry on with the version before;
+    - no other SINDIE system on this PC runs (the simulator's services, say): they share the software.
 
     The list changes as you put each thing right.
-3. Type `UPDATE` and press **Update now**. Or press **Later** to leave the update for a better time: it stays on offer.
+3. Type `UPDATE` and press **Update now**. The launcher looks at the conditions once more as you press it. Or press **Later** to leave the update for a better time: it stays on offer.
 4. Wait a few minutes while the window lists each step. The services stop: the PLC latches **PC_Watchdog_Timeout** and keeps the gate valve shut. This PC's own settings are kept. The new version is tested: it has to read and write the PLC exactly where this one does, and pass its own check. Then the services start again, and every service that was **ONLINE** has to come back, with the PLC answering.
 5. When the window says **Updated to ...**, press **Restart the launcher**. The launcher starts again, so that it runs the new version too.
 6. Press **RESET FAULTS** in **System Health**, and open the HMI again.
 
-If any step fails, the update puts the version before back by itself and starts the services again as they were. The window says what went wrong: tell Josh.
+If any step fails, the update puts the version before back by itself and starts the services again as they were. The window says what went wrong: tell Josh. While the update runs, the launcher can't be closed.
 
 An update keeps this PC's own config values (its [lab settings](../engineering/configuration.md#lab-settings), in `config/lab/`), its recipes and its data. If a config file was changed on this PC, by hand or by an older config editor, the update keeps the change as a lab setting.
 
@@ -113,7 +114,7 @@ An update keeps this PC's own config values (its [lab settings](../engineering/c
 
 Some versions need more than the launcher can do safely. The window says why, and Josh installs them by hand:
 
-- a change to the data the PC and the PLC exchange (`plc/generated/`): the PLC program has to be changed in TIA Portal first, or the PLC refuses the PC's reads;
+- a change to the data the PC and the PLC exchange (`plc/generated/`), or to where the PC finds the PLC (its address, in `config/network_config.json`): the PLC program has to be changed in TIA Portal first, or the PLC refuses the PC's reads;
 - other Python packages (`requirements.txt`): they can't be installed while SINDIE's programs run;
 - a version whose GitHub tests failed, or haven't finished: check again in a quarter of an hour;
 - a version that meets changes made on this PC: to the software itself, or to a recipe that the new version changes too.
@@ -122,8 +123,12 @@ Some versions need more than the launcher can do safely. The window says why, an
 
 After an update, **Go back...** returns to the version the PC ran before it, the same way: what going back takes away, the same conditions, `BACK` typed to confirm. Use it if the new version misbehaves, and tell Josh. The launcher then still offers the newer version, with a note that the PC went back from it.
 
+### When the services are HELD
+
+If the version before couldn't be put back completely after a failed update, or the launcher stopped half way through an update (the PC lost power, say), the services are left stopped and no launcher starts them by itself, even with **Keep the services running** ticked: the **Services** box says **HELD**, and why. The launcher also says so when it opens. Call Josh. **Start services** asks before it starts them; answer **Yes** only once Josh has checked the software.
+
 > [!NOTE]
-> Everything an update does is recorded in `data/updates/` and `SystemLogs/launcher.log`. If the launcher stops half way through an update (the PC loses power, say), it says so the next time it opens: call Josh before starting the services. How versions reach the lab branch, and the first update to this version, are in [Releasing to the lab](../engineering/releasing.md).
+> Everything an update does is recorded in `data/updates/` and `SystemLogs/launcher.log`. How versions reach the lab branch, and the first update to this version, are in [Releasing to the lab](../engineering/releasing.md).
 
 ## The simulator
 

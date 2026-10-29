@@ -167,6 +167,9 @@ CHECKED = {
     ("src/utils/build_registry.py", "vac_gauges_config.json"), ("src/utils/build_registry.py", "mpd_config.json"),
     ("src/utils/build_registry.py", "magnet_config.json"), ("src/utils/build_registry.py", "steerer_magnet_config.json"),
     ("src/utils/build_registry.py", "smu_config.json"), ("src/utils/build_registry.py", "plc_config.json"),
+    # (paths as git names them, not opened: the updater's and the help pictures' canned update)
+    ("src/launcher/updater.py", "fault_config.json"), ("src/launcher/updater.py", "network_config.json"),
+    ("src/utils/make_help_screenshots.py", "smu_config.json"),
 }
 
 

@@ -26,6 +26,7 @@ FIRST_LOOK_MS = 60 * 1000           # ... first a minute after it opens
 SAFE_WORDS = {updater.UPDATE: "UPDATE", updater.BACK: "BACK"}
 START_WAIT_S = 30.0                 # the service manager started: holding its lock within this
 RESTART_WAIT_S = 30.0               # the new launcher: holding the launcher's name within this
+LOOK_AROUND_S = 3.0                 # the update window open: SINDIE's processes on this PC looked at this often
 PROGRAMS = (("hmi", "Operator HMI"), ("viewer", "data viewer"))
 
 WHAT_UPDATE = (
@@ -85,16 +86,20 @@ class UpdateController(QObject):
         self.checking = self.busy = False
         self.dialog = None
         self.opened = clock()
-        self.seen = {"this": None, "other": None}       # when each system's service manager was last seen running
+        self.seen = {"this": None, "other": None}       # when each system's services were last seen running
+        self.procs, self._procs_at, self._looking = {}, None, False      # SINDIE's processes on this PC (sindie_processes)
         self._restart = None
         self._restart_until = 0.0
         self.pane = self._build()
         self.stepped.connect(self._stepped)
+        self.timers = []
         if auto_check:
-            self.timer = QTimer(self)
-            self.timer.timeout.connect(self.daily)
-            self.timer.start(LOOK_EVERY_MS)
-            QTimer.singleShot(FIRST_LOOK_MS, self.daily)
+            for every, single in ((LOOK_EVERY_MS, False), (FIRST_LOOK_MS, True)):
+                timer = QTimer(self)                    # (the controller's own: they go with it)
+                timer.setSingleShot(single)
+                timer.timeout.connect(self.daily)
+                timer.start(every)
+                self.timers.append(timer)
         self.update_pane()
         self.window._background(updater.version, self._version_known)
 
@@ -175,9 +180,14 @@ class UpdateController(QObject):
         self.btn_back.setEnabled(last is not None and not self.busy and last.get("to") == v.get("sha"))
 
     # --- checking ----------------------------------------------------------------------------------
+    def stop_timers(self):
+        """The launcher is closing: nothing more from here."""
+        for timer in self.timers + ([self._restart] if self._restart is not None else []):
+            timer.stop()
+
     def daily(self):
         """Once a day: check (never apply) - the box and the tray say if there is an update."""
-        if self.busy or self.checking:
+        if self.busy or self.checking or self.dialog is not None:
             return
         last = updater.load_state().get("last_check") or 0
         if time.time() - float(last) >= updater.CHECK_EVERY_S:
@@ -202,10 +212,8 @@ class UpdateController(QObject):
         if self.dialog is not None and self.dialog.kind == updater.UPDATE and self.dialog.state == "checking":
             self.dialog.set_plan(plan)
         if auto and plan.available:
-            state = updater.load_state()
-            if state.get("told") != plan.target:            # (once for each version)
-                state["told"] = plan.target
-                updater.save_state(state)
+            if updater.load_state().get("told") != plan.target:     # (once for each version)
+                updater.change_state(told=plan.target)
                 self.notify(f"A software update is available ({len(plan.commits)} changes). The launcher's Software "
                             "box shows what is in it: update when it suits.")
 
@@ -254,19 +262,52 @@ class UpdateController(QObject):
         now = self.clock()
         if running:
             self.seen["this"] = now
-        other = programs.other_manager_running()
+        other = self.other_running()
         if other:
             self.seen["other"] = now
         if self.dialog is not None and self.dialog.state == "review":
-            self.dialog.set_reasons(self.reasons(running, other), running)
+            self.look_around()
+            self.dialog.set_reasons(self.reasons(running), running)
 
-    def reasons(self, running: bool, other: bool) -> list:
-        now = self.clock()
+    def look_around(self, now: bool = False):
+        """SINDIE's processes on this PC (every system's), looked at again: in the background every
+        LOOK_AROUND_S while the update window is open, or now (on the window's thread)."""
+        if now:
+            self._procs_known(programs.sindie_processes(), None)
+            return
+        if self._looking or (self._procs_at is not None and self.clock() - self._procs_at < LOOK_AROUND_S):
+            return
+        self._looking = True
+        self.window._background(programs.sindie_processes, self._procs_known)
+
+    def _procs_known(self, procs, error):
+        self._looking = False
+        if error is not None:
+            log.warning("SINDIE's processes couldn't be looked at: %s", error)
+            procs = {None: ["(processes couldn't be looked at)"]}
+        self.procs, self._procs_at = dict(procs or {}), self.clock()
+
+    def other_running(self) -> bool:
+        """The other system's services: from the real system's launcher, any other system's (a
+        simulator's); from the simulator's, the real system's."""
+        mine = programs.this_system()
+        if programs.simulation():
+            return programs.other_manager_running() or programs.REAL in self.procs
+        return programs.other_manager_running() or any(key != mine for key in self.procs)
+
+    def reasons(self, running: bool) -> list:
+        now, mine, view = self.clock(), programs.this_system(), self.window.cache.view()
+        other = self.other_running()
 
         def silent(key, up):
             return None if up else now - (self.seen[key] if self.seen[key] is not None else self.opened)
-        return updater.machine_reasons(self.window.cache.view(), running, silent("this", running), self.open_programs(),
-                                       other, silent("other", other), programs.simulation())
+        strays = [] if running else self.procs.get(mine, [])
+        heard = not running and self.window.cache.topic_fresh("PLC_DATA")
+        others = [programs.system_name(k) for k in self.procs
+                  if k != mine and not (programs.simulation() and k == programs.REAL)]
+        return updater.machine_reasons(view, running, silent("this", running), self.open_programs(), other,
+                                       silent("other", other), programs.simulation(), strays=strays, plc_heard=heard,
+                                       others=others)
 
     def open_programs(self) -> list:
         """The HMIs and data viewers open on this PC (the simulator's too)."""
@@ -279,14 +320,28 @@ class UpdateController(QObject):
         return out
 
     # --- applying ----------------------------------------------------------------------------------
-    def start_apply(self, plan):
+    def start_apply(self, plan) -> bool:
+        """Update now pressed: the conditions once more, as they are this moment, then the update in a
+        thread of its own. False if it didn't start (the update window shows why)."""
+        if self.busy or self.checking:
+            return False
+        running = programs.manager_running()
+        self.look_around(now=True)
+        reasons = self.reasons(running)
+        if reasons:
+            if self.dialog is not None:
+                self.dialog.set_reasons(reasons, running)
+            return False
         self.busy = True
         self.update_pane()
         self.window.refresh()
         hooks, user = self.hooks(), programs._user()
         log.info("Software %s to %s started by %s", "update" if plan.kind == updater.UPDATE else "going back",
                  plan.target[:7], user)
-        self.window._background(lambda: self.apply_fn(plan, hooks, step=self.stepped.emit, user=user), self._applied)
+        registry = updater.live_registry()
+        self.window._background(lambda: self.apply_fn(plan, hooks, step=self.stepped.emit, user=user,
+                                                      registry_path=registry), self._applied)
+        return True
 
     def _stepped(self, text: str):
         if self.dialog is not None:
@@ -299,17 +354,33 @@ class UpdateController(QObject):
         if self.dialog is not None:
             self.dialog.show_result(report)
         self.plan = None
+        if report.ok and report.kind == updater.UPDATE:     # (what the launcher started again shows)
+            self.plan = updater.Plan(root=paths.PROJECT_ROOT, checked_at=time.time(), state=updater.UP_TO_DATE,
+                                     current=report.now)
+            updater.remember_check(self.plan)
         self.update_pane()
         self.window.refresh()
         if not report.ok:
             self.window._background(lambda: updater.version(), self._version_known)
 
     def hooks(self) -> updater.Hooks:
-        def stop():
+        def stop(force: bool) -> str:
             programs.record_services_stopped(True)          # (no launcher starts them again meanwhile)
-            return programs.stop_manager()
+            problem = programs.stop_manager()
+            if problem and force:                           # (going back: a new version that doesn't answer)
+                log.warning("Update: %s - ending the service manager and its services", problem)
+                programs.end_manager_processes()
+                end = time.monotonic() + 10.0
+                while programs.manager_running() and time.monotonic() < end:
+                    time.sleep(0.5)
+                problem = "" if not programs.manager_running() else f"{problem}, and it couldn't be ended"
+            return problem
 
         def start():
+            if programs.simulation():               # (its registry, built by the version now on disk)
+                problem = programs.rebuild_simulator_registry(python)
+                if problem:
+                    return f"the simulator's tag registry couldn't be built: {problem}"
             programs.record_services_stopped(False)
             try:
                 programs.start_manager()
@@ -322,15 +393,20 @@ class UpdateController(QObject):
                 time.sleep(0.5)
             return f"the service manager didn't start within {START_WAIT_S:.0f} s"
 
+        # (the machine's conditions were checked once more as Update now was pressed: start_apply)
         python = programs.python_for(gui=False)
         return updater.Hooks(services_running=programs.manager_running, online=self.online, stop_services=stop,
                              start_services=start, healthy=self.wait_healthy,
                              build_registry=lambda out: updater.build_registry_into(out, python=python),
                              self_check=lambda: updater.self_check_of(python=python))
 
-    def online(self) -> set:
-        states = self.window.cache.view().get("manager.services") or {}
-        return {n for n, s in states.items() if s == "ONLINE"} if isinstance(states, dict) else set()
+    def online(self):
+        """The services the service manager reports ONLINE (None: it hasn't reported just now)."""
+        cache = self.window.cache
+        states = cache.view().get("manager.services")
+        if not cache.topic_fresh("MANAGER") or not isinstance(states, dict):
+            return None
+        return {n for n, s in states.items() if s == "ONLINE"}
 
     def health_problem(self, before: set, since: float) -> str:
         """'' once the service manager has reported since `since` (the cache's clock), every service in
@@ -341,8 +417,10 @@ class UpdateController(QObject):
             return "the service manager hasn't reported"
         view = cache.view()
         states = view.get("manager.services") or {}
-        waiting = [f"{n.replace('service_', '')} ({states[n]})" for n in sorted(before)
-                   if n in states and states[n] != "ONLINE"]
+        missing = [n.replace("service_", "") for n in sorted(before) if n not in states]
+        if missing:
+            return "not run by the service manager now: " + ", ".join(missing)
+        waiting = [f"{n.replace('service_', '')} ({states[n]})" for n in sorted(before) if states[n] != "ONLINE"]
         if waiting:
             return "not ONLINE: " + ", ".join(waiting)
         if seen.get("PLC_DATA", 0) < since or not view.get("system.connected"):
@@ -366,7 +444,8 @@ class UpdateController(QObject):
         if guard is not None:
             guard.close()                   # (the new one takes the name)
         try:
-            programs.spawn(args, "launcher_console.log")
+            # (without the simulator's registry this one chose: the new launcher builds its own, with the new version)
+            programs.spawn(args, "launcher_console.log", env=programs.child_env(own_registry=False))
         except OSError as e:
             self._restart_failed(f"it couldn't be started ({e})")
             return
@@ -536,17 +615,18 @@ class UpdateDialog(QDialog):
 
     def _update_go(self):
         ready = (self.state == "review" and self.plan is not None and self.plan.state == updater.READY
-                 and not self.reasons)
+                 and not self.reasons and not self.controller.checking)
         self.btn_go.setEnabled(ready and self.edit.text().strip() == self.word)
 
     def _go(self):
         if not self.btn_go.isEnabled():
             return
+        if not self.controller.start_apply(self.plan):
+            return                          # (the conditions, as they are this moment, are shown)
         self.state = "applying"
         self.heading.setText("Going back..." if self.kind == updater.BACK else "Updating...")
         self.progress.setText("")
         self._show_for_state()
-        self.controller.start_apply(self.plan)
 
     def add_step(self, text: str):
         line = f"{time.strftime('%H:%M:%S')}  {text}"

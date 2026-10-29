@@ -9,6 +9,7 @@ nothing has to be installed again. The shortcuts made here point at that Python,
     open_program("hmi")         start the HMI or data viewer (or bring a running one to the front: Qt side)
     manager_running()           is the service manager running (its lock port is taken)?
     other_manager_running()     ... and the other system's on this PC (the simulator's, or the real one's)?
+    sindie_processes()          every SINDIE service manager and service running on this PC, by system
     start_manager()             start it in the background, outliving the launcher
     stop_manager()              ask it to stop every service and itself
     services_stopped()          stopped on purpose from a launcher (left stopped until Start services)?
@@ -98,13 +99,21 @@ def script(program: str) -> str:
     return os.path.join(ROOT, SCRIPTS[program])
 
 
-def child_env() -> dict:
+_REGISTRY_SET_HERE = []         # SINDIE_REGISTRY was set by use_simulator_registry (not by whoever started this)
+
+
+def child_env(own_registry: bool = True) -> dict:
+    """This program's environment for one it starts. own_registry=False: without the simulator's tag
+    registry this one chose (use_simulator_registry) - the launcher started again after an update
+    builds its own, with the new version."""
     env = os.environ.copy()
     env["PYTHONPATH"] = ROOT + (os.pathsep + env["PYTHONPATH"] if env.get("PYTHONPATH") else "")
+    if not own_registry and _REGISTRY_SET_HERE:
+        env.pop("SINDIE_REGISTRY", None)
     return env
 
 
-def spawn(args: list, log_name: str, console: bool = False) -> int:
+def spawn(args: list, log_name: str, console: bool = False, env: dict = None) -> int:
     """Start a program that outlives this one and is nobody's child: through src/launcher/detach.py,
     which starts it (on Windows with no console window, or a new one; in its own process group, out of
     any job object) and exits at once. PyCharm's Stop button ends a run's whole process tree: a service
@@ -115,7 +124,7 @@ def spawn(args: list, log_name: str, console: bool = False) -> int:
     with open(log_path, "a", encoding="utf-8", errors="replace") as out:
         out.write(f"\n===== {time.strftime('%Y-%m-%d %H:%M:%S')} {' '.join(args)}\n")
     helper = [python_for(gui=True), "-m", "src.launcher.detach"] + (["--console"] if console else []) + [log_path] + args
-    kw = dict(cwd=ROOT, env=child_env(), stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=60)
+    kw = dict(cwd=ROOT, env=env or child_env(), stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=60)
     if os.name == "nt":
         kw["creationflags"] = DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP
     try:
@@ -168,6 +177,52 @@ def other_manager_running() -> bool:
     return _lock_taken(manager_lock_port(0 if simulation() else SIM_PORT_OFFSET))
 
 
+REAL = (0, False)               # the real system's (port offset, simulated?)
+
+
+def this_system() -> tuple:
+    """This program's system, as service_manager.instance_key names one: (port offset, simulated?)."""
+    return PORT_OFFSET, simulation()
+
+
+def system_name(key) -> str:
+    """'the real system', 'the simulator', 'a simulator on port offset 20000' ..."""
+    if key is None:
+        return "a SINDIE system whose ports can't be told"
+    offset, sim = key
+    if (offset, bool(sim)) == REAL:
+        return "the real system"
+    if sim and offset == SIM_PORT_OFFSET:
+        return "the simulator"
+    return f"{'a simulator' if sim else 'a copy of SINDIE'} on port offset {offset}"
+
+
+def sindie_processes() -> dict:
+    """{system: [names]} of every SINDIE service manager and service running on this PC, the
+    system a process belongs to read from its environment (service_manager.instance_key: None if it
+    can't be read). It takes a moment (every process is looked at): not for the window's thread."""
+    import psutil
+    from src.services.service_manager import SERVICES_CONFIG, instance_key
+    scripts = [os.path.basename(SCRIPTS["manager"])] + [os.path.basename(c["script"]) for c in SERVICES_CONFIG.values()]
+    found, me = {}, os.getpid()
+    for proc in psutil.process_iter(["pid", "name", "cmdline"]):
+        try:
+            cmdline = proc.info.get("cmdline")
+            if proc.info["pid"] == me or not cmdline or "python" not in (proc.info["name"] or "").lower():
+                continue
+            name = next((s for s in scripts if any(str(arg).endswith(s) for arg in cmdline)), None)
+            if name is None:
+                continue
+            try:
+                key = instance_key(proc.environ())
+            except (psutil.AccessDenied, psutil.ZombieProcess, OSError):
+                key = None
+            found.setdefault(key, set()).add(os.path.splitext(name)[0])
+        except (psutil.NoSuchProcess, psutil.AccessDenied):
+            pass
+    return {key: sorted(names) for key, names in found.items()}
+
+
 def start_manager() -> int:
     """The service manager in the background, with no console window to close by mistake. It
     starts every service, and keeps running when the launcher or the HMI is closed."""
@@ -186,6 +241,22 @@ def use_simulator_registry():
         sys.path.insert(0, ROOT)
     import run_simulation
     os.environ["SINDIE_REGISTRY"] = run_simulation.prepare_registry(paths.DATA_DIR)
+    _REGISTRY_SET_HERE.append(True)
+
+
+def rebuild_simulator_registry(python: str = None) -> str:
+    """After an update, from the simulator's launcher: the simulator's tag registry built again by the
+    version now on disk (this program runs the version before), on a copy of the real system's as
+    run_simulation.py builds it. '' or what went wrong."""
+    if not _REGISTRY_SET_HERE:
+        return ""                           # (not chosen here: whoever set SINDIE_REGISTRY looks after it)
+    from src.launcher import updater
+    out = os.environ["SINDIE_REGISTRY"]
+    real = os.path.join(ROOT, "config", "system_tags.json")
+    if os.path.exists(real):
+        import shutil
+        shutil.copyfile(real, out)
+    return updater.build_registry_into(out, ROOT, python)
 
 
 def stop_manager(timeout: float = 20.0, client=None) -> str:

@@ -21,7 +21,7 @@ from PyQt6.QtWidgets import (QApplication, QCheckBox, QDialog, QDialogButtonBox,
 from src.core.telemetry_cache import TelemetryCache
 from src.gui.settings import gui_settings
 from src.gui.style import chip, set_role, set_tone
-from src.launcher import icon, programs
+from src.launcher import icon, programs, updater
 
 log = logging.getLogger("launcher")
 
@@ -144,6 +144,7 @@ class LauncherWindow(QWidget):
         self.cache = TelemetryCache()
         self._telemetry = None
         self._stopped = programs.services_stopped()     # stopped on purpose: {'at', 'by'} (or None)
+        self._held = updater.held_up()                  # why the services mustn't be started by themselves ('' none)
         self._stopping = False
         self._jobs = set()                  # Background calls still running
         self._was_running = None
@@ -170,6 +171,8 @@ class LauncherWindow(QWidget):
             if self.tray is not None:
                 self.tray.showMessage("SINDIE", f"The services were stopped on purpose ({self._stopped_text()}). They "
                                       "stay stopped until Start services.", QSystemTrayIcon.MessageIcon.Information, 8000)
+        elif self._held:
+            log.warning("Keep running: the services aren't started: %s", self._held)
         elif self.chk_keep.isChecked() and not programs.manager_running():
             log.info("Keep running: the service manager isn't running: starting it")
             self._start_manager()
@@ -363,9 +366,19 @@ class LauncherWindow(QWidget):
         bring_to_front(self)
 
     def closeEvent(self, event):
+        ending = QApplication.instance().isSavingSession()
+        if self.updates.busy and (self._quitting or ending or self.tray is None):
+            # An update runs in this launcher: it can't stop half way. (Windows logging off or shutting
+            # down is held up: it says this program is preventing it.)
+            event.ignore()
+            self._quitting = False
+            if ending:
+                log.critical("Windows is logging off or shutting down while the software is being updated")
+                updater.note_on_last({"session_ending": time.strftime("%Y-%m-%d %H:%M:%S")})
+            return
         # Closed: to the tray. (Not while Windows is logging off or shutting down: a window that
         # refuses to close then would hold the shutdown up.)
-        if self.tray is not None and not self._quitting and not QApplication.instance().isSavingSession():
+        if self.tray is not None and not self._quitting and not ending:
             event.ignore()
             self.hide()
             if not self._told_tray:
@@ -373,6 +386,8 @@ class LauncherWindow(QWidget):
                 self.tray.showMessage("SINDIE", "The launcher is still in the tray. The services keep running.",
                                       QSystemTrayIcon.MessageIcon.Information, 4000)
             return
+        self.timer.stop()
+        self.updates.stop_timers()
         self._shutdown_threads()
         super().closeEvent(event)
 
@@ -395,6 +410,10 @@ class LauncherWindow(QWidget):
         self.chk_startup.setToolTip("" if error is None else f"Couldn't check: {error}")
 
     def quit(self):
+        if self.updates.busy:
+            QMessageBox.information(self, "SINDIE", "The software is being updated: the launcher can't close until the "
+                                    "update has finished.")
+            return
         self._quitting = True
         self._shutdown_threads()
         if self.tray is not None:
@@ -438,6 +457,9 @@ class LauncherWindow(QWidget):
         if self._stopping:
             return ("STOPPING...", "warn", "Stopping every service and the service manager...", "warn")
         if not running:
+            if self._held:
+                return ("HELD", "fault", f"Not started by themselves: {self._held}. Call Josh before pressing Start "
+                        "services.", "fault")
             if self._stopped:
                 return ("STOPPED", "off", f"Stopped on purpose ({self._stopped_text()}). They stay stopped until "
                         "Start services is pressed.", "fault")
@@ -458,8 +480,9 @@ class LauncherWindow(QWidget):
 
     def refresh(self):
         self._stopped = programs.services_stopped()          # (another launcher of this system may have)
+        self._held = updater.held_up()
         running = programs.manager_running()
-        if running and self._stopped and not self._stopping:
+        if running and self._stopped and not self._stopping and not self.updates.busy and not self._held:
             # Started since by other means (or a stop that didn't finish): they aren't stopped now
             programs.record_services_stopped(False)
             self._stopped = None
@@ -503,7 +526,7 @@ class LauncherWindow(QWidget):
             if self._down_since is None:
                 self._down_since = now
             wait = RESTART_DELAYS[min(self._restarts, len(RESTART_DELAYS) - 1)]
-            if self.chk_keep.isChecked() and not self._stopped and now - self._down_since >= wait:
+            if self.chk_keep.isChecked() and not self._stopped and not self._held and now - self._down_since >= wait:
                 self._restarts += 1
                 log.warning("Keep running: starting the service manager (it wasn't running)")
                 self._start_manager()
@@ -529,6 +552,20 @@ class LauncherWindow(QWidget):
     def start_services(self):
         if self.updates.busy:
             return
+        held = updater.held_up()
+        if held == updater.BEING_UPDATED:
+            QMessageBox.information(self, "Start services", "The software is being updated (from another launcher, or "
+                                    "the command line): start the services once it has finished.")
+            return
+        if held:
+            answer = QMessageBox.warning(
+                self, "Start services", f"The services weren't started by themselves: {held}.\n\nHas Josh checked the "
+                "software? Start the services all the same?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No, QMessageBox.StandardButton.No)
+            if answer != QMessageBox.StandardButton.Yes:
+                return
+            updater.release_hold(programs._user())
+            self._held = ""
         programs.record_services_stopped(False)
         self._stopped = None
         if not programs.manager_running() and not self._starting():
@@ -541,7 +578,7 @@ class LauncherWindow(QWidget):
             self._restarts = 0
             self._down_since = None
             if (not self._stopped and not self._stopping and not self.updates.busy and not self._starting()
-                    and not programs.manager_running()):
+                    and not updater.held_up() and not programs.manager_running()):
                 log.info("Keep running ticked: starting the service manager")
                 self._start_manager()
         self.refresh()
@@ -571,8 +608,16 @@ class LauncherWindow(QWidget):
         self.refresh()
 
     # --- the programs ------------------------------------------------------------------------------
+    def _updating(self, title: str) -> bool:
+        """An update runs: nothing is started meanwhile (it would start half one version, half the other)."""
+        if self.updates.busy:
+            QMessageBox.information(self, title, "The software is being updated: open it once the update has finished.")
+        return self.updates.busy
+
     def open_program(self, program: str):
         from src.launcher.instance import open_or_raise
+        if self._updating(programs.TITLES[program]):
+            return
         problem = open_or_raise(program)
         if problem:
             QMessageBox.warning(self, programs.TITLES[program], problem)
@@ -582,6 +627,8 @@ class LauncherWindow(QWidget):
         show_help("getting-started/starting-the-software.md")
 
     def open_simulator(self):
+        if self._updating("Simulator"):
+            return
         try:
             programs.open_simulator()
         except (OSError, programs.subprocess.SubprocessError) as e:

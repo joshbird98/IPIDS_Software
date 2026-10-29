@@ -59,6 +59,22 @@ def endpoint():
     return free_tcp_endpoint()
 
 
+@pytest.fixture(autouse=True)
+def _no_real_programs(request, monkeypatch):
+    """No test starts a real, detached program by accident - a service manager above all. (October
+    2026: a launcher window left ticking by an earlier test started one, and the tests after it failed
+    with its ports in use.) A test that starts one on purpose is marked real_spawn."""
+    if request.node.get_closest_marker("real_spawn"):
+        return
+    from src.launcher import programs
+
+    def refuse(args, log_name, *a, **kw):
+        import traceback
+        traceback.print_stack()
+        raise OSError(f"a test tried to start a real program ({' '.join(map(str, args))[:200]}): stand it in")
+    monkeypatch.setattr(programs, "spawn", refuse)
+
+
 def _gh_escape(text: str, prop: bool = False) -> str:
     text = text.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
     return text.replace(":", "%3A").replace(",", "%2C") if prop else text

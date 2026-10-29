@@ -32,6 +32,7 @@ def test_which_python_and_what_to_run():
     assert programs._ps_quote("C:\\Josh's folder") == "'C:\\Josh''s folder'"
 
 
+@pytest.mark.real_spawn
 def test_a_helper_that_hangs_is_an_oserror(monkeypatch):
     def hang(*a, **k):
         raise subprocess.TimeoutExpired("python", 60)
@@ -52,6 +53,7 @@ def test_a_console_of_its_own_only_on_windows(tmp_path):
             programs.open_simulator()
 
 
+@pytest.mark.real_spawn
 def test_a_program_started_outlives_and_logs(tmp_path, monkeypatch):
     import psutil
     monkeypatch.setattr(programs.paths, "LOG_DIR", str(tmp_path))

@@ -1,5 +1,6 @@
 """Software updates (src/launcher/updater.py), against real git repositories: a bare one standing in
 for GitHub, Josh's (where versions are made and the lab branch is moved), and the lab PC's clone."""
+import contextlib
 import json
 import os
 import shutil
@@ -102,7 +103,7 @@ class FakeLauncher:
     def online(self):
         return {"service_plc", "service_logger"} if self.running else set()
 
-    def stop(self):
+    def stop(self, force=False):
         self.calls.append("stop")
         if self.stop_problem:
             return self.stop_problem
@@ -378,7 +379,7 @@ def test_data_the_update_stops_tracking_stays_on_the_pc(lab):
     untrack_example_data(lab)
     plan = check(lab)
     assert plan.state == updater.READY and plan.hold == ["data/example.csv"]
-    assert any("stops tracking data/example.csv in git: they stay on this PC" in n for n in plan.notes)
+    assert any("stops tracking data/example.csv in git: it stays on this PC" in n for n in plan.notes)
     report = apply(lab, plan)
     assert report.ok, report.message
     assert text(lab, "data/example.csv") == "a,b\n" and run_git(lab.pc, "status", "--porcelain") == ""
@@ -406,8 +407,7 @@ def test_this_pcs_own_changes_to_tracked_files_survive_an_update_and_a_failed_on
     report = apply(lab, check(lab))
     assert not report.ok and report.rolled_back
     assert run_git(lab.pc, "status", "--porcelain") == status and text(lab, "data/day1.csv") == "x\ny\n"
-    stamp = os.path.basename(report.folder)
-    assert run_git(lab.pc, "rev-parse", "--verify", "-q", f"refs/sindie/{stamp}")      # (kept, as a stash commit)
+    assert run_git(lab.pc, "for-each-ref", "refs/sindie") == ""         # (nothing of the PC's data copied into git)
     release(lab, {"src/app.py": "VERSION = 3\n"}, "Good")
     report = apply(lab, check(lab))
     assert report.ok, report.message
@@ -465,9 +465,9 @@ def test_a_checkout_that_fails_half_way_is_undone(lab):
 
     class Flaky(updater.Git):
         def __call__(self, *args, **kw):
-            if args[:2] == ("checkout", "-B"):
+            if args[:2] == ("checkout", plan.target):
                 (lab.pc / "src" / "app.py").write_text("half\n")         # git got part of the way
-                raise updater.GitError("git checkout failed: unable to unlink old 'src/app.py': Permission denied")
+                raise updater.GitError("git checkout failed: error: unable to unlink old 'src/app.py': Permission denied")
             return super().__call__(*args, **kw)
     report = updater.apply(plan, FakeLauncher(lab.pc).hooks(), git=Flaky(str(lab.pc)), registry_path=str(lab.registry),
                            folder_root=str(lab.updates))
@@ -522,7 +522,8 @@ def test_an_update_that_never_finished_is_found(lab):
 
 
 # --------------------------------------------------------------------------- the machine
-SAFE = {"system.connected": True, updater.RELAY: 0, updater.SOURCE_COLD: 1, "sequencer.recipe.state": "idle"}
+SAFE = {"system.connected": True, updater.RELAY: 0, updater.SOURCE_COLD: 1, "sequencer.recipe.state": "idle",
+        "manager.services": {"service_plc": "ONLINE", "service_sequencer": "ONLINE"}}
 
 
 @pytest.mark.parametrize("view, running, silent, words", [
@@ -532,6 +533,8 @@ SAFE = {"system.connected": True, updater.RELAY: 0, updater.SOURCE_COLD: 1, "seq
     ({"system.connected": False}, True, None, "PLC isn't reporting"),
     ({"system.connected": True}, True, None, "safety relay's state isn't known"),
     (dict(SAFE, **{"sequencer.mass_scan.state": "running"}), True, None, "mass scan is running"),
+    ({"system.connected": True, updater.RELAY: 0, updater.SOURCE_COLD: 1}, True, None, "service manager isn't reporting"),
+    ({k: v for k, v in SAFE.items() if k != "sequencer.recipe.state"}, True, None, "the sequencer isn't reporting"),
     ({}, False, 10.0, "Wait 50 s more"),
     ({}, False, None, "stopped for a minute"),
     ({}, False, 61.0, None),
@@ -542,11 +545,22 @@ def test_when_the_machine_can_be_updated(view, running, silent, words):
 
 
 def test_the_other_system_and_open_programs():
-    assert "close the simulator" in updater.machine_reasons(SAFE, True, None, [], other_running=True)[0]
+    assert "(the simulator): close them first" in updater.machine_reasons(SAFE, True, None, [], other_running=True)[0]
+    named = updater.machine_reasons(SAFE, True, None, [], others=["a simulator on port offset 20000"])
+    assert "(a simulator on port offset 20000)" in named[0]
     sim = updater.machine_reasons(SAFE, True, None, [], other_running=True, simulation=True)
     assert "update from the real system's launcher" in sim[0]
     assert updater.machine_reasons(SAFE, True, None, [], other_silent_for=70.0, simulation=True) == []
     assert updater.machine_reasons(SAFE, True, None, ["Operator HMI"]) == ["The Operator HMI is open: close it first."]
+
+
+def test_services_left_running_without_the_service_manager():
+    """A service manager ended by force leaves its services running: the PLC service keeps the PLC's
+    watchdog going, so the relay may still be on however long the manager has been gone."""
+    strays = updater.machine_reasons({}, False, 600.0, [], strays=["service_plc", "service_logger"])
+    assert len(strays) == 1 and "without the service manager (service_plc, service_logger)" in strays[0]
+    heard = updater.machine_reasons({}, False, 600.0, [], plc_heard=True)
+    assert len(heard) == 1 and "PLC's data is still arriving" in heard[0]
 
 
 def test_plc_differences():
@@ -574,20 +588,40 @@ class _Answer:
         return False
 
 
-def _runs(*runs):
-    return lambda req, timeout: _Answer({"check_runs": [dict(zip(("name", "status", "conclusion"), r)) for r in runs]})
+def _runs(*runs, asked=None):
+    def answer(req, timeout):
+        if asked is not None:
+            asked.append(req.full_url)
+        return _Answer({"workflow_runs": [dict(zip(("name", "status", "conclusion"), r)) for r in runs]})
+    return answer
 
 
 @pytest.mark.parametrize("runs, status", [
-    ([("quick", "completed", "success"), ("full", "completed", "success")], updater.PASSED),
-    ([("quick", "completed", "success"), ("full", "completed", "failure")], updater.FAILED),
-    ([("quick", "completed", "success"), ("full", "in_progress", None)], updater.RUNNING),
-    ([("quick", "completed", "success"), ("full", "completed", "cancelled"), ("full", "completed", "success")],
-     updater.PASSED),                                   # (the same commit pushed to the lab branch too)
-    ([], updater.UNKNOWN),
+    ([("Tests", "completed", "success")], updater.PASSED),
+    ([("Tests", "completed", "failure")], updater.FAILED),          # (a job skipped after it: the workflow's failure)
+    ([("Tests", "in_progress", None)], updater.RUNNING),
+    ([("Tests", "queued", None)], updater.RUNNING),
+    ([("Tests", "completed", "cancelled"), ("Tests", "completed", "success")], updater.PASSED),    # (run again)
+    ([("Tests", "completed", "cancelled")], updater.FAILED),
+    ([("Tests", "completed", "skipped")], updater.FAILED),
+    ([("Tests", "completed", "success"), ("Docs", "completed", "failure")], updater.FAILED),
+    ([("Tests", "completed", "failure"), ("Tests", "in_progress", None)], updater.RUNNING),     # (a run again, going)
+    ([], updater.UNKNOWN),                              # (not started yet)
 ])
 def test_the_github_tests(runs, status):
-    assert updater.tests_status("joshbird98/IPIDS_Software", "abc", opener=_runs(*runs)) == status
+    asked = []
+    assert updater.tests_status("joshbird98/IPIDS_Software", "abc", opener=_runs(*runs, asked=asked)) == status
+    assert asked == ["https://api.github.com/repos/joshbird98/IPIDS_Software/actions/runs?head_sha=abc&per_page=100"]
+
+
+def test_only_a_pass_is_remembered(lab, monkeypatch):
+    """GitHub answers 60 questions an hour: a pass is remembered. A failure is asked again (a run made
+    again can pass)."""
+    answers = [updater.FAILED, updater.PASSED]
+    monkeypatch.setattr(updater, "tests_status", lambda repo, sha: answers.pop(0))
+    assert updater._cached_tests("a/b", "abc") == updater.FAILED
+    assert updater._cached_tests("a/b", "abc") == updater.PASSED
+    assert updater._cached_tests("a/b", "abc") == updater.PASSED and answers == []
 
 
 def test_github_not_answering_is_unknown():
@@ -660,7 +694,6 @@ def test_the_command_line(lab, capsys, monkeypatch):
 def test_applying_by_hand(lab, monkeypatch):
     """From a terminal (and the first time, from a copy of the new version: --root): with the services
     stopped for a minute, and UPDATE typed."""
-    from src.launcher import programs
     release(lab, {"src/app.py": "VERSION = 2\n"}, "Two")
     plan = check(lab)
     launcher = FakeLauncher(lab.pc, running=False)
@@ -668,12 +701,15 @@ def test_applying_by_hand(lab, monkeypatch):
     monkeypatch.setattr(updater, "self_check_of", lambda root=None, python=None: launcher.self_check())
     monkeypatch.setenv("SINDIE_REGISTRY", str(lab.registry))
     taken, t, said = {"on": True}, [0.0], []
-    monkeypatch.setattr(programs, "_lock_taken", lambda port: taken["on"])
+
+    def running():
+        return ["the real system: service_plc"] if taken["on"] else []
 
     def sleep(s):
         t[0] += s
-    kw = dict(clock=lambda: t[0], sleep=sleep, out=said.append)
+    kw = dict(clock=lambda: t[0], sleep=sleep, out=said.append, running=running)
     assert updater.apply_by_hand(plan, str(lab.pc), **kw) == 1 and "stop them first" in said[-1]
+    assert "the real system: service_plc" in said[-1]
     taken["on"] = False
     assert updater.apply_by_hand(plan, str(lab.pc), ask=lambda q: "yes", **kw) == 1
     assert t[0] >= updater.SILENT_FOR_S and said[-1] == "Nothing applied." and head(lab) == lab.first
@@ -699,3 +735,392 @@ def test_only_problems_the_new_version_brings_count(lab):
             return ["smu_config.json: max_v out of range"] + super().self_check()
     release(lab, {"src/app.py": "VERSION = 2\n"}, "Two")
     assert apply(lab, check(lab), Known(lab.pc)).ok
+
+
+# --------------------------------------------------------------------------- what could go wrong (reviewed 29 October 2026)
+@contextlib.contextmanager
+def held_open(folder: Path):
+    """A folder whose files can't be replaced, as a file a program holds open on Windows can't be:
+    chattr +i (as root), read-only otherwise. The test is skipped where neither works."""
+    root = getattr(os, "geteuid", lambda: 1)() == 0
+    if root:
+        if shutil.which("chattr") is None or subprocess.run(["chattr", "+i", str(folder)]).returncode:
+            pytest.skip("chattr +i isn't available here")
+    else:
+        os.chmod(folder, 0o555)
+    try:
+        try:
+            (folder / ".probe").write_text("x")
+            (folder / ".probe").unlink()
+            locked = False
+        except OSError:
+            locked = True
+        if not locked:
+            pytest.skip("a folder can't be locked here")
+        yield
+    finally:
+        if root:
+            subprocess.run(["chattr", "-i", str(folder)])
+        else:
+            os.chmod(folder, 0o755)
+
+
+def status(lab) -> str:
+    return run_git(lab.pc, "status", "--porcelain", "--untracked-files=all")
+
+
+def refs(lab) -> str:
+    return run_git(lab.pc, "for-each-ref", "--format=%(refname) %(objectname)", "refs/heads")
+
+
+def test_a_file_here_the_same_as_one_the_update_adds_makes_way(lab):
+    sha = release(lab, {"src/new.py": "x = 1\n"}, "New file")
+    write(lab.pc, {"src/new.py": "x = 1\n"})
+    plan = check(lab)
+    assert plan.state == updater.READY and plan.aside == ["src/new.py"]
+    report = apply(lab, plan)
+    assert report.ok, report.message
+    assert head(lab) == sha and status(lab) == ""
+    assert (Path(report.folder) / "set_aside" / "in_the_way" / "src" / "new.py").read_text() == "x = 1\n"
+
+
+def test_a_file_a_program_holds_open_stops_the_update_and_it_is_undone(lab):
+    """git leaves a file it can't replace as it was, and can still say it worked: each file is
+    checked after the move."""
+    commit(lab.dev, {"zz/locked.txt": "v1\n"}, "A file")
+    run_git(lab.dev, "push", "-q", "origin", "HEAD:lab")
+    run_git(lab.pc, "pull", "-q", "origin", "lab")
+    first = head(lab)
+    release(lab, {"zz/locked.txt": "v2\n", "src/app.py": "VERSION = 2\n", "src/aaa_new.py": "x = 1\n"}, "Two")
+    plan = check(lab)
+    launcher = FakeLauncher(lab.pc)
+    with held_open(lab.pc / "zz"):
+        report = apply(lab, plan, launcher)
+    assert not report.ok and "couldn't be written (zz/locked.txt)" in report.message, report.message
+    assert report.rolled_back, report.message
+    assert head(lab) == first and branch(lab) == "main" and status(lab) == ""
+    assert text(lab, "src/app.py") == "VERSION = 1\n" and not (lab.pc / "src" / "aaa_new.py").exists()
+    assert launcher.calls[-2:] == ["start", ("healthy", ("service_logger", "service_plc"))]
+    assert updater.held_up() == ""
+
+
+def test_a_file_held_open_while_going_back_leaves_the_services_stopped(lab):
+    """What can't be put back is said, and no launcher starts the services by itself until someone has
+    looked (held_up)."""
+    commit(lab.dev, {"zz/locked.txt": "v1\n", "data/day1.csv": "x\n"}, "Files")
+    run_git(lab.dev, "push", "-q", "origin", "HEAD:lab")
+    run_git(lab.pc, "pull", "-q", "origin", "lab")
+    first = head(lab)
+    write(lab.pc, {"data/day1.csv": "x\ncompacted by this PC\n"})
+    release(lab, {"src/app.py": "BROKEN\n", "zz/locked.txt": "v2\n"}, "Bad")
+    lock = []
+
+    class LockedThen(FakeLauncher):
+        def self_check(self):
+            found = super().self_check()
+            if found and not lock:                      # (the new version's check: a program opens the file)
+                lock.append(held_open(lab.pc / "zz"))
+                lock[0].__enter__()
+            return found
+    launcher = LockedThen(lab.pc)
+    try:
+        report = apply(lab, check(lab), launcher)
+    finally:
+        if lock:
+            lock[0].__exit__(None, None, None)
+    assert not report.ok and not report.rolled_back
+    assert "couldn't be put back completely" in report.message and "zz/locked.txt" in report.message
+    assert "left stopped" in report.message and "start" not in launcher.calls          # (not started again)
+    assert head(lab) == first and text(lab, "data/day1.csv") == "x\ncompacted by this PC\n"
+    assert text(lab, "src/app.py") == "VERSION = 1\n"
+    assert "couldn't be put back completely" in updater.held_up()
+    updater.release_hold("josh")
+    assert updater.held_up() == ""
+
+
+def test_a_detached_pc_or_one_on_another_branch_is_left_as_it_was(lab):
+    run_git(lab.pc, "checkout", "-q", "-b", "lab", "--track", "origin/lab")
+    run_git(lab.pc, "checkout", "-q", "--detach")
+    before, config = refs(lab), run_git(lab.pc, "config", "--get-regexp", r"^branch\.")
+    release(lab, {"src/app.py": "BROKEN\n"}, "Bad")
+    report = apply(lab, check(lab))
+    assert not report.ok and report.rolled_back
+    assert refs(lab) == before and branch(lab) == "HEAD" and head(lab) == lab.first
+    assert run_git(lab.pc, "config", "--get-regexp", r"^branch\.") == config
+    # On main, with no branch 'lab' here at all: none is left behind
+    run_git(lab.pc, "checkout", "-q", "main")
+    run_git(lab.pc, "branch", "-q", "-D", "lab")
+    before, config = refs(lab), run_git(lab.pc, "config", "--get-regexp", r"^branch\.")
+    report = apply(lab, check(lab))
+    assert not report.ok and report.rolled_back
+    assert refs(lab) == before and branch(lab) == "main"
+    assert run_git(lab.pc, "config", "--get-regexp", r"^branch\.") == config
+
+
+def test_this_pcs_own_commits_on_lab_are_back_on_lab_after_a_failed_update(lab):
+    run_git(lab.pc, "checkout", "-q", "-b", "lab", "--track", "origin/lab")
+    own = commit(lab.pc, {"config/recipes/mine.json": {"steps": [3]}}, "Recipe builder: mine")
+    before = refs(lab)
+    release(lab, {"src/app.py": "BROKEN\n"}, "Bad")
+    report = apply(lab, check(lab))
+    assert not report.ok and report.rolled_back
+    assert refs(lab) == before and head(lab) == own and branch(lab) == "lab"       # (and no backup branch left)
+
+
+def test_staged_changes_survive_a_failed_update(lab):
+    commit(lab.dev, {"data/day1.csv": "x\n", "data/day2.csv": "y\n"}, "More example data")
+    run_git(lab.dev, "push", "-q", "origin", "HEAD:lab")
+    run_git(lab.pc, "pull", "-q", "origin", "lab")
+    write(lab.pc, {"data/day1.csv": "x\nmore\n"})
+    run_git(lab.pc, "add", "data/day1.csv")             # staged
+    run_git(lab.pc, "rm", "-q", "data/day2.csv")        # staged deletion
+    before = status(lab)
+    release(lab, {"src/app.py": "BROKEN\n"}, "Bad")
+    report = apply(lab, check(lab))
+    assert not report.ok and report.rolled_back and status(lab) == before
+
+
+def test_line_endings_of_this_pcs_files_are_kept(lab):
+    run_git(lab.pc, "config", "core.autocrlf", "true")
+    (lab.pc / "data" / "example.csv").write_bytes(b"a,b\n1,2\n")          # (the compactor writes LF)
+    write(lab.pc, {"config/recipes/r1.json": "{\n  \"steps\": [5]\n}\n"})
+    before = {p: (lab.pc / p).read_bytes() for p in ("data/example.csv", "config/recipes/r1.json")}
+    release(lab, {"src/app.py": "BROKEN\n"}, "Bad")
+    report = apply(lab, check(lab))
+    assert not report.ok and report.rolled_back
+    assert {p: (lab.pc / p).read_bytes() for p in before} == before
+
+
+def test_untracking_data_the_pc_deleted_or_rewrote(lab):
+    """The compactor deletes and rewrites logged files: none of that stands in the way of an update
+    that stops tracking them, and what it rewrote stays."""
+    commit(lab.dev, {"data/day1.csv": "x\n", "data/day2.csv": "y\n"}, "More example data")
+    run_git(lab.dev, "push", "-q", "origin", "HEAD:lab")
+    run_git(lab.pc, "pull", "-q", "origin", "lab")
+    (lab.pc / "data" / "day1.csv").unlink()
+    write(lab.pc, {"data/day2.csv": "y\ncompacted\n"})
+    write(lab.dev, {".gitignore": "config/lab/\n*.log\ndata/\n"})
+    run_git(lab.dev, "rm", "-q", "-r", "--cached", "data")
+    run_git(lab.dev, "commit", "-q", "-am", "Stop tracking the example data")
+    run_git(lab.dev, "push", "-q", "origin", "HEAD:lab")
+    plan = check(lab)
+    assert plan.state == updater.READY, plan.blockers
+    assert plan.hold == ["data/day2.csv", "data/example.csv"]
+    report = apply(lab, plan)
+    assert report.ok, report.message
+    assert text(lab, "data/day2.csv") == "y\ncompacted\n" and not (lab.pc / "data" / "day1.csv").exists()
+    assert run_git(lab.pc, "ls-files", "data") == "" and status(lab) == ""
+
+
+def test_a_recipe_from_its_own_commits_edited_since(lab):
+    run_git(lab.pc, "checkout", "-q", "-b", "lab", "--track", "origin/lab")
+    commit(lab.pc, {"config/recipes/r1.json": {"steps": [7]}}, "Recipe builder: r1")
+    write(lab.pc, {"config/recipes/r1.json": {"steps": [7, 8]}})
+    release(lab, {"src/app.py": "VERSION = 2\n"}, "Two")
+    plan = check(lab)
+    assert plan.state == updater.READY and plan.keep == ["config/recipes/r1.json"]
+    report = apply(lab, plan)
+    assert report.ok, report.message
+    assert json.loads(text(lab, "config/recipes/r1.json")) == {"steps": [7, 8]}
+
+
+@pytest.mark.parametrize("how", ["own recipe", "recipe removed", "recipe added"])
+def test_update_go_back_update_again(lab, how):
+    if how == "own recipe":                             # (the old recipe builder committed on the lab PC)
+        run_git(lab.pc, "checkout", "-q", "-b", "lab", "--track", "origin/lab")
+        commit(lab.pc, {"config/recipes/mine.json": {"steps": [3]}}, "Recipe builder: mine")
+        release(lab, {"src/app.py": "VERSION = 2\n"}, "Two")
+    elif how == "recipe removed":
+        run_git(lab.dev, "rm", "-q", "config/recipes/r1.json")
+        run_git(lab.dev, "commit", "-q", "-m", "Remove an obsolete recipe")
+        run_git(lab.dev, "push", "-q", "origin", "HEAD:lab")
+    else:
+        release(lab, {"config/recipes/new.json": {"steps": [5]}}, "A new recipe")
+    plan = check(lab)
+    assert plan.state == updater.READY, plan.blockers
+    first, recipes = head(lab), sorted(p.name for p in (lab.pc / "config" / "recipes").iterdir())
+    assert apply(lab, plan).ok
+    back = updater.plan_back(str(lab.pc), git=lab.git)
+    assert back.state == updater.READY, back.blockers
+    report = apply(lab, back)
+    assert report.ok, report.message
+    assert head(lab) == first and {p.name for p in (lab.pc / "config" / "recipes").iterdir()} >= set(recipes)
+    again = check(lab)
+    assert again.state == updater.READY, again.blockers
+    report = apply(lab, again)
+    assert report.ok, report.message
+
+
+def test_a_git_that_was_ended_half_way(lab):
+    """A checkout ended by its time limit leaves what it had written, and its index.lock (which stops
+    every git after it): both are dealt with, and the next update works."""
+    sha = release(lab, {"src/app.py": "VERSION = 2\n", "src/zz_new.py": "y = 1\n",
+                        "config/recipes/new.json": {"steps": [2]}}, "Two")
+    plan = check(lab)
+
+    class Ended(updater.Git):
+        def __call__(self, *args, **kw):
+            if args[:2] == ("checkout", plan.target):
+                for path in ("src/zz_new.py", "config/recipes/new.json"):
+                    write(lab.pc, {path: run_git(lab.pc, "show", f"{sha}:{path}") + "\n"})
+                (lab.pc / ".git" / "index.lock").write_text("")
+                raise updater.GitError("git checkout took longer than 300 s")
+            return super().__call__(*args, **kw)
+    report = updater.apply(plan, FakeLauncher(lab.pc).hooks(), git=Ended(str(lab.pc)), registry_path=str(lab.registry),
+                           folder_root=str(lab.updates))
+    assert not report.ok and report.rolled_back, report.message
+    assert head(lab) == lab.first and status(lab) == "" and not (lab.pc / ".git" / "index.lock").exists()
+    assert list((lab.pc / ".git").glob("index.lock.stale-*"))         # (set aside, not deleted)
+    again = check(lab)
+    assert again.state == updater.READY, again.blockers
+    assert apply(lab, again).ok
+
+
+def test_the_registry_in_use_must_be_what_this_version_builds(lab):
+    in_use = json.loads(json.dumps(TAGS))
+    in_use["ion_beam.system.plc_watchdog"]["byte_offset"] = 194       # (what the PC talks to the PLC with now)
+    lab.registry.write_text(json.dumps(in_use))
+    release(lab, {"src/app.py": "VERSION = 2\n"}, "Two")
+    launcher = FakeLauncher(lab.pc)
+    report = apply(lab, check(lab), launcher)
+    assert not report.ok and report.rolled_back and "the tag registry in use doesn't match" in report.message
+    assert "(10, 194, 0, 'INT', True) -> (10, 196, 0, 'INT', True)" in report.message
+    assert json.loads(lab.registry.read_text()) == in_use and head(lab) == lab.first
+
+
+def test_a_builder_that_writes_the_registry_in_use(lab):
+    """Versions from before 17 October 2026 build the registry in use whatever --out says: it is put
+    back."""
+    class Old(FakeLauncher):
+        def build(self, out):
+            if "VERSION = 1" in (self.root / "src" / "app.py").read_text():
+                lab.registry.write_text(json.dumps({"rebuilt": "in place"}))
+                return ""
+            return super().build(out)
+    release(lab, {"src/app.py": "VERSION = 2\n"}, "Two")
+    report = apply(lab, check(lab), Old(lab.pc))
+    assert report.ok, report.message
+    assert any("wrote the registry in use" in s for s in report.steps)
+    assert json.loads(lab.registry.read_text()) == TAGS
+
+
+def test_a_change_to_where_the_pc_finds_the_plc_is_applied_by_hand(lab):
+    commit(lab.dev, {"config/network_config.json": {"plc": {"ip": "192.168.0.1", "rack": 0, "slot": 1}}}, "Network")
+    run_git(lab.dev, "push", "-q", "origin", "HEAD:lab")
+    run_git(lab.pc, "pull", "-q", "origin", "lab")
+    release(lab, {"config/network_config.json": {"plc": {"ip": "192.168.0.2", "rack": 0, "slot": 1}}}, "New PLC address")
+    plan = check(lab)
+    assert plan.state == updater.BLOCKED and "where the PC finds the PLC (network_config.json: plc ip)" in plan.blockers[0]
+
+
+def test_a_conflict_left_unresolved_blocks(lab):
+    release(lab, {"src/app.py": "VERSION = 2\n"}, "Two")
+    blob = run_git(lab.pc, "rev-parse", "HEAD:src/app.py")
+    subprocess.run(["git", "-C", str(lab.pc), "update-index", "--index-info"], check=True, text=True,
+                   input=f"0 {'0' * 40}\tsrc/app.py\n100644 {blob} 1\tsrc/app.py\n100644 {blob} 2\tsrc/app.py\n")
+    assert "in the middle of resolving a conflict" in " ".join(check(lab).blockers)
+
+
+def test_one_update_at_a_time(lab):
+    release(lab, {"src/app.py": "VERSION = 2\n"}, "Two")
+    plan = check(lab)
+    other = updater.update_lock()
+    assert other.acquire()
+    try:
+        assert updater.held_up() == updater.BEING_UPDATED
+        launcher = FakeLauncher(lab.pc)
+        report = apply(lab, plan, launcher)
+        assert not report.ok and "another update is under way" in report.message and launcher.calls == []
+    finally:
+        other.release()
+    assert updater.held_up() == "" and apply(lab, plan).ok
+
+
+def test_the_machine_once_more_as_it_starts(lab):
+    release(lab, {"src/app.py": "VERSION = 2\n"}, "Two")
+    launcher = FakeLauncher(lab.pc)
+    hooks = launcher.hooks()
+    hooks.safe_now = lambda: ["The safety relay is on: switch it off first (System Health panel)."]
+    report = updater.apply(check(lab), hooks, git=lab.git, registry_path=str(lab.registry), folder_root=str(lab.updates))
+    assert not report.ok and report.message.startswith("not now: The safety relay is on")
+    assert launcher.calls == [] and not report.folder and updater.history() == []
+
+
+def test_which_services_were_online_must_be_known(lab):
+    release(lab, {"src/app.py": "VERSION = 2\n"}, "Two")
+    launcher = FakeLauncher(lab.pc)
+    hooks = launcher.hooks()
+    hooks.online = lambda: None                         # (the service manager hasn't reported just now)
+    report = updater.apply(check(lab), hooks, git=lab.git, registry_path=str(lab.registry), folder_root=str(lab.updates))
+    assert not report.ok and "which services are ONLINE isn't known" in report.message
+    assert launcher.calls == [] and head(lab) == lab.first
+
+
+def test_an_update_interrupted_is_undone_first(lab):
+    class Interrupted(FakeLauncher):
+        def self_check(self):
+            if "VERSION = 2" in (self.root / "src" / "app.py").read_text():
+                raise KeyboardInterrupt
+            return super().self_check()
+    release(lab, {"src/app.py": "VERSION = 2\n"}, "Two")
+    launcher = Interrupted(lab.pc)
+    with pytest.raises(KeyboardInterrupt):
+        apply(lab, check(lab), launcher)
+    assert head(lab) == lab.first and status(lab) == ""
+    [entry] = updater.history()
+    assert not entry["ok"] and entry["rolled_back"] and "interrupted" in entry["message"]
+    assert launcher.calls[-2:] == ["start", ("healthy", ("service_logger", "service_plc"))]
+
+
+def test_a_failure_starting_the_services_again_is_said(lab):
+    class NoStart(FakeLauncher):
+        def start(self):
+            self.calls.append("start")
+            raise OSError("the helper that starts it didn't finish")
+    release(lab, {"src/app.py": "BROKEN\n"}, "Bad")
+    report = apply(lab, check(lab), NoStart(lab.pc))
+    assert not report.ok and report.rolled_back and "didn't finish" in report.advice
+    [entry] = updater.history()
+    assert entry["rolled_back"] and "didn't finish" in entry["advice"]
+
+
+def test_an_update_that_never_finished_holds_the_services(lab):
+    folder = lab.updates / "20261029-101500"
+    folder.mkdir(parents=True)
+    (folder / "update.json").write_text(json.dumps({"started": "20261029-101500"}))
+    assert "never finished" in updater.held_up()
+    updater.mark_seen(str(folder))                      # (said once: still held)
+    assert updater.unfinished() is None and "never finished" in updater.held_up()
+    updater.release_hold("josh")
+    assert updater.held_up() == ""
+    assert json.loads((folder / "update.json").read_text())["released"]["by"] == "josh"
+
+
+def test_a_plc_tags_type_comes_from_the_plc_interface(capsys):
+    """The registry builder keeps hand-edited fields of an existing registry, but not a PLC tag's data
+    type: the PC must read it as the PLC holds it."""
+    from src.utils.build_registry import apply_existing_overrides
+    new = {"ion_beam.system.plc_watchdog": {"source": "service_plc_snap7", "datatype": "WORD", "unit": ""},
+           "vacuum.vg1": {"source": "service_vacuum", "datatype": "REAL", "unit": "mbar"}}
+    old = {"ion_beam.system.plc_watchdog": {"source": "service_plc_snap7", "datatype": "INT", "unit": "counts"},
+           "vacuum.vg1": {"source": "service_vacuum", "datatype": "DOUBLE", "unit": "Pa"}}
+    built = apply_existing_overrides(json.loads(json.dumps(new)), old)
+    assert built["ion_beam.system.plc_watchdog"] == {"source": "service_plc_snap7", "datatype": "WORD", "unit": "counts"}
+    assert built["vacuum.vg1"]["datatype"] == "DOUBLE" and built["vacuum.vg1"]["unit"] == "Pa"
+    assert "data type INT in the registry, WORD in the PLC interface" in capsys.readouterr().out
+
+
+def test_going_back_to_a_version_from_before_the_updater(lab):
+    """It has no check of its own: going back to it is let through all the same (it ran here before),
+    but an update to such a version isn't."""
+    class Old(FakeLauncher):
+        def self_check(self):
+            if "VERSION = 1" in (self.root / "src" / "app.py").read_text():
+                raise updater.UpdateFailed("the version's own check didn't run: No module named src.launcher.updater")
+            return super().self_check()
+    release(lab, {"src/app.py": "VERSION = 2\n"}, "Two")
+    assert apply(lab, check(lab), Old(lab.pc)).ok
+    back = updater.plan_back(str(lab.pc), git=lab.git)
+    report = apply(lab, back, Old(lab.pc))
+    assert report.ok, report.message
+    assert any("from before the updater" in s for s in report.steps) and head(lab) == lab.first

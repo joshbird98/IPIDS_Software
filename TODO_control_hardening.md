@@ -92,15 +92,38 @@ simulator; none of it has been tried on the real hardware yet (see "Lab PC valid
   once its GitHub tests passed, and refuses (to be installed by hand) a change to plc/generated/ or to
   requirements.txt, or one that meets software changes made on the lab PC. It installs only with the PLC
   reporting the relay off and the source cold and nothing running (or the services stopped for a minute),
-  and the HMI and data viewer closed, after UPDATE is typed: services stopped; the lab PC's changes to
-  tracked files kept as a stash commit (refs/sindie/<time>); its config changes made lab settings; `git
-  checkout -B lab <version>`; the new registry built on the one in use and its PLC tags compared with the
-  old one's (any address, type or write access changed: undone); the new version's own --self-check (no
-  new problem); services started again and every one ONLINE with the PLC answering within 2 minutes.
-  Anything failing puts the version before back and starts the services again. Go back... returns to the
-  version before the last update. The launcher then starts again (--after-update). Rehearsed on copies of
-  the real repository: from 9f7f2c2 (no updater; a config commit and an edit on the "PC" became lab
-  settings), a broken version undone with the compactor's deleted and rewritten files kept, going back.
+  and the HMI and data viewer closed, after UPDATE is typed: services stopped; git's index and copies of
+  the lab PC's own files the move touches kept; its config changes made lab settings; the branch lab at
+  the version and every file it changes written (git checkout <version> -- <files>), each checked after;
+  the new registry built on the one in use and its PLC tags compared with the old one's (any address,
+  type or write access changed: undone); the new version's own --self-check (no new problem); services
+  started again and every one ONLINE with the PLC answering within 2 minutes. Anything failing puts the
+  version before back, part by part, and starts the services again. Go back... returns to the version
+  before the last update. The launcher then starts again (--after-update). Rehearsed on copies of the real
+  repository: from 9f7f2c2 (no updater; a config commit and an edit on the "PC" became lab settings), a
+  broken version undone with the compactor's deleted and rewritten files kept, going back.
+  An independent review (the same day) found 16 ways it could go wrong, all fixed, each with a test:
+  services left running by a service manager ended by force (the PLC's watchdog kept going: no minute of
+  silence makes that safe) - now refused, from the processes on the PC and the PLC data still arriving;
+  the update's "stopped on purpose" undone by the launcher's own refresh while the manager stopped, and
+  keep running then starting the services on a half put back version - now kept, and after an update
+  that failed to undo itself or never finished the services are HELD (no launcher starts them by itself
+  until someone confirms); the tray's Close and Windows shutting down ending an update half way - now
+  refused; the undo stopping at git's first error, and git's checkout saying it worked with a file held
+  open - now each part is put back on its own and judged by what git leaves, and each file checked; an
+  identical untracked file, the compactor's deleted or rewritten data, and a recipe from the PC's own
+  commits edited since, each making the update or going back fail - now handled; the branch lab, the
+  index (staged changes) and line endings not put back; a timed-out git's index.lock stopping the undo;
+  the undo rewriting every tracked data file (625 MB) and a stash commit copying them into git at each
+  update - now only the files the update changed are touched; a failed GitHub test cached for ever, and a
+  skipped job counted as a pass - now workflow runs, and only a pass remembered; two updates at once (two
+  launchers, the command line) - now an OS lock; the registry in use never compared with the new one, and
+  a PLC tag's data type kept from the old registry by the builder (so a type change went unseen, and a
+  rebuild by hand kept the old type) - now the builder takes it from the PLC interface; the simulator's
+  launcher restarted with the simulator's registry; and smaller ones (a service missing after the update
+  not counted, which services were ONLINE not known, the sequencer's silence taken as idle, a simulator on
+  another port offset not seen, the conditions not looked at again at the click, the PLC's address in
+  network_config.json not checked).
 - 29 October 2026 (Josh: in the data viewer on his laptop, events vanished while scrolling and came back
   after more zooming and panning; he had a second events.db in data/daily_logs/). The second file wasn't
   it: the software reads only data/events.db, and that one was in a copy of the OneDrive backup folder.
