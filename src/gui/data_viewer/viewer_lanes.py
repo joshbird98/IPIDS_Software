@@ -21,6 +21,14 @@ from src.gui.thesis_style import display_unit
 
 SERIES_STYLES = (Qt.PenStyle.SolidLine, Qt.PenStyle.DashLine, Qt.PenStyle.DotLine)
 
+# View > Line width: (name, width in pixels, points per curve). A line wider than one pixel costs Qt
+# about ten times as much to draw (measured October 2026, offscreen: 16 curves of 10000 points took
+# 13 ms a frame at 1 px and 600 ms at 1.5 px; drawn as separate segments, 150 ms). So the wider ones
+# are drawn as segments from fewer points: at 3000 a curve (min and max of each bin kept, about two
+# a pixel on a laptop screen), drawn as the viewer draws them, 16 curves take 75-85 ms a frame (27 ms
+# thin) and 4 curves 27 ms (8 ms thin) - fine for a few channels, slower to pan with many.
+LINE_WIDTHS = (("Thin (fastest)", 1.0, 10000), ("Medium", 1.5, 3000), ("Thick", 2.0, 3000))
+
 
 class LanesMixin:
     """Plot lanes (one pyqtgraph plot per lane), their axes and the curves drawn on them. Mixed into DataViewerApp (viewer_main.py)."""
@@ -236,11 +244,24 @@ class LanesMixin:
         self._series_slots = kept
 
     def _series_pen(self, tag: str):
-        """The channel's line: its lane slot's theme colour; past eight in one lane, dashed, then dotted."""
+        """The channel's line: its lane slot's theme colour; past eight in one lane, dashed, then dotted;
+        as wide as View > Line width says."""
         _lane, slot = getattr(self, "_series_slots", {}).get(tag, (None, 0))
         n = len(theme.tokens()["series"])
         style = SERIES_STYLES[min(slot // n, len(SERIES_STYLES) - 1)]
-        return pg.mkPen(color=theme.series_color(slot), width=1.0, style=style)
+        return pg.mkPen(color=theme.series_color(slot), width=getattr(self, "line_width", 1.0), style=style)
+
+    def set_line_width(self, name: str):
+        """View > Line width: the curves' width, and how many points each is drawn from."""
+        _name, width, points = next((w for w in LINE_WIDTHS if w[0] == name), LINE_WIDTHS[0])
+        self.line_width, self.RENDER_LIMIT = width, points
+        for curves in (getattr(self, "curves", {}), getattr(self, "hist_curves", {})):
+            for tag, c in curves.items():
+                c.setPen(self._series_pen(tag))
+                c.curve.setSegmentedLineMode("on" if width > 1.0 else "auto")
+        x, y = getattr(self, "historical_x", None), getattr(self, "historical_y", None)
+        if x is not None and y and getattr(self, "lanes", None):
+            self._render_curves(self.hist_curves, x, y, is_historical=True)    # (with the new point budget)
 
     @staticmethod
     def _style_legend(legend):
@@ -389,6 +410,8 @@ class LanesMixin:
             # view and min/max-downsamples, and with them on pyqtgraph re-ran
             # setData on every view change (part of the double-repaint cascade).
             c = pg.PlotDataItem(pen=pen, autoDownsample=False, clipToView=False, connect='finite')
+            if getattr(self, "line_width", 1.0) > 1.0:
+                c.curve.setSegmentedLineMode("on")      # (a wide line: drawn as segments - LINE_WIDTHS)
             if cfg.get('scale') == 'log':
                 self.lane_axes[lane].addItem(c)
             else:

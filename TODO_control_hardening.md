@@ -74,6 +74,28 @@ simulator; none of it has been tried on the real hardware yet (see "Lab PC valid
     send the day's telemetry and events.db.
 
 ## Done
+- 29 October 2026 (Josh: in the data viewer on his laptop, events vanished while scrolling and came back
+  after more zooming and panning; he had a second events.db in data/daily_logs/). The second file wasn't
+  it: the software reads only data/events.db, and that one was in a copy of the OneDrive backup folder.
+  The laptop's data/events.db (89.6 MB) was damaged: pages of the events table between about 20943 and
+  21231 failed SQLite's check, so a query returned some events, an error ("database disk image is
+  malformed") or nothing, depending on the time span and the types ticked. Its service_events.log said "malformed"
+  every minute from 28 October 20:07, so the laptop's new events since then were lost. Most likely a copy
+  of the lab's events.db put over it while it was in use (the -wal/-shm then belong to another database).
+  Now:
+  - src/utils/repair_events_db.py: reads every event it can (row ranges, halved around what can't be
+    read) and every event of the backups given (--backup, the OneDrive events.db), writes each event once,
+    in time order, to a new events.db, checks it and swaps it in; the damaged one is kept as
+    events.db.damaged-<time>. Refuses while the services run. On a copy of the laptop's database with the
+    27 October backup: 544,291 events, sound, the backup's per-type daily counts all there, in 8.5 s.
+  - the events service checks the database at start-up and says so (CRITICAL, with how to repair it) then
+    and when a write finds it damaged, at most hourly; the data viewer checks it once, off its thread, and
+    says so under Event markers; the nightly backup checks its copy and keeps the last sound backup rather
+    than replacing it with a damaged one (src/core/events_db.py holds the table, the check and the hint).
+  - View > Line width in the data viewer: Thin (fastest, the default), Medium (1.5 px) or Thick (2 px),
+    kept per PC. Measured offscreen: a line wider than 1 px is about ten times as slow for Qt to draw, so
+    the wider ones are drawn as segments from 3000 points a curve (rather than 10000): 16 curves take about
+    75-85 ms a frame (27 ms thin), 4 curves about 27 ms (8 ms thin).
 - 28 October 2026 (Josh: the safety relay still dropped while running after VG1's ride-through went in,
   on 22 October; his supervisor sent the events and telemetry). Every drop since then - 23 October 14:46
   and 17:25, 27 October 16:33, 28 October 11:00 and 12:25 - had the same cause, and it wasn't the vacuum

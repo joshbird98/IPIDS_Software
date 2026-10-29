@@ -3,11 +3,13 @@ import logging
 import os
 import sqlite3
 import json
+import threading
 import pyqtgraph as pg
 
 from PyQt6.QtWidgets import QApplication
 from PyQt6.QtCore import Qt, QTimer
-from src.core import paths
+from src.core import events_db, paths
+from src.core.events_db import damaged
 from src.gui.data_viewer.event_overlay import event_colour
 from src.gui.data_viewer.viewer_widgets import MarkerDialog
 
@@ -79,7 +81,41 @@ class MarkersMixin:
             if not os.path.exists(db_path):
                 return None
             self._ev_conn = sqlite3.connect(db_path, timeout=0.5)
+            if getattr(self, '_ev_checked', None) != db_path:
+                self._ev_checked = db_path
+                threading.Thread(target=self._check_events_db, args=(db_path,), name="events-db-check",
+                                 daemon=True).start()
         return self._ev_conn
+
+    def _check_events_db(self, db_path):
+        """SQLite's check of events.db, once, off the window's thread (about a second for a big one).
+        A damaged database returns some events and not others - an error for one view, nothing for
+        the next - so the events come and go: say so instead (_show_events_damage)."""
+        try:
+            conn = sqlite3.connect(db_path, timeout=5.0)
+            try:
+                problem = events_db.check(conn)
+            finally:
+                conn.close()
+        except sqlite3.Error as e:          # (busy, say: not damage - it is checked again next time it is opened)
+            logging.getLogger("viewer.markers").warning("events.db couldn't be checked: %s", e)
+            self._ev_checked = None
+            return
+        if problem:
+            self._ev_damage = problem[:300]
+            logging.getLogger("viewer.markers").error("events.db is damaged (%s): %s", db_path, self._ev_damage)
+
+    def _show_events_damage(self):
+        damage = getattr(self, '_ev_damage', None)
+        label = getattr(self, 'events_warning', None)
+        if label is None or not damage or getattr(self, '_ev_damage_shown', False):
+            return
+        self._ev_damage_shown = True
+        label.setText("events.db is damaged, so some events can't be read: they come and go, or are missing. "
+                      "Stop the services, close this window and run python -m src.utils.repair_events_db "
+                      "(Help: Troubleshooting, \"Events come and go in the data viewer\").")
+        label.setToolTip(f"SQLite: {damage}")
+        label.show()
 
     def _events_db_version(self):
         """Changes whenever ANOTHER connection (the events service) commits."""
@@ -173,6 +209,8 @@ class MarkersMixin:
         except sqlite3.Error as e:
             logging.getLogger("viewer.markers").error("Event markers not readable from events.db: %s", e)
             self._ev_conn = None  # reconnect next time
+            if damaged(e):
+                self._ev_damage = str(e)
 
         return markers
 
@@ -276,6 +314,7 @@ class MarkersMixin:
         lanes = list(self.lanes.values())
         legend = self.lane_legends.get(next(iter(self.lanes)))
         self.event_overlay.update(lanes, legend, self.event_data, self.t0, view_range)
+        self._show_events_damage()
 
         # (A forced self.layout_widget.scene().update() used to sit here. It made Qt
         # repaint the whole scene 10x/s even when idle: ~45% CPU at 1080p. Adding or

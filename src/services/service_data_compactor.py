@@ -10,7 +10,7 @@ from pathlib import Path
 import polars as pl
 import zmq
 
-from src.core import paths
+from src.core import events_db, paths
 from src.core.log_setup import setup_logging
 from src.core.network_map import ZMQ_PORT_HEARTBEAT
 from src.core.os_helper import harden_windows_process
@@ -94,7 +94,8 @@ class OneDriveArchiver:
 
     def sync_database(self, local_db_path: str) -> bool:
         """
-        Safely snapshots a live SQLite database and syncs it to OneDrive.
+        Safely snapshots a live SQLite database and syncs it to OneDrive. A snapshot that fails
+        SQLite's check (a damaged events.db) doesn't replace the backup: the last sound one stays.
         """
         db_file = Path(local_db_path)
         if not db_file.exists():
@@ -102,30 +103,37 @@ class OneDriveArchiver:
             return False
 
         cloud_file = self.onedrive_dir / db_file.name
+        temp_cloud_db = cloud_file.with_suffix('.db.tmp')
 
         try:
-            # Check if an archive is necessary
-            if cloud_file.exists() and db_file.stat().st_mtime > cloud_file.stat().st_mtime:
-                log.info(f"Modification detected for {db_file.name}. Archiving old version.")
-                timestamp = time.strftime("%Y%m%d_%H%M%S")
-                archive_name = f"{cloud_file.stem}_{timestamp}{cloud_file.suffix}"
-                archive_path = self.archive_dir / archive_name
-                shutil.move(str(cloud_file), str(archive_path))
-
             log.info(f"Snapshotting live database: {db_file.name}...")
-            temp_cloud_db = cloud_file.with_suffix('.db.tmp')
 
             # 1. Open connections
             src = sqlite3.connect(db_file)
             dst = sqlite3.connect(temp_cloud_db)
 
             try:
-                # 2. Perform the backup safely
+                # 2. Perform the backup safely, and check the copy (the pages as they will be kept)
                 src.backup(dst)
+                problem = events_db.check(dst)
             finally:
                 # 3. CRITICAL: Explicitly close connections to release Windows file locks
                 dst.close()
                 src.close()
+
+            if problem:
+                log.critical(f"{events_db.REPAIR_HINT}. Tonight's copy failed SQLite's check ({problem[:300]}), so "
+                             f"it has not replaced the backup: {cloud_file} is still the last sound one (the "
+                             f"copy is {temp_cloud_db}).")
+                return False
+
+            # 4. Archive the backup it replaces, if the database has changed since
+            if cloud_file.exists() and db_file.stat().st_mtime > cloud_file.stat().st_mtime:
+                log.info(f"Modification detected for {db_file.name}. Archiving old version.")
+                timestamp = time.strftime("%Y%m%d_%H%M%S")
+                archive_name = f"{cloud_file.stem}_{timestamp}{cloud_file.suffix}"
+                archive_path = self.archive_dir / archive_name
+                shutil.move(str(cloud_file), str(archive_path))
 
             # Now that Python has released the lock, we can safely swap the files
             os.replace(temp_cloud_db, cloud_file)

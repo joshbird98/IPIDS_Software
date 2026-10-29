@@ -54,7 +54,7 @@ If the PC is off at 02:00, nothing is lost: the next run compacts every earlier 
 After compacting, the compactor copies to a OneDrive folder (set as `ONEDRIVE_PATH` in `src/services/service_data_compactor.py`):
 
 - the day files and rollups in `data/daily_logs/`, new or changed ones only;
-- a snapshot of `data/events.db`, taken with SQLite's own backup so it is consistent while the database is in use;
+- a snapshot of `data/events.db`, taken with SQLite's own backup so it is consistent while the database is in use, and checked with SQLite's quick check before it replaces the last backup (a damaged one doesn't: see [Events come and go in the data viewer](../troubleshooting.md#events-come-and-go-in-the-data-viewer));
 - everything in `data/exports/`.
 
 The copy is one way: deleting a file locally doesn't delete it in OneDrive. When a file in OneDrive is replaced by a newer one, the older copy is moved to `_Archive_Versions` there, with the time in its name. The simulator's compactor skips the backup.
@@ -91,6 +91,12 @@ The data viewer reads the chunks, the day files and the rollups for the view and
 
 The database runs in WAL mode, so the data viewer, exports and the nightly backup can read it while it is written. Events that arrive together are written in one transaction. There are many COMMAND rows: leave them out of a query with `WHERE event_type != 'COMMAND'`. The data viewer shows commands only when its **Operator Commands (audit)** overlay is ticked.
 
+### When it is damaged
+
+SQLite keeps the database's recent changes in `events.db-wal` beside it (with an index of them in `events.db-shm`) until it folds them into `events.db`. The three belong together: a copy of `events.db` put over the one in use, while a program has it open, leaves the `-wal` and `-shm` of the other database beside it, and the database is damaged. SQLite then reads some parts of it and not others ("database disk image is malformed"), so the data viewer's events come and go, and the events service can't save new ones.
+
+The events service checks the database when it starts, and says so in its log when the check or a write finds it damaged (at most once an hour). The data viewer checks it once when it opens it, off its window's thread, and says so under **Event markers**. `src/utils/repair_events_db.py` repairs it: see [Events come and go in the data viewer](../troubleshooting.md#events-come-and-go-in-the-data-viewer). The table, its indexes and the check are in `src/core/events_db.py`.
+
 ## Log files
 
 Each program writes its own log, `SystemLogs/<program>.log`: `service_manager.log`, one per service, `hmi.log` and `viewer.log`. They hold warnings, errors and the full traceback of anything unhandled, so a crash that made the service manager restart something can be explained afterwards. A file is rotated at 5 MB and five old copies are kept.
@@ -103,7 +109,7 @@ The command audit trail is written to each service's log file too, but not to it
 |---|---|
 | `data/parquet_logs/` | today's chunks (and any not yet compacted), the crash journal |
 | `data/daily_logs/` | day files and their 1-minute and 20-minute rollups |
-| `data/events.db` | the events database (with `events.db-wal` and `events.db-shm` while in use) |
+| `data/events.db` | the events database (with `events.db-wal` and `events.db-shm` while in use); a damaged one a repair has replaced is kept beside it as `events.db.damaged-<time>` |
 | `data/exports/` | the data viewer's exports |
 | `data/alarm_state.json` | alarm acknowledgements, shelves and first-out |
 | `SystemLogs/` | each program's log file |

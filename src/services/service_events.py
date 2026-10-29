@@ -1,12 +1,14 @@
 import logging
 import os
 import sqlite3
+import threading
 import time
 
 import orjson
 import zmq
 
-from src.core import paths
+from src.core import events_db, paths
+from src.core.events_db import REPAIR_HINT, create_schema, damaged
 from src.core.log_setup import Throttle, setup_logging
 from src.core.network_map import ZMQ_PORT_EVENTS_SUB, ZMQ_PORT_HEARTBEAT
 from src.core.os_helper import harden_windows_process
@@ -42,29 +44,12 @@ class EventLogger:
         self.hb_socket = self.context.socket(zmq.PUB)
         self.hb_socket.connect(ZMQ_PORT_HEARTBEAT)
         self._throttle = Throttle(60.0)
+        self._damage_report = Throttle(3600.0)
         self.running = True
 
     def _open_db(self):
         self.conn = sqlite3.connect(self.db_path, timeout=5.0)
-        cursor = self.conn.cursor()
-        cursor.execute("PRAGMA journal_mode=WAL")
-        cursor.execute("PRAGMA synchronous=NORMAL")
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS events (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                timestamp REAL,
-                service TEXT,
-                severity TEXT,
-                event_type TEXT,
-                message TEXT,
-                metadata TEXT
-            )
-        ''')
-        # Indexing timestamp for fast GUI queries later
-        cursor.execute('CREATE INDEX IF NOT EXISTS idx_timestamp ON events(timestamp)')
-        # Filtering by type (e.g. hiding the COMMAND audit trail) without scanning everything
-        cursor.execute('CREATE INDEX IF NOT EXISTS idx_type_timestamp ON events(event_type, timestamp)')
-        self.conn.commit()
+        create_schema(self.conn)
 
     def handle_events(self, payloads):
         """Write a batch of events in one transaction. Returns the number written."""
@@ -104,6 +89,8 @@ class EventLogger:
         except sqlite3.Error as e:
             if (n := self._throttle.ready("db")) is not None:
                 log.error("DB error, %d event(s) lost: %s%s", len(rows), e, Throttle.suffix(n))
+            if damaged(e) and self._damage_report.ready("damaged") is not None:
+                log.critical(REPAIR_HINT)
             # Reopen in case the handle is broken (disk unplugged, file replaced, ...)
             try:
                 self.conn.close()
@@ -119,8 +106,29 @@ class EventLogger:
     def handle_event(self, payload: dict):
         return self.handle_events([payload])
 
+    def check_in_background(self) -> threading.Thread:
+        """SQLite's check of the database, on a thread and a connection of its own (it reads every
+        page: a second or more for a big database, which mustn't hold up the heartbeat). Logged as
+        CRITICAL, with how to repair it, if the database is damaged."""
+        def check():
+            try:
+                conn = sqlite3.connect(self.db_path, timeout=5.0)
+                try:
+                    problem = events_db.check(conn)
+                finally:
+                    conn.close()
+            except sqlite3.Error as e:
+                log.warning("Couldn't check %s just now: %s", self.db_path, e)
+                return
+            if problem:
+                log.critical("%s. SQLite's check found: %s", REPAIR_HINT, problem[:500])
+        thread = threading.Thread(target=check, name="events-db-check", daemon=True)
+        thread.start()
+        return thread
+
     def run(self):
         log.info("Service online. Listening for events on %s, writing %s", ZMQ_PORT_EVENTS_SUB, self.db_path)
+        self.check_in_background()
         last_hb = 0
 
         while self.running:

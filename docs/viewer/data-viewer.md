@@ -100,6 +100,8 @@ The lanes are drawn top to bottom from **Lane 1** to **Lane 4**. A lane with no 
 
 Each lane's channels take the eight line colours in turn; the colours are checked to be told apart by colour-blind readers. A channel keeps its colour while it stays in its lane, so adding or removing another channel doesn't change it; a channel moved to another lane takes the first free colour there. A ninth line in one lane repeats the colours dashed, and a seventeenth dotted. The **Values** section shows each channel's colour next to its name. The colours differ slightly between the dark and light themes.
 
+**View > Line width** draws the lines **Thin (fastest)**, one pixel wide (as the data viewer starts the first time), **Medium** or **Thick**. A line wider than a pixel takes Qt about ten times as long to draw, so the wider lines are drawn from fewer points (3000 a line rather than 10000, still about two a pixel across a laptop screen). With a few channels you won't notice; with many, panning and zooming are less smooth. The choice is kept for next time on this PC.
+
 ### Linear and log axes
 
 Each lane has a linear axis on the left and a log axis on the right. A channel on **Linear** is drawn against the left-hand axis and one on **Log** against the right-hand axis, so a lane can hold pressures on a log scale next to, say, currents. The two axes scale separately.
@@ -157,6 +159,8 @@ Each kind has its own colour in the theme: active faults red, cleared faults blu
 
 An export includes the events of the kinds ticked here: see [Exporting data and figures](exporting.md).
 
+If the event database is damaged, its events come and go as you pan and zoom, and the section says `events.db is damaged, so some events can't be read ...` in a red box. See [Events come and go in the data viewer](../troubleshooting.md#events-come-and-go-in-the-data-viewer).
+
 ### How events are drawn
 
 - Each label is one line, shortened to 26 characters, in rows along the top of the first lane, centred on its line; near the left or right edge of the plot it sits beside its line instead, so that it isn't cut off. Hover over a line or label for the time and full text.
@@ -192,6 +196,7 @@ Right-click a user marker's line or label and choose **Delete marker** followed 
 | **View > Sidebar** | Shows or hides the sidebar. |
 | **View > Theme > Dark**, **View > Theme > Light** | Switches the theme. The HMI follows within a second, and both programs start in it next time (it is kept in `config/appearance.json`). |
 | **View > Theme > Switch theme** | Switches to the other theme. **Ctrl+Shift+T** does the same. |
+| **View > Line width > Thin (fastest)**, **Medium**, **Thick** | How wide the lines are drawn: see [Lanes and line colours](#lanes-and-line-colours). |
 | **View > Open the operator HMI** | Brings the HMI to the front, or starts it. |
 | **Help > Using the data viewer** | Opens this page. **F1** does the same. |
 | **Help > Help contents** | Opens the help's home page. |

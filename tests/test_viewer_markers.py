@@ -137,3 +137,18 @@ def test_zooming_out_stops_at_the_data_plus_ten_percent(viewer, app):
     lo, hi = viewer.time_limits()
     assert x0 >= lo - 1 and x1 <= hi + 1 and (x1 - x0) <= (hi - lo) + 1
     assert (x1 - x0) < 365 * 86400                     # (the simulator's record is minutes long)
+
+
+def test_line_width_from_the_view_menu(viewer, app):
+    """Chosen in View > Line width, applied to the lines drawn, remembered for next time."""
+    from src.gui.settings import gui_settings
+    pens = lambda: {c.opts["pen"].widthF() for c in [*viewer.curves.values(), *viewer.hist_curves.values()]}  # noqa: E731
+    assert viewer.line_width_actions["Thin (fastest)"].isChecked() and pens() == {1.0}
+    try:
+        viewer.line_width_actions["Thick"].trigger()
+        pump(app, 1)
+        assert pens() == {2.0} and viewer.RENDER_LIMIT == 3000
+        assert gui_settings("SINDIE", "DataViewer").value("view/line_width") == "Thick"
+    finally:
+        viewer.line_width_actions["Thin (fastest)"].trigger()
+    assert pens() == {1.0} and viewer.RENDER_LIMIT == 10000

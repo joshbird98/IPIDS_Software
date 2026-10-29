@@ -80,3 +80,35 @@ def test_event_kinds_and_their_colours(app):
         assert theme._contrast(white, theme.qcolor(theme.tokens()["plot_bg"])) >= 3.0
     finally:
         theme.apply_theme(app, theme.DEFAULT_MODE)
+
+
+def test_view_line_width(app):
+    """View > Line width: wider lines keep their colours, and are drawn as segments from fewer
+    points (a line wider than a pixel is about ten times as slow to draw: viewer_lanes.LINE_WIDTHS)."""
+    import pyqtgraph as pg
+    from src.gui.data_viewer.viewer_lanes import LanesMixin
+
+    class Viewer(LanesMixin):
+        RENDER_LIMIT = 10000
+
+        def __init__(self):
+            self.plot_config = cfg("a.v", "b.v")
+            self._assign_series_slots()
+            self.curves = {"a.v": pg.PlotDataItem(pen=self._series_pen("a.v"))}        # live
+            self.hist_curves = {"b.v": pg.PlotDataItem(pen=self._series_pen("b.v"))}   # historical
+    v = Viewer()
+    colours = {t: v._series_pen(t).color() for t in ("a.v", "b.v")}
+    every = lambda: [(t, c) for curves in (v.curves, v.hist_curves) for t, c in curves.items()]   # noqa: E731
+    v.set_line_width("Medium")
+    assert v.RENDER_LIMIT == 3000
+    for tag, c in every():
+        assert c.opts["pen"].widthF() == 1.5 and c.opts["pen"].color() == colours[tag]
+        assert c.curve.opts["segmentedLineMode"] == "on"
+    v.set_line_width("Thick")
+    assert {c.opts["pen"].widthF() for _t, c in every()} == {2.0}
+    v.set_line_width("Thin (fastest)")
+    assert v.RENDER_LIMIT == 10000
+    for _tag, c in every():
+        assert c.opts["pen"].widthF() == 1.0 and c.curve.opts["segmentedLineMode"] == "auto"
+    v.set_line_width("Hairline")                    # (a name this version doesn't know: thin)
+    assert v.line_width == 1.0 and v.RENDER_LIMIT == 10000

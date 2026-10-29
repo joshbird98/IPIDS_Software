@@ -315,9 +315,16 @@ def render(data, peaks, settings, variant, out_base, formats=FORMATS, font="seri
         _place_labels(fig, ax, annotations, stack=variant["size"] != "half")
         for fmt in formats:
             path = f"{out_base}.{fmt}"
-            fig.savefig(path, dpi=png_px / (width_mm / 25.4) if fmt == "png" else None)
+            fig.savefig(path, dpi=png_dpi(png_px, width_mm) if fmt == "png" else None)
             written.append(path)
     return written
+
+
+def png_dpi(px: int, width_mm: float) -> float:
+    """The resolution that makes a figure `width_mm` wide exactly `px` pixels wide. A hair over
+    px / width: 1600 / (72 / 25.4) is 1599.9999999999998 px, which matplotlib 3.11.0 (the lab PC's)
+    truncates to 1599."""
+    return px / (width_mm / 25.4) * (1 + 1e-9)
 
 
 def render_folder(folder, only=None, formats=FORMATS, font="serif", font_size=9.0, mass_label=None,

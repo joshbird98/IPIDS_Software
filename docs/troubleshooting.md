@@ -300,6 +300,31 @@ If no sound plays at all, `SystemLogs/hmi.log` says `Alarm sound missing: <file>
 
 A marker you add is written by the events service. **Marker not saved** means the events service of this system didn't receive it, for the same reasons as step 4. See [Using the data viewer](viewer/data-viewer.md).
 
+## Events come and go in the data viewer
+
+Event lines that vanish as you pan or zoom, and come back after more panning, mean the events database, `data/events.db`, is damaged. SQLite can read some parts of it and not others, so one view's events are there and the next view's aren't. While it is damaged, the events service can't save new events either: they are lost.
+
+How to tell:
+
+- under **Event markers**, the data viewer says `events.db is damaged, so some events can't be read ...` (hover over it for what SQLite found);
+- `SystemLogs/service_events.log` says `DB error, <n> event(s) lost: database disk image is malformed` and `events.db is damaged: events are being lost ...`;
+- in the project folder, `python -m src.utils.repair_events_db --check` says `DAMAGED`.
+
+To repair it:
+
+1. Stop the services (the launcher's **Stop services...**), and close the data viewer and the HMI.
+2. Download the latest backup of the database: `events.db` in the OneDrive backup folder, `IPIDS_Data_Backup`. Older copies are in its `_Archive_Versions` folder.
+3. In the project folder, run `python -m src.utils.repair_events_db --backup <the downloaded events.db>`. You can give `--backup` more than once.
+4. Start the services again.
+
+The repair reads every event it can from the damaged database, and every event in the backups, and writes each event once, in time order, to a new `events.db`. It says how many events it read from each file, and how many rows of the damaged one couldn't be read. The damaged database is kept beside the new one as `events.db.damaged-<date>-<time>`, with its `-wal` and `-shm` files: nothing is deleted. Events the services sent while the database was damaged were never saved, so no repair can bring them back.
+
+**What damages it.** Most often, a copy of `events.db` put over the one in use while the services or the data viewer had it open. The `events.db-wal` and `events.db-shm` beside it then belong to the other database. To replace `events.db` (with a copy from another PC, say), stop the services and close the data viewer first, and move `events.db-wal` and `events.db-shm` away with the old database.
+
+The software reads only `data/events.db` (`data_sim/events.db` for the simulator). A copy anywhere else, such as one downloaded into `data/daily_logs/`, is never read: it can't cause this, and it can serve as a backup for the repair.
+
+Each night the backup checks the copy it takes of `events.db`. A damaged copy doesn't replace the last sound backup in OneDrive (`service_data_compactor.log`: `Tonight's copy failed SQLite's check ...`). See [The events database](how-it-works/data-logging.md#the-events-database).
+
 ## Gaps in the logged data
 
 The logger writes the latest value of every channel 20 times a second. A gap, a break in a line, means the value was unknown then.

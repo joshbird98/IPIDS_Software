@@ -29,7 +29,7 @@ import numpy as np
 import pyqtgraph as pg
 from PyQt6.QtCore import QDateTime, Qt, QTimer
 from PyQt6.QtWidgets import (QApplication, QCheckBox, QComboBox, QDateTimeEdit, QFormLayout, QFrame, QGroupBox,
-                             QHBoxLayout, QLineEdit, QMainWindow, QPushButton, QScrollArea, QSplitter,
+                             QHBoxLayout, QLabel, QLineEdit, QMainWindow, QPushButton, QScrollArea, QSplitter,
                              QVBoxLayout, QWidget)
 
 from src.core import paths
@@ -148,6 +148,33 @@ class DataViewerApp(LanesMixin, InspectorMixin, MarkersMixin, ExportMixin, Profi
         self.marker_sync_timer.timeout.connect(self._refresh_event_markers)
         self.marker_sync_timer.start(1000)  # Check SQLite every 1 second
 
+    def _add_line_width_menu(self, view_menu):
+        """View > Line width: thin (1 px, the fastest), medium or thick; remembered on this PC."""
+        from PyQt6.QtGui import QActionGroup
+        from src.gui.data_viewer.viewer_lanes import LINE_WIDTHS
+        menu = view_menu.addMenu("Line width")
+        group = QActionGroup(self)
+        chosen = gui_settings("SINDIE", "DataViewer").value("view/line_width", LINE_WIDTHS[0][0])
+        if chosen not in [w[0] for w in LINE_WIDTHS]:
+            chosen = LINE_WIDTHS[0][0]
+        self.line_width_actions = {}
+        for name, width, _points in LINE_WIDTHS:
+            act = menu.addAction(name)
+            act.setCheckable(True)
+            act.setChecked(name == chosen)
+            if width > 1.0:
+                act.setToolTip(f"{width:g} px: slower to draw, so with many channels panning and zooming are "
+                               f"less smooth")
+            group.addAction(act)
+            act.triggered.connect(lambda _c=False, n=name: self._choose_line_width(n))
+            self.line_width_actions[name] = act
+        menu.setToolTipsVisible(True)
+        self.set_line_width(chosen)
+
+    def _choose_line_width(self, name: str):
+        gui_settings("SINDIE", "DataViewer").setValue("view/line_width", name)
+        self.set_line_width(name)
+
     def _open_program(self, program: str):
         """The HMI (or another SINDIE program) to the front, or started (src/launcher/instance.py)."""
         from PyQt6.QtWidgets import QMessageBox
@@ -165,6 +192,7 @@ class DataViewerApp(LanesMixin, InspectorMixin, MarkersMixin, ExportMixin, Profi
         self.sidebar_action.toggled.connect(lambda on: self.sidebar_scroll.setVisible(on))
         view_menu.addSeparator()
         theme.add_theme_menu(view_menu, self)
+        self._add_line_width_menu(view_menu)
         view_menu.addSeparator()
         self.open_hmi_action = view_menu.addAction("Open the operator HMI")
         self.open_hmi_action.setToolTip("Brings the HMI to the front, or starts it")
@@ -349,6 +377,14 @@ class DataViewerApp(LanesMixin, InspectorMixin, MarkersMixin, ExportMixin, Profi
             overlay_layout.addWidget(cb)
 
         events_layout.addWidget(self.overlay_frame)
+        # (shown when events.db is damaged: its events then come and go - viewer_markers.py)
+        self.events_warning = QLabel()
+        self.events_warning.setWordWrap(True)
+        set_role(self.events_warning, "note")
+        self.events_warning.setProperty("level", "fault")
+        self.events_warning.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        self.events_warning.hide()
+        events_layout.addWidget(self.events_warning)
         sidebar_layout.addWidget(events_box)
 
         sidebar_layout.addStretch()
