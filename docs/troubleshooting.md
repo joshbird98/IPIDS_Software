@@ -370,6 +370,12 @@ Each night the compactor also copies new and changed day files, a snapshot of `e
 
 Panels that are closed or behind a tab aren't refreshed; they catch up as soon as they are shown. In the data viewer, **View > Sidebar** shows and hides the sidebar. See [A tour of the HMI](getting-started/screen-tour.md).
 
+## A software update can't be installed, or didn't work
+
+The update window says why: an update the launcher can't install (a PLC data layout change, new packages, GitHub tests not passed, changes made on this PC), the conditions it is waiting for (the safety relay off and the source cold, or the services stopped for a minute; the HMI and the data viewer closed), or the step that failed. Each text is explained in [Software update messages](messages.md#software-update-messages).
+
+An update that fails puts the version before back by itself, so the machine runs as it did. What it did is in `data/updates/<time>/update.json` and `SystemLogs/launcher.log`: send those to Josh. If the new version misbehaves later, **Go back...** in the launcher's **Software** box returns to the version before (see [Updating the software](getting-started/starting-the-software.md#going-back)).
+
 ## The simulator does not start
 
 `python run_simulation.py` starts the service manager in simulation mode, waits for the services, then opens the HMI and the data viewer. Its own window then shows the fault menu.

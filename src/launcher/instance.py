@@ -56,6 +56,17 @@ def ask_running(program: str, message: str = "activate", timeout_ms: int = 500, 
     return ANSWERED if answered else SILENT
 
 
+def is_running(name: str, timeout_ms: int = 300) -> bool:
+    """Whether a copy holds this instance name (programs.instance_name), asking it nothing: it
+    doesn't come to the front."""
+    sock = QLocalSocket()
+    sock.connectToServer(name)
+    up = sock.waitForConnected(timeout_ms)
+    if up:
+        sock.disconnectFromServer()
+    return up
+
+
 def not_answering(program: str) -> str:
     title = TITLES.get(program, program)
     return (f"The {title} is already open for this system, but isn't answering: it may be busy. Try again in a "

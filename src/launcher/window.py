@@ -1,8 +1,9 @@
 """The launcher's window and tray icon (main_launcher.py).
 
 The window starts the HMI, the data viewer, the help and the simulator, shows the services' state,
-and starts and stops the service manager. Closed, it goes to the tray, where the icon's dot shows
-the services' state; the services never depend on it. With "Keep the services running" it starts
+starts and stops the service manager, and updates the software (its Software box:
+src/launcher/update_window.py). Closed, it goes to the tray, where the icon's dot shows the
+services' state; the services never depend on it. With "Keep the services running" it starts
 the service manager if it isn't running and starts it again if it stops, unless they were stopped
 on purpose ("Stop services...", which asks you to type STOP first): that is recorded for this
 system, so no launcher starts them again until someone presses Start services.
@@ -56,7 +57,10 @@ class Background(QObject):
             result, error = self._fn(), None
         except Exception as e:      # (handed to the window, which says what went wrong)
             result, error = None, e
-        self.done.emit(self, result, error)
+        try:
+            self.done.emit(self, result, error)
+        except RuntimeError:        # (the window has gone meanwhile)
+            pass
 
 
 def _services_summary(view: dict) -> tuple:
@@ -128,8 +132,9 @@ class StopDialog(QDialog):
 
 class LauncherWindow(QWidget):
     def __init__(self, keep_running: bool = None, telemetry=True, settings=None, clock=time.monotonic,
-                 windows: bool = None):
+                 windows: bool = None, auto_check: bool = True):
         super().__init__()
+        self._auto_check = auto_check           # (the daily check for software updates)
         self.windows = os.name == "nt" if windows is None else windows      # (the Windows settings)
         self.setObjectName("LauncherWindow")
         self.setWindowTitle("SINDIE" + (" [SIMULATION]" if programs.simulation() else ""))
@@ -270,6 +275,10 @@ class LauncherWindow(QWidget):
             lay.addLayout(sim_row)
         outer.addWidget(frame)
 
+        from src.launcher.update_window import UpdateController
+        self.updates = UpdateController(self, auto_check=self._auto_check, clock=self.clock)
+        outer.addWidget(self.updates.pane)
+
         frame, lay = self._pane("Windows")
         self.chk_startup = QCheckBox("Start with Windows (in the tray, with the services)")
         self.btn_shortcuts = QPushButton("Put shortcuts on the desktop")
@@ -395,9 +404,10 @@ class LauncherWindow(QWidget):
 
     # --- telemetry ---------------------------------------------------------------------------------
     def _start_telemetry(self):
-        from src.core.network_map import ZMQ_PORT_MANAGER_PUB, ZMQ_PORT_PLC_PUB
+        from src.core.network_map import ZMQ_PORT_MANAGER_PUB, ZMQ_PORT_PLC_PUB, ZMQ_PORT_SEQUENCER_PUB
         from src.core.network_threads import ZMQTelemetryThread
-        self._telemetry = ZMQTelemetryThread([ZMQ_PORT_MANAGER_PUB, ZMQ_PORT_PLC_PUB])
+        # (the sequencer's: whether a recipe, scan or optimiser runs, for the update's conditions)
+        self._telemetry = ZMQTelemetryThread([ZMQ_PORT_MANAGER_PUB, ZMQ_PORT_PLC_PUB, ZMQ_PORT_SEQUENCER_PUB])
         self._telemetry.data_received.connect(self.cache.ingest)
         self._telemetry.start()
 
@@ -422,6 +432,9 @@ class LauncherWindow(QWidget):
         view = self.cache.view()
         online, total, waiting = _services_summary(view)
         fresh = self.cache.topic_age(MANAGER_TOPIC) <= MANAGER_SILENT_S
+        if self.updates.busy:
+            return ("UPDATING...", "warn", "The software is being updated: the update stops the services and starts "
+                    "them again.", "warn")
         if self._stopping:
             return ("STOPPING...", "warn", "Stopping every service and the service manager...", "warn")
         if not running:
@@ -457,25 +470,27 @@ class LauncherWindow(QWidget):
         if self.services_text.text() != sentence:
             self.services_text.setText(sentence)
             QTimer.singleShot(0, self._fit_height)     # (once the layout has taken the new text in)
-        can_start = not running and not self._starting() and not self._stopping
+        busy = self.updates.busy
+        can_start = not running and not self._starting() and not self._stopping and not busy
         self.btn_start.setEnabled(can_start)
         set_tone(self.btn_start, "primary" if can_start else None)
-        self.btn_stop.setEnabled(running and not self._stopping)
+        self.btn_stop.setEnabled(running and not self._stopping and not busy)
         if self.tray is not None and dot != self._status:
             self._status = dot
             self.tray.setIcon(icon.app_icon(dot))
         if self.tray is not None:
             self.tray.setToolTip(f"SINDIE services: {text.lower()}")
             self.tray_status.setText(f"Services: {text.lower()}")
-            self.tray_stop.setEnabled(running and not self._stopping)
+            self.tray_stop.setEnabled(running and not self._stopping and not busy)
         self._watch_manager(running)
+        self.updates.refresh(running)
 
     def _watch_manager(self, running: bool):
         """Keep running: start the service manager when it isn't running (after a wait that grows
         with each restart), unless the services were stopped on purpose or it was started a moment
         ago; tell the tray when it stops."""
         now = self.clock()
-        if self._stopping:
+        if self._stopping or self.updates.busy:         # (an update stops and starts them itself)
             return
         if running:
             self._down_since = None
@@ -512,6 +527,8 @@ class LauncherWindow(QWidget):
         return True
 
     def start_services(self):
+        if self.updates.busy:
+            return
         programs.record_services_stopped(False)
         self._stopped = None
         if not programs.manager_running() and not self._starting():
@@ -523,12 +540,15 @@ class LauncherWindow(QWidget):
         if on:              # ticked: start it now if it isn't running (unless stopped on purpose)
             self._restarts = 0
             self._down_since = None
-            if not self._stopped and not self._stopping and not self._starting() and not programs.manager_running():
+            if (not self._stopped and not self._stopping and not self.updates.busy and not self._starting()
+                    and not programs.manager_running()):
                 log.info("Keep running ticked: starting the service manager")
                 self._start_manager()
         self.refresh()
 
     def stop_services(self):
+        if self.updates.busy:
+            return
         dlg = StopDialog(self.cache.view(), self)
         if dlg.exec() != QDialog.DialogCode.Accepted:
             return

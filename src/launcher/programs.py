@@ -8,6 +8,7 @@ nothing has to be installed again. The shortcuts made here point at that Python,
     python_for(gui=True)        the Python to run a program with
     open_program("hmi")         start the HMI or data viewer (or bring a running one to the front: Qt side)
     manager_running()           is the service manager running (its lock port is taken)?
+    other_manager_running()     ... and the other system's on this PC (the simulator's, or the real one's)?
     start_manager()             start it in the background, outliving the launcher
     stop_manager()              ask it to stop every service and itself
     services_stopped()          stopped on purpose from a launcher (left stopped until Start services)?
@@ -23,7 +24,8 @@ import time
 from typing import Optional
 
 from src.core import paths
-from src.core.network_map import MANAGER_LOCK_PORT, PORT_OFFSET
+from src.core.env import SIM_PORT_OFFSET
+from src.core.network_map import MANAGER_LOCK_PORT, PORT_OFFSET, manager_lock_port
 
 log = logging.getLogger("launcher")
 
@@ -69,11 +71,15 @@ def _user() -> str:
         return "user"
 
 
-def instance_name(program: str) -> str:
+def instance_name(program: str, sim: bool = None) -> str:
     """A name per program, user and system (the simulator and the real system apart, each port
-    offset apart): a second copy of a program only defers to a first of the same system."""
+    offset apart): a second copy of a program only defers to a first of the same system. sim: the
+    name in the simulator's system (True) or the real one's (False) instead of this one's."""
+    here = simulation()
+    sim = here if sim is None else bool(sim)
+    offset = PORT_OFFSET if sim == here else (SIM_PORT_OFFSET if sim else 0)
     safe = "".join(ch if ch.isalnum() else "-" for ch in _user())
-    return f"sindie-{program}-{'sim' if simulation() else 'live'}-{PORT_OFFSET}-{safe}"
+    return f"sindie-{program}-{'sim' if sim else 'live'}-{offset}-{safe}"
 
 
 def python_for(gui: bool = True) -> str:
@@ -140,16 +146,26 @@ def open_simulator() -> int:
 
 
 # --- The service manager ----------------------------------------------------------------------------
-def manager_running() -> bool:
-    """Whether this system's service manager is running: it holds its lock port while it does."""
+def _lock_taken(port: int) -> bool:
     probe = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     try:
-        probe.bind(("localhost", MANAGER_LOCK_PORT))
+        probe.bind(("localhost", port))
     except OSError:
         return True
     finally:
         probe.close()
     return False
+
+
+def manager_running() -> bool:
+    """Whether this system's service manager is running: it holds its lock port while it does."""
+    return _lock_taken(MANAGER_LOCK_PORT)
+
+
+def other_manager_running() -> bool:
+    """Whether the other system's service manager on this PC is running: the simulator's (or, from
+    the simulator's launcher, the real system's). Both run the same software."""
+    return _lock_taken(manager_lock_port(0 if simulation() else SIM_PORT_OFFSET))
 
 
 def start_manager() -> int:

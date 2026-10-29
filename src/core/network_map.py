@@ -114,7 +114,12 @@ ZMQ_PORT_ALARMS_CMD = _endpoint("alarms_cmd")
 
 # Port of the service manager's single-instance lock (plain TCP, not ZMQ); moved down by the
 # offset so a test/simulation stack has its own lock
-MANAGER_LOCK_PORT = 65432 - (PORT_OFFSET % 60000)
+def manager_lock_port(offset: int = None) -> int:
+    """The lock port of the service manager of the system with this port offset (this one's if None)."""
+    return 65432 - ((PORT_OFFSET if offset is None else int(offset)) % 60000)
+
+
+MANAGER_LOCK_PORT = manager_lock_port()
 
 # Where each subsystem accepts commands (acknowledged ROUTER sockets, see src/core/commands.py)
 COMMAND_ENDPOINTS = {

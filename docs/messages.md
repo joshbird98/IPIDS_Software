@@ -835,6 +835,70 @@ The config editor opens from **Config** in the menu bar, with the engineering pa
 | `Problems in the file as it is now (the services are using it - fix them here, or put back a working version with History...):` | above the tree | | Fix them, or put back a working version. |
 | `Large changes - check these are meant:` with the tick box `I have checked the large changes` | a number changes by more than a factor of 3 | | Check, then tick to confirm. |
 
+## Software update messages
+
+The launcher's **Software** box and its update window: see [Updating the software](getting-started/starting-the-software.md#updating-the-software). Josh's side is in [Releasing to the lab](engineering/releasing.md).
+
+### Why an update can't be installed from the launcher
+
+Listed under `It can't be applied from here:` in the update window, with **UPDATE AVAILABLE** in amber in the **Software** box.
+
+| Text | What it means | What to do |
+|---|---|---|
+| `It changes the PC-PLC data layout (<files>): the PLC program has to match it first, ...` | The data the PC and the PLC exchange changes: the PLC program has to be changed first. | Josh installs it by hand, after the PLC. |
+| `It needs other Python packages (requirements.txt): ...` | | Josh installs it by hand. |
+| `The GitHub tests failed on this version: it isn't for the lab. Tell Josh.` | | Tell Josh. |
+| `The GitHub tests on this version haven't finished yet: ...` | They take about a quarter of an hour. | **Check for updates** again later. |
+| `Whether the GitHub tests passed on this version couldn't be found out (...)` | GitHub's API didn't answer (it answers 60 questions an hour per address), or the tests haven't run. | **Check for updates** again later. If it lasts, tell Josh. |
+| `This PC has changes of its own to the software: <files>. Ask Josh before updating.`, `This PC has software changes in its version that the 'lab' branch doesn't have: <files>. ...` | The software was changed on the lab PC itself. | Ask Josh. |
+| `<file> has been changed on this PC, and the update changes it too: it would be overwritten. ...` | A recipe or data file. | Save your version under another name (or ask Josh), then check again. |
+| `The update adds <file>, but this PC has a file of that name already: ...` | | Move the file somewhere else, then check again. |
+| `<file> has been deleted on this PC: put it back (git checkout -- <file>, in the SINDIE folder), ...`, `... can't be read as a config file: ...` | A config file of the repository's was deleted or broken by hand. | Put it back as it says, or ask Josh. |
+| `This PC's lab settings for <file> can't be read (...)` | `config/lab/<file>` is broken. | Put it right with the config editor's **History...**, or ask Josh. |
+| `The update removes <file>, ...`, `It has files in config/lab/, ...`, `git is in the middle of a merge ...` | | Ask Josh. |
+
+### Couldn't check
+
+**CAN'T CHECK** in the **Software** box, with one of:
+
+| Text | What it means | What to do |
+|---|---|---|
+| `GitHub couldn't be reached (<git's error>)` | No network, or GitHub is down. | It checks again the next day; **Check for updates** tries now. |
+| `there is no 'lab' branch on GitHub yet` | | Tell Josh. |
+| `git isn't installed (or isn't on the PATH): install Git for Windows` | | Install Git for Windows. |
+| `the SINDIE folder (<folder>) isn't a git checkout`, `this PC's version and the 'lab' branch have no history in common` | | Ask Josh. |
+
+### Before it can start
+
+Under **Before it can start** in the update window, `Not yet:` and what is in the way. **Update now** stays greyed out until it says `Ready`.
+
+| Text | What to do |
+|---|---|
+| `The safety relay is on: switch it off first (System Health panel).` | Switch it off. |
+| `The source isn't cold yet (high voltage on, or the filament or caesium hot): ...` | Shut the source down (see [Shutting down](procedures/beam-shut-down.md)) and let it cool. |
+| `A recipe is running: ...` (or a mass scan, the optimiser) | Let it finish, or stop it. |
+| `The PLC isn't reporting, so the safety relay's state isn't known.` | Check the PLC connection (see [PLC COMMS shows OFFLINE](troubleshooting.md#plc-comms-shows-offline)), or stop the services and wait a minute. |
+| `Wait <n> s more: the services have to have been stopped for a minute, ...` | Wait: a minute after the services stop, the PLC has the safety relay off. (The launcher counts the minute from when it last saw them, or from when it opened.) |
+| `The Operator HMI is open: close it first.` (or the data viewer, or the simulator's) | Close it. |
+| `The simulator's services are running: close the simulator first ...` | Type `q` in the simulator's window. |
+
+### The update didn't work
+
+The update window says `The update didn't work`, why, and whether `The version before is back.`
+
+| Text | What it means | What to do |
+|---|---|---|
+| `this PC's version, or the lab branch, has changed since the check: check again`, `this PC's own files have changed since the check: ...` | Nothing was changed. | Close the window and press **Update...** again. |
+| `the services didn't stop: <reason>` | Nothing was changed. | See the **Services** box; try again. |
+| `it would read or write the PLC differently (<tags>): the PLC program has to match it first` | The new version's tag registry puts a PLC tag elsewhere. The version before is back. | Tell Josh: it has to be installed by hand, after the PLC. |
+| `it didn't pass its own check: <problems>` | The new version doesn't compile or import, or a config file fails its checks with it. The version before is back. | Tell Josh, with the problems. |
+| `its tag registry couldn't be built: <error>` | The version before is back. | Tell Josh. |
+| `it didn't come up: not ONLINE: <services>`, `... the PLC isn't answering`, `... the service manager hasn't reported` | The new version's services didn't all come back within two minutes. The version before is back, and its services are started again. | Tell Josh. |
+| `The services haven't all come back (<reason>): ...` | After putting the version before back, its services didn't all come back either. | See the **Services** box and the **Service Manager** panel; call Josh. |
+| `... AND the version before couldn't be put back completely (<error>): the services are left stopped - call Josh. ...` | Something went wrong while undoing the update. The services are left stopped, so the PLC keeps the source safe. | Call Josh. Don't start the services. |
+| **SINDIE**: `An update started and never finished: ...` | The launcher stopped half way through an update (the PC lost power, say). | Call Josh before starting the services. |
+| **SINDIE**: `The launcher couldn't start again with the new version: <reason>. ...` | The update worked, but the launcher didn't restart. | Close the launcher (tray icon, **Close the launcher**) and open it again. |
+
 ## Data viewer messages
 
 | Title and text | What it means | What to do |

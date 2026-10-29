@@ -60,6 +60,7 @@ In the HMI, press **F1** with the mouse over a panel to open that panel's page. 
     - [The simulator](how-it-works/simulator.md)
 - **Engineering**
     - [Configuration files and the config editor](engineering/configuration.md)
+    - [Releasing to the lab](engineering/releasing.md)
     - [Tests](engineering/testing.md)
     - [Writing help pages](engineering/writing-help-pages.md)
 - [Glossary](glossary.md)

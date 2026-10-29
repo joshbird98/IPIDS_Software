@@ -1,6 +1,6 @@
 # Starting the software
 
-How to start and stop the SINDIE software on the lab PC, with the launcher or by hand, what each part is for, and how to run the simulator instead when you want to practise or try something out without the machine.
+How to start and stop the SINDIE software on the lab PC, with the launcher or by hand, what each part is for, how to update it, and how to run the simulator instead when you want to practise or try something out without the machine.
 
 ## The parts
 
@@ -15,7 +15,7 @@ The services do the work and hold the machine's state. The HMI and the data view
 
 ## The launcher
 
-![The launcher, here started for the simulator: the services' state, the programs and the Windows settings](../images/launcher.png)
+![The launcher, here started for the simulator: the services' state, the programs, the software's version and the Windows settings](../images/launcher.png)
 
 | Control | What it does |
 |---|---|
@@ -26,11 +26,12 @@ The services do the work and hold the machine's state. The HMI and the data view
 | **Operator HMI**, **Data viewer** | Start the program, or bring it to the front if it is already open: each runs once. |
 | **Help** | This help. |
 | **Start the simulator** | `run_simulation.py` in a window of its own (see [The simulator](#the-simulator)). Windows only. |
+| **Software** | The version this PC runs, and whether there is a newer one: **Check for updates**, **Update...** and **Go back...** (see [Updating the software](#updating-the-software)). |
 | **Start with Windows** | Logging on to Windows starts the launcher in the tray, and it starts the services (it ticks **Keep the services running**). Only the real system's launcher offers it, not the simulator's. |
 | **Put shortcuts on the desktop** | **SINDIE** (the launcher), **SINDIE HMI** and **SINDIE Data Viewer**. |
 | **Python** | The Python that the launcher, the programs it starts and its shortcuts use. |
 
-Closing the launcher's window leaves it in the Windows tray. Its icon carries a dot for the services: green, all online; amber, some starting or restarting; red, the service manager isn't running. Click the icon to open the window; right-click it for the programs, the services' state, **Stop services...** and **Close the launcher**. Closing the launcher never stops the services: they run on their own.
+Closing the launcher's window leaves it in the Windows tray. Its icon carries a dot for the services: green, all online; amber, some starting or restarting; red, the service manager isn't running. Click the icon to open the window; right-click it for the programs, the services' state, **Stop services...** and **Close the launcher**. Closing the launcher never stops the services: they run on their own. The tray also says when a software update is available.
 
 The HMI and the data viewer open each other: **View > Open the data viewer** in the HMI, **View > Open the operator HMI** in the data viewer. Each program runs once per system and Windows user: starting it again, from a shortcut or the launcher, brings the open one to the front. If the open one doesn't answer (it is busy, or hung), you are told so rather than a second copy being opened: wait a moment and try again, or close it (with Task Manager if need be). The simulator's programs are kept apart from the real system's, so both can be open at once.
 
@@ -74,6 +75,56 @@ Restarting one service from the **Service Manager** panel leaves the others runn
 
 If the service manager doesn't answer **Stop services...**, the launcher offers to end it and the services it started at once, without tidying up. The next start clears anything left over.
 
+## Updating the software
+
+The launcher keeps the software up to date from GitHub, but only when you choose, and only when the machine is safe.
+
+Josh puts each version that is ready for the lab on the `lab` branch on GitHub, once its automatic tests have passed. Nothing else reaches the lab PC. Once a day the launcher checks whether that branch has a newer version than the PC runs. It never installs anything by itself: when there is a newer version, the **Software** box says **UPDATE AVAILABLE** and a message comes up from the tray icon. **Check for updates** checks at once.
+
+| **Software** box | Meaning |
+|---|---|
+| **UP TO DATE** | The PC runs the newest version on the lab branch. |
+| **UPDATE AVAILABLE** (blue) | A newer version is ready: **Update...** shows what is in it. |
+| **UPDATE AVAILABLE** (amber) | A newer version is there, but it can't be installed from the launcher: **Update...** says why (see [What the launcher can't install](#what-the-launcher-cant-install)). |
+| **CAN'T CHECK** | GitHub couldn't be reached, or git didn't work: the line below says which. The launcher tries again the next day. |
+| **NOT CHECKED** | Not checked since this version was installed. |
+| **UPDATING...** | An update is running. |
+
+![The update window: what is in the new version, and why it can't start yet](../images/dialog-update.png)
+
+To update:
+
+1. Press **Update...**. It checks GitHub again and lists what is in the new version, newest first.
+2. Read **Before it can start**. The update waits until:
+    - the PLC reports the safety relay off and the source cold (extraction and target off, filament and caesium cold), and no recipe, mass scan or optimiser is running; or the services have been stopped for at least a minute, so that the PLC has switched the relay off itself;
+    - the HMI and the data viewer are closed: they would carry on with the version before.
+
+    The list changes as you put each thing right.
+3. Type `UPDATE` and press **Update now**. Or press **Later** to leave the update for a better time: it stays on offer.
+4. Wait a few minutes while the window lists each step. The services stop: the PLC latches **PC_Watchdog_Timeout** and keeps the gate valve shut. This PC's own settings are kept. The new version is tested: it has to read and write the PLC exactly where this one does, and pass its own check. Then the services start again, and every service that was **ONLINE** has to come back, with the PLC answering.
+5. When the window says **Updated to ...**, press **Restart the launcher**. The launcher starts again, so that it runs the new version too.
+6. Press **RESET FAULTS** in **System Health**, and open the HMI again.
+
+If any step fails, the update puts the version before back by itself and starts the services again as they were. The window says what went wrong: tell Josh.
+
+An update keeps this PC's own config values (its [lab settings](../engineering/configuration.md#lab-settings), in `config/lab/`), its recipes and its data. If a config file was changed on this PC, by hand or by an older config editor, the update keeps the change as a lab setting.
+
+### What the launcher can't install
+
+Some versions need more than the launcher can do safely. The window says why, and Josh installs them by hand:
+
+- a change to the data the PC and the PLC exchange (`plc/generated/`): the PLC program has to be changed in TIA Portal first, or the PLC refuses the PC's reads;
+- other Python packages (`requirements.txt`): they can't be installed while SINDIE's programs run;
+- a version whose GitHub tests failed, or haven't finished: check again in a quarter of an hour;
+- a version that meets changes made on this PC: to the software itself, or to a recipe that the new version changes too.
+
+### Going back
+
+After an update, **Go back...** returns to the version the PC ran before it, the same way: what going back takes away, the same conditions, `BACK` typed to confirm. Use it if the new version misbehaves, and tell Josh. The launcher then still offers the newer version, with a note that the PC went back from it.
+
+> [!NOTE]
+> Everything an update does is recorded in `data/updates/` and `SystemLogs/launcher.log`. If the launcher stops half way through an update (the PC loses power, say), it says so the next time it opens: call Josh before starting the services. How versions reach the lab branch, and the first update to this version, are in [Releasing to the lab](../engineering/releasing.md).
+
 ## The simulator
 
 The simulator runs the whole system against simulated devices, so you can learn the HMI, try a recipe or check a change without the machine:
@@ -99,8 +150,9 @@ Each program also takes `--sim` on its own, for example `python src/hmi.py --sim
 | Logged telemetry | `data/parquet_logs/` (today's, in 15-minute files) and `data/daily_logs/` (one file per day) |
 | Events: alarms, faults, commands, markers | `data/events.db` |
 | Each program's log file | `SystemLogs/` |
-| Configuration | `config/` (see [Configuration files](../engineering/configuration.md)) |
+| Configuration | `config/` (see [Configuration files](../engineering/configuration.md)), and this PC's own values in `config/lab/` |
 | Recipes | `config/recipes/` |
+| Software updates: what each one did, and the copies it kept | `data/updates/` |
 
 **Help > About SINDIE** shows which version of the software is running and the folders it is using. Quote those details when reporting a problem.
 
@@ -110,3 +162,4 @@ Each program also takes `--sim` on its own, for example `python src/hmi.py --sim
 - [Safety rules](../safety.md)
 - [Service Manager](../panels/service-manager.md)
 - [Troubleshooting](../troubleshooting.md)
+- [Releasing to the lab](../engineering/releasing.md)

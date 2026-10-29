@@ -556,21 +556,65 @@ class Shooter:
             print("  (config editor not taken:", e, ")")
 
     def shoot_launcher(self):
-        """The launcher's window, watching the simulator's services (so it says SIMULATOR)."""
+        """The launcher's window, watching the simulator's services (so it says SIMULATOR). Its
+        Software box as on the lab PC after a check (canned: the help's pictures mustn't depend on
+        GitHub, or on the branch this copy is on)."""
         try:
+            from src.launcher import updater
             from src.launcher.window import LauncherWindow
-            w = LauncherWindow(windows=True)
+            w = LauncherWindow(windows=True, auto_check=False)
             w.show()
             self.wait(lambda: "ONLINE" in w.services_chip.text(), 15, "the launcher's services ONLINE")
+            self.wait(lambda: w.updates.version, 10, "the software's version")
+            w.updates.version = dict(w.updates.version, branch=updater.BRANCH)
+            w.updates.plan = updater.Plan(root=ROOT, checked_at=time.time() - 3 * 3600, state=updater.UP_TO_DATE,
+                                          current=w.updates.version.get("sha", ""))
+            w.updates.update_pane()
             self.spin(0.5)
             self.unfocus(w)
             self.save(w.grab(), "launcher")
+            self.shoot_update_window(w)
             w.quit = lambda: None           # (it would quit the application)
             w._quitting = True
             w._shutdown_threads()
             w.close()
         except Exception as e:
             print("  (launcher not taken:", e, ")")
+
+    def shoot_update_window(self, w):
+        """The launcher's update window with an update to this version (canned, as above), and why it
+        can't start yet: the machine as it is now."""
+        from src.launcher import updater
+        commit = updater.Commit
+        version = w.updates.version
+        plan = updater.Plan(
+            root=ROOT, checked_at=time.time(), state=updater.READY, current="9f7f2c29a96a33436e825f146b76215e25d93f97",
+            current_date="2026-10-28T16:02:11+00:00", target=version.get("sha") or "0" * 40,
+            target_date=version.get("date") or "2026-10-29T10:00:00+00:00", tests=updater.PASSED,
+            commits=[commit(version.get("sha") or "0" * 40, version.get("short") or "0000000",
+                            version.get("date") or "2026-10-29T10:00:00+00:00", "Josh Bird",
+                            "Launcher: software updates from the lab branch, applied when it suits and the machine is safe",
+                            "The launcher's Software box shows the version this PC runs and checks the lab branch on GitHub "
+                            "once a day. An update is installed only when the operator chooses, with the safety relay off "
+                            "and the source cold, and the version before comes back by itself if the new one doesn't "
+                            "come up."),
+                     commit("57e4e0a" + "0" * 33, "57e4e0a", "2026-10-28T18:40:00+00:00", "Josh Bird",
+                            "Lab settings: this machine's own config values in config/lab/, not in git",
+                            "The config editor keeps this PC's own values in config/lab/, which software updates never "
+                            "touch, instead of committing them.")],
+            notes=["This PC's own changes to smu_config.json are kept, as its lab settings (config/lab/)."],
+            adopt=["config/smu_config.json"])
+        w.updates.opened -= 2 * updater.SILENT_FOR_S     # (the simulator's: no wait for the real system's services)
+        w.updates._open(updater.UPDATE)
+        dlg = w.updates.dialog
+        dlg.set_plan(plan)
+        w.refresh()                         # (the conditions: the simulated machine as it is)
+        self.spin(1.5)
+        dlg.resize(660, dlg.sizeHint().height())
+        self.spin(0.5)
+        self.unfocus(dlg)
+        self.save(dlg.grab(), "dialog-update")
+        dlg.reject()
 
     def shoot_alarm(self):
         """The Alarms panel with an alarm raised: the turbo pump's controller made unreachable."""

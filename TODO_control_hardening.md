@@ -72,8 +72,35 @@ simulator; none of it has been tried on the real hardware yet (see "Lab PC valid
     no longer drop with the vacuum fine: in the data viewer, ion_beam.source.chamber.stat_vac_ok_for_gv
     shouldn't dip with VG1 low (it did two to ten times a day, for about 0.5 s). If the relay still drops,
     send the day's telemetry and events.db.
+14. Software updates from the launcher (29 October 2026; docs/engineering/releasing.md). Once Josh has moved
+    the branch `lab` on GitHub to this version: install it by hand, from a second copy of it, as "The first
+    update to this version" there says (stop the services, close the HMI, data viewer and launcher, `git
+    worktree add`, `python -m src.launcher.updater --root ..\IPIDS_Software --apply`). It turns any config
+    changes made on the lab PC (by hand, or committed by the old config editor) into lab settings
+    (config/lab/), and leaves the lab PC on the `lab` branch. Then open the launcher: its Software box should
+    say UP TO DATE; press Check for updates once and check it gets an answer from GitHub (CAN'T CHECK says
+    why not). From then on, updates come through Update... in that box.
 
 ## Done
+- 29 October 2026 (Josh: "a Check for Updates button" in the launcher - pull, changelog, the operator says
+  when, only with the safety relay definitely off, and it can wait; a lab branch; lab settings out of git;
+  a daily check). Lab settings: config/lab/<file> (git-ignored) holds only what a machine changes; every
+  reader takes the repository's file with it on top (src/core/lab_config.py; a test fails if a config file
+  is opened past it); the config editor and the recipe builder no longer commit. The updater
+  (src/launcher/updater.py; the launcher's Software box and update window, src/launcher/update_window.py):
+  the launcher checks the `lab` branch once a day and never installs by itself. It offers a version only
+  once its GitHub tests passed, and refuses (to be installed by hand) a change to plc/generated/ or to
+  requirements.txt, or one that meets software changes made on the lab PC. It installs only with the PLC
+  reporting the relay off and the source cold and nothing running (or the services stopped for a minute),
+  and the HMI and data viewer closed, after UPDATE is typed: services stopped; the lab PC's changes to
+  tracked files kept as a stash commit (refs/sindie/<time>); its config changes made lab settings; `git
+  checkout -B lab <version>`; the new registry built on the one in use and its PLC tags compared with the
+  old one's (any address, type or write access changed: undone); the new version's own --self-check (no
+  new problem); services started again and every one ONLINE with the PLC answering within 2 minutes.
+  Anything failing puts the version before back and starts the services again. Go back... returns to the
+  version before the last update. The launcher then starts again (--after-update). Rehearsed on copies of
+  the real repository: from 9f7f2c2 (no updater; a config commit and an edit on the "PC" became lab
+  settings), a broken version undone with the compactor's deleted and rewritten files kept, going back.
 - 29 October 2026 (Josh: in the data viewer on his laptop, events vanished while scrolling and came back
   after more zooming and panning; he had a second events.db in data/daily_logs/). The second file wasn't
   it: the software reads only data/events.db, and that one was in a copy of the OneDrive backup folder.
@@ -656,7 +683,14 @@ simulator; none of it has been tried on the real hardware yet (see "Lab PC valid
      brings them back after a reboot; Stop services... stops them (PLC watchdog shutdown, as expected)
      and they stay stopped across a launcher restart until Start services; the tray dot follows the
      services; Start the simulator opens run_simulation.py in its own console with a working fault menu.
-2. Take the example parquet data out of git - on the lab PC (the files stay on disk; back up data/ first anyway):
+2. The updater on the lab PC, once installed (step 14 above): with the source cold, release a harmless version
+   (a help page, say) and install it from the launcher: the services stop and start again, the launcher
+   starts again, RESET FAULTS clears PC_Watchdog_Timeout. Then Go back..., and update again. Check that the
+   lab PC reaches api.github.com (if GitHub's tests can't be found out, no update is offered: say if that
+   should be relaxed), and that a daily check's tray message comes up.
+3. Take the example parquet data out of git - in the repository, released through `lab` (not on the lab PC,
+   which no longer commits anything): the updater moves the lab PC's files out of git's way and back, so they
+   stay on its disk. In your own clone (back up data/ first: a clone that pulls the commit loses its copies):
    ```
    git rm -r --cached data/daily_logs data/parquet_logs
    git commit -m "Stop tracking machine data (files stay on disk)"
@@ -664,13 +698,14 @@ simulator; none of it has been tried on the real hardware yet (see "Lab PC valid
    (.gitignore now lists them, so they won't be re-added.) Other clones that pull that commit lose their copies;
    the history keeps ~500 MB unless it is rewritten (git filter-repo + force push - only if wanted). Optional:
    point `SINDIE_DATA_DIR` at a folder outside the repo so git can never touch live data.
-3. After the first HMI start on the lab PC: check config/recipes/ for recipes copied from src/config/recipes/
-   (the HMI log says which), commit them, then delete src/config/.
-4. Possible later: approach the magnet current from below in "Calculate & set amps" (hysteresis - the scan
+4. After the first HMI start on the lab PC: check config/recipes/ for recipes copied from src/config/recipes/
+   (the HMI log says which), then delete src/config/. They stay on the lab PC, untracked (updates keep them);
+   to put one in the repository, copy it into your own clone and release it.
+5. Possible later: approach the magnet current from below in "Calculate & set amps" (hysteresis - the scan
    calibrates on the way up), if the landing isn't repeatable enough.
-5. Lab PC validation of the second round: a recipe and a mass scan under leases on the real supplies; Take
+6. Lab PC validation of the second round: a recipe and a mass scan under leases on the real supplies; Take
    control mid-run; alarm rules on real data (nuisance alarms? priorities right?); horn audible.
-6. Decided (October 2026):
+7. Decided (October 2026):
    - vacuum relay set points: the gate-valve permissive is withheld until VG1's and VG2's relays are read
      back holding the configured channel and set points (start-up check, then the round-robin - a front-
      panel change or a controller reset counts too, once three reads in a row give the same other value,
@@ -706,7 +741,7 @@ simulator; none of it has been tried on the real hardware yet (see "Lab PC valid
      while a Spellman or magnet PSU holds a setpoint past its cap (e.g. set at its front panel); mass
      scans, the optimiser and "Calculate & set amps" name the cap when they refuse; the HMI's setpoint
      boxes name their cap in the tooltip (a value typed past a box's maximum just doesn't go in).
-7. Later (agreed with Josh, 21 October 2026: "the rest we will come back to"):
+8. Later (agreed with Josh, 21 October 2026: "the rest we will come back to"):
    - **Operator log-in.** Josh Bird and Dr Luke Antwis to start with, each with a name and a password
      (stored salted and hashed, per machine, not in git); an operator role and an engineer role (the config
      editor, service restarts), replacing the config editor's password in the source. The HMI starts
@@ -738,16 +773,16 @@ simulator; none of it has been tried on the real hardware yet (see "Lab PC valid
      year, checked (restic check, a weekly test restore of one file), with the last good backup shown in the
      HMI and an alarm after 36 h without one. It never deletes anything on the lab PC (Josh's rule): pruning
      only removes the backup's own old versions. The network probe says whether the share is reachable.
-8. On the lab PC and a laptop: the new look in both themes (alarm colours, the safety-relay countdown on
+9. On the lab PC and a laptop: the new look in both themes (alarm colours, the safety-relay countdown on
    ENABLE SAFETY RELAY), dragging panels into a narrow column, Reset layout, and the CPU use with the
    default layout (the simulator measured here: see the commit message).
-9. Help pages, for Josh: add the Ion Beam Centre's local rules (docs/safety.md, "Local rules") and the
+10. Help pages, for Josh: add the Ion Beam Centre's local rules (docs/safety.md, "Local rules") and the
    caesium safe operating procedure; read the procedures (docs/procedures/) against practice; check the
    photo captions in docs/safety.md (the source deck, the High Voltage Systems Control box). What is still
    open is the PLC's behaviour, to check on the machine: which way the Faraday cup moves on a latched fault,
    and the relay trip that starts no shutdown sequence (grep -rn "checked on the machine\|To be confirmed" docs/).
 
-10. Found while writing the help (October 2026), not fixed - to review (file:line at the time):
+11. Found while writing the help (October 2026), not fixed - to review (file:line at the time):
     - Simulator: INITIATE SHUTDOWN trips the relay (no shutdown sequencer; cmd_source_shutdown never
       cleared), and after a fault reset the relay is refused until service_plc restarts (src/sim/plc.py:205);
       caesium "hot" at 50 degC and target minimum 0.5 kV instead of the PLC's 30 degC and 3 kV. (The machine
@@ -827,7 +862,7 @@ simulator; none of it has been tried on the real hardware yet (see "Lab PC valid
       the tests; the ADAM service hard-codes its address; VG4 is left out of rapid-rise detection
       (service_vac_gauge_controllers.py:554); the Service Manager's Start button keeps the Stop tooltip.
 
-11. Caesium oven cooling air (agreed with Josh, October 2026). As the PLC program reads, it opens the cooling
+12. Caesium oven cooling air (agreed with Josh, October 2026). As the PLC program reads, it opens the cooling
     air whenever the safety relay is open, however cold the oven is, so after a shutdown it stays on until the
     relay closes again. The HMI now shows this honestly: FORCED COOLING shows only the operator's own request
     (FORCED COOLING: ON), and the oven's second line says "cooling air on" with the reason in its tooltip

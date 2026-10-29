@@ -5,6 +5,8 @@ services running in the background, with a tray icon showing their state.
     pythonw main_launcher.py --tray --keep-running   in the tray, starting the services if they
                                                 aren't running (what Start with Windows runs)
     pythonw main_launcher.py --sim              the same for the simulator's system
+    pythonw main_launcher.py --after-update     (what an update starts: the launcher again, with the
+                                                new version, saying how the update went)
 
 Use the Python of PyCharm's project interpreter (its virtual environment): it has every library
 SINDIE needs. The launcher's Windows shortcuts point at it. See docs/getting-started/
@@ -30,6 +32,8 @@ def main(argv=None) -> int:
     ap.add_argument("--tray", action="store_true", help="start in the tray, without showing the window")
     ap.add_argument("--keep-running", action="store_true",
                     help="start the service manager if it isn't running, and again if it stops")
+    ap.add_argument("--after-update", action="store_true",
+                    help="started again by a software update: say how it went (src/launcher/update_window.py)")
     args = ap.parse_args(argv)
 
     os.environ.setdefault("QT_API", "PyQt6")
@@ -47,10 +51,12 @@ def main(argv=None) -> int:
         return 0                    # (the running launcher was asked to come forward)
     theme.install(app)
     window = LauncherWindow(keep_running=True if args.keep_running else None)
+    window.guard = guard                # (released for the launcher started again after an update)
     guard.activated.connect(lambda message: window.show_window() if message == "activate" else None)
     app.setQuitOnLastWindowClosed(window.tray is None)
-    if not (args.tray and window.tray is not None):
+    if args.after_update or not (args.tray and window.tray is not None):
         window.show()
+    window.updates.startup(after_update=args.after_update)
     return app.exec()
 
 

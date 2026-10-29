@@ -157,7 +157,7 @@ Every program reads a config file as the repository's file with the lab file on 
 - an update's change to a config file reaches the machine, unless the machine has its own value for that key: the machine's value is kept, and the updater says so (see [Updating the software](../getting-started/starting-the-software.md#updating-the-software));
 - nothing on the lab PC is committed to git: neither the config editor nor the recipe builder commits (they used to, which left the lab PC with commits of its own to merge at every update).
 
-Don't edit the repository's files on the lab PC by hand: a change there is a change to the software, which the next update meets. Put a machine's own value in its lab file instead (the config editor does), or change the repository's file in the repository, for every machine. If a repository file has been broken by hand, the config editor says so and how to put it back: `git checkout -- config/<file>` in the SINDIE folder.
+Don't edit the repository's files on the lab PC by hand: put a machine's own value in its lab file instead (the config editor does), or change the repository's file in the repository, for every machine. (The next update finds a file changed by hand and keeps the change, as a lab setting: see [Releasing to the lab](releasing.md#what-the-launcher-checks-first).) If a repository file has been broken by hand, the config editor says so and how to put it back: `git checkout -- config/<file>` in the SINDIE folder.
 
 ## The config editor
 
