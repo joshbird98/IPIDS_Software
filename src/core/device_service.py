@@ -44,7 +44,7 @@ import time
 import orjson
 import zmq
 
-from src.core import hard_caps, paths
+from src.core import hard_caps, lab_config, paths
 from src.core.commands import CommandServer, bind_retrying
 from src.core.event_helper import EventHelper
 from src.core.leases import LEASE_SUFFIX, LeaseTable
@@ -395,11 +395,11 @@ class DeviceService:
 
     # ================================================================== config
     def load_config(self, filename: str, defaults: dict = None) -> dict:
+        """A config file as the system uses it (this machine's lab settings on top of the repository's
+        file), over `defaults`."""
         config = dict(defaults or {})
-        path = paths.config_path(filename)
         try:
-            with open(path, "r") as f:
-                config.update(json.load(f))
+            config.update(lab_config.read(filename))
         except (OSError, ValueError) as e:
             self.events.log_general(f"{filename} not loaded ({e}) - using built-in defaults", severity="WARNING")
         return config

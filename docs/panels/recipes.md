@@ -268,10 +268,9 @@ The box under the recipe's name asks a language model (Google's Gemini) for a dr
 Then the builder:
 
 1. saves a recipe that was opened from a file to that same file, even if you have renamed the recipe. A new recipe gets a file named after it: lower case, with anything other than letters, digits, `-` and `_` turned into `_` (**Ramp 1/2** is saved as `ramp_1_2.json`). A new recipe never takes the file of another one: a second **Ramp** is saved as `ramp_2.json`;
-2. refuses to save if the file has changed since the recipe was opened (saved from another builder window, edited by hand, or a git pull): **... has changed since it was opened here ...**. Open the recipe again and make your change again, so the other change isn't undone;
+2. refuses to save if the file has changed since the recipe was opened (saved from another builder window, edited by hand, or a software update): **... has changed since it was opened here ...**. Open the recipe again and make your change again, so the other change isn't undone;
 3. copies the file as it was to `config/backups/recipes/`, named with the date and time (the newest 50 of each recipe are kept; backups are not in git);
-4. writes the new file whole, then puts it in place, so a half-written recipe never appears;
-5. commits the file to git, with what changed in the commit message (best effort: the line at the bottom of the builder says whether it was committed). The control PC then has local commits: pull with `--rebase`.
+4. writes the new file whole, then puts it in place, so a half-written recipe never appears. Nothing is committed to git: a recipe made on the lab PC is a file git doesn't track, which never stands in a software update's way.
 
 **Save as new recipe** saves to a new file named after the recipe, and leaves the file it was opened from as it was; the builder then works on the new file. The **Recipe Execution** panel lists a saved recipe at once, and loads it again if it is the one loaded.
 

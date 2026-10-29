@@ -47,3 +47,9 @@ config/*.tmp
 
 # Per-machine look (theme chosen in View > Theme), shared by the HMI and the viewer
 config/appearance.json
+
+# This machine's own config values (src/core/lab_config.py): the repository's config/*.json with
+# these on top. Never in git, so software updates never meet them.
+config/lab/
+# The software updater's state and the files it keeps for going back (src/launcher/updater.py)
+data/updates/

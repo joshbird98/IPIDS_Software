@@ -336,11 +336,11 @@ def test_save_as_new_keeps_the_original(make, folder):
 
 def test_store_rules_without_the_window(folder):
     data = {"recipe_name": "Ramp 1/2", "version": "1", "steps": [{"step_id": 1, "type": "WAIT_TIME", "duration_sec": 1}]}
-    r = save_recipe(data, str(folder), commit=False)
+    r = save_recipe(data, str(folder))
     assert r.saved and r.filename == "ramp_1_2.json" and r.backup is None
-    r = save_recipe(data, str(folder), filename="ramp_1_2.json", commit=False)
+    r = save_recipe(data, str(folder), filename="ramp_1_2.json")
     assert not r.saved and "there is a recipe ramp_1_2.json already" in r.refused
-    r = save_recipe(data, str(folder), filename="../x.json", commit=False)
+    r = save_recipe(data, str(folder), filename="../x.json")
     assert not r.saved and "isn't a recipe file name" in r.refused
     assert recipe_filename("Ramp 1/2") == "ramp_1_2.json" and recipe_filename("../../etc/passwd") == "etc_passwd.json"
     assert recipe_filename("  ") == "recipe.json"

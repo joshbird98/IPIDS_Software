@@ -11,13 +11,12 @@ machine, from the tag registry and fault_config.json:
 
 No Qt here: the sequencer uses it too, to check a recipe before it runs.
 """
-import json
 import logging
 import re
 from dataclasses import dataclass
 from typing import Dict, List, Optional
 
-from src.core import paths
+from src.core import lab_config, paths
 
 log = logging.getLogger("recipe_catalog")
 
@@ -387,8 +386,7 @@ def _num(v) -> Optional[float]:
 def read_json(path: str) -> dict:
     """A JSON object from a file, or {} (logged) if it can't be read."""
     try:
-        with open(path, "r", encoding="utf-8-sig") as f:
-            data = json.load(f)
+        data = lab_config.load(path)            # (a config file with this machine's lab settings)
         return data if isinstance(data, dict) else {}
     except (OSError, ValueError) as e:
         log.error("Recipe catalogue: %s not readable: %s", path, e)

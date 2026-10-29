@@ -57,7 +57,7 @@ def env(app, tmp_path, monkeypatch, fake_events):
     cmds = FakeCommands()
 
     def make(**kw):
-        return ced.ConfigEditorDialog(cmds, config_dir=str(cfg), events=fake_events, rebuild=rebuild, commit=False,
+        return ced.ConfigEditorDialog(cmds, config_dir=str(cfg), events=fake_events, rebuild=rebuild,
                                       services=lambda: env_state["services"], **kw)
     yield type("Env", (), dict(cfg=cfg, boxes=boxes, confirm=confirm, rebuilds=rebuilds, state=env_state,
                                cmds=cmds, events=fake_events, make=staticmethod(make)))
@@ -169,7 +169,7 @@ def test_a_file_changed_on_disk_meanwhile_is_not_overwritten(env):
     widget_at(dlg, "min_v").setText("-150")
     dlg._save_and_restart()
     kind, text = env.boxes[-1]
-    assert kind == "critical" and "changed on disk" in text
+    assert kind == "critical" and "has changed since it was opened" in text
     assert cs.read("smu_config.json", str(env.cfg)) == dict(data, max_v=180) and env.cmds.sent == []
 
 
@@ -271,8 +271,9 @@ def test_no_service_list_no_blind_restarts(env):
     assert env.cmds.sent == [] and "Nothing was restarted" in env.boxes[-1][1]
 
 
-def test_unreadable_file_offers_history_only(env):
-    (env.cfg / "smu_config.json").write_text("{broken")
+def test_unreadable_lab_settings_offer_history_only(env):
+    (env.cfg / "lab").mkdir()
+    (env.cfg / "lab" / "smu_config.json").write_text("{broken")
     dlg = env.make()
     dlg.cb_files.setCurrentText("smu_config.json")
     assert dlg.original is None and not dlg.btn_save.isEnabled()
@@ -303,21 +304,42 @@ def test_history_puts_a_previous_version_back(env, monkeypatch):
     assert len(cs.backups("smu_config.json", str(env.cfg))) == 2       # the 150 version is kept too
 
 
-def test_history_rescues_an_unreadable_file(env, monkeypatch):
+def test_history_rescues_unreadable_lab_settings(env, monkeypatch):
     from src.gui.control.dialogs import config_editor_dialog as ced
     dlg = open_file(env.make(), "smu_config.json")
     widget_at(dlg, "max_v").setText("150")
     dlg._save_and_restart()                                           # keeps a backup of the good file
-    (env.cfg / "smu_config.json").write_text("{broken")                 # then someone breaks it by hand
+    (env.cfg / "lab" / "smu_config.json").write_text("{broken")         # then someone breaks the lab file by hand
     dlg = env.make()
     dlg.cb_files.setCurrentText("smu_config.json")
     assert dlg.original is None and not dlg.btn_save.isEnabled()
+    assert "lab settings for the file can't be read" in dlg.lbl_problems.text()
     monkeypatch.setattr(ced.QInputDialog, "getItem", staticmethod(lambda *a, **k: (a[3][0], True)))
     dlg._show_history()
     assert cs.read("smu_config.json", str(env.cfg))["max_v"] == 200      # the version before the 150 save
     assert dlg.original is not None and dlg.btn_save.isEnabled()
     broken = [p for p in cs.backups("smu_config.json", str(env.cfg)) if open(p).read() == "{broken"]
     assert broken                                                      # the broken file was kept too
+
+
+def test_an_unreadable_repository_file_is_put_back_with_git_not_here(env, monkeypatch):
+    """The repository's file changes only with updates: broken by hand, the editor says how to put it
+    back (git), and writes nothing - lab settings on top of a broken file wouldn't help."""
+    from src.gui.control.dialogs import config_editor_dialog as ced
+    dlg = open_file(env.make(), "smu_config.json")
+    widget_at(dlg, "max_v").setText("150")
+    dlg._save_and_restart()
+    (env.cfg / "smu_config.json").write_text("{broken")
+    dlg = env.make()
+    dlg.cb_files.setCurrentText("smu_config.json")
+    assert dlg.original is None and not dlg.btn_save.isEnabled()
+    assert "git checkout -- config/smu_config.json" in dlg.lbl_problems.text()
+    lab_before = (env.cfg / "lab" / "smu_config.json").read_bytes()
+    monkeypatch.setattr(ced.QInputDialog, "getItem", staticmethod(lambda *a, **k: (a[3][0], True)))
+    dlg._show_history()
+    kind, text = env.boxes[-1]
+    assert kind == "critical" and "git checkout -- config/smu_config.json" in text
+    assert (env.cfg / "lab" / "smu_config.json").read_bytes() == lab_before
 
 
 def test_a_service_stopped_on_purpose_stays_stopped(env):
@@ -389,3 +411,23 @@ def test_the_drafting_settings_restart_nothing(env):
     dlg._save_and_restart()
     assert cs.read("recipe_ai.json", str(env.cfg))["max_rounds"] == 12
     assert env.cmds.sent == [] and "recipe builder reads this file each time it opens" in env.boxes[-1][1]
+
+
+def test_lab_settings_are_shown_and_can_be_taken_away(env):
+    """A change is this machine's lab settings: the editor says which values the machine sets
+    itself, and 'Repository values...' takes them away again (backed up first)."""
+    dlg = open_file(env.make(), "smu_config.json")
+    assert "No lab settings" in dlg.lbl_lab.text() and not dlg.btn_repo.isEnabled()
+    widget_at(dlg, "max_v").setText("150")
+    dlg._save_and_restart()
+    kind, text = env.boxes[-1]
+    assert kind == "information" and "lab settings" in text and "software updates keep them" in text
+    assert (env.cfg / "lab" / "smu_config.json").exists()
+    dlg = open_file(env.make(), "smu_config.json")
+    assert "max_v" in dlg.lbl_lab.text() and dlg.btn_repo.isEnabled()
+    dlg._use_repository_values()
+    assert env.confirm["shown"][-1] == ["max_v: 150 -> 200"]
+    assert cs.read("smu_config.json", str(env.cfg))["max_v"] == 200
+    assert cs.lab_settings("smu_config.json", str(env.cfg)) == {}
+    assert "No lab settings" in dlg.lbl_lab.text() and not dlg.btn_repo.isEnabled()
+    assert len(cs.backups("smu_config.json", str(env.cfg))) == 2

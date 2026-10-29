@@ -57,7 +57,7 @@ import threading
 
 from snap7.util import get_bool, get_dword, get_int, get_real, set_bool, set_dint, set_dword, set_int, set_real
 
-from src.core import paths
+from src.core import lab_config, paths
 from src.sim import Clock, first_order, injected_faults, noisy
 
 _SIZES = {"BOOL": 1, "BYTE": 1, "INT": 2, "UINT": 2, "WORD": 2, "DINT": 4, "UDINT": 4, "DWORD": 4, "REAL": 4,
@@ -133,8 +133,7 @@ class SimulatedPLC:
         self._held = set()               # supplies the PLC keeps on while the cesium is hot
         self._gv_cmd_t = None
         self._last_fault_flags = {}
-        with open(paths.config_path("fault_config.json"), "r") as f:
-            self.faults = json.load(f)
+        self.faults = lab_config.read("fault_config.json")         # (with this machine's lab settings)
         self._init_values()
 
     # ------------------------------------------------------------------ raw access

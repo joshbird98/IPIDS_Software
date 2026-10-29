@@ -1,5 +1,7 @@
-"""Saving recipes from the recipe builder: checked, never over another file, backed up, written
-whole and committed to git, as the config editor saves configuration (src/core/config_store.py).
+"""Saving recipes from the recipe builder: checked, never over another file, backed up and written
+whole, as the config editor saves configuration (src/core/config_store.py). Nothing is committed to
+git: the lab PC's git work tree stays as the software updates leave it (a recipe made here is a
+file git doesn't track, which never stands in an update's way).
 
     result = save_recipe(data, recipes_dir, filename="ramp.json", expected=text_when_opened)
 
@@ -8,17 +10,16 @@ whole and committed to git, as the config editor saves configuration (src/core/c
   recipe gets a file named after it (letters, digits, '-' and '_'), and never one that exists
   already: a second 'Ramp' is ramp_2.json, not an overwrite of the first one.
 - expected: the file's text when it was opened. If the file has changed since (saved from another
-  builder, edited by hand, a git pull), nothing is written, rather than undo that change unseen.
+  builder, edited by hand, a software update), nothing is written, rather than undo that change unseen.
 - The recipe must have no errors (src/core/recipe_check.py, the same checks the sequencer makes
   before it starts a recipe); warnings are the author's call.
 - The file as it was is copied to config/backups/recipes/<name>.<time>.json first (not in git),
-  the new one is written to a temporary file and swapped in, then committed to git (best effort).
+  the new one is written to a temporary file and swapped in.
 """
 import json
 import logging
 import os
 import re
-import subprocess
 import time
 from dataclasses import dataclass
 from typing import Optional
@@ -48,8 +49,6 @@ class SaveResult:
     path: str = ""
     backup: Optional[str] = None
     refused: str = ""           # why nothing was written
-    committed: bool = False
-    git: str = ""               # the commit, or why there is none
 
     @property
     def filename(self) -> str:
@@ -133,8 +132,7 @@ def text_of(data: dict, old_text: str = "") -> str:
 
 
 def save_recipe(data: dict, recipes_dir: str = None, filename: str = None, expected: str = None,
-                reason: str = "", catalog=None, commit: bool = True, run=subprocess.run,
-                clock=time.time) -> SaveResult:
+                reason: str = "", catalog=None, clock=time.time) -> SaveResult:
     """Save a recipe (see the module doc). filename: its file if it was opened from one (None: a
     new recipe, named after it). expected: that file's text when it was opened."""
     recipes_dir = os.path.realpath(recipes_dir or paths.RECIPES_DIR)
@@ -162,7 +160,7 @@ def save_recipe(data: dict, recipes_dir: str = None, filename: str = None, expec
             return result
         if old_text.replace("\r\n", "\n") != expected.replace("\r\n", "\n"):
             result.refused = (f"{filename} has changed since it was opened here (saved from another recipe builder, "
-                              "edited by hand, or a git pull): open it again and make the change again, so that "
+                              "edited by hand, or a software update): open it again and make the change again, so that "
                               "change isn't undone")
             return result
     elif expected is not None:
@@ -177,11 +175,6 @@ def save_recipe(data: dict, recipes_dir: str = None, filename: str = None, expec
         result.refused = f"{filename} could not be written: {e}"
         return result
     result.saved = True
-    if commit:
-        why = f" - {reason.strip()}" if reason.strip() else ""
-        result.committed, result.git = config_store.git_commit(path, f"Recipe builder: {filename}{why}", run=run)
-    else:
-        result.git = "git commit switched off"
-    log.info("Recipe saved: %s (version %s)%s; backup %s; git: %s", path, data.get("version"),
-             f" - {reason}" if reason else "", result.backup, result.git)
+    log.info("Recipe saved: %s (version %s)%s; backup %s", path, data.get("version"),
+             f" - {reason}" if reason else "", result.backup)
     return result

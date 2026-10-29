@@ -33,7 +33,7 @@ import json
 import logging
 from dataclasses import dataclass, field
 
-from src.core import paths
+from src.core import lab_config, paths
 from src.sequencer import protocol as SEQ
 
 log = logging.getLogger("alarms.rules")
@@ -123,8 +123,7 @@ def load_config(path: str = None) -> dict:
     config = json.loads(json.dumps(DEFAULT_CONFIG))
     path = path or paths.config_path("alarm_config.json")
     try:
-        with open(path, "r") as f:
-            user = json.load(f)
+        user = lab_config.load(path)            # (with this machine's lab settings)
     except FileNotFoundError:
         return config
     except (OSError, ValueError) as e:
@@ -141,8 +140,7 @@ def load_config(path: str = None) -> dict:
 def load_fault_config(path: str = None) -> dict:
     path = path or paths.config_path("fault_config.json")
     try:
-        with open(path, "r") as f:
-            return json.load(f)
+        return lab_config.load(path)
     except (OSError, ValueError) as e:
         log.error("fault_config.json not loaded (%s): no PLC fault alarms", e)
         return {}

@@ -27,6 +27,7 @@ import snap7
 import zmq
 from snap7.util import get_bool, get_dint, get_dword, get_int, get_real, set_bool, set_dint, set_int, set_real
 
+from src.core import lab_config
 from src.core.device_service import DeviceService
 from src.core.log_setup import Throttle, setup_logging
 from src.core.os_helper import harden_windows_process
@@ -229,8 +230,7 @@ class PlcMicroservice(DeviceService):
     def _load_fault_map(self, config_path: str = None) -> dict:
         config_path = config_path or config_file("fault_config.json")
         try:
-            with open(config_path, "r") as f:
-                raw_json = json.load(f)
+            raw_json = lab_config.load(config_path)         # (with this machine's lab settings)
 
             dynamic_map = {}
             for udt_name, data in raw_json.items():

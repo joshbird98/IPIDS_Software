@@ -5,7 +5,7 @@ integer value.
 """
 import logging
 
-import orjson
+from src.core import lab_config
 
 log = logging.getLogger("fault_registry")
 
@@ -22,8 +22,7 @@ class FaultRegistry:
 
     def _load_map(self, file_path: str):
         try:
-            with open(file_path, "rb") as f:
-                self.fault_structures = orjson.loads(f.read())
+            self.fault_structures = lab_config.load(file_path)      # (with this machine's lab settings)
         except FileNotFoundError:
             log.error("Fault map %s not found - PLC faults will not be named", file_path)
         except (OSError, ValueError) as e:

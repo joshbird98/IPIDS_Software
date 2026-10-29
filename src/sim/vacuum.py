@@ -9,13 +9,12 @@ Injected faults (SINDIE_SIM_FAULTS): vacuum_disconnect, vacuum_vent_source (VG1 
 vacuum_spike_source (a powdered target's bursts), vacuum_lossy_bus (the lab's bus: reads lost at
 random, and now and then a few seconds with no answers at all).
 """
-import json
 import math
 import random
 import threading
 import time
 
-from src.core import paths
+from src.core import lab_config
 from src.sim import injected_faults
 
 _BASE_PRESSURES = {(10, 1): 2.1e-7, (10, 2): 3.4e-7, (10, 3): 5.2e-7,
@@ -43,8 +42,7 @@ class FakeGraphix:
         self.relays = {}   # (node, relay) -> {"ch": int, "on": float, "off": float}
         self.relay_closed = {}  # (node, relay) -> its state: it closes below "on", opens above "off"
         try:
-            with open(paths.config_path("vac_gauges_config.json"), "r") as f:
-                cfg = json.load(f)
+            cfg = lab_config.read("vac_gauges_config.json")         # (with this machine's lab settings)
         except (OSError, ValueError):
             cfg = {}
         for node_str, node in cfg.items():

@@ -6,7 +6,7 @@ import sys
 if __package__ in (None, ""):
     # Run as a script (python src/utils/build_registry.py): make 'src' importable
     sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")))
-from src.core import hard_caps  # noqa: E402
+from src.core import hard_caps, lab_config  # noqa: E402  (config files with this machine's lab settings)
 from src.core.spellman_locations import LOCATIONS  # noqa: E402
 
 # --- Configuration & Constants ---
@@ -51,8 +51,7 @@ def get_vacuum_tags(config_dir):
     vacuum_settings_path = os.path.join(config_dir, "vac_gauges_config.json")
 
     try:
-        with open(vacuum_settings_path, "r") as f:
-            vacuum_settings = json.load(f)
+        vacuum_settings = lab_config.load(vacuum_settings_path)
     except FileNotFoundError:
         vacuum_settings = {}
 
@@ -202,8 +201,7 @@ def get_spellman_tags(config_dir):
     location_routing = LOCATIONS
 
     try:
-        with open(config_path, "r") as f:
-            mpd_config = json.load(f)
+        mpd_config = lab_config.load(config_path)
     except FileNotFoundError:
         return tags
 
@@ -284,8 +282,7 @@ def get_magnet_tags(config_dir):
 
     config_path = os.path.join(config_dir, "magnet_config.json")
     try:
-        with open(config_path, "r") as f:
-            mag_config = json.load(f)
+        mag_config = lab_config.load(config_path)
     except FileNotFoundError:
         mag_config = {}
 
@@ -357,8 +354,7 @@ def get_steerer_magnet_tags(config_dir):
 
     config_path = os.path.join(config_dir, "steerer_magnet_config.json")
     try:
-        with open(config_path, "r") as f:
-            mag_config = json.load(f)
+        mag_config = lab_config.load(config_path)
     except FileNotFoundError:
         mag_config = {}
 
@@ -430,8 +426,7 @@ def get_smu_tags(config_dir):
 
     config_path = os.path.join(config_dir, "smu_config.json")
     try:
-        with open(config_path, "r") as f:
-            smu_config = json.load(f)
+        smu_config = lab_config.load(config_path)
     except FileNotFoundError:
         smu_config = {}
 
@@ -485,8 +480,7 @@ def get_smu_tags(config_dir):
 def get_plc_tags_from_scl(scl_path, config_dir, db_number=10, machine_root="ion_beam"):
     plc_config_path = os.path.join(config_dir, "plc_config.json")
     try:
-        with open(plc_config_path, "r") as f:
-            plc_hw_limits = json.load(f)
+        plc_hw_limits = lab_config.load(plc_config_path)
     except FileNotFoundError:
         plc_hw_limits = {}
 

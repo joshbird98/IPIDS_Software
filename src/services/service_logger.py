@@ -1,5 +1,4 @@
 import gc
-import json
 import logging
 import os
 import queue
@@ -14,7 +13,7 @@ import orjson
 import polars as pl
 import zmq
 
-from src.core import paths
+from src.core import lab_config, paths
 from src.core.event_helper import EventHelper
 from src.core.log_setup import Throttle, setup_logging
 from src.core.network_map import (
@@ -401,8 +400,7 @@ class TelemetryLoggerService:
         self.journal_interval = 5.0
         overhead = 1.1
         try:
-            with open(LOGGER_CONFIG_PATH, "r") as f:
-                cfg = json.load(f)
+            cfg = lab_config.load(LOGGER_CONFIG_PATH)       # (with this machine's lab settings)
             self.tick_rate = cfg.get("tick_rate_seconds", 0.050)
             self.flush_interval = cfg.get("flush_interval_seconds", 900.0)
             self.journal_interval = cfg.get("journal_interval_seconds", 5.0)

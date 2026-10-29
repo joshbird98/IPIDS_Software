@@ -37,8 +37,9 @@ TIME_COLS = ("Timestamp_UNIX", "Human_Time", "Elapsed_s")
 # ----------------------------------------------------------------------------- helpers
 def logger_tick_seconds(project_root):
     try:
-        with open(os.path.join(project_root, "config", "logger_config.json")) as f:
-            return float(json.load(f).get("tick_rate_seconds", 0.05))
+        from src.core import lab_config
+        return float(lab_config.load(os.path.join(project_root, "config", "logger_config.json"))
+                     .get("tick_rate_seconds", 0.05))
     except (OSError, ValueError, TypeError, AttributeError):   # missing / unreadable: the shipped rate
         return 0.05
 

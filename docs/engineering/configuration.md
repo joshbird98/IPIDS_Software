@@ -137,9 +137,31 @@ When a readback stays outside its tolerance for the rule's delay, the monitor wr
 
 Keys left out of a rule come from `defaults` (5 s, no absolute tolerance, 5 %). The file has rules for the source einzel, extraction, target, filament, thermionic, analyser magnet, X-steerer and Faraday cup bias; the caesium oven rule is there but switched off. The monitor checks the file every 2 s and reloads it when it changes, with no restart.
 
+## Lab settings
+
+The files in `config/` are the repository's: they come with the software and change only when the software is updated. What is changed on a machine - from the config editor, below - is kept apart from them, as that machine's **lab settings**, in `config/lab/<file>`. A lab file holds only the values that differ from the repository's file:
+
+```json
+{
+  "system_interlocks": {
+    "safety_loop_relays": ["10.4"]
+  }
+}
+```
+
+Every program reads a config file as the repository's file with the lab file on top, key by key (`src/core/lab_config.py`): an object in the lab file is merged into the repository's object, and anything else - a number, text, true or false, a list - replaces the repository's value. `{"__lab__": "removed"}` takes a key of the repository's out.
+
+`config/lab/` isn't in git, so:
+
+- a software update never overwrites a lab setting, and a lab setting never stands in an update's way;
+- an update's change to a config file reaches the machine, unless the machine has its own value for that key: the machine's value is kept, and the updater says so (see [Updating the software](../getting-started/starting-the-software.md#updating-the-software));
+- nothing on the lab PC is committed to git: neither the config editor nor the recipe builder commits (they used to, which left the lab PC with commits of its own to merge at every update).
+
+Don't edit the repository's files on the lab PC by hand: a change there is a change to the software, which the next update meets. Put a machine's own value in its lab file instead (the config editor does), or change the repository's file in the repository, for every machine. If a repository file has been broken by hand, the config editor says so and how to put it back: `git checkout -- config/<file>` in the SINDIE folder.
+
 ## The config editor
 
-The HMI's config editor changes the files in `config/` with checks, a confirmation, a backup and a record of the change.
+The HMI's config editor changes the config files with checks, a confirmation, a backup and a record of the change. What it saves is the machine's lab settings.
 
 ### Opening it
 
@@ -149,7 +171,7 @@ The **System Configuration Editor** lists every file in `config/` except the gen
 
 ![The config editor with alarm_config.json open: its keys and values as a tree, the service it restarts, History... and APPLY CHANGES & RESTART SERVICE_ALARMS](../images/dialog-config-editor.png)
 
-When the file opens it is checked, and any problem is listed above the tree: the services are using the file as it is. A file that isn't valid JSON can't be edited; put a working version back with **History...**.
+When the file opens it is checked, and any problem is listed above the tree: the services are using the file as it is. Under that, a line says which values the machine sets itself (**Lab settings (lab/<file>): this machine sets 2 value(s) itself, kept through software updates: ...**) or that it has none. A file whose lab settings aren't valid JSON can't be edited; put a working version back with **History...**. A repository file that isn't valid JSON (broken by hand) can't be put right from here: the editor says how to put it back with git.
 
 ### What can be changed
 
@@ -161,12 +183,11 @@ Values only. Keys can't be added, removed or renamed, because the services look 
 
 1. **Checks.** The edited file is checked: types, physical ranges, limits the right way round, duplicate ports, addresses or names, gauge relay points the controllers can store (two significant figures). A problem stops it with **Not Applied**, a value past a hard cap with **Refused: Hard Cap**, and no change at all with **Nothing To Apply**.
 2. **Confirmation.** The changes are listed, with a box for the reason, which is kept in the history. A number that changes by more than a factor of 3, or changes sign, is listed again under **Large changes - check these are meant**, and **OK** stays greyed until **I have checked the large changes** is ticked. Changes to or from zero, and small whole numbers up to 10, aren't counted as large.
-3. **Unchanged on disk.** If the file was changed on disk since the editor opened it (by hand, or by a `git pull`), nothing is written; open it again and make the change again.
-4. **Backup and write.** The current file is copied to `config/backups/<name>.<date>-<time>.json`; the newest 50 of each file are kept. Only the changed values are rewritten, so the file's layout and its other values stay as they were typed, and the new file replaces the old one whole.
-5. **Registry.** If the file feeds the tag registry, the registry is rebuilt. If that fails, the previous file is put back and nothing is applied.
-6. **Git.** The file is committed to git on its own, with the message `Config editor: <file> - <reason>`. The lab PC then has local commits: pull with `git pull --rebase`.
-7. **Record.** A CONFIG_CHANGE event goes to `data/events.db`, with the changes, the reason, the backup and the commit.
-8. **Restart.** The service manager is asked to restart what reads the file (below). A service stopped on purpose is left stopped, and reads the new settings when it is started.
+3. **Unchanged since it was opened.** If the file as the programs use it changed since the editor opened it (by hand, or by a software update), nothing is written; open it again and make the change again.
+4. **Backup and write.** The file as the programs used it is written to `config/backups/<name>.<date>-<time>.json`; the newest 50 of each file are kept. The lab file is written with only the values that now differ from the repository's file, and replaces the old one whole. The repository's file isn't touched.
+5. **Registry.** If the file feeds the tag registry, the registry is rebuilt. If that fails, the previous lab file is put back and nothing is applied.
+6. **Record.** A CONFIG_CHANGE event goes to `data/events.db`, with the changes, the reason, the backup and the lab file. Nothing is committed to git.
+7. **Restart.** The service manager is asked to restart what reads the file (below). A service stopped on purpose is left stopped, and reads the new settings when it is started.
 
 | File | Restarted |
 |---|---|
@@ -193,7 +214,9 @@ A change that rebuilds the registry changes the setpoint limits, which the HMI a
 
 ### History
 
-**History...** lists the kept versions of the open file by the time they were replaced. Choosing one checks it, lists what would change and asks for confirmation, as for any change; the version is then put back byte for byte, with the current file backed up, the registry rebuilt where needed, a git commit and a CONFIG_CHANGE event.
+**History...** lists the kept versions of the open file by the time they were replaced. Choosing one checks it, lists what would change and asks for confirmation, as for any change; the version is then put back as the machine's lab settings, with the current file backed up, the registry rebuilt where needed and a CONFIG_CHANGE event. Backups from before lab settings (whole files) are put back the same way.
+
+**Repository values...** takes the machine's lab settings for the open file away, so the programs use the file as the repository has it. It lists what would change and asks for confirmation, as for any change, and backs the file up first. It is greyed while the machine has no lab settings for the file.
 
 ## See also
 

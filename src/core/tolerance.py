@@ -17,10 +17,11 @@ Rule fields (unset ones come from "defaults"):
     min_setpoint  ignore the rule while |setpoint| is below this
     enabled       false to switch a rule off
 """
-import json
 import logging
 import os
 import time
+
+from src.core import lab_config
 
 log = logging.getLogger("tolerance")
 
@@ -54,8 +55,7 @@ class ToleranceRule:
 
 
 def load_rules(path: str):
-    with open(path, "r") as f:
-        cfg = json.load(f)
+    cfg = lab_config.load(path)             # (with this machine's lab settings)
     defaults = cfg.get("defaults", {})
     rules = []
     for spec in cfg.get("rules", []):
@@ -150,9 +150,8 @@ class RuleFileWatcher:
         if now < self._next_check:
             return False
         self._next_check = now + self.check_every
-        try:
-            mtime = os.path.getmtime(self.path)
-        except OSError:
+        mtime = lab_config.mtime(self.path)     # (the newer of the file and its lab settings)
+        if not mtime:
             if self._mtime is not None:
                 log.warning("%s disappeared - keeping the last rules", self.path)
                 self._mtime = None

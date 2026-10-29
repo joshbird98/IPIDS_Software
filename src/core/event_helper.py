@@ -1,4 +1,3 @@
-import json
 import logging
 import os
 import time
@@ -6,6 +5,7 @@ import time
 import orjson
 import zmq
 
+from src.core import lab_config
 from src.core.network_map import ZMQ_PORT_EVENTS_PUB
 
 # Event types that only exist for filtering/auditing - kept out of the viewer's
@@ -37,14 +37,13 @@ class EventHelper:
         config_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '../../config/fault_config.json'))
         flat_map = {}
         try:
-            with open(config_path, "r") as f:
-                raw_json = json.load(f)
-                # Flatten the nested UDT structure for O(1) key lookups
-                for udt_group in raw_json.values():
-                    if "bits" in udt_group:
-                        for bit_data in udt_group["bits"].values():
-                            name = bit_data["name"]
-                            flat_map[name] = bit_data
+            raw_json = lab_config.load(config_path)         # (with this machine's lab settings)
+            # Flatten the nested UDT structure for O(1) key lookups
+            for udt_group in raw_json.values():
+                if "bits" in udt_group:
+                    for bit_data in udt_group["bits"].values():
+                        name = bit_data["name"]
+                        flat_map[name] = bit_data
         except (OSError, ValueError, KeyError, AttributeError) as e:
             self.log.error("Failed to load fault map %s: %s", config_path, e)
         return flat_map

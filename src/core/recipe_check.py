@@ -26,7 +26,7 @@ import os
 from dataclasses import dataclass
 from typing import List, Optional
 
-from src.core import hard_caps, paths
+from src.core import hard_caps, lab_config, paths
 from src.core.conditions import number
 from src.core.config_store import read_text
 from src.core.recipe_catalog import FAULT_RESET, SAFETY_ENABLE, SAFETY_RELAY, TURBO_ENABLE, Catalog, shared
@@ -597,8 +597,7 @@ def gauge_relay_off(tag) -> Optional[float]:
     vac_gauges_config.json."""
     if not _relay_off:
         try:
-            with open(paths.config_path("vac_gauges_config.json"), "r", encoding="utf-8") as f:
-                cfg = json.load(f)
+            cfg = lab_config.read("vac_gauges_config.json")         # (with this machine's lab settings)
             trips = hard_caps.valid_trips(cfg)
             for node, channel, gauge in ((*hard_caps.GATE_VALVE_GAUGES[0], VG1), (*hard_caps.GATE_VALVE_GAUGES[1], VG2)):
                 if (node, channel) in trips:

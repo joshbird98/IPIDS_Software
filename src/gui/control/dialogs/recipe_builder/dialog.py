@@ -1543,9 +1543,8 @@ class RecipeBuilderDialog(QDialog):
         self._saved_snapshot = _snapshot(self.data)
         self._record()
         self._refresh_all(select=self._selected)
-        git = (f"committed to git ({result.git})" if result.committed else f"not committed to git: {result.git}")
         backup = f"; the previous file is in {os.path.relpath(result.backup, self.recipes_dir)}" if result.backup else ""
-        self._status(f"Saved {result.filename}, version {version}: {git}{backup}.")
+        self._status(f"Saved {result.filename}, version {version}{backup}.")
         self.saved.emit(result.filename)
         return True
 

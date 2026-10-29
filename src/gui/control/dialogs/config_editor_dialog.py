@@ -1,18 +1,23 @@
 """Engineering config editor: edit a config/*.json file as a tree, then apply it and restart what
 reads it.
 
-Safeguards (the checking, backups and git commit are in src/core/config_store.py):
+A change is saved as this machine's lab settings (config/lab/<file>, only what differs from the
+repository's file; src/core/lab_config.py): the repository's file changes only with software
+updates, which keep the lab settings. Nothing is committed to git.
+
+Safeguards (the checking and the backups are in src/core/config_store.py):
   * on load, the file is checked and any problem is shown above the tree,
   * on apply, the edits are checked (types, ranges, limits the right way round...), the changes
     are listed for confirmation with an optional reason, and a number that changes by more than
     a factor of 3 needs a tick to confirm it was meant (95.0 typed as 950),
   * a value over a hard cap (src/core/hard_caps.py: VG relays, Spellman, magnet, SMU) is refused
     outright - no tick gets past it - and its field is marked red with the reason as tooltip,
-  * nothing is written if the file changed on disk since it was opened (a hand edit or git pull
+  * nothing is written if the file changed since it was opened (a hand edit or a software update
     would otherwise be silently undone),
-  * the previous file is kept in config/backups/ ('History...' puts one back), only the changed
-    values are rewritten, and files that feed system_tags.json are rolled back if the rebuild fails,
-  * the change is committed to git and recorded in the event log.
+  * the file as it was is kept in config/backups/ ('History...' puts one back), and the lab
+    settings of files that feed system_tags.json are put back if the rebuild fails,
+  * the change is recorded in the event log,
+  * 'Repository values' takes this machine's lab settings for the file away (backed up first).
 Keys can't be renamed or added here (the services look things up by name). Numbers keep full
 precision; nulls and empty lists are kept.
 """
@@ -26,7 +31,7 @@ from PyQt6.QtWidgets import (QCheckBox, QComboBox, QDialog, QDialogButtonBox, QH
                              QLineEdit, QListWidget, QMessageBox, QPushButton, QTreeWidget, QTreeWidgetItem,
                              QVBoxLayout)
 
-from src.core import config_store, hard_caps, paths
+from src.core import config_store, hard_caps, lab_config, paths
 from src.gui import theme
 from src.gui.style import set_prop, set_role, set_tone
 from src.core.config_store import REGISTRY_INPUTS, ConfigError
@@ -120,8 +125,7 @@ class ConfirmChangesDialog(QDialog):
 
 
 class ConfigEditorDialog(QDialog):
-    def __init__(self, cmd_thread, parent=None, config_dir=None, services=None, events=None, rebuild=None,
-                 commit=True):
+    def __init__(self, cmd_thread, parent=None, config_dir=None, services=None, events=None, rebuild=None):
         """services: callable -> {service name: state} as the manager reports them (for 'ALL
         SERVICES'); events: EventHelper for the change record; rebuild: callable -> error text or None."""
         super().__init__(parent)
@@ -132,7 +136,6 @@ class ConfigEditorDialog(QDialog):
         self.services = services
         self.events = events
         self.rebuild = rebuild or config_store.rebuild_registry
-        self.commit = commit
         self.original = None            # the file as loaded (None: nothing loaded / unreadable)
         self._leaves = []               # (tree item, path tuple, original value)
 
@@ -160,6 +163,12 @@ class ConfigEditorDialog(QDialog):
         self.lbl_problems.hide()
         layout.addWidget(self.lbl_problems)
 
+        self.lbl_lab = QLabel()            # what this machine changes in the repository's file
+        self.lbl_lab.setWordWrap(True)
+        self.lbl_lab.setTextFormat(Qt.TextFormat.PlainText)
+        set_role(self.lbl_lab, "caption")
+        layout.addWidget(self.lbl_lab)
+
         self.tree = QTreeWidget()
         self.tree.setHeaderLabels(["Configuration Key", "Value"])
         self.tree.setColumnWidth(0, 300)
@@ -171,6 +180,11 @@ class ConfigEditorDialog(QDialog):
         self.btn_history.setToolTip("Put back a previous version of this file (every save keeps one).")
         self.btn_history.clicked.connect(self._show_history)
         bottom.addWidget(self.btn_history)
+        self.btn_repo = QPushButton("Repository values...")
+        self.btn_repo.setToolTip("Take this machine's lab settings for this file away: the file as the repository has "
+                                 "it (backed up first, like any change).")
+        self.btn_repo.clicked.connect(self._use_repository_values)
+        bottom.addWidget(self.btn_repo)
         self.btn_save = QPushButton("APPLY CHANGES && RESTART SERVICE")
         set_tone(self.btn_save, "primary")
         self.btn_save.setMinimumHeight(34)
@@ -213,11 +227,18 @@ class ConfigEditorDialog(QDialog):
 
         self.tree.clear()
         self.original, self._leaves = None, []
+        self._show_lab(filename)
         try:
             data, problems = config_store.load(filename, self.config_dir)
         except ConfigError as e:
-            self._show_problems([str(e)], "This file can't be read, so it can't be edited here. The services "
-                                          "can't read it either - use History... to put back a working version.")
+            repository = config_store.repository_problem(filename, self.config_dir)
+            if repository:
+                self._show_problems([repository], "This file can't be read, so it can't be edited here. The "
+                                                  "services can't read it either:")
+            else:
+                self._show_problems([str(e)], "This machine's lab settings for the file can't be read, so it can't "
+                                              "be edited here. The services can't read it either - use History... "
+                                              "to put back a working version.")
             self.btn_save.setEnabled(False)
             return
         self.original = data
@@ -227,6 +248,25 @@ class ConfigEditorDialog(QDialog):
         self.btn_save.setEnabled(True)
         self._show_problems(problems, "Problems in the file as it is now (the services are using it - fix them "
                                       "here, or put back a working version with History...):")
+
+    def _show_lab(self, filename):
+        """Which values this machine sets itself (its lab settings), or that it has none."""
+        try:
+            keys = lab_config.changed_keys(config_store.lab_settings(filename, self.config_dir))
+        except ConfigError as e:
+            keys, problem = [], str(e)
+        else:
+            problem = ""
+        self.btn_repo.setEnabled(bool(keys))
+        if problem:
+            text = f"Lab settings can't be read: {problem}"
+        elif not keys:
+            text = "No lab settings: the file as the repository has it."
+        else:
+            shown = ", ".join(keys[:6]) + (f" and {len(keys) - 6} more" if len(keys) > 6 else "")
+            text = (f"Lab settings ({lab_config.LAB_DIRNAME}/{filename}): this machine sets {len(keys)} value(s) itself, "
+                    f"kept through software updates: {shown}.")
+        self.lbl_lab.setText(text)
 
     def _populate_tree(self, parent_node, data, path):
         items = data.items() if isinstance(data, dict) else enumerate(data)
@@ -363,14 +403,15 @@ class ConfigEditorDialog(QDialog):
         return told + hmi
 
     def _record(self, filename, changes, reason, result, what="changed"):
-        log.warning("Config %s %s: %s (reason: %s; backup %s; git %s)", filename, what, "; ".join(changes),
-                    reason or "-", result.backup, result.git)
+        log.warning("Config %s %s: %s (reason: %s; backup %s; lab settings %s)", filename, what, "; ".join(changes),
+                    reason or "-", result.backup, result.path)
         if self.events is not None:
             text = f"Config {filename} {what}: " + "; ".join(changes[:4]) + (" ..." if len(changes) > 4 else "")
             self.events.log_general(text + (f" ({reason})" if reason else ""), severity="WARNING",
                                     event_type="CONFIG_CHANGE",
                                     metadata={"file": filename, "changes": changes, "reason": reason,
-                                              "backup": result.backup, "git": result.git})
+                                              "backup": result.backup, "lab_file": result.path,
+                                              "lab_settings": lab_config.changed_keys(result.lab)})
 
     def _apply(self, filename, changes, title, intro, what, write, large=()):
         """Confirm, then write(reason, after_write) -> SaveResult; record and restart. True if applied."""
@@ -386,9 +427,12 @@ class ConfigEditorDialog(QDialog):
             QMessageBox.critical(self, "Not Applied", f"{filename} was not changed:\n\n{detail}")
             return False
         self._record(filename, changes, reason, result, what)
+        keys = lab_config.changed_keys(result.lab)
         lines = [f"Saved {filename}" + (" and rebuilt system_tags.json." if after else "."),
+                 (f"This machine now sets {len(keys)} value(s) of it itself, as lab settings "
+                  f"({lab_config.LAB_DIRNAME}/{filename}): software updates keep them." if keys else
+                  "It is now as the repository has it: no lab settings."),
                  f"Previous version kept: {result.backup}" if result.backup else "",
-                 f"Committed to git: {result.git}" if result.committed else f"Not committed to git: {result.git}",
                  self._restart(filename, target)]
         QMessageBox.information(self, "Applied", "\n".join(line for line in lines if line))
         return True
@@ -423,7 +467,7 @@ class ConfigEditorDialog(QDialog):
 
         def write(reason, after):
             return config_store.save(filename, data, original=original, expected=original, reason=reason,
-                                     config_dir=self.config_dir, after_write=after, commit=self.commit)
+                                     config_dir=self.config_dir, after_write=after)
         if self._apply(filename, changes, "Apply Changes", f"<b>{filename}</b>: {len(changes)} change(s). Apply them?",
                        "changed", write, large=config_store.large_changes(original, data)):
             self.accept()
@@ -461,10 +505,41 @@ class ConfigEditorDialog(QDialog):
         def write(reason, after):
             return config_store.restore(filename, path, expected=current,
                                         reason=reason or f"put back the version from before {choice}",
-                                        config_dir=self.config_dir, after_write=after, commit=self.commit)
+                                        config_dir=self.config_dir, after_write=after)
         changes = config_store.diff(current if current is not None else {}, data) or ["(identical to the current file)"]
         large = config_store.large_changes(current, data) if current is not None else []
         if self._apply(filename, changes, "Put Back a Previous Version",
                        f"<b>{filename}</b>: put back the version from before {choice}?", "restored", write,
                        large=large):
+            self._load_file(filename)
+
+    def _use_repository_values(self):
+        """This machine's lab settings for the file taken away: the repository's file again."""
+        filename = self.cb_files.currentText()
+        if not filename or self.original is None:
+            return
+        try:
+            data = config_store.repository_value(filename, self.config_dir)
+        except ConfigError as e:
+            QMessageBox.critical(self, "Repository Values", f"Could not read the repository's {filename}:\n{e}")
+            return
+        if data is None:
+            QMessageBox.information(self, "Repository Values", f"The repository has no {filename}: it is this "
+                                                               "machine's own file.")
+            return
+        problems = config_store.check(filename, data)
+        if problems:
+            QMessageBox.warning(self, "Repository Values", "The repository's file has problems the services would "
+                                "trip over:\n\n• " + "\n• ".join(problems))
+            return
+        current = self.original
+
+        def write(reason, after):
+            return config_store.save(filename, data, expected=current, reason=reason or "the repository's values",
+                                     config_dir=self.config_dir, after_write=after)
+        changes = config_store.diff(current, data) or ["(identical to the current file)"]
+        if self._apply(filename, changes, "Use the Repository's Values",
+                       f"<b>{filename}</b>: take this machine's lab settings away, so it is as the repository has "
+                       "it?", "set to the repository's values", write,
+                       large=config_store.large_changes(current, data)):
             self._load_file(filename)

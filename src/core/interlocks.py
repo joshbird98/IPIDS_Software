@@ -35,13 +35,12 @@ match them is flagged: the PLC program may then differ from its description.
 import json
 import logging
 import math
-import os
 import re
 import time
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Tuple
 
-from src.core import paths
+from src.core import lab_config, paths
 
 log = logging.getLogger("interlocks")
 
@@ -187,8 +186,7 @@ class LoopConfig:
     def load(cls, path: str = None) -> "LoopConfig":
         path = path or paths.config_path("vac_gauges_config.json")
         try:
-            with open(path, "r", encoding="utf-8") as f:
-                return cls.parse(json.load(f))
+            return cls.parse(lab_config.load(path))         # (with this machine's lab settings)
         except (OSError, ValueError) as e:
             log.warning("Interlocks: %s not readable (%s): the loop's gauge relays are taken as unknown", path, e)
             return cls(problem=f"vac_gauges_config.json isn't readable ({e})")
@@ -1075,7 +1073,5 @@ class Disagreements:
 
 
 def config_mtime(path: str = None) -> Optional[float]:
-    try:
-        return os.path.getmtime(path or paths.config_path("vac_gauges_config.json"))
-    except OSError:
-        return None
+    """When the file (or its lab settings) last changed; None if it isn't there."""
+    return lab_config.mtime(path or paths.config_path("vac_gauges_config.json")) or None

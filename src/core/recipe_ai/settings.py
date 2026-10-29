@@ -1,13 +1,12 @@
 """Settings for recipe drafting: config/recipe_ai.json (in git, so nothing secret goes in it), and
 the API key, from the environment or the .env file in the SINDIE folder (not in git)."""
 import importlib.util
-import json
 import logging
 import os
 import re
 from dataclasses import dataclass, fields
 
-from src.core import paths
+from src.core import lab_config, paths
 
 log = logging.getLogger("recipe_ai")
 
@@ -38,8 +37,7 @@ class Settings:
         path = path or paths.config_path(CONFIG_FILE)
         settings = cls()
         try:
-            with open(path, "r", encoding="utf-8-sig") as f:
-                data = json.load(f)
+            data = lab_config.load(path)            # (with this machine's lab settings)
         except FileNotFoundError:
             return settings
         except (OSError, ValueError) as e:

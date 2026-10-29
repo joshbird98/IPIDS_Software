@@ -1,14 +1,11 @@
 import os
-import json
 
+from src.core import lab_config
 from src.core.env import getenv
 
-# Define absolute path to the config file relative to this script
+# The repository's file (config/network_config.json), with this machine's lab settings on top
 CONFIG_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), '../../config/network_config.json'))
-
-# Load the JSON map into memory
-with open(CONFIG_PATH, 'r') as f:
-    _cfg = json.load(f)
+_cfg = lab_config.read("network_config.json")
 
 HOST = _cfg["host"]
 
