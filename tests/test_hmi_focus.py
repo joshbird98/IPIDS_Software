@@ -195,3 +195,42 @@ def test_the_filament_steps_by_10_ma(hmi):
     """Its arrows stepped 1 mA: nine clicks took it from 28.5 to 28.509 A (Oct 2026)."""
     app, w, _ = hmi
     assert w.src_widget.psu_controls["Filament"]["sp_box"].singleStep() == 0.01
+
+
+def test_enter_in_a_box_that_used_it_is_not_typing_lost(hmi):
+    """Qt passes Enter on to the window from a spin box or line edit once the box has used it (so
+    that a dialog's default button can answer it too): the window took that Enter for typing that
+    went nowhere, and said "Not sent" after every value sent (Josh, 30 October 2026)."""
+    app, w, notices = hmi
+    sent = []
+    w.cmd_thread.send_command = lambda route, tag, value, *a, **k: sent.append((tag, value))
+    w.src_dock.raise_()
+    app.processEvents()
+    box = w.src_widget.psu_controls["Filament"]["sp_box"]
+    box.setEnabled(True)
+    box.show_setpoint(28.01)
+    box.setFocus(Qt.FocusReason.MouseFocusReason)
+    app.processEvents()
+    assert QApplication.focusWidget() is box
+    box.lineEdit().selectAll()
+    QTest.keyClicks(QApplication.focusWidget(), "29")
+    QTest.keyClick(QApplication.focusWidget(), Qt.Key.Key_Return)
+    assert sent == [("ion_beam.source.filament.sp_requested_current", 29.0)]
+    assert not [n for n in notices if "went into no setpoint box" in n]
+    # ... nor a marker added in Experiment Logging with Enter (a line edit)
+    markers = []
+    w.log_widget.event_helper.log_user_marker = lambda ts, text, colour: markers.append(text)
+    w.log_dock.raise_()
+    app.processEvents()
+    note = w.log_widget.le_marker
+    note.setFocus(Qt.FocusReason.MouseFocusReason)
+    app.processEvents()
+    QTest.keyClicks(note, "Beam on target 12")
+    QTest.keyClick(note, Qt.Key.Key_Return)
+    assert markers == ["Beam on target 12"]
+    assert not [n for n in notices if "went into no setpoint box" in n]
+    # ... while Enter with the keyboard on the window still says so
+    w.setFocus(Qt.FocusReason.OtherFocusReason)
+    app.processEvents()
+    QTest.keyClick(w, Qt.Key.Key_Return)
+    assert len([n for n in notices if "went into no setpoint box" in n]) == 1

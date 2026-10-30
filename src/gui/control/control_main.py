@@ -1,8 +1,8 @@
 import logging
 import os
 import time
-from PyQt6.QtWidgets import (QApplication, QMainWindow, QDockWidget, QMessageBox, QInputDialog, QLineEdit,
-                             QScrollArea, QFrame, QTabWidget)
+from PyQt6.QtWidgets import (QAbstractSpinBox, QApplication, QMainWindow, QDockWidget, QMessageBox, QInputDialog,
+                             QLineEdit, QPlainTextEdit, QScrollArea, QFrame, QTabWidget, QTextEdit)
 from PyQt6.QtCore import Qt, QTimer, QPoint, QByteArray
 from PyQt6.QtGui import QAction, QGuiApplication
 
@@ -46,6 +46,13 @@ from src.gui.control.widgets.mass_scan import PrecisionMassScannerWidget
 from src.gui.control.widgets.command_log_widget import CommandLogWidget
 from src.gui.control.widgets.automation_bar import AutomationBar
 from src.gui.control.widgets.alarm_widget import AlarmPanel
+
+
+def _takes_typing(widget) -> bool:
+    """A box that takes what is typed (a setpoint box, a line edit, a text box), and isn't read-only."""
+    return (isinstance(widget, (QLineEdit, QAbstractSpinBox, QTextEdit, QPlainTextEdit))
+            and not widget.isReadOnly())
+
 
 log = logging.getLogger("hmi")
 
@@ -168,9 +175,15 @@ class ControlMainWindow(QMainWindow):
     def keyPressEvent(self, event):
         """A value typed, or Enter, that reaches the window went into no control: the keyboard was
         parked here (see _keep_focus_here), or the control holding it takes no text. Say so, rather
-        than nothing happening."""
+        than nothing happening.
+
+        Not when the keyboard is with a box that takes typing: Qt passes Enter on to the window from
+        a setpoint box (any spin box or line edit) once the box has used it - sent the value, added
+        the marker - so that a dialog's default button can answer it too. That Enter went somewhere:
+        saying "Not sent" after every value sent was wrong (Josh, 30 October 2026)."""
         text = event.text()
-        if (text and (text.isdigit() or text in ".,-")) or event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
+        typed = (text and (text.isdigit() or text in ".,-")) or event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter)
+        if typed and not _takes_typing(QApplication.focusWidget()):
             now = time.monotonic()
             if now - self._lost_keys_shown > 5.0:
                 self._lost_keys_shown = now

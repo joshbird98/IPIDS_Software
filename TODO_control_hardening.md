@@ -82,6 +82,12 @@ simulator; none of it has been tried on the real hardware yet (see "Lab PC valid
     why not). From then on, updates come through Update... in that box.
 
 ## Done
+- 30 October 2026 (Josh: "Not sent ... went into no setpoint box" came up every time he typed a value and
+  pressed Enter, though it was sent). Qt passes Enter on to the window from a spin box or line edit once
+  the box has used it (so a dialog's default button can answer it), and the HMI window's catch-all for
+  typing that went nowhere (b82744b) took it for lost: after every value sent, and every marker or phase
+  added with Enter. It now speaks only when the keyboard isn't with a box that takes typing. The first
+  fix to be released through the launcher's Software box.
 - 29 October 2026 (Josh: "a Check for Updates button" in the launcher - pull, changelog, the operator says
   when, only with the safety relay definitely off, and it can wait; a lab branch; lab settings out of git;
   a daily check). Lab settings: config/lab/<file> (git-ignored) holds only what a machine changes; every
