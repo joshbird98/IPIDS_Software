@@ -87,7 +87,16 @@ simulator; none of it has been tried on the real hardware yet (see "Lab PC valid
   the box has used it (so a dialog's default button can answer it), and the HMI window's catch-all for
   typing that went nowhere (b82744b) took it for lost: after every value sent, and every marker or phase
   added with Enter. It now speaks only when the keyboard isn't with a box that takes typing. The first
-  fix to be released through the launcher's Software box.
+  fix to be released through the launcher's Software box: on Josh's laptop, the first update by hand
+  (--root) at 11:02, then this one from the launcher at 11:08.
+- 30 October 2026 (Josh: "I do not want people tweaking plotting scripts having to ask me each time ...
+  only block when actually needed"; his laptop's update stopped on a new script in testing/, added to
+  git and not committed). Only a change to the running software blocks an update now: src/, plc/,
+  config/ (its templates), main_launcher.py, run_simulation.py, requirements.txt, .gitignore. Edits to
+  anything else - the scripts in testing/, notebooks, docs, tests: nothing in src/ reads them - are kept
+  as they are, like recipes, and block only when the update changes that same file (one version would
+  be lost). A script changed at the lab that the update removes stays there, untracked; one deleted
+  there that the update changes comes back; an unchanged one the update removes goes.
 - 29 October 2026 (Josh: "a Check for Updates button" in the launcher - pull, changelog, the operator says
   when, only with the safety relay definitely off, and it can wait; a lab branch; lab settings out of git;
   a daily check). Lab settings: config/lab/<file> (git-ignored) holds only what a machine changes; every

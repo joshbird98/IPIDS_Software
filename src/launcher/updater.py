@@ -18,9 +18,12 @@ What blocks an update (check() lists it; it can't be applied from the launcher):
   * new Python packages (requirements.txt): pip can't replace a package the running programs hold
     open. Applied by hand;
   * the GitHub tests failing on the version (or not finished, or not known);
-  * this PC's own changes in the way: a change to the software itself (not on the lab branch), a
-    recipe or data file the update changes too, a file the update adds that is here already and isn't
-    the same.
+  * this PC's own changes in the way: a change to the running software itself (src/, plc/, config/,
+    main_launcher.py, run_simulation.py, requirements.txt, .gitignore: not on the lab branch), a file of
+    the PC's - a recipe, data, a script in testing/ - that the update changes too, a file the update adds
+    that is here already and isn't the same. An edit to anything that isn't the running software (the
+    scripts in testing/, notebooks, docs, tests) is kept as it is, and blocks only when the update
+    changes that same file.
 
 This PC's own config changes (the config editor used to commit them, and a file can be edited by
 hand) are kept: they become its lab settings (config/lab/, src/core/lab_config.py), and the
@@ -93,6 +96,8 @@ PLC_INTERFACE = ("plc/generated/",)         # the PC-PLC data layout: the PLC pr
 PLC_TOOLS = ("plc/",)                       # anything else under plc/: a note
 PACKAGES = ("requirements.txt",)            # new Python packages for the programs: by hand
 KEEP = ("config/recipes/", "data/")         # this PC's own files: kept as they are
+SOFTWARE = ("src/", "plc/", "config/")      # the running software (config/: settings and recipes are told apart first) ...
+SOFTWARE_FILES = ("main_launcher.py", "run_simulation.py", "requirements.txt", ".gitignore")   # ... and these
 LAB_FOLDER = "config/lab/"                  # this PC's lab settings: never in git
 FAULT_BITS = "config/fault_config.json"     # the PLC program sets the bits: a note
 NETWORK_CONFIG = "config/network_config.json"   # its "plc": where the PC finds the PLC
@@ -371,6 +376,13 @@ def _same_text(a: Optional[bytes], b: Optional[bytes]) -> bool:
 
 def _config_dir(root: str) -> str:
     return os.path.join(root, "config")
+
+
+def _is_software(path: str) -> bool:
+    """Part of the running software: a change to it on the PC needs Josh. Anything else - the scripts
+    in testing/, tests, docs, notebooks - is the PC's to change: kept as it is, unless the update
+    changes it too (nothing in src/ reads them; the help window only shows docs/)."""
+    return path.startswith(SOFTWARE) or path in SOFTWARE_FILES
 
 
 def _is_setting(path: str) -> bool:
@@ -716,10 +728,13 @@ def _judge(plan: Plan, git: Git):
         here = os.path.join(root, path)
         if _is_setting(path):
             _judge_setting(plan, path, status)
-        elif path.startswith(KEEP):
+        elif path.startswith(KEEP) or not _is_software(path):
             if path in files and files[path] != "D":
                 if status != "D" and _same_text(_read(here), git.show(plan.target, path)):
                     plan.keep.append(path)          # (the update's version is this PC's: nothing changes)
+                elif status == "D" and not path.startswith(KEEP):
+                    plan.keep.append(path)          # (a script deleted here: the update's comes, nothing is lost)
+                    coming_back.append(path)
                 elif status == "D":
                     plan.blockers.append(f"{path} has been deleted on this PC, and the update changes it: put it back "
                                          f"(git checkout -- {path}, in the SINDIE folder) or ask Josh, then check "
@@ -737,9 +752,11 @@ def _judge(plan: Plan, git: Git):
             (software_committed if path in committed else software_here).append(path)
     if coming_back:
         plan.notes.append(f"{_files(coming_back)} deleted on this PC come back, as the repository has them.")
-    # This PC's recipes and data that the update stops tracking, or adds too: they stay as they are
-    gone = [p for p, s in moving.items() if s == "D" and p.startswith(KEEP) and os.path.lexists(os.path.join(root, p))]
-    theirs_too = [p for p in arriving if p.startswith(KEEP)]
+    # This PC's recipes and data that the update stops tracking, its other files of its own (scripts,
+    # notes) it changed that the update takes away, and its files the update adds too: they stay as they are
+    gone = [p for p, s in moving.items() if s == "D" and os.path.lexists(os.path.join(root, p))
+            and (p.startswith(KEEP) or (not _is_software(p) and p in own))]
+    theirs_too = [p for p in arriving if p.startswith(KEEP) or not _is_software(p)]
     plan.hold = sorted(set(gone) | set(theirs_too))
     if gone:
         plan.notes.append(f"The update stops tracking {_files(sorted(gone))} in git: "
@@ -757,7 +774,7 @@ def _judge(plan: Plan, git: Git):
 
     # Other files here that the update adds: the same file is set aside for it; another one is in the way
     for path in arriving:
-        if path.startswith(KEEP):
+        if path in theirs_too:
             continue
         here = os.path.join(root, path)
         if os.path.isfile(here) and not os.path.islink(here) and _same_text(_read(here), git.show(plan.target, path)):

@@ -117,7 +117,9 @@ Some versions need more than the launcher can do safely. The window says why, an
 - a change to the data the PC and the PLC exchange (`plc/generated/`), or to where the PC finds the PLC (its address, in `config/network_config.json`): the PLC program has to be changed in TIA Portal first, or the PLC refuses the PC's reads;
 - other Python packages (`requirements.txt`): they can't be installed while SINDIE's programs run;
 - a version whose GitHub tests failed, or haven't finished: check again in a quarter of an hour;
-- a version that meets changes made on this PC: to the software itself, or to a recipe that the new version changes too.
+- a version that meets changes made on this PC: to the software itself (the programs, in `src/`, say), or to a recipe, data file or script that the new version changes too.
+
+Edits to anything that isn't the software itself - a plotting script in `testing/`, a notebook - don't stop an update: they are kept as they are.
 
 ### Going back
 

@@ -32,8 +32,8 @@ The update window lists whatever of these is the case (`check()` in `src/launche
 | A change to `requirements.txt` | pip can't replace a package that the running programs hold open. Install by hand (below). |
 | Anything in `config/lab/` | The lab PC's own settings. That folder must never be in git. |
 | The GitHub tests failed, haven't finished, or can't be found out | Asked of the GitHub API (`/actions/runs?head_sha=<commit>`): each workflow must have passed in some run on the commit, by its own conclusion (a job skipped because the one before it failed makes the workflow fail; a cancelled run doesn't pass). A pass is remembered, so the API is asked once for each version that passed (it answers 60 requests an hour per address); a failure is asked again at each check, as a run made again can pass. |
-| A change on the lab PC to the software itself | Not on the `lab` branch: committed there, or not committed. Someone has to decide what becomes of it. |
-| A recipe or data file changed, or deleted, on the lab PC that the update changes too | It would be overwritten. (The same change on both sides is no matter.) |
+| A change on the lab PC to the running software itself | `src/`, `plc/`, `config/` (its templates: settings and recipes are dealt with apart), `main_launcher.py`, `run_simulation.py`, `requirements.txt` or `.gitignore`, not on the `lab` branch: committed there, or not committed. Someone has to decide what becomes of it. |
+| A file of the lab PC's changed there that the update changes too | A recipe, a data file, or anything else that isn't the running software (a script in `testing/`, a notebook, a help page): one of the two versions would be lost. (The same change on both sides is no matter.) A recipe or data file deleted on the lab PC blocks too; a script deleted there comes back. |
 | A file the update adds that is on the lab PC already, and isn't the same | Untracked or git-ignored: it would be overwritten. |
 | A config file deleted on the lab PC, or broken, or a lab file that can't be read | |
 | git in the middle of a merge or a rebase, or with a conflict not resolved | |
@@ -43,9 +43,10 @@ These are only noted:
 - a change to `plc/` outside `plc/generated/` (the tools), or to `config/fault_config.json` (the fault texts; the PLC program sets the bits);
 - the update changes a config value that the lab PC has its own value for: the lab PC's value is kept;
 - the lab PC has config files changed (by hand, or committed by the config editor before October 2026): the update turns them into lab settings;
+- the lab PC has edits to files that aren't the running software - the scripts in `testing/`, notebooks, help pages, tests - committed or not: they are kept as they are (nothing in `src/` reads them), and a script changed there that the update takes away stays on the lab PC, untracked;
 - the lab PC has commits of its own: they stay on the branch they are on (a branch named `sindie-pc-<time>` if they were on `lab`);
 - the update stops tracking a recipe or data file (`git rm --cached` in the repository): it stays on the lab PC as it is, no longer tracked - also when the data compactor has rewritten it; one the compactor deleted stays deleted;
-- the update brings a recipe or data file that the lab PC has a version of its own of: the lab PC's is kept;
+- the update brings a file that the lab PC has a version of its own of, and it isn't the running software (a recipe, a data file, a script): the lab PC's is kept, and the update's is set aside in `data/updates/<time>/set_aside/`;
 - a file deleted on the lab PC that the move to the new version writes (one deleted in its own commits, say) comes back.
 
 A file on the lab PC that is the same as one the update adds is moved into `data/updates/<time>/set_aside/in_the_way/`, and the update's takes its place.

@@ -246,8 +246,12 @@ def test_a_file_in_the_way_of_one_the_update_adds(lab):
     run_git(lab.dev, "commit", "-q", "-m", "A log")
     run_git(lab.dev, "push", "-q", "origin", "HEAD:lab")
     write(lab.pc, {"notes.log": "ours\n"})
-    plan = check(lab)
-    assert plan.state == updater.BLOCKED and "adds notes.log" in " ".join(plan.blockers)
+    plan = check(lab)                                   # (not the running software: this PC's is kept)
+    assert plan.state == updater.READY and plan.hold == ["notes.log"]
+    assert any("brings notes.log, which this PC has a version of its own of" in n for n in plan.notes)
+    report = apply(lab, plan)
+    assert report.ok and text(lab, "notes.log") == "ours\n"
+    assert (Path(report.folder) / "set_aside" / "in_the_way_of_held" / "notes.log").read_text() == "theirs\n"
 
 
 def test_config_changes_here_are_adopted_and_broken_ones_block(lab):
@@ -1124,3 +1128,81 @@ def test_going_back_to_a_version_from_before_the_updater(lab):
     report = apply(lab, back, Old(lab.pc))
     assert report.ok, report.message
     assert any("from before the updater" in s for s in report.steps) and head(lab) == lab.first
+
+
+# --------------------------------------------------------------------------- what blocks only when it has to (30 October 2026)
+def with_scripts(lab):
+    """The version the PC runs has a script in testing/ and a help page, as the repository does."""
+    commit(lab.dev, {"testing/plot.py": "print('plot')\n", "testing/old.py": "print('old')\n",
+                     "docs/help.md": "# Help\n"}, "Scripts and help")
+    run_git(lab.dev, "push", "-q", "origin", "HEAD:lab")
+    run_git(lab.pc, "pull", "-q", "origin", "lab")
+
+
+def test_edits_outside_the_running_software_dont_block(lab):
+    """A plotting script tweaked at the lab, a new one (added to git, not committed: Josh's laptop,
+    30 October), a help page: kept as they are. Only the running software's changes need Josh."""
+    with_scripts(lab)
+    write(lab.pc, {"testing/plot.py": "print('plot, tweaked')\n", "testing/beam_profile_plotter.py": "print('new')\n",
+                   "docs/help.md": "# Help, with a note\n"})
+    run_git(lab.pc, "add", "testing/beam_profile_plotter.py")
+    before = status(lab)
+    sha = release(lab, {"src/app.py": "VERSION = 2\n"}, "Two")
+    plan = check(lab)
+    assert plan.state == updater.READY, plan.blockers
+    assert set(plan.keep) >= {"testing/plot.py", "testing/beam_profile_plotter.py", "docs/help.md"}
+    report = apply(lab, plan)
+    assert report.ok, report.message
+    assert head(lab) == sha and status(lab) == before
+    assert text(lab, "testing/plot.py") == "print('plot, tweaked')\n" and text(lab, "docs/help.md") == "# Help, with a note\n"
+    write(lab.pc, {"src/app.py": "VERSION = 2  # tweaked\n"})              # (the running software: still Josh's)
+    release(lab, {"src/other.py": "x = 1\n"}, "Three")
+    assert "changes of its own to the software: src/app.py" in " ".join(check(lab).blockers)
+
+
+def test_a_script_changed_here_and_by_the_update_blocks(lab):
+    with_scripts(lab)
+    write(lab.pc, {"testing/plot.py": "print('plot, tweaked')\n"})
+    release(lab, {"testing/plot.py": "print('plot, v2')\n"}, "A better plot")
+    plan = check(lab)
+    assert plan.state == updater.BLOCKED
+    assert "testing/plot.py has been changed on this PC, and the update changes it too" in " ".join(plan.blockers)
+    write(lab.pc, {"testing/plot.py": "print('plot, v2')\n"})               # (the same as the update's: no matter)
+    assert check(lab).state == updater.READY
+
+
+def test_a_script_changed_here_that_the_update_removes_stays(lab):
+    with_scripts(lab)
+    write(lab.pc, {"testing/old.py": "print('old, but mine')\n"})
+    run_git(lab.dev, "rm", "-q", "testing/old.py", "testing/plot.py")
+    run_git(lab.dev, "commit", "-q", "-m", "Old scripts gone")
+    run_git(lab.dev, "push", "-q", "origin", "HEAD:lab")
+    plan = check(lab)
+    assert plan.state == updater.READY and plan.hold == ["testing/old.py"]
+    report = apply(lab, plan)
+    assert report.ok, report.message
+    assert text(lab, "testing/old.py") == "print('old, but mine')\n" and status(lab) == "?? testing/old.py"
+    assert not (lab.pc / "testing" / "plot.py").exists()                    # (not changed here: it goes)
+    assert (Path(report.folder) / "set_aside" / "removed_by_the_update" / "testing" / "plot.py").exists()
+
+
+def test_a_script_deleted_here_comes_back_if_the_update_changes_it(lab):
+    with_scripts(lab)
+    (lab.pc / "testing" / "plot.py").unlink()
+    release(lab, {"testing/plot.py": "print('plot, v2')\n"}, "A better plot")
+    plan = check(lab)
+    assert plan.state == updater.READY, plan.blockers
+    assert any("testing/plot.py deleted on this PC come back" in n for n in plan.notes)
+    assert apply(lab, plan).ok
+    assert text(lab, "testing/plot.py") == "print('plot, v2')\n" and status(lab) == ""
+
+
+def test_a_script_in_this_pcs_own_commits_is_kept(lab):
+    with_scripts(lab)
+    run_git(lab.pc, "checkout", "-q", "-b", "lab", "--track", "origin/lab")
+    commit(lab.pc, {"testing/mine.py": "print('mine')\n", "testing/plot.py": "print('plot, mine')\n"}, "Lab scripts")
+    release(lab, {"src/app.py": "VERSION = 2\n"}, "Two")
+    plan = check(lab)
+    assert plan.state == updater.READY, plan.blockers
+    assert apply(lab, plan).ok
+    assert text(lab, "testing/mine.py") == "print('mine')\n" and text(lab, "testing/plot.py") == "print('plot, mine')\n"
