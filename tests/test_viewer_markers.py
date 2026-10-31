@@ -152,3 +152,27 @@ def test_line_width_from_the_view_menu(viewer, app):
     finally:
         viewer.line_width_actions["Thin (fastest)"].trigger()
     assert pens() == {1.0} and viewer.RENDER_LIMIT == 10000
+
+
+def test_a_lane_built_again_after_a_thesis_capture_leaves_no_ghost(viewer, app):
+    """F12 with Style > Thesis figure, then a channel added: the old lane went on being drawn under the
+    new one - its axes, grid and legend, a "ghost" that didn't go away (October 2026) - and drawing there
+    crashed the window once it was freed. (test_thesis_style has the why.)"""
+    from PyQt6.QtWidgets import QGraphicsScene
+    from src.gui.figure_capture import _settle
+    from src.gui.thesis_style import ThesisStyle
+    from tests.test_thesis_style import drawn_while
+    plots = viewer.layout_widget
+    assert plots.scene().itemIndexMethod() == QGraphicsScene.ItemIndexMethod.NoIndex
+    old = list(viewer.lanes.values())
+    look = ThesisStyle(plots, 150.0)
+    _settle(plots)
+    look.remove()
+    _settle(plots)
+    viewer.request_ui_refresh()
+    pump(app, 1)
+    assert old and not set(map(id, old)) & set(map(id, viewer.lanes.values()))
+    gone = [a["item"] for p in old for a in p.axes.values()] + [p.legend for p in old]
+    assert all(it.scene() is None for it in gone)
+    assert drawn_while(plots, gone) == []
+    assert plots.scene().sceneRect().width() < 1e5

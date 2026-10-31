@@ -145,6 +145,87 @@ def test_the_plots_line_up(lanes):
     assert bottom.getAxis("left").fixedWidth is None
 
 
+def drawn_while(lw, items):
+    """Which of items are drawn when lw is painted (their paint wrapped while it is)."""
+    app = _app()
+    drawn = []
+    for item in items:
+        item.paint = (lambda it: lambda p, *a: (drawn.append(it), type(it).paint(it, p, *a))[1])(item)
+    try:
+        lw.viewport().repaint()
+        lw.grab()
+        app.processEvents()
+    finally:
+        for item in items:
+            item.__dict__.pop("paint", None)
+    return drawn
+
+
+def test_the_grid_lines_reach_as_far_as_their_plot(lanes):
+    """They used to claim 10^7 px each way, which grew the scene's extent for good (and Qt's index of the
+    scene then went wrong: the next test)."""
+    from src.gui.thesis_style import ThesisStyle, _GridLines
+    lw = lanes["lw"]
+    look = ThesisStyle(lw, per_inch=150.0)
+    try:
+        settle(lw)
+        grids = [it for it in lw.scene().items() if isinstance(it, _GridLines)]
+        assert grids and all(g.boundingRect() == g.host.rect() for g in grids)
+        lw.resize(700, 420)
+        settle(lw)
+        assert all(g.boundingRect() == g.host.rect() for g in grids)      # (followed the plots)
+    finally:
+        look.remove()
+    settle(lw)
+    assert lw.scene().sceneRect().width() < 1e5                         # (was 2e7)
+
+
+def test_a_plot_taken_out_after_a_capture_is_not_drawn_again():
+    """A thesis capture, then the plot built again (in the data viewer: a channel added). The old plot went
+    on being drawn under the new one - a "ghost" of its axes, grid and legend (October 2026) - and once it
+    was freed, drawing there crashed the window: Qt's index of the scene still had it. Every plot's scene
+    is unindexed now (theme.style_plot: theme.unindexed), and the grid lines no longer stretch it."""
+    import pyqtgraph as pg
+    from PyQt6.QtWidgets import QGraphicsScene
+    from src.gui import theme
+    from src.gui.thesis_style import ThesisStyle
+    app = _app()
+    lw = pg.GraphicsLayoutWidget()
+    lw.resize(900, 600)
+    theme.style_plot(lw)                      # (as every plot of the software's is)
+
+    def build():
+        lw.clear()
+        p = lw.addPlot(row=0, col=0)
+        p.showGrid(x=True, y=True, alpha=0.35)
+        p.addLegend(offset=(10, 10))
+        x = np.linspace(0, 100, 500)
+        p.plot(x, np.sin(x / 10), pen="b", name="A [W]")
+        return p
+
+    old = build()
+    lw.show()
+    try:
+        for _ in range(5):
+            app.processEvents()
+        look = ThesisStyle(lw, 150.0)
+        settle(lw)
+        look.remove()
+        settle(lw)
+        new = build()
+        for _ in range(5):
+            app.processEvents()
+        gone = [a["item"] for a in old.axes.values()] + [old.legend]
+        assert all(it.scene() is None for it in gone)
+        assert drawn_while(lw, gone) == []
+        assert drawn_while(lw, [new.getAxis("bottom"), new.legend])     # (so it would see one drawn)
+        assert lw.scene().itemIndexMethod() == QGraphicsScene.ItemIndexMethod.NoIndex
+    finally:
+        lw.close()
+        lw.deleteLater()
+        app.processEvents()
+
+
 def test_numbers_as_the_thesis_figures_write_them():
     """(What follows ^ the axis draws as a superscript: the thesis' type has no superscript figures.)"""
     from src.gui.thesis_style import tidy_number

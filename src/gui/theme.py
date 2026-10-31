@@ -11,7 +11,8 @@ switched ON (an energised supply, a running pump), blue marks automatic modes an
                           changes made in the other program (appearance.json, checked every second)
     apply_theme(app, m)   switch now ('dark' / 'light'); every window restyles in place
     tokens() / color(n)   the current colours, for code that paints (dials, plots, table rows)
-    style_plot(p)         pyqtgraph plots: colours now, and again after every switch
+    style_plot(p)         pyqtgraph plots: colours now, and again after every switch (and their
+                          scenes unindexed: see unindexed)
     theme_changed         Qt signal (mode) for anything else that needs to redraw
 
 Widgets don't carry colours of their own: they set a "tone" or "role" property (src/gui/style.py)
@@ -564,11 +565,26 @@ def style_plot(plot, restyle=None):
     """Colour a pyqtgraph PlotWidget / PlotItem / GraphicsLayoutWidget for the current theme,
     and again after every theme switch. restyle(plot): optional extra step for the caller's own
     items (curves, markers), run after the colours change. (A method is held weakly: the plot
-    and its panel can still be freed.)"""
+    and its panel can still be freed.) Also leaves the plot's scene unindexed (unindexed)."""
+    unindexed(plot)
     _style_plot_now(plot)
     _plots[plot] = _weakly(restyle)
     if restyle is not None:
         restyle(plot)
+
+
+def unindexed(plot):
+    """The scene a pyqtgraph plot is drawn in, without Qt's index of where its items are (a BSP tree):
+    Qt then checks each item as it paints, which for a few hundred items costs nothing measurable.
+    pyqtgraph changes where some items reach without telling Qt (an axis' grid reaches over its plot,
+    whose size can change on its own), and the index then kept a plot that had been taken out of the
+    scene: it went on being drawn - in the data viewer, a "ghost" of the old axes, grid and legend
+    under the new ones (October 2026) - and once the old plot was freed, drawing that part of the
+    window crashed the program."""
+    from PyQt6.QtWidgets import QGraphicsScene
+    scene = plot.scene() if hasattr(plot, "scene") else None
+    if scene is not None and scene.itemIndexMethod() != QGraphicsScene.ItemIndexMethod.NoIndex:
+        scene.setItemIndexMethod(QGraphicsScene.ItemIndexMethod.NoIndex)
 
 
 def _weakly(fn):

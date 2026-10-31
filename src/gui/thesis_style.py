@@ -312,15 +312,35 @@ def _draw_powers(axis):
 
 class _GridLines(QGraphicsItem):
     """An axis' grid: lines across its plot at its major ticks, behind the data (pyqtgraph draws its
-    grid as the axis' own ticks drawn long, over the data)."""
+    grid as the axis' own ticks drawn long, over the data). It reaches as far as its plot does, and
+    follows it when it changes size: it used to claim 10^7 px each way, which grew the scene's extent
+    for good, and Qt's index of the scene then went wrong (theme.unindexed). remove() when done."""
 
     def __init__(self, axis, host, pen):
         super().__init__(host)
         self.axis, self.host, self.pen = axis, host, pen
+        self._rect = QRectF(host.rect())
         self.setZValue(-1e5)                  # above the ViewBox's background (-1e6), below its data (0)
+        self._resizes = getattr(host, "sigResized", None)
+        if self._resizes is not None:
+            self._resizes.connect(self._host_resized)
+
+    def _host_resized(self, *_):
+        self.prepareGeometryChange()
+        self._rect = QRectF(self.host.rect())
+
+    def remove(self):
+        if self._resizes is not None:
+            try:
+                self._resizes.disconnect(self._host_resized)
+            except (TypeError, RuntimeError):  # (not connected, or the plot has gone)
+                pass
+            self._resizes = None
+        if self.scene() is not None:
+            self.scene().removeItem(self)
 
     def boundingRect(self):
-        return QRectF(-1e7, -1e7, 2e7, 2e7)   # (the ViewBox clips it to the plot)
+        return self._rect
 
     def paint(self, p, opt, widget=None):
         view = self.axis.linkedView()
@@ -510,8 +530,8 @@ class ThesisStyle:
         ax._updateLabel()
 
         def undo():
-            if lines is not None and lines.scene() is not None:
-                lines.scene().removeItem(lines)
+            if lines is not None:
+                lines.remove()
             ax._pen, ax._textPen, ax._tickPen = pens
             ax.style = style
             ax.fixedWidth, ax.fixedHeight = fixed

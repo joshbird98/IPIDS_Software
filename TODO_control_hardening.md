@@ -82,6 +82,18 @@ simulator; none of it has been tried on the real hardware yet (see "Lab PC valid
     why not). From then on, updates come through Update... in that box.
 
 ## Done
+- 31 October 2026 (Josh: the data viewer's time axis had a "ghost" that didn't go away - a second set of
+  dates, log-axis numbers, grid lines and a legend box under the plot). It was the plot from before a
+  channel was added, still drawn although it had been taken out of the scene. An F12 thesis-style capture
+  that afternoon had added grid lines claiming 10^7 px each way (src/gui/thesis_style.py, _GridLines);
+  that grew the scene's extent for good, and Qt's index of the scene (a BSP tree, which pyqtgraph's axes
+  already upset: an axis' grid reaches over its plot, which changes size without the axis telling Qt) then
+  kept the old plot's axes and legend after they were removed. Once the old plot was freed, drawing that
+  part of the window crashed the viewer (reproduced: a capture, a channel added, a theme switch - a
+  segmentation fault). The grid lines now reach as far as their plot and follow it, and every plot's
+  scene is unindexed (theme.style_plot: theme.unindexed): Qt checks each item as it paints, no slower for
+  the viewer's few hundred items (measured: 16 curves of 10000 points, the same 130-140 ms a frame).
+  Tests: tests/test_thesis_style.py (both fail on the version before), tests/test_viewer_markers.py.
 - 30 October 2026 (Josh: "Not sent ... went into no setpoint box" came up every time he typed a value and
   pressed Enter, though it was sent). Qt passes Enter on to the window from a spin box or line edit once
   the box has used it (so a dialog's default button can answer it), and the HMI window's catch-all for
