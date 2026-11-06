@@ -278,7 +278,7 @@ class View:
         screen, which is the diagram's 'legend' part (a click folds or unfolds it)."""
         ts = self.text_scale
         fm = QFontMetricsF(self.fonts["name"])
-        row_h, sym_w, pad, col_gap = fm.height() * 1.75, fm.height() * 1.6, 9 * ts, 16 * ts
+        row_h, sym_w, pad, col_gap = fm.height() * 1.5, fm.height() * 1.5, 9 * ts, 16 * ts
         head = QFontMetricsF(self.fonts["name-b"]).height() + 6 * ts
         arrow = "▾" if self.legend_open else "▸"
         title_w = QFontMetricsF(self.fonts["name-b"]).horizontalAdvance(f"{title}  {arrow}")

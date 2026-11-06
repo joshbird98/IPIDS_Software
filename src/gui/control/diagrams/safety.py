@@ -325,7 +325,7 @@ class SafetyChainDiagram(DiagramPanel):
         # The high-voltage enclosure
         v.text(ENCLOSURE.center().x() + 8, ENCLOSURE.bottom() - 10, "High-voltage deck\nenclosure", "name-b", HC | B)
         v.text(160, 160, "Access\ndoors", "name", R | VC)
-        v.text(350, 34, "ESO", "name", HC | VC)
+        v.text(378, 50, "ESO", "name", L | VC)
         # The PLC's inputs
         v.text(COLUMN_X - 40, 330, "GV2", "name-b", R | VC)
         v.text(295, 410, "Source coolant loop", "name-b", HC | B)
@@ -376,7 +376,7 @@ class SafetyChainDiagram(DiagramPanel):
             ("note", "< 10⁻⁶ mbar"), ("chip", text if vac is None or vac.state != il.OK else "", tone)]], HC | T)
         state = self.health.lbl_safety_state
         v.block(RELAY_BOX.center().x(), RELAY_BOX.center().y(), [
-            [("name-b", "Dual-channel")], [("name-b", "safety relay")],
+            [("name-b", "Safety relay")],
             [("chip", state.text().replace("SAFETY: ", ""), "warn" if closed else
               "fault" if state.property("tone") == "fault" else "off" if closed is False else "unknown")]], HC | VC)
         v.text(782, 694, "24 V", "note", R | VC)

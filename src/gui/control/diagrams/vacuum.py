@@ -32,8 +32,8 @@ GAUGE_S, PUMP_R = 70.0, 50.0
 # Gauges: centre of the box, the line to the vessel, where the readout goes (x, y, align), and
 # whether its chip (shown when it isn't healthy) goes beside the name or under the pressure
 GAUGES = {
-    1: dict(name="VG1  Source", at=(372, 195), line=[(372, 240), (372, 230)], label=(372, 153, HC | B),
-            chip="beside"),
+    1: dict(name="VG1  Source", at=(372, 195), line=[(372, 240), (372, 230)], label=(338, 153, L | B),
+            chip="beside"),             # (from the box's left edge: GV1 is close on its left, the room is right)
     2: dict(name="VG2  Beamline pre-magnet", at=(90, 545), line=[(125, 545), (COLUMN_X, 545)],
             label=(90, 588, HC | T), chip="under"),
     3: dict(name="VG3  Beamline", at=(868, 1210), line=[(868, BEAM_Y), (868, 1175)], label=(868, 1253, HC | T),
