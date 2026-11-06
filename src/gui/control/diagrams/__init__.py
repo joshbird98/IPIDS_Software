@@ -13,6 +13,10 @@ panel's (mirror.py) - same rules, same two-click confirmation, same commands. Wh
 read is drawn dotted. The colours are the panels' (src/gui/theme.py): grey is normal, green on,
 blue automatic, violet held by a sequence, amber and red what needs attention.
 
-    canvas.py     the drawing surface: scale to fit, text at screen size, pointing and clicking
-    symbols.py    pumps, valves, gauges and the like
+    panel.py      what the four have in common: the drawing, its refresh, the faceplate open
+    canvas.py     the drawing surface: scale to fit, text at screen size, pointing and clicking, the
+                  key, and the layout check the tests run (labels clear of each other and the lines)
+    symbols.py    pumps, valves, gauges, lenses, slits, switches and the like
+    faceplate.py  the card a part opens; plates.py, the ones more than one diagram opens
+    mirror.py     a faceplate's controls: the panels' own, mirrored
 """
