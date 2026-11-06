@@ -189,6 +189,59 @@ def test_no_label_overlaps_another_a_part_a_pipe_or_the_edge(app, panels, kind, 
     d.deleteLater()
 
 
+@pytest.mark.parametrize("texts", ["normal", "longest"])
+@pytest.mark.parametrize("kind", ["vacuum", "beam", "safety", "tess"])
+def test_larger_text_keeps_the_labels_clear(app, panels, kind, texts, tmp_path, monkeypatch):
+    """View > Text size: the labels grow and still keep clear of each other and the lines. The
+    drawing needs more room for them - its readable size grows - and in a smaller panel it shrinks
+    to fit as before; in a large panel the text is the larger size."""
+    from src.gui import theme
+    from src.gui.control.diagrams.canvas import layout_problems
+    monkeypatch.setenv("SINDIE_SETTINGS_DIR", str(tmp_path))
+    d = make(kind, panels)
+    feed(panels, d, live(True))
+    if texts == "longest":
+        busy(panels)
+        d.update_telemetry(live(True))
+    normal = d.canvas.sizeHint()
+    d.canvas.resize(QSize(2400, 1500))
+    normal_text = d.canvas.text_scale()
+    theme.apply_appearance(app, text_scale=1.5)
+    try:
+        grown = d.canvas.sizeHint()
+        assert grown.width() > normal.width() * 1.4 and grown.height() > normal.height() * 1.4
+        for size in (grown, grown * 0.6, grown * 0.35, QSize(1280, 820), QSize(2400, 1500)):
+            assert layout_problems(d.canvas, size) == [], (kind, size)
+        d.canvas.resize(QSize(2400, 1500))
+        assert d.canvas.text_scale() == pytest.approx(1.5 * normal_text, rel=0.02) or d.canvas.zoom() < 1
+    finally:
+        theme.apply_appearance(app, text_scale=1.0)
+    d.deleteLater()
+
+
+def test_a_faceplate_is_wider_with_larger_text(app, panels, tmp_path, monkeypatch):
+    from src.gui import theme
+    from src.gui.control.diagrams.faceplate import WIDTH_PX
+    monkeypatch.setenv("SINDIE_SETTINGS_DIR", str(tmp_path))
+    d = make("vacuum", panels)
+    d.resize(1280, 820)
+    d.show()
+    feed(panels, d, live(True))
+    d.open_faceplate("VG1")
+    app.processEvents()
+    assert d.faceplate.width() == WIDTH_PX
+    theme.apply_appearance(app, text_scale=1.3)
+    try:
+        app.processEvents()
+        assert d.faceplate.width() == round(WIDTH_PX * 1.3)        # (the open card too)
+        assert d.rect().contains(d.faceplate.geometry())
+    finally:
+        theme.apply_appearance(app, text_scale=1.0)
+    d.open_faceplate("")
+    d.close()
+    d.deleteLater()
+
+
 @pytest.mark.parametrize("kind", ["vacuum", "beam", "safety", "tess"])
 def test_a_small_panel_shrinks_the_drawing_to_fit_rather_than_cropping_it(app, panels, kind):
     """Josh's laptop (6 Nov): a diagram cut off in a small panel. Below its readable size the whole

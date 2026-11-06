@@ -10,13 +10,23 @@ switched ON (an energised supply, a running pump), blue marks automatic modes an
     install(app)          at start-up: Fusion style, fonts, the saved theme, and following theme
                           changes made in the other program (appearance.json, checked every second)
     apply_theme(app, m)   switch now ('dark' / 'light'); every window restyles in place
+    apply_appearance(app, text_scale=, palette=)
+                          the two options for people who need them (View menu): larger text, and
+                          colours that colour-blind people can tell apart; off, nothing changes
     tokens() / color(n)   the current colours, for code that paints (dials, plots, table rows)
+    pt(points)            a font size in points at the chosen text size
     style_plot(p)         pyqtgraph plots: colours now, and again after every switch (and their
                           scenes unindexed: see unindexed)
     theme_changed         Qt signal (mode) for anything else that needs to redraw
 
 Widgets don't carry colours of their own: they set a "tone" or "role" property (src/gui/style.py)
 and the application stylesheet built here draws it.
+
+Colour-blind safe colours (COLOUR_BLIND): the standard red, green, amber, blue and violet are
+partly alike to someone with red-green colour blindness (about 1 man in 12) - green ON and red
+FAULT both look olive, blue AUTO and violet SEQUENCE the same blue. The safe palette replaces the
+colours that carry a meaning, in both themes, with ones chosen to stay apart under simulated
+deuteranopia, protanopia and tritanopia (tests/test_theme.py checks them).
 """
 import json
 import logging
@@ -34,6 +44,12 @@ log = logging.getLogger("theme")
 
 MODES = ("dark", "light")
 DEFAULT_MODE = "dark"
+# View > Text size: (name, scale of every font)
+TEXT_SIZES = (("Normal", 1.0), ("Large", 1.15), ("Larger", 1.3), ("Largest", 1.5))
+DEFAULT_TEXT_SCALE = 1.0
+# View > Colour-blind safe colours
+PALETTE_NAMES = ("standard", "colour-blind")
+DEFAULT_PALETTE = "standard"
 
 # --- Colours -----------------------------------------------------------------------------------
 # window: behind the panels (shows in the gaps); panel: a panel's own background; card: group
@@ -93,12 +109,53 @@ PALETTES = {
     },
 }
 
+# The colour-blind safe palette (View > Colour-blind safe colours): the colours that carry a
+# meaning, replaced. One hue per meaning in every use - fault vermilion, warning yellow, on
+# teal-green, automatic blue, sequence purple - with lightness and hue chosen so that, under
+# simulated deuteranopia and protanopia (Machado 2009, full severity), every two meanings stay
+# at least Delta E OK 9 apart (fills 11) and 6.5 under tritanopia; in the standard palette green
+# and red come to 3, blue and violet to 2. The viewer's lines: six colours apart for every pair
+# (any two can share a plot; past six, lines are dashed). Contrast as in the standard palette:
+# text >= 4.5:1, lines on the plots >= 3:1. Checked by tests/test_theme.py.
+COLOUR_BLIND = {
+    "dark": {
+        "ok": "#7FEAD3", "ok_bg": "#0E3324", "ok_fill": "#18835E", "ok_fill_text": "#FFFFFF",
+        "warn": "#FAD96B", "warn_bg": "#37290A", "warn_fill": "#EDBD59", "warn_fill_text": "#1C1305",
+        "fault": "#FB7155", "fault_bg": "#41221A", "fault_fill": "#D4390E", "fault_fill_text": "#FFFFFF",
+        "info": "#6B93F8", "info_bg": "#1B2C44", "info_fill": "#0A73E8", "info_fill_text": "#FFFFFF",
+        "seq": "#E7A6FF", "seq_bg": "#302540", "seq_fill": "#63269D", "seq_fill_text": "#FFFFFF",
+        "series": ["#3175FF", "#AC5B05", "#72FBD5", "#BBAD54", "#89518D", "#54BCE8"],
+        "ev_fault": "#FB7155", "ev_cleared": "#6B93F8", "ev_watchdog": "#E7A6FF", "ev_phase": "#7FEAD3",
+        "ev_tolerance": "#FAD96B",
+        "alarm_1": "#D4390E", "alarm_1_text": "#FFFFFF", "alarm_1_soft": "#4F251B", "alarm_1_soft_text": "#FCCABD",
+        "alarm_2": "#E98A35", "alarm_2_text": "#1C1305", "alarm_2_soft": "#4B290C", "alarm_2_soft_text": "#FCCDAA",
+        "alarm_3": "#F4CD4B", "alarm_3_text": "#1C1305", "alarm_3_soft": "#3F3101", "alarm_3_soft_text": "#E8D7A3",
+        "alarm_4": "#0A73E8", "alarm_4_text": "#FFFFFF", "alarm_4_soft": "#1C3353", "alarm_4_soft_text": "#C1DAFC",
+    },
+    "light": {
+        "ok": "#0A4F3F", "ok_bg": "#DDF3E8", "ok_fill": "#18835E", "ok_fill_text": "#FFFFFF",
+        "warn": "#85661E", "warn_bg": "#F6ECD8", "warn_fill": "#EDBD59", "warn_fill_text": "#1C1305",
+        "fault": "#8C1203", "fault_bg": "#FFE7E1", "fault_fill": "#D4390E", "fault_fill_text": "#FFFFFF",
+        "info": "#2360D5", "info_bg": "#E3EEFD", "info_fill": "#0A73E8", "info_fill_text": "#FFFFFF",
+        "seq": "#643580", "seq_bg": "#F0E9FD", "seq_fill": "#63269D", "seq_fill_text": "#FFFFFF",
+        "series": ["#0A42A5", "#8A3D0F", "#16A690", "#977C01", "#7C115C", "#107AAA"],
+        "ev_fault": "#8C1203", "ev_cleared": "#2360D5", "ev_watchdog": "#643580", "ev_phase": "#0A4F3F",
+        "ev_tolerance": "#85661E",
+        "alarm_1": "#D4390E", "alarm_1_text": "#FFFFFF", "alarm_1_soft": "#FDD3C8", "alarm_1_soft_text": "#6E2A1A",
+        "alarm_2": "#E98A35", "alarm_2_text": "#1C1305", "alarm_2_soft": "#F8D7BE", "alarm_2_soft_text": "#653401",
+        "alarm_3": "#F4CD4B", "alarm_3_text": "#1C1305", "alarm_3_soft": "#EADEB9", "alarm_3_soft_text": "#514105",
+        "alarm_4": "#0A73E8", "alarm_4_text": "#FFFFFF", "alarm_4_soft": "#CBE0FC", "alarm_4_soft_text": "#1B4276",
+    },
+}
+
 
 class _Notifier(QObject):
     changed = pyqtSignal(str)
 
 
-_state = {"mode": DEFAULT_MODE, "notifier": None, "sync": None, "fonts": None}
+_state = {"mode": DEFAULT_MODE, "text_scale": DEFAULT_TEXT_SCALE, "palette": DEFAULT_PALETTE,
+          "notifier": None, "sync": None, "fonts": None, "base_font": None}
+_merged = {}                                  # (mode, palette) -> the palette with its overrides
 _plots = weakref.WeakKeyDictionary()          # plot object -> extra restyle callback (or None)
 
 
@@ -117,8 +174,30 @@ def current_mode() -> str:
     return _state["mode"]
 
 
-def tokens(mode: str = None) -> dict:
-    return PALETTES[mode or _state["mode"]]
+def tokens(mode: str = None, palette: str = None) -> dict:
+    """The colours of a theme (the current one) in a palette (the current one)."""
+    mode, palette = mode or _state["mode"], palette or _state["palette"]
+    if palette == DEFAULT_PALETTE:
+        return PALETTES[mode]
+    key = (mode, palette)
+    if key not in _merged:
+        _merged[key] = {**PALETTES[mode], **COLOUR_BLIND[mode]}
+    return _merged[key]
+
+
+def palette_name() -> str:
+    """'standard', or 'colour-blind' (View > Colour-blind safe colours)."""
+    return _state["palette"]
+
+
+def text_scale() -> float:
+    """How much larger than normal the text is drawn (View > Text size): 1.0 normally."""
+    return _state["text_scale"]
+
+
+def pt(points: float) -> float:
+    """A font size given in points, at the chosen text size."""
+    return points * _state["text_scale"]
 
 
 def color(name: str, mode: str = None) -> QColor:
@@ -140,8 +219,9 @@ def rgba(hex_code: str, alpha: float) -> str:
 
 
 def series_color(slot: int, mode: str = None) -> QColor:
-    """Line colour for the n-th channel of a plot (0-based); after 8 the colours repeat (callers
-    then draw those lines dashed, so no two lines on one plot look the same)."""
+    """Line colour for the n-th channel of a plot (0-based); after 8 (6 in the colour-blind
+    palette) the colours repeat (callers then draw those lines dashed, so no two lines on one plot
+    look the same)."""
     s = tokens(mode)["series"]
     return qcolor(s[slot % len(s)])
 
@@ -301,6 +381,13 @@ def build_stylesheet(mode: str = None) -> str:
     t = tokens(mode)
     f = fonts()
     m = mode or _state["mode"]
+    scale = _state["text_scale"]
+
+    def size(points):                 # a font size, at the chosen text size ('12pt' at normal size)
+        return f"{points * scale:g}pt"
+
+    def px(pixels):                   # a box that holds a tick or a dot, grown with the text
+        return f"{round(pixels * scale)}px"
     close_icon = _icon_path("close", t["text_muted"])
     float_icon = _icon_path("float", t["text_muted"])
     up_icon, down_icon = _icon_path("up", t["text_muted"]), _icon_path("down", t["text_muted"])
@@ -347,7 +434,7 @@ def build_stylesheet(mode: str = None) -> str:
         f'border: 1px solid {t["border_soft"]}; }}'
         for k in ("fault", "warn", "info", "primary", "ok", "armed"))
     return f"""
-/* SINDIE {m} theme - generated by src/gui/theme.py */
+/* SINDIE {m} theme{"" if t is PALETTES[m] else ", colour-blind safe colours"}{"" if scale == 1 else f", text at {scale:g} x"} - generated by src/gui/theme.py */
 QMainWindow {{ background-color: {t['window']}; }}
 QMainWindow::separator {{ background-color: {t['window']}; width: 5px; height: 5px; }}
 QMainWindow::separator:hover {{ background-color: {t['accent']}; }}
@@ -400,15 +487,15 @@ QFrame[role="rule"] {{ background-color: {t['border_soft']}; max-height: 1px; mi
 
 /* Text roles */
 QLabel {{ background: transparent; }}
-QLabel[role="readout"] {{ font-family: "{f['mono']}"; font-size: 12pt; color: {t['text']}; }}
+QLabel[role="readout"] {{ font-family: "{f['mono']}"; font-size: {size(12)}; color: {t['text']}; }}
 QLabel[role="readout-sm"] {{ font-family: "{f['mono']}"; color: {t['text']}; }}
 QLabel[role="readout-sub"] {{ font-family: "{f['mono']}"; color: {t['text_muted']}; }}
-QLabel[role="readout-lg"] {{ font-family: "{f['mono']}"; font-size: 18pt; font-weight: 600; color: {t['text']}; }}
-QLabel[role="readout-hero"] {{ font-family: "{f['mono']}"; font-size: 28pt; font-weight: 600; color: {t['text']}; }}
+QLabel[role="readout-lg"] {{ font-family: "{f['mono']}"; font-size: {size(18)}; font-weight: 600; color: {t['text']}; }}
+QLabel[role="readout-hero"] {{ font-family: "{f['mono']}"; font-size: {size(28)}; font-weight: 600; color: {t['text']}; }}
 QLabel[role="caption"] {{ color: {t['text_muted']}; }}
 QLabel[role="hint"] {{ color: {t['text_faint']}; }}
 QLabel[role="title"] {{ font-weight: 600; color: {t['text']}; }}
-QLabel[role="heading"] {{ font-size: 11pt; font-weight: 600; color: {t['text']}; }}
+QLabel[role="heading"] {{ font-size: {size(11)}; font-weight: 600; color: {t['text']}; }}
 QLabel[role="error"] {{ color: {t['fault']}; }}
 QLabel[role="warning"] {{ color: {t['warn']}; }}
 QLabel[role="success"] {{ color: {t['ok']}; }}
@@ -425,7 +512,7 @@ QLabel[role="readout"][tolerance="out"], QLabel[role="readout-sm"][tolerance="ou
 {chips}
 
 /* Banners: one line that sums up a panel's state (the alarm summary) */
-QLabel[role="banner"] {{ font-size: 12pt; font-weight: 700; padding: 6px 10px; border-radius: 4px;
+QLabel[role="banner"] {{ font-size: {size(12)}; font-weight: 700; padding: 6px 10px; border-radius: 4px;
     color: {t['text_muted']}; background-color: {t['card_alt']}; }}
 QLabel[role="banner"][level="1"] {{ background-color: {t['alarm_1']}; color: {t['alarm_1_text']}; }}
 QLabel[role="banner"][level="2"] {{ background-color: {t['alarm_2']}; color: {t['alarm_2_text']}; }}
@@ -459,7 +546,7 @@ QPushButton[role="flat"] {{ background: transparent; border: none; text-align: l
 QPushButton[role="toggle"]:checked {{ background-color: {t['accent']}; color: {t['on_accent']};
     border-color: {t['accent']}; font-weight: 600; }}
 QPushButton[role="toggle"]:checked:hover {{ background-color: {t['accent_hover']}; }}
-QPushButton[role="star"] {{ background: transparent; border: none; padding: 0; font-size: 13pt;
+QPushButton[role="star"] {{ background: transparent; border: none; padding: 0; font-size: {size(13)};
     color: {t['text_faint']}; }}
 QPushButton[role="star"][on="true"] {{ color: {t['warn_fill']}; }}
 QPushButton[role="star"]:hover {{ color: {t['warn']}; }}
@@ -544,19 +631,19 @@ QProgressBar {{ background-color: {t['input']}; border: 1px solid {t['border']};
 QProgressBar::chunk {{ background-color: {t['accent']}; border-radius: 3px; }}
 QStatusBar {{ background-color: {t['window']}; color: {t['text_muted']}; }}
 QCheckBox, QRadioButton {{ spacing: 6px; background: transparent; }}
-QCheckBox::indicator, QGroupBox::indicator {{ width: 14px; height: 14px; border: 1px solid {t['border_strong']};
+QCheckBox::indicator, QGroupBox::indicator {{ width: {px(14)}; height: {px(14)}; border: 1px solid {t['border_strong']};
     border-radius: 3px; background: {t['input']}; }}
 QCheckBox::indicator:hover, QGroupBox::indicator:hover {{ border-color: {t['accent']}; }}
 QCheckBox::indicator:checked, QGroupBox::indicator:checked {{ background: {t['accent']}; border-color: {t['accent']};
     image: url({check_on}); }}
 QCheckBox::indicator:disabled {{ background: {t['panel']}; border-color: {t['border_soft']}; }}
 QCheckBox::indicator:checked:disabled {{ background: {t['border']}; }}
-QRadioButton::indicator {{ width: 14px; height: 14px; border: 1px solid {t['border_strong']}; border-radius: 8px;
+QRadioButton::indicator {{ width: {px(14)}; height: {px(14)}; border: 1px solid {t['border_strong']}; border-radius: {px(8)};
     background: {t['input']}; }}
 QRadioButton::indicator:hover {{ border-color: {t['accent']}; }}
-QRadioButton::indicator:checked {{ border: 4px solid {t['accent']}; background: {t['on_accent']}; width: 8px;
-    height: 8px; }}
-QMenu::indicator {{ width: 14px; height: 14px; left: 4px; }}
+QRadioButton::indicator:checked {{ border: 4px solid {t['accent']}; background: {t['on_accent']}; width: {px(8)};
+    height: {px(8)}; }}
+QMenu::indicator {{ width: {px(14)}; height: {px(14)}; left: 4px; }}
 QMenu::indicator:checked {{ image: url({check_menu}); }}
 """
 
@@ -636,18 +723,21 @@ def _style_plot_now(plot):
 
 
 def style_legend(legend):
-    """A pyqtgraph legend in the theme: its box, border and the text of every entry (pyqtgraph's
-    setLabelTextColor only stores the colour for new entries: existing ones are re-rendered here)."""
+    """A pyqtgraph legend in the theme: its box, border and the text of every entry, at the text
+    size (pyqtgraph's setLabelTextColor only stores the colour for new entries: existing ones are
+    re-rendered here)."""
     import pyqtgraph as pg
     t = tokens()
     legend.setBrush(pg.mkBrush(qcolor(t["plot_legend_bg"])))
     legend.setPen(pg.mkPen(qcolor(t["border"])))
     ink = qcolor(t["text"])
+    size = f"{pt(9):g}pt"                       # (pyqtgraph's own size for a legend's text: 9 pt)
     try:
         legend.setLabelTextColor(ink)
+        legend.opts["labelTextSize"] = size
         for _sample, label in getattr(legend, "items", []):
-            label.setText(label.text, color=ink)
-    except AttributeError:
+            label.setText(label.text, color=ink, size=size)
+    except (AttributeError, KeyError, TypeError):
         pass
 
 
@@ -665,8 +755,22 @@ def _restyle_plots():
 def apply_theme(app: QApplication, mode: str, persist: bool = False):
     """Restyle everything for `mode` now. persist: also save it for the next start (and for the
     other program, which follows within a second)."""
-    mode = mode if mode in MODES else DEFAULT_MODE
-    _state["mode"] = mode
+    apply_appearance(app, mode=mode, persist=persist)
+
+
+def apply_appearance(app: QApplication, mode: str = None, text_scale: float = None, palette: str = None,
+                     persist: bool = False):
+    """Restyle everything now for any of: the theme ('dark' / 'light'), the text size (a scale
+    from TEXT_SIZES) and the palette ('standard' / 'colour-blind'); what isn't given stays.
+    persist: also save the choice (shared with the other program, which follows within a second)."""
+    if mode is not None:
+        _state["mode"] = mode if mode in MODES else DEFAULT_MODE
+    if text_scale is not None:
+        _state["text_scale"] = _valid_scale(text_scale)
+    if palette is not None:
+        _state["palette"] = palette if palette in PALETTE_NAMES else DEFAULT_PALETTE
+    mode = _state["mode"]
+    _apply_font(app)
     app.setPalette(build_palette(mode))
     app.setStyleSheet(build_stylesheet(mode))
     try:
@@ -682,8 +786,30 @@ def apply_theme(app: QApplication, mode: str, persist: bool = False):
         log.debug("qfluentwidgets theme not set", exc_info=True)
     _restyle_plots()
     if persist:
-        save_mode(mode)
+        save_appearance()
     theme_changed().emit(mode)
+
+
+def _valid_scale(value) -> float:
+    try:
+        value = float(value)
+    except (TypeError, ValueError):
+        return DEFAULT_TEXT_SCALE
+    return min((scale for _name, scale in TEXT_SIZES), key=lambda s: abs(s - value))
+
+
+def _apply_font(app: QApplication):
+    """The application's font at the chosen text size (its size at start-up is normal)."""
+    if _state["base_font"] is None:
+        _state["base_font"] = QFont(app.font())
+    base, scale = _state["base_font"], _state["text_scale"]
+    font = QFont(base)
+    if base.pointSizeF() > 0:
+        font.setPointSizeF(base.pointSizeF() * scale)
+    elif base.pixelSize() > 0:
+        font.setPixelSize(max(1, round(base.pixelSize() * scale)))
+    if app.font() != font:
+        app.setFont(font)
 
 
 def toggle(app: QApplication = None):
@@ -692,8 +818,8 @@ def toggle(app: QApplication = None):
 
 # --- The saved choice, shared by both programs -------------------------------------------------
 def appearance_path() -> str:
-    """appearance.json: {"theme": "dark"}. In SINDIE_SETTINGS_DIR when that is set (the tests),
-    otherwise in config/ (per machine, not in git)."""
+    """appearance.json: {"theme": "dark", "text_size": 1.0, "palette": "standard"}. In
+    SINDIE_SETTINGS_DIR when that is set (the tests), otherwise in config/ (per machine, not in git)."""
     from src.core.env import getenv
     folder = getenv("SETTINGS_DIR").strip()
     if not folder:
@@ -701,29 +827,48 @@ def appearance_path() -> str:
     return os.path.join(folder, "appearance.json")
 
 
-def saved_mode() -> str:
+def saved_appearance() -> dict:
+    """The saved choice: {'mode', 'text_scale', 'palette'}, each the default when missing or broken."""
     try:
         with open(appearance_path(), encoding="utf-8") as f:
-            mode = json.load(f).get("theme", DEFAULT_MODE)
-        return mode if mode in MODES else DEFAULT_MODE
-    except (OSError, ValueError, AttributeError):
-        return DEFAULT_MODE
+            saved = json.load(f)
+        if not isinstance(saved, dict):
+            saved = {}
+    except (OSError, ValueError):
+        saved = {}
+    mode, palette = saved.get("theme", DEFAULT_MODE), saved.get("palette", DEFAULT_PALETTE)
+    return {"mode": mode if mode in MODES else DEFAULT_MODE,
+            "text_scale": _valid_scale(saved.get("text_size", DEFAULT_TEXT_SCALE)),
+            "palette": palette if palette in PALETTE_NAMES else DEFAULT_PALETTE}
+
+
+def saved_mode() -> str:
+    return saved_appearance()["mode"]
 
 
 def save_mode(mode: str):
+    save_appearance(mode=mode)
+
+
+def save_appearance(mode: str = None, text_scale: float = None, palette: str = None):
+    """Save the current choice (or the values given) for the next start and the other program."""
     path = appearance_path()
+    choice = {"theme": mode or _state["mode"],
+              "text_size": _valid_scale(text_scale if text_scale is not None else _state["text_scale"]),
+              "palette": palette or _state["palette"]}
     try:
         os.makedirs(os.path.dirname(path), exist_ok=True)
         tmp = path + ".tmp"
         with open(tmp, "w", encoding="utf-8") as f:
-            json.dump({"theme": mode}, f)
+            json.dump(choice, f)
         os.replace(tmp, path)
     except OSError:
-        log.warning("Could not save the theme choice to %s", path, exc_info=True)
+        log.warning("Could not save the appearance choice to %s", path, exc_info=True)
 
 
 class _Follower(QObject):
-    """Checks appearance.json once a second; when the other program switched theme, so does this one."""
+    """Checks appearance.json once a second; when the other program switched theme (or text size,
+    or palette), so does this one."""
 
     def __init__(self, app):
         super().__init__(app)
@@ -745,27 +890,35 @@ class _Follower(QObject):
         if stamp == self._stamp:
             return
         self._stamp = stamp
-        mode = saved_mode()
-        if mode != _state["mode"]:
-            apply_theme(self.app, mode)
+        saved = saved_appearance()
+        if any(saved[k] != _state[k] for k in ("mode", "text_scale", "palette")):
+            apply_appearance(self.app, **saved)
 
 
 def install(app: QApplication, mode: str = None, follow: bool = True):
     """Start-up: the Fusion style (the same widgets on every platform), the interface font, and
-    the saved theme (or `mode`). follow: switch along when the other program changes theme."""
+    the saved theme (or `mode`), text size and palette. follow: switch along when the other
+    program changes them."""
     app.setStyle("Fusion")
     ui = fonts()["ui"]
     if app.font().family() != ui:
         f = QFont(app.font())
         f.setFamily(ui)
         app.setFont(f)
-    apply_theme(app, mode or saved_mode())
+    if _state["base_font"] is None or _state["base_font"].family() != ui:
+        base = QFont(app.font())                        # (normal size: Text size scales from this)
+        if base.pointSizeF() > 0 and _state["text_scale"] != 1:
+            base.setPointSizeF(base.pointSizeF() / _state["text_scale"])
+        _state["base_font"] = base
+    saved = saved_appearance()
+    apply_appearance(app, mode or saved["mode"], saved["text_scale"], saved["palette"])
     if follow and not _alive(_state["sync"]):
         _state["sync"] = _Follower(app)
 
 
 def add_theme_menu(menu, parent=None):
-    """'Theme' entries for a View menu: Dark / Light (checked = current), Ctrl+Shift+T toggles."""
+    """'Theme' entries for a View menu: Dark / Light (checked = current), Ctrl+Shift+T toggles; then
+    'Text size' (Normal ... Largest) and 'Colour-blind safe colours' (on / off)."""
     from PyQt6.QtGui import QAction, QActionGroup, QKeySequence
     sub = menu.addMenu("Theme")
     group = QActionGroup(sub)
@@ -786,19 +939,48 @@ def add_theme_menu(menu, parent=None):
     if parent is not None:
         parent.addAction(toggle_act)          # the shortcut works without opening the menu
 
+    sizes_menu = menu.addMenu("Text size")
+    sizes_menu.setToolTipsVisible(True)
+    sizes = QActionGroup(sizes_menu)
+    sizes.setExclusive(True)
+    size_actions = {}
+    for name, scale in TEXT_SIZES:
+        act = QAction(name if scale == 1 else f"{name} ({round(scale * 100)}%)", sizes_menu, checkable=True)
+        act.setChecked(scale == text_scale())
+        act.triggered.connect(lambda _=False, s=scale: apply_appearance(QApplication.instance(), text_scale=s,
+                                                                         persist=True))
+        sizes.addAction(act)
+        sizes_menu.addAction(act)
+        size_actions[scale] = act
+    colours = QAction("Colour-blind safe colours", menu, checkable=True)
+    colours.setToolTip("Status colours chosen to stay apart for red-green (and blue-yellow) colour blindness")
+    colours.setChecked(palette_name() != DEFAULT_PALETTE)
+    colours.toggled.connect(lambda on: apply_appearance(
+        QApplication.instance(), palette="colour-blind" if on else DEFAULT_PALETTE, persist=True))
+    menu.addAction(colours)
+
     # (owned by the menu, so the connection goes with it: a closure would outlive the window)
-    sub._theme_sync = _MenuSync(actions, sub)
+    sub._theme_sync = _MenuSync(actions, sub, size_actions, colours)
     theme_changed().connect(sub._theme_sync.sync)
     return sub
 
 
 class _MenuSync(QObject):
-    """Ticks the Theme menu's entry for the current theme (it may change from the other program)."""
+    """Ticks the menu's entries for the current theme, text size and palette (they may change from
+    the other program)."""
 
-    def __init__(self, actions: dict, parent):
+    def __init__(self, actions: dict, parent, size_actions: dict = None, colours=None):
         super().__init__(parent)
         self.actions = actions
+        self.size_actions = size_actions or {}
+        self.colours = colours
 
     def sync(self, mode: str):
         for m, a in self.actions.items():
             a.setChecked(m == mode)
+        for scale, a in self.size_actions.items():
+            a.setChecked(scale == text_scale())
+        if self.colours is not None and self.colours.isChecked() != (palette_name() != DEFAULT_PALETTE):
+            self.colours.blockSignals(True)
+            self.colours.setChecked(palette_name() != DEFAULT_PALETTE)
+            self.colours.blockSignals(False)

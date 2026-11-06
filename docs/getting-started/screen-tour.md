@@ -7,7 +7,7 @@ What is where on the HMI's screen, how to arrange its panels, and the keyboard s
 ## The parts of the screen
 
 1. **The menu bar.**
-    - **View**: **Panels** opens and closes each panel; **Layouts** saves the arrangement of the panels under a name and brings it back; **Reset layout** puts every panel back where it starts; **Theme** switches between dark and light; **Open the data viewer** brings it to the front, or starts it; **Capture GUI figure...** saves any panel or the whole window as a figure for a report (F12).
+    - **View**: **Panels** opens and closes each panel; **Layouts** saves the arrangement of the panels under a name and brings it back; **Reset layout** puts every panel back where it starts; **Theme** switches between dark and light; **Text size** and **Colour-blind safe colours** are for anyone who finds the screen hard to read (see [Larger text, and colour-blind safe colours](controls-and-colours.md#larger-text-and-colour-blind-safe-colours)); **Open the data viewer** brings it to the front, or starts it; **Capture GUI figure...** saves any panel or the whole window as a figure for a report (F12).
     - **Config**: the configuration editor, for engineers (it asks for the engineering password). See [Configuration files and the config editor](../engineering/configuration.md).
     - **Help**: this help, the most-used pages, and **About SINDIE**, which shows the version that is running.
 2. **The Automation bar.** Which recipe, scan or optimiser run holds which controls, with a **TAKE CONTROL** button for each. When nothing is running it reads "Automation: nothing holds any controls". See [The Automation bar](../panels/automation-bar.md).

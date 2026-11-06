@@ -9,6 +9,7 @@ from PyQt6.QtCore import QPoint, QRect, QRectF, Qt, pyqtSignal
 from PyQt6.QtWidgets import (QFrame, QGridLayout, QHBoxLayout, QLabel, QPushButton, QScrollArea, QSizePolicy,
                              QToolButton, QVBoxLayout, QWidget)
 
+from src.gui import theme
 from src.gui.style import set_role, set_tone
 
 GAP_PX = 14
@@ -25,7 +26,7 @@ class Faceplate(QFrame):
         self.setObjectName("DiagramFaceplate")
         set_role(self, "card")
         self.setAutoFillBackground(True)
-        self.setFixedWidth(WIDTH_PX)
+        self.setFixedWidth(round(WIDTH_PX * theme.text_scale()))
         self.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Minimum)
         self._mirrors = []
         self._updaters = []
@@ -167,8 +168,9 @@ class Faceplate(QFrame):
 
     def place(self, anchor: QRectF, bounds: QRect):
         """Beside anchor (the part, in the parent's coordinates), inside bounds: all of it, or as much
-        of its contents as fit, scrolled."""
-        w = WIDTH_PX
+        of its contents as fit, scrolled. (Wider with larger text: View > Text size.)"""
+        w = round(WIDTH_PX * theme.text_scale())
+        self.setFixedWidth(w)
         self.ensurePolished()
         lay = self.layout()
         frame, margins = self.contentsMargins(), lay.contentsMargins()

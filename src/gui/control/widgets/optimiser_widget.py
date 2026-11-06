@@ -372,7 +372,7 @@ class ParameterOptimizerWidget(QWidget):
         t = theme.tokens()
         self.hover_text.setHtml(f"<div style='text-align: left; color: {t['text']};'><b>X:</b> {x_val:.2f} {x_unit}<br>"
                                 f"<b>Y:</b> {y_val:.2f} {y_unit}<br><b>I: {z_str}</b><br>"
-                                f"<span style='color: {t['text_muted']}; font-size: 8pt;'>Double-click to set "
+                                f"<span style='color: {t['text_muted']}; font-size: {theme.pt(8):g}pt;'>Double-click to set "
                                 f"point</span></div>")
         self.hover_text.setAnchor((1.0 if x_val > (xs[0] + xs[-1]) / 2 else 0.0,
                                    0.0 if y_val > (ys[0] + ys[-1]) / 2 else 1.0))

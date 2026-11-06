@@ -123,7 +123,7 @@ def restyle(w):
     negative in red; the previous pass (ghost) dashed and faint."""
     t = theme.tokens()
     pos, neg = theme.series_color(0), theme.series_color(7)
-    ghost_pos, ghost_neg = theme.qcolor(t["series"][0]), theme.qcolor(t["series"][7])
+    ghost_pos, ghost_neg = theme.series_color(0), theme.series_color(7)
     ghost_pos.setAlpha(110)
     ghost_neg.setAlpha(110)
     w.curve_ghost_pos.setPen(pg.mkPen(ghost_pos, width=1, style=Qt.PenStyle.DashLine))

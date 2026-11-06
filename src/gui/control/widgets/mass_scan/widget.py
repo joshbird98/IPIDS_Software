@@ -566,7 +566,7 @@ class PrecisionMassScannerWidget(QWidget):
             if peak.labelled:
                 ink = theme.tokens()[MATCH_INK.get(peak.kind, "text_faint")]
                 where = f"{amps[row]:.2f} A" if self.x_unit == "amps" else f"{peak.amu:.1f}"
-                label = pg.TextItem(html=f"<div style='text-align: center; color: {ink}; font-size: 10pt; "
+                label = pg.TextItem(html=f"<div style='text-align: center; color: {ink}; font-size: {theme.pt(10):g}pt; "
                                          f"font-weight: bold;'>{peak.match_html}<br>({where})</div>",
                                     anchor=(0.5, 1.2))
                 label.setPos(float(xs[row]), float(self._ty(peak.current)))

@@ -114,7 +114,8 @@ class View:
     (rings); None draws them straight away."""
 
     def __init__(self, painter: QPainter, transform: QTransform, scale: float, hover: str, selected: str,
-                 text_scale: float, legend_open: bool = True, zoom: float = 1.0, text_ops: list = None):
+                 text_scale: float, legend_open: bool = True, zoom: float = 1.0, text_ops: list = None,
+                 grow: float = 1.0):
         self.p = painter
         self.t = theme.tokens()
         self.transform = transform
@@ -124,6 +125,7 @@ class View:
         self.text_scale = text_scale
         self.legend_open = legend_open
         self.zoom = zoom
+        self.grow = grow        # how much larger the readable size is for larger text (View > Text size)
         self.text_ops = text_ops
         self.rings = []         # (screen rect, corner radius px, 'hover' or 'selected')
         self.placed = []        # (screen rect, text)
@@ -166,9 +168,9 @@ class View:
         return inverse.map(point)
 
     def units(self, px: float) -> float:
-        """A gap or a width drawn px screen pixels wide (shrinking when zoomed out), in the drawing's
-        units."""
-        return px * self.zoom / self.scale
+        """A gap or a width drawn px screen pixels wide (shrinking when zoomed out, growing with larger
+        text: the room round a label grows with it), in the drawing's units."""
+        return px * self.zoom * self.grow / self.scale
 
     def screen_units(self, px: float) -> float:
         """A length measured on the screen as it is (text's), in the drawing's units."""
@@ -418,7 +420,9 @@ class DiagramCanvas(QWidget):
         self.setAttribute(Qt.WidgetAttribute.WA_OpaquePaintEvent)
 
     def sizeHint(self):
-        return QSize(self.readable)
+        """The readable size (larger with larger text: the labels need room to grow)."""
+        grow = self._knee() / self._scale_for(self.readable.width(), self.readable.height())
+        return QSize(round(self.readable.width() * grow), round(self.readable.height() * grow))
 
     def minimumSizeHint(self):
         return QSize(SMALLEST)
@@ -431,9 +435,33 @@ class DiagramCanvas(QWidget):
     def scale(self) -> float:
         return self._scale_for(self.width(), self.height())
 
+    def _normal_text(self, scale: float) -> float:
+        """The text's size at a scale, at normal text size: a little smaller or larger with it."""
+        return max(0.85, min(1.2, (scale / self.design_scale) ** 0.5))
+
+    def _knee(self) -> float:
+        """The scale the drawing is at its readable size at: the READABLE size's at normal text.
+        Larger text (View > Text size) needs a larger drawing - the labels keep the room they have
+        at the readable size, so the drawing must be at least as much larger as the text."""
+        knee = self._scale_for(self.readable.width(), self.readable.height())
+        factor = theme.text_scale()
+        if factor <= 1.0:
+            return knee
+        most = self._normal_text(knee) / knee         # text to drawing: the most the labels allow
+        lo, hi = knee, knee * factor * factor * 4
+        for _ in range(40):
+            mid = (lo + hi) / 2
+            if factor * self._normal_text(mid) / mid > most:
+                lo = mid
+            else:
+                hi = mid
+        # (and a little more: a font's lines don't grow exactly with its size - a tall one, such
+        # as a CJK font, came a pixel too close to a line at 150 %)
+        return hi * (1 + 0.1 * (factor - 1))
+
     def zoom(self) -> float:
         """1 at or above the readable size; below it, how far the whole drawing is shrunk."""
-        return min(1.0, self.scale() / self._scale_for(self.readable.width(), self.readable.height()))
+        return min(1.0, self.scale() / self._knee())
 
     def transform(self) -> QTransform:
         s = self.scale()
@@ -444,10 +472,8 @@ class DiagramCanvas(QWidget):
 
     def text_scale(self) -> float:
         """The text's size: a little smaller or larger with the panel down to the readable size,
-        then shrinking with the drawing."""
-        knee = self._scale_for(self.readable.width(), self.readable.height())
-        base = max(0.85, min(1.2, (max(self.scale(), knee) / self.design_scale) ** 0.5))
-        return base * self.zoom()
+        then shrinking with the drawing; all of it larger with View > Text size."""
+        return theme.text_scale() * self._normal_text(max(self.scale(), self._knee())) * self.zoom()
 
     def to_units(self, pos) -> QPointF:
         inverse, ok = self.transform().inverted()
@@ -473,8 +499,9 @@ class DiagramCanvas(QWidget):
         p.setRenderHint(QPainter.RenderHint.TextAntialiasing)
         transform = self.transform()
         p.setTransform(transform)
+        grow = self._knee() / self._scale_for(self.readable.width(), self.readable.height())
         return View(p, transform, self.scale(), self.hover, self.selected, self.text_scale(), self.legend_open,
-                    self.zoom(), text_ops)
+                    self.zoom(), text_ops, grow)
 
     def paint_on(self, p: QPainter) -> View:
         """The whole drawing, straight on to p (an image, for the layout check)."""
@@ -525,8 +552,9 @@ class DiagramCanvas(QWidget):
             self.update(changed)
 
     def invalidate(self):
-        """Draw it all again (the theme changed)."""
+        """Draw it all again (the theme, the text size or the palette changed)."""
         self._pending = self._last = self._painted = self._layer = None
+        self.updateGeometry()                   # (its readable size grows with the text)
         self.update()
 
     def paintEvent(self, event):

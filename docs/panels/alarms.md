@@ -42,6 +42,8 @@ Unacknowledged alarms come first, then cleared-unacknowledged ones, then acknowl
 | **MEDIUM** | yellow | Sounds, quieter. |
 | **LOW** | blue | Never sounds: listed only. |
 
+With **View > Colour-blind safe colours**, critical is vermilion and the three warm colours differ in lightness too (critical darkest, medium lightest), so they stay apart for colour-blind eyes.
+
 Each priority that sounds has a sound of its own.
 
 ### States

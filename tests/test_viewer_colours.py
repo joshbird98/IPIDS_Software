@@ -63,6 +63,23 @@ def test_a_ninth_line_in_a_lane_is_dashed(app):
     assert first.style() == Qt.PenStyle.SolidLine and ninth.style() == Qt.PenStyle.DashLine
 
 
+def test_with_colour_blind_safe_colours_a_seventh_line_is_dashed(app, tmp_path, monkeypatch):
+    """The safe palette has six line colours, apart for every two of them: past six, dashes."""
+    from src.gui import theme
+    monkeypatch.setenv("SINDIE_SETTINGS_DIR", str(tmp_path))
+    before = theme.palette_name()
+    theme.apply_appearance(app, palette="colour-blind")
+    try:
+        lanes = Lanes(cfg(*[f"t{i:02d}.v" for i in range(8)]))
+        lanes.assign()
+        first, sixth, seventh = lanes.pen("t00.v"), lanes.pen("t05.v"), lanes.pen("t06.v")
+        assert sixth.style() == Qt.PenStyle.SolidLine and seventh.style() == Qt.PenStyle.DashLine
+        assert first.color() == seventh.color()
+        assert first.color().name().upper() == theme.COLOUR_BLIND[theme.current_mode()]["series"][0]
+    finally:
+        theme.apply_appearance(app, palette=before)
+
+
 def test_event_kinds_and_their_colours(app):
     from src.gui import theme
     from src.gui.data_viewer.event_overlay import event_colour, kind_of, priority

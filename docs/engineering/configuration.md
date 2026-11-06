@@ -21,7 +21,7 @@ The configuration files in `config/` and what reads them, the tag registry built
 | `recipes/` | the recipes (in git) | the HMI's recipe panel and builder, `service_sequencer` |
 | `recipe_templates/` | the recipe builder's templates (in git): start-up, shutdowns, mass scan, degauss, HV conditioning | the recipe builder's **New** |
 | `recipe_ai.json` | the recipe builder's drafting: the model, its time limits (below) | the recipe builder, each time it opens |
-| `appearance.json`, `workspace_profiles.json`, `plot_settings.json` | the theme, and the data viewer's profiles, per machine (nothing reads `plot_settings.json` now) | the HMI and the data viewer |
+| `appearance.json`, `workspace_profiles.json`, `plot_settings.json` | the theme, text size and colour-blind safe colours (View menu), and the data viewer's profiles, per machine (nothing reads `plot_settings.json` now) | the HMI and the data viewer |
 | `backups/` | previous versions of files changed in the config editor, and of recipes saved in the recipe builder (`backups/recipes/`) | the config editor's **History...** |
 
 The per-machine files and `backups/` are not in git. The services read their files when they start, so a change made outside the config editor needs the service restarted, except `readback_tolerance.json`.

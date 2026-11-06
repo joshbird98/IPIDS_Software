@@ -98,7 +98,7 @@ The favourite stars, labels, multipliers, scales and lanes are part of the chann
 
 The lanes are drawn top to bottom from **Lane 1** to **Lane 4**. A lane with no channels isn't drawn, and the others share its space.
 
-Each lane's channels take the eight line colours in turn; the colours are checked to be told apart by colour-blind readers. A channel keeps its colour while it stays in its lane, so adding or removing another channel doesn't change it; a channel moved to another lane takes the first free colour there. A ninth line in one lane repeats the colours dashed, and a seventeenth dotted. The **Values** section shows each channel's colour next to its name. The colours differ slightly between the dark and light themes.
+Each lane's channels take the eight line colours in turn. Neighbouring colours in the list are checked to be told apart by colour-blind readers, but with more than two lines in a lane some can look alike to them; **View > Colour-blind safe colours** uses six colours that are apart for every pair instead (see [Larger text, and colour-blind safe colours](../getting-started/controls-and-colours.md#larger-text-and-colour-blind-safe-colours)). A channel keeps its colour while it stays in its lane, so adding or removing another channel doesn't change it; a channel moved to another lane takes the first free colour there. A ninth line in one lane (a seventh with the safe colours) repeats the colours dashed, and a seventeenth (a thirteenth) dotted. The **Values** section shows each channel's colour next to its name. The colours differ slightly between the dark and light themes.
 
 **View > Line width** draws the lines **Thin (fastest)**, one pixel wide (as the data viewer starts the first time), **Medium** or **Thick**. A line wider than a pixel takes Qt about ten times as long to draw, so the wider lines are drawn from fewer points (3000 a line rather than 10000, still about two a pixel across a laptop screen). With a few channels you won't notice; with many, panning and zooming are less smooth. The choice is kept for next time on this PC.
 
@@ -155,7 +155,7 @@ The data viewer draws events from the event database (`data/events.db`) as dashe
 | **Readback Tolerance** | A readback going out of tolerance of its setpoint, and coming back. |
 | **Operator Commands (audit)** | Every command sent by the HMI, a recipe, the optimiser or a scan, with the service's answer. There are a great many of these. |
 
-Each kind has its own colour in the theme: active faults red, cleared faults blue, watchdog events orange, phase changes green, tolerance events amber and commands grey. A user marker keeps the colour it was given, drawn darker or lighter where needed to show on the plot background. Alarms, configuration changes and general messages from the services aren't drawn.
+Each kind has its own colour in the theme: active faults red, cleared faults blue, watchdog events orange, phase changes green, tolerance events amber and commands grey (with **View > Colour-blind safe colours**: vermilion, blue, purple, teal, yellow and grey). A user marker keeps the colour it was given, drawn darker or lighter where needed to show on the plot background. Alarms, configuration changes and general messages from the services aren't drawn.
 
 An export includes the events of the kinds ticked here: see [Exporting data and figures](exporting.md).
 

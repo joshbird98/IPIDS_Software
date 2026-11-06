@@ -80,9 +80,9 @@ class LanesMixin:
             t = theme.tokens()
             prompt_text = (
                 "<div style='text-align: center;'>"
-                f"<span style='color: {t['text_muted']}; font-size: 18pt; font-weight: bold;'>"
+                f"<span style='color: {t['text_muted']}; font-size: {theme.pt(18):g}pt; font-weight: bold;'>"
                 "No channels selected</span><br>"
-                f"<span style='color: {t['text_faint']}; font-size: 12pt;'>"
+                f"<span style='color: {t['text_faint']}; font-size: {theme.pt(12):g}pt;'>"
                 "Choose some with Configure channels in the sidebar.</span>"
                 "</div>"
             )

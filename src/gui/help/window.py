@@ -90,13 +90,14 @@ class HelpBrowser(QTextBrowser):
             stamp = os.path.getmtime(path)
         except OSError:
             stamp = 0
-        key = (path, stamp, theme.current_mode(), self.base_pt)
+        key = (path, stamp, theme.current_mode(), theme.palette_name(), self.base_pt, theme.text_scale())
         page = self._cache.get(key)
         if page is None:
             with open(path, "r", encoding="utf-8") as f:
                 text = f.read()
             fonts = theme.fonts()
-            page = render.to_html(text, theme.tokens(), fonts["ui"], fonts["mono"], self.base_pt)
+            # (its own A- / A+ size, at View > Text size)
+            page = render.to_html(text, theme.tokens(), fonts["ui"], fonts["mono"], theme.pt(self.base_pt))
             self._cache[key] = page
         return page
 

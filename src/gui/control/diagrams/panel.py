@@ -80,8 +80,11 @@ class DiagramPanel(QWidget):
                 self.faceplate = None
 
     def _restyle(self, *_):
+        """The theme, the text size or the palette changed: draw it all again (and the open card
+        again in its place: larger text makes it wider)."""
         try:
             self.canvas.invalidate()
+            self._place_faceplate()
         except RuntimeError:
             pass
 

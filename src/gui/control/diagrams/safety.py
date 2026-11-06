@@ -387,7 +387,7 @@ class SafetyChainDiagram(DiagramPanel):
             v.text(x, y + 22, text, "note", HC | T)
         # The power cabinet
         v.text(CABINET.center().x(), CABINET.bottom() + 8, "Power cabinet B", "name", HC | T)
-        v.text(CABINET.left() + 22, 935, "L1", "note", R | VC)
+        v.text(CABINET.left() + 19, 935, "L1", "note", R | VC)        # (clear of the contactor, at +20)
         v.block(CABINET.left() + 310, 935, [[("name-b", "Every high-voltage supply")],
                                             [("note", "switched mains")]], L | VC)
 

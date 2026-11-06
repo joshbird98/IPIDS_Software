@@ -22,6 +22,15 @@ Alarms have their own colours, by priority: see [Alarms](../panels/alarms.md).
 
 Both programs have a dark theme (the default) and a light one. **View > Theme**, or Ctrl+Shift+T, switches while they run, and the other program follows within a second. The colours mean the same in both.
 
+### Larger text, and colour-blind safe colours
+
+Two more choices in the **View** menu of both programs are for anyone who finds the screen hard to read. Both are off until someone chooses them, and off nothing looks different. Like the theme, the other program follows within a second and the choice is remembered on that computer.
+
+- **View > Text size**: **Normal**, **Large** (115%), **Larger** (130%) or **Largest** (150%). All the text grows: in the panels, the help and the machine diagrams. A panel whose contents no longer fit scrolls, as it does when it is made small. A diagram needs a larger panel to show its labels at the larger size; in a smaller one it shrinks to fit as usual, and the card a part opens is always at the larger size.
+- **View > Colour-blind safe colours**: about 1 man in 12, and 1 woman in 200, has red-green colour blindness. To most of them the standard colours are partly alike: solid green (on) and red (a fault) look the same olive, blue (automatic) and violet (a sequence) the same blue, and amber and red come close. The safe colours keep every meaning apart for them, and for the rarer blue-yellow colour blindness, in both themes: on is teal-green, a fault vermilion, a warning yellow, automatic blue and a sequence purple; the alarm priorities differ in lightness as well as colour; and the data viewer's lines use six colours that are apart for every pair, repeating dashed from the seventh line in a lane.
+
+Either way, colour is not the only sign: chips and buttons say what they show in words, a diagram labels a part that isn't healthy with a chip, and its switches are drawn open or made.
+
 ## Switching an output on takes two clicks
 
 ![A source ENABLE button after its first click, waiting for the second](../images/arming.png)
