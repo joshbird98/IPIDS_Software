@@ -81,7 +81,7 @@ class VacuumDiagram(DiagramPanel):
     ORIGIN = QPointF(-70, 0)
     SIZE = QSizeF(1790, 1340)
     DESIGN_SCALE = 0.55
-    MINIMUM = QSize(860, 660)
+    READABLE = QSize(860, 660)
 
     def __init__(self, panels: dict, show_panel=None):
         super().__init__(panels, show_panel)

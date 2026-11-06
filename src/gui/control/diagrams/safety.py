@@ -74,7 +74,7 @@ class SafetyChainDiagram(DiagramPanel):
     ORIGIN = QPointF(-60, 0)
     SIZE = QSizeF(1600, 1265)
     DESIGN_SCALE = 0.55
-    MINIMUM = QSize(980, 760)
+    READABLE = QSize(980, 760)
 
     def __init__(self, panels: dict, show_panel=None):
         super().__init__(panels, show_panel)
@@ -207,7 +207,7 @@ class SafetyChainDiagram(DiagramPanel):
         p.drawPath(path)
         inner = v.pen(v.c("panel"), 1.0)
         inner.setCosmetic(False)
-        inner.setWidthF(30 - 2.4 / v.scale)
+        inner.setWidthF(30 - v.units(2.4))
         p.setPen(inner)
         p.drawPath(path)
         p.restore()

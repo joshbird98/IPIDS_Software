@@ -35,7 +35,7 @@ def tubes(v, runs):
             pen = v.pen(v.c("border_strong") if layer == "wall" else bore or v.c("card_alt"))
             pen.setCosmetic(False)
             pen.setCapStyle(Qt.PenCapStyle.FlatCap)
-            pen.setWidthF(width if layer == "wall" else max(width - 2.0 * 2.2 / v.scale, width * 0.45))
+            pen.setWidthF(width if layer == "wall" else max(width - v.units(4.4), width * 0.45))
             p.setPen(pen)
             p.drawPath(path)
     p.restore()
@@ -66,19 +66,22 @@ def _pump_body(v, c: QPointF, r: float, tone):
 
 
 def turbo(v, c: QPointF, r: float, tone, spin: float = None):
-    """A turbo pump. spin: its speed as a fraction of full (0..1) - an arc around it; None: not shown."""
+    """A turbo pump. spin: its speed as a fraction of full (0..1) - an arc around it, in steps of a
+    hundredth (a speed wavering by a hertz at full speed doesn't redraw the machine: canvas.py);
+    None: not shown."""
     p = v.p
     p.save()
     _pump_body(v, c, r, tone)
     p.setBrush(Qt.BrushStyle.NoBrush)
     p.drawEllipse(c, 0.41 * r, 0.41 * r)
     p.drawEllipse(c, 0.31 * r, 0.31 * r)
-    if spin is not None and spin > 0.005:
+    hundredths = round(100 * min(1.0, spin)) if spin is not None else 0
+    if hundredths > 0:
         _fill, line_c, _ink = v.tone(tone)
         arc = v.pen(line_c, 3.0)
         p.setPen(arc)
-        rr = r + 7 / v.scale
-        p.drawArc(QRectF(c.x() - rr, c.y() - rr, 2 * rr, 2 * rr), 90 * 16, int(-360 * 16 * min(1.0, spin)))
+        rr = r + v.units(7)
+        p.drawArc(QRectF(c.x() - rr, c.y() - rr, 2 * rr, 2 * rr), 90 * 16, -360 * 16 * hundredths // 100)
     p.restore()
 
 
@@ -412,7 +415,7 @@ def contact(v, c: QPointF, closed, tone, vertical: bool = False, actuator: str =
     lift = 0 if closed else -half * 0.75                 # the blade's free end, raised when open
     tip = _pt(c, vertical, half * 0.9, lift)
     p.setBrush(QColor(line_c))
-    r = 3.2 / v.scale
+    r = v.units(3.2)
     p.drawEllipse(a, r, r)
     p.drawEllipse(b, r, r)
     p.drawLine(a, tip)

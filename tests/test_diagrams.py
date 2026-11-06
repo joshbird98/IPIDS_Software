@@ -8,7 +8,8 @@ from PyQt6.QtWidgets import QApplication, QPushButton
 
 from src.gui.style import set_ink, set_tone
 
-SIZES = ("minimum", QSize(1280, 820), QSize(1700, 1000))
+# Each diagram's READABLE size, smaller (as parts of it: the drawing shrinks to fit), and larger
+SIZES = ("readable", 0.7, 0.45, QSize(1280, 820), QSize(1700, 1000))
 
 
 class FakeCmd:
@@ -174,8 +175,8 @@ def test_each_diagram_draws_with_no_data_and_with_the_machine_running(app, panel
 @pytest.mark.parametrize("kind", ["vacuum", "beam", "safety", "tess"])
 @pytest.mark.parametrize("texts", ["normal", "longest"])
 def test_no_label_overlaps_another_a_part_a_pipe_or_the_edge(app, panels, kind, texts):
-    """At the smallest size the drawing is shown at, a usual one and a large one, with the
-    machine running and with every label at the longest it can be."""
+    """At the readable size and smaller (the drawing shrinks to fit), a usual size and a large one,
+    with the machine running and with every label at the longest it can be."""
     from src.gui.control.diagrams.canvas import layout_problems
     d = make(kind, panels)
     feed(panels, d, live(True))
@@ -183,8 +184,26 @@ def test_no_label_overlaps_another_a_part_a_pipe_or_the_edge(app, panels, kind, 
         busy(panels)
         d.update_telemetry(live(True))
     for size in SIZES:
-        size = d.MINIMUM if size == "minimum" else size
+        size = d.READABLE if size == "readable" else d.READABLE * size if isinstance(size, float) else size
         assert layout_problems(d.canvas, size) == [], (kind, size)
+    d.deleteLater()
+
+
+@pytest.mark.parametrize("kind", ["vacuum", "beam", "safety", "tess"])
+def test_a_small_panel_shrinks_the_drawing_to_fit_rather_than_cropping_it(app, panels, kind):
+    """Josh's laptop (6 Nov): a diagram cut off in a small panel. Below its readable size the whole
+    drawing shrinks, so every part is in view; the panel scrolls only below canvas.SMALLEST."""
+    from PyQt6.QtCore import QRectF
+    from src.gui.control.diagrams.canvas import SMALLEST
+    d = make(kind, panels)
+    feed(panels, d, live(True))
+    assert d.minimumSizeHint().width() <= SMALLEST.width() and d.minimumSizeHint().height() <= SMALLEST.height()
+    for size in (d.READABLE, d.READABLE * 0.5, QSize(d.READABLE.width(), SMALLEST.height()), SMALLEST):
+        d.canvas.resize(size)
+        seen = QRectF(d.canvas.rect())
+        assert d.canvas.zoom() == pytest.approx(1.0) if size == d.READABLE else d.canvas.zoom() < 1
+        for part in d.parts():
+            assert seen.contains(d.canvas.box_on_screen(part.key)), (kind, size, part.key)
     d.deleteLater()
 
 
@@ -395,6 +414,117 @@ def test_clicking_parts_opens_and_closes_faceplates_and_folds_the_key(app, panel
     assert canvas.legend_open
     click(canvas.legend_box.center())
     assert not canvas.legend_open
+    d.deleteLater()
+
+
+@pytest.mark.parametrize("kind", ["vacuum", "beam", "safety", "tess"])
+def test_opening_a_faceplate_flashes_up_no_window_and_shows_it_in_its_place(app, panels, kind):
+    """Josh saw a small empty window flicker before a faceplate appeared (6 Nov): its controls were
+    shown before they were in the card, and a widget shown with no parent is a window of its own (on
+    Windows, with its title bar). And the card is placed before it is shown, never seen elsewhere."""
+    from PyQt6.QtCore import QEvent, QObject
+    from PyQt6.QtWidgets import QWidget
+    from src.gui.control.diagrams.faceplate import Faceplate
+
+    class Spy(QObject):
+        def __init__(self):
+            super().__init__()
+            self.windows, self.shown_at = [], {}
+
+        def eventFilter(self, obj, event):
+            if event.type() == QEvent.Type.Show and isinstance(obj, QWidget):
+                if obj.isWindow():
+                    self.windows.append(type(obj).__name__)
+                if isinstance(obj, Faceplate):
+                    self.shown_at[obj.key] = obj.geometry()
+            return False
+
+    d = make(kind, panels)
+    d.show()
+    feed(panels, d, live(True))
+    app.processEvents()
+    spy = Spy()
+    app.installEventFilter(spy)
+    try:
+        keys = [part.key for part in d.parts() if part.clickable]
+        assert keys
+        for key in keys:
+            d.open_faceplate(key)
+            app.processEvents()
+            if d.faceplate is not None:
+                assert spy.shown_at.get(key) == d.faceplate.geometry(), key
+    finally:
+        app.removeEventFilter(spy)
+    assert spy.windows == []
+    assert len(spy.shown_at) >= len(keys) // 2          # (most parts have a faceplate)
+    d.open_faceplate("")
+    d.close()
+    d.deleteLater()
+
+
+def test_a_refresh_repaints_only_what_changed(app, panels):
+    """The panels refresh ten times a second: the same telemetry repaints nothing, a reading that
+    changed only its own text (the machine drawn once, kept), and a valve that moved all of it."""
+    from PyQt6.QtCore import QEvent, QObject
+
+    class Paints(QObject):
+        def __init__(self):
+            super().__init__()
+            self.regions = []
+
+        def eventFilter(self, obj, event):
+            if event.type() == QEvent.Type.Paint:
+                self.regions.append(event.region().boundingRect())
+            return False
+
+    d = make("vacuum", panels)
+    d.show()
+    data = live(True)
+    feed(panels, d, data)
+    app.processEvents()
+    paints = Paints()
+    d.canvas.installEventFilter(paints)
+    whole = d.canvas.rect()
+
+    feed(panels, d, data)
+    app.processEvents()
+    assert paints.regions == []                         # nothing new: nothing repainted
+
+    layer = d.canvas._layer
+    data = dict(data, **{"ion_beam.beamline.vacuum_gauge_3.rb_pressure": 5.2e-8})
+    feed(panels, d, data)
+    app.processEvents()
+    assert paints.regions and all(r.width() * r.height() < whole.width() * whole.height() / 20 for r in paints.regions)
+    assert d.canvas._layer is layer                     # the machine wasn't drawn again
+
+    paints.regions.clear()
+    data = dict(data, **{"ion_beam.source.chamber.stat_gv_open": 0.0, "ion_beam.source.chamber.stat_gv_closed": 1.0})
+    feed(panels, d, data)
+    app.processEvents()
+    assert whole in paints.regions and d.canvas._layer is not layer
+    d.canvas.removeEventFilter(paints)
+    d.close()
+    d.deleteLater()
+
+
+def test_a_faceplate_taller_than_its_panel_scrolls_inside_it(app, panels):
+    """The PLC's card is taller than a laptop's Safety Chain panel: it stays inside the panel, its
+    title and its link to the panel showing, and its contents scroll between them."""
+    d = make("safety", panels)
+    d.show()
+    feed(panels, d, live(True))
+    for size, scrolls in ((QSize(1280, 820), False), (QSize(700, 330), True)):
+        d.resize(size)
+        app.processEvents()
+        d.open_faceplate("plc")
+        app.processEvents()
+        plate = d.faceplate
+        assert d.rect().contains(plate.geometry()), size
+        assert (plate.scroll.verticalScrollBar().maximum() > 0) == scrolls, size
+        links = [b for b in plate.findChildren(QPushButton) if b.property("role") == "link"]
+        assert links and all(plate.rect().contains(b.geometry()) for b in links)
+        d.open_faceplate("")
+    d.close()
     d.deleteLater()
 
 

@@ -23,7 +23,7 @@ The outline says how much the software knows:
 - **Dashed**: no live reading now (a service isn't sending data, or a device isn't answering).
 - **Dotted**: the software can't read this part at all, such as most of the pumps, GV1, GV3, GV4, the hand valves, the doors and the ESOs. The diagram shows no state for it, so check it at the machine.
 
-Point at a part to see its name, and click it to open its faceplate. The key in the corner explains the symbols; click its title to fold it away, and again to open it. The text stays readable as the panel is made smaller; below the smallest size the drawing can be shown at, the panel scrolls.
+Point at a part to see its name, and click it to open its faceplate. The key in the corner explains the symbols; click its title to fold it away, and again to open it. A diagram always fits its panel. As the panel is made smaller its text shrinks only a little, down to the size each diagram is drawn readable at; smaller than that, the whole drawing shrinks together, like a picture zoomed out, so nothing is cut off. To read it at full size, make the panel larger or drag it out as a floating panel. Only a very small panel scrolls.
 
 ## Faceplates
 

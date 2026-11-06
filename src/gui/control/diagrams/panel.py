@@ -4,6 +4,9 @@ with the telemetry, and the faceplate of the part last clicked (faceplate.py).
 A diagram is drawn from the panels it pictures (it is given them: `panels`), so it shows what they
 show and its controls are theirs. The HMI refreshes those panels while a diagram of them is in view,
 even when their own docks are hidden (control_main.ControlMainWindow._ui_update_loop).
+
+READABLE is the smallest panel a diagram's text is at its smallest readable size in. Smaller, the
+whole drawing shrinks together to fit (canvas.py): the panel scrolls only below canvas.SMALLEST.
 """
 import logging
 
@@ -22,7 +25,7 @@ class DiagramPanel(QWidget):
     ORIGIN = QPointF(0, 0)          # the drawing's top left corner, in its own units
     SIZE = QSizeF(1000, 700)        # ... and its size
     DESIGN_SCALE = 0.55             # screen px per unit the labels were placed for
-    MINIMUM = QSize(640, 460)
+    READABLE = QSize(640, 460)      # below this, the drawing shrinks to fit
 
     def __init__(self, panels: dict, show_panel=None):
         """panels: the HMI's panels this diagram pictures, by name. show_panel(name): bring that
@@ -34,7 +37,7 @@ class DiagramPanel(QWidget):
         self.drawing_size = self.SIZE
         self.drawing_origin = self.ORIGIN
         self.faceplate = None
-        self.canvas = DiagramCanvas(self, self.DESIGN_SCALE, self.MINIMUM, self)
+        self.canvas = DiagramCanvas(self, self.DESIGN_SCALE, self.READABLE, self)
         self.canvas.clicked.connect(self.open_faceplate)
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -66,16 +69,19 @@ class DiagramPanel(QWidget):
             self.read(data)
         except Exception:       # one bad value must not freeze the panel
             log.exception("%s: reading the telemetry failed", type(self).__name__)
-        self.canvas.update()
+        self.canvas.refresh()
         if self.faceplate is not None:
             try:
+                where = self.faceplate.geometry()
                 self.faceplate.sync()
+                if self.faceplate.geometry() != where:      # (taller or shorter: its shadow moves too)
+                    self.canvas.update()
             except RuntimeError:            # (deleted under us)
                 self.faceplate = None
 
     def _restyle(self, *_):
         try:
-            self.canvas.update()
+            self.canvas.invalidate()
         except RuntimeError:
             pass
 
@@ -96,8 +102,8 @@ class DiagramPanel(QWidget):
                 self.faceplate = plate
                 self.canvas.selected = key
                 plate.sync()
+                self._place_faceplate()     # (placed, then shown: never seen anywhere else first)
                 plate.show()
-                self._place_faceplate()
         self.canvas.update()
 
     def _faceplate_closed(self):

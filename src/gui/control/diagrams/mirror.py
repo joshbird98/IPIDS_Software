@@ -6,6 +6,9 @@ So a diagram has no rules of its own about what can be done: the gate valve open
 only when the Vacuum System panel's OPEN could be pressed, switching a supply on takes the same two
 clicks (arming.py), a value typed is sent and checked as from the panel (setpoint_box.py), and the
 command goes the same way. sync() is called on every refresh (10 times a second) and after a press.
+
+A mirror follows its source's hidden or shown only once it is in its card: a widget shown before it
+has a parent is a window of its own, which flashes up on the screen (on Windows, with its title bar).
 """
 from PyQt6.QtWidgets import QLabel, QPushButton
 
@@ -36,7 +39,7 @@ class MirrorLabel(QLabel):
         _copy_props(s, self)
         if self.toolTip() != s.toolTip():
             self.setToolTip(s.toolTip())
-        if self.isHidden() != s.isHidden():
+        if self.parentWidget() is not None and self.isHidden() != s.isHidden():
             self.setHidden(s.isHidden())
 
 
@@ -68,7 +71,7 @@ class MirrorButton(QPushButton):
             self.setStyleSheet(s.styleSheet())
         if self.toolTip() != s.toolTip():
             self.setToolTip(s.toolTip())
-        if self.isHidden() != s.isHidden():
+        if self.parentWidget() is not None and self.isHidden() != s.isHidden():
             self.setHidden(s.isHidden())
 
 

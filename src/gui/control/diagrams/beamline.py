@@ -55,7 +55,7 @@ class BeamPathDiagram(DiagramPanel):
     ORIGIN = QPointF(-40, 0)
     SIZE = QSizeF(1950, 1235)
     DESIGN_SCALE = 0.55
-    MINIMUM = QSize(900, 600)
+    READABLE = QSize(900, 600)
 
     def __init__(self, panels: dict, show_panel=None):
         super().__init__(panels, show_panel)

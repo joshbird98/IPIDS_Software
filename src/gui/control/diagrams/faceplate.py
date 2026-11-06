@@ -1,16 +1,19 @@
 """A faceplate: the card that opens over a diagram when a part is clicked, with what that part shows
 and the controls it has (mirrors of its panel's: mirror.py). It sits beside the part, inside the
-panel; the cross, a click on empty space, or another part closes it.
+panel; the cross, a click on empty space, or another part closes it. In a panel too short for all
+of it, its contents scroll between its title and its link to the panel. Its shadow is drawn by the
+canvas under it (DiagramCanvas._shadow): a blur effect on the card would be worked out again on
+every refresh of its readouts.
 """
 from PyQt6.QtCore import QPoint, QRect, QRectF, Qt, pyqtSignal
-from PyQt6.QtGui import QColor
-from PyQt6.QtWidgets import (QFrame, QGraphicsDropShadowEffect, QGridLayout, QHBoxLayout, QLabel, QPushButton,
-                             QSizePolicy, QToolButton, QVBoxLayout, QWidget)
+from PyQt6.QtWidgets import (QFrame, QGridLayout, QHBoxLayout, QLabel, QPushButton, QScrollArea, QSizePolicy,
+                             QToolButton, QVBoxLayout, QWidget)
 
 from src.gui.style import set_role, set_tone
 
 GAP_PX = 14
 WIDTH_PX = 330
+LEAST_CONTENTS_PX = 64      # of its contents shown, however short the panel
 
 
 class Faceplate(QFrame):
@@ -24,13 +27,9 @@ class Faceplate(QFrame):
         self.setAutoFillBackground(True)
         self.setFixedWidth(WIDTH_PX)
         self.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Minimum)
-        shadow = QGraphicsDropShadowEffect(self)
-        shadow.setBlurRadius(22)
-        shadow.setOffset(0, 4)
-        shadow.setColor(QColor(0, 0, 0, 110))
-        self.setGraphicsEffect(shadow)
         self._mirrors = []
         self._updaters = []
+        self._placed = None         # (anchor, bounds, the contents' width and height) when last placed
 
         outer = QVBoxLayout(self)
         outer.setContentsMargins(12, 8, 8, 12)
@@ -56,11 +55,23 @@ class Faceplate(QFrame):
         close.clicked.connect(self.close_plate)
         head.addWidget(close, 0, Qt.AlignmentFlag.AlignTop)
         outer.addLayout(head)
+        # The contents (rows, notes): scrolled when the panel is too short for them (place())
+        body = QWidget()
+        self._body = QVBoxLayout(body)
+        self._body.setContentsMargins(0, 0, 0, 0)
         self.grid = QGridLayout()
         self.grid.setHorizontalSpacing(10)
         self.grid.setVerticalSpacing(6)
         self.grid.setColumnStretch(1, 1)
-        outer.addLayout(self.grid)
+        self._body.addLayout(self.grid)
+        self.scroll = QScrollArea()
+        set_role(self.scroll, "pane-body")          # (transparent: the card shows through)
+        self.scroll.setFrameShape(QFrame.Shape.NoFrame)
+        self.scroll.setWidgetResizable(True)
+        self.scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.scroll.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.scroll.setWidget(body)
+        outer.addWidget(self.scroll)
         self._outer = outer
 
     # --- contents ---------------------------------------------------------------------------
@@ -134,6 +145,10 @@ class Faceplate(QFrame):
             m.sync()
         for fn in self._updaters:
             fn()
+        if self._placed is not None:
+            anchor, bounds, width, height = self._placed
+            if self._contents_height(width) != height:      # (a row shown or hidden, a note longer)
+                self.place(anchor, bounds)
 
     def close_plate(self):
         self.hide()
@@ -146,13 +161,29 @@ class Faceplate(QFrame):
             return
         super().keyPressEvent(event)
 
+    def _contents_height(self, width: int) -> int:
+        body = self._body
+        return body.totalHeightForWidth(width) if body.hasHeightForWidth() else body.sizeHint().height()
+
     def place(self, anchor: QRectF, bounds: QRect):
-        """Beside anchor (the part, in the parent's coordinates), inside bounds."""
+        """Beside anchor (the part, in the parent's coordinates), inside bounds: all of it, or as much
+        of its contents as fit, scrolled."""
         w = WIDTH_PX
+        self.ensurePolished()
         lay = self.layout()
-        lay.activate()
+        frame, margins = self.contentsMargins(), lay.contentsMargins()
+        width = w - frame.left() - frame.right() - margins.left() - margins.right()
         # (its wrapped notes are as tall as they are at this width: sizeHint alone cuts the last line)
+        contents = self._contents_height(width)
+        self.scroll.setFixedHeight(contents)
+        lay.activate()
         h = max(lay.totalHeightForWidth(w) if lay.hasHeightForWidth() else 0, self.sizeHint().height())
+        room = bounds.height() - 8
+        if h > room:
+            shown = min(contents, max(LEAST_CONTENTS_PX, contents - (h - room)))
+            self.scroll.setFixedHeight(shown)
+            h -= contents - shown
+        self._placed = (QRectF(anchor), QRect(bounds), width, contents)
         self.resize(w, h)
         a = anchor.toAlignedRect()
         if a.right() + GAP_PX + w <= bounds.right():
