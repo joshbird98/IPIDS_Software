@@ -87,6 +87,11 @@ class SetpointBox(QDoubleSpinBox):
         """The operator has typed or stepped a value that hasn't been sent yet."""
         return self._edited
 
+    @property
+    def live(self):
+        """The live setpoint last shown (show_setpoint); None while it isn't known."""
+        return self._live
+
     def show_setpoint(self, value):
         """The live setpoint from telemetry (None, or anything not a number: not known)."""
         self._live = _number(value)

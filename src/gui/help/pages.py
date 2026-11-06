@@ -32,6 +32,10 @@ PANEL_PAGES = {
     "CommandLogDock": "panels/command-log.md",
     "ServicesDock": "panels/service-manager.md",
     "AutomationBar": "panels/automation-bar.md",
+    "VacuumDiagramDock": "panels/machine-diagrams.md",
+    "BeamDiagramDock": "panels/machine-diagrams.md",
+    "SafetyDiagramDock": "panels/machine-diagrams.md",
+    "SourceDiagramDock": "panels/machine-diagrams.md",
 }
 
 

@@ -44,6 +44,7 @@ In the HMI, press **F1** with the mouse over a panel to open that panel's page. 
     - [Command Log](panels/command-log.md)
     - [Service Manager](panels/service-manager.md)
     - [The Automation bar](panels/automation-bar.md)
+    - [Machine diagrams (test)](panels/machine-diagrams.md)
 - **Data viewer**
     - [Using the data viewer](viewer/data-viewer.md)
     - [Exporting data and figures](viewer/exporting.md)

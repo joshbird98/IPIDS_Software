@@ -46,6 +46,10 @@ from src.gui.control.widgets.mass_scan import PrecisionMassScannerWidget
 from src.gui.control.widgets.command_log_widget import CommandLogWidget
 from src.gui.control.widgets.automation_bar import AutomationBar
 from src.gui.control.widgets.alarm_widget import AlarmPanel
+from src.gui.control.diagrams.vacuum import VacuumDiagram
+from src.gui.control.diagrams.beamline import BeamPathDiagram
+from src.gui.control.diagrams.safety import SafetyChainDiagram
+from src.gui.control.diagrams.source import TessSourceDiagram
 
 
 def _takes_typing(widget) -> bool:
@@ -208,10 +212,12 @@ class ControlMainWindow(QMainWindow):
         if not self.master_telemetry_cache:
             return              # no telemetry yet: nothing to bring it up to (the next refresh does)
         if widget is not None and widget not in self._always_refresh:
-            try:
-                widget.update_telemetry(self.master_telemetry_cache)
-            except Exception:
-                log.exception("%s.update_telemetry failed", type(widget).__name__)
+            # (a diagram: the panels it draws from first, as they weren't refreshed while hidden)
+            for w in [p for p in getattr(widget, "watched", []) if p not in self._always_refresh] + [widget]:
+                try:
+                    w.update_telemetry(self.master_telemetry_cache)
+                except Exception:
+                    log.exception("%s.update_telemetry failed", type(w).__name__)
 
     def _open_program(self, program: str):
         """The data viewer (or another SINDIE program) to the front, or started (src/launcher/instance.py)."""
@@ -305,8 +311,11 @@ class ControlMainWindow(QMainWindow):
         for dock in (self.recipe_dock, self.log_dock, self.cmd_log_dock, self.service_dock):
             self.tabifyDockWidget(previous, dock)
             previous = dock
+        for diagram_dock, twin in self._twin_of.items():
+            self.tabifyDockWidget(twin, diagram_dock)
         for dock in self._docks:
             dock.show()
+        self.vac_dock.raise_()
         self.health_dock.raise_()
         self.src_dock.raise_()
         self.alarm_dock.raise_()
@@ -334,14 +343,19 @@ class ControlMainWindow(QMainWindow):
 
     def _place_new_panels(self):
         """A panel added since the layout was saved (the saved layout doesn't place it): a tab behind
-        System Health, where it can be found, rather than nowhere."""
+        System Health, where it can be found, rather than nowhere - a diagram, behind the panel it
+        draws from."""
         for dock in self._docks:
             if self.dockWidgetArea(dock) == Qt.DockWidgetArea.NoDockWidgetArea and not dock.isFloating():
                 anchor = self.health_dock if dock is not self.health_dock else self.vac_dock
+                twin = self._twin_of.get(dock)
+                if twin is not None and self.dockWidgetArea(twin) != Qt.DockWidgetArea.NoDockWidgetArea:
+                    anchor = twin
                 if self.dockWidgetArea(anchor) == Qt.DockWidgetArea.NoDockWidgetArea:
                     self.addDockWidget(Qt.DockWidgetArea.LeftDockWidgetArea, dock)
                 else:
                     self.tabifyDockWidget(anchor, dock)
+                    dock.show()                 # (a tab that is there, not one hidden from the start)
                     anchor.raise_()
 
     def _fit_to_screen(self, force: bool = False):
@@ -503,6 +517,28 @@ class ControlMainWindow(QMainWindow):
         self.cmd_log_widget = CommandLogWidget()
         self.cmd_log_dock = self._panel("Command Log", "CommandLogDock", self.cmd_log_widget)
 
+        # The machine diagrams (a test, November 2026): the machine drawn as it is laid out, live, from
+        # the panels above - a part's faceplate has its panel's own controls (src/gui/control/diagrams)
+        self.vac_diagram = VacuumDiagram({"vacuum": self.vac_widget}, self.show_panel)
+        self.vac_diagram_dock = self._panel("Vacuum Diagram", "VacuumDiagramDock", self.vac_diagram)
+        self.beam_diagram = BeamPathDiagram(
+            {"source": self.src_widget, "optics": self.optics_widget, "vacuum": self.vac_widget,
+             "faraday": self.smu_widget, "currents": self.current_mon_widget}, self.show_panel)
+        self.beam_diagram_dock = self._panel("Beam Path Diagram", "BeamDiagramDock", self.beam_diagram)
+        self.safety_diagram = SafetyChainDiagram(
+            {"health": self.health_widget, "interlocks": self.interlocks_widget, "vacuum": self.vac_widget},
+            self.show_panel)
+        self.safety_diagram_dock = self._panel("Safety Chain Diagram", "SafetyDiagramDock", self.safety_diagram)
+        self.source_diagram = TessSourceDiagram({"source": self.src_widget, "interlocks": self.interlocks_widget},
+                                                self.show_panel)
+        self.source_diagram_dock = self._panel("TESS Source Diagram", "SourceDiagramDock", self.source_diagram)
+        self.diagrams = [self.vac_diagram, self.beam_diagram, self.safety_diagram, self.source_diagram]
+        for diagram in self.diagrams:
+            diagram.notice.connect(self._show_notice)       # (a faceplate's setpoint entry not sent)
+        # Each diagram is a tab beside the panel it draws most from
+        self._twin_of = {self.vac_diagram_dock: self.vac_dock, self.beam_diagram_dock: self.optics_dock,
+                         self.safety_diagram_dock: self.interlocks_dock, self.source_diagram_dock: self.src_dock}
+
         # Refreshed even while hidden: the alarm horn, the automation bar, and the panels that
         # follow a running sequence (operator prompts, scan points fetched as they come)
         self._always_refresh = {self.automation_bar, self.alarm_widget, self.recipe_widget,
@@ -510,7 +546,7 @@ class ControlMainWindow(QMainWindow):
         self._refreshed = [self.vac_widget, self.src_widget, self.optics_widget, self.health_widget,
                            self.interlocks_widget, self.service_widget, self.log_widget, self.smu_widget, self.current_mon_widget,
                            self.optimiser_widget, self.mass_scan_widget, self.recipe_widget,
-                           self.automation_bar, self.alarm_widget]
+                           self.automation_bar, self.alarm_widget] + self.diagrams     # (after their panels)
         self._dock_of = {w: d for d, w in self._panel_widgets.items()}
 
     def _route_telemetry(self, topic: str, fresh_data: dict):
@@ -549,8 +585,11 @@ class ControlMainWindow(QMainWindow):
         self.master_telemetry_cache.update(view)
 
         minimised = self.isMinimized()
+        # The panels a diagram in view draws from are kept up to date, their own docks hidden or not
+        drawn_from = set() if minimised else {w for d in self.diagrams if self.on_screen(self._dock_of[d])
+                                               for w in d.watched}
         for widget in self._refreshed:
-            if widget not in self._always_refresh:
+            if widget not in self._always_refresh and widget not in drawn_from:
                 # A closed panel, or one behind another tab, isn't redrawn 10 times a second for
                 # nobody: it catches up the moment it is shown (_panel_shown)
                 dock = self._dock_of.get(widget)
@@ -561,6 +600,15 @@ class ControlMainWindow(QMainWindow):
             except Exception:  # one widget's bug must not freeze every other panel
                 log.exception("%s.update_telemetry failed", type(widget).__name__)
 
+
+    def show_panel(self, name: str):
+        """A panel to the front, opened if it was closed (a diagram's faceplate links to its panel)."""
+        dock = {"vacuum": self.vac_dock, "source": self.src_dock, "optics": self.optics_dock,
+                "faraday": self.smu_dock, "currents": self.current_mon_dock, "health": self.health_dock,
+                "interlocks": self.interlocks_dock, "source_diagram": self.source_diagram_dock}.get(name)
+        if dock is not None:
+            dock.show()
+            dock.raise_()
 
     @staticmethod
     def on_screen(dock) -> bool:
