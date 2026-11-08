@@ -6,7 +6,8 @@ show and its controls are theirs. The HMI refreshes those panels while a diagram
 even when their own docks are hidden (control_main.ControlMainWindow._ui_update_loop).
 
 READABLE is the smallest panel a diagram's text is at its smallest readable size in. Smaller, the
-whole drawing shrinks together to fit (canvas.py): the panel scrolls only below canvas.SMALLEST.
+whole drawing shrinks together to fit (canvas.py): the panel scrolls only below canvas.SMALLEST -
+or, with larger text (View > Text size), below the size its text is the chosen size in.
 """
 import logging
 

@@ -219,6 +219,36 @@ def test_larger_text_keeps_the_labels_clear(app, panels, kind, texts, tmp_path, 
     d.deleteLater()
 
 
+@pytest.mark.parametrize("kind", ["vacuum", "beam", "safety", "tess"])
+def test_with_larger_text_a_diagram_keeps_its_text_that_size(app, panels, kind, tmp_path, monkeypatch):
+    """Josh (8 Nov): larger text changed nothing in the diagrams - in a small panel they shrank it
+    back down to fit. With larger text chosen, a diagram is never smaller than the size its text is
+    the chosen size of its readable size's in (a smaller panel scrolls); at normal size it still
+    shrinks to fit any panel."""
+    from src.gui import theme
+    from src.gui.control.diagrams.canvas import SMALLEST
+    monkeypatch.setenv("SINDIE_SETTINGS_DIR", str(tmp_path))
+    d = make(kind, panels)
+    feed(panels, d, live(True))
+    assert d.canvas.minimumSizeHint() == SMALLEST
+    d.canvas.resize(d.READABLE)
+    readable_text = d.canvas.text_scale()
+    for factor in (1.15, 1.5):
+        theme.apply_appearance(app, text_scale=factor)
+        try:
+            least = d.canvas.minimumSize()
+            assert least == d.canvas.minimumSizeHint()
+            assert least.width() > d.READABLE.width() or least.height() > d.READABLE.height()
+            d.canvas.resize(least)
+            assert d.canvas.text_scale() == pytest.approx(factor * readable_text, rel=0.01)
+            d.canvas.resize(SMALLEST)                    # (asked for less: it stays at its least)
+            assert d.canvas.size() == least
+        finally:
+            theme.apply_appearance(app, text_scale=1.0)
+    assert d.canvas.minimumSize() == SMALLEST
+    d.deleteLater()
+
+
 def test_a_faceplate_is_wider_with_larger_text(app, panels, tmp_path, monkeypatch):
     from src.gui import theme
     from src.gui.control.diagrams.faceplate import WIDTH_PX

@@ -414,7 +414,7 @@ class DiagramCanvas(QWidget):
         self._painted = None            # the signature on the screen
         self._layer = None              # the machine, drawn: ((w, h, ratio), machine bytes, pixmap)
         self.setMouseTracking(True)
-        self.setMinimumSize(SMALLEST)
+        self.setMinimumSize(self.minimumSizeHint())
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         self.setFocusPolicy(Qt.FocusPolicy.NoFocus)     # (clicks here never take the keyboard: see control_main)
         self.setAttribute(Qt.WidgetAttribute.WA_OpaquePaintEvent)
@@ -425,7 +425,22 @@ class DiagramCanvas(QWidget):
         return QSize(round(self.readable.width() * grow), round(self.readable.height() * grow))
 
     def minimumSizeHint(self):
-        return QSize(SMALLEST)
+        """At normal text, SMALLEST: the drawing shrinks to fit any panel. With larger text (View >
+        Text size) the size its text is at the chosen size in - never smaller than that, which is
+        what larger text is for: a smaller panel scrolls."""
+        floor = self._floor_scale()
+        if floor is None:
+            return QSize(SMALLEST)
+        size = self.diagram.drawing_size
+        return QSize(math.ceil(size.width() * floor + 2 * MARGIN_PX), math.ceil(size.height() * floor + 2 * MARGIN_PX))
+
+    def _floor_scale(self):
+        """With larger text, the scale the text is the chosen size of the readable size's text at
+        (below it, smaller than that); None at normal text."""
+        if theme.text_scale() <= 1.0:
+            return None
+        normal, knee = self._scale_for(self.readable.width(), self.readable.height()), self._knee()
+        return knee * self._normal_text(normal) / self._normal_text(knee)
 
     # --- geometry -------------------------------------------------------------------------------
     def _scale_for(self, width: float, height: float) -> float:
@@ -554,7 +569,8 @@ class DiagramCanvas(QWidget):
     def invalidate(self):
         """Draw it all again (the theme, the text size or the palette changed)."""
         self._pending = self._last = self._painted = self._layer = None
-        self.updateGeometry()                   # (its readable size grows with the text)
+        self.setMinimumSize(self.minimumSizeHint())     # (its readable and least sizes grow with the text)
+        self.updateGeometry()
         self.update()
 
     def paintEvent(self, event):
@@ -673,8 +689,10 @@ def _circle_hits(rect: QRectF, centre: QPointF, r: float) -> bool:
 
 def layout_problems(canvas: DiagramCanvas, size: QSize, slack_px: float = 1.0) -> list:
     """What would be hard to read with the drawing at this size: a label over another, over a part,
-    a pipe or the key, or off the edge. (Drawn into an image: nothing is shown.)"""
+    a pipe or the key, or off the edge. (Drawn into an image: nothing is shown.) Smaller than the
+    canvas goes (with larger text: the panel scrolls), it is checked at its least size."""
     canvas.resize(size)
+    size = canvas.size()
     image = QImage(size, QImage.Format.Format_ARGB32_Premultiplied)
     p = QPainter(image)
     view = canvas.paint_on(p)

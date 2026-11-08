@@ -163,6 +163,58 @@ def test_larger_text_grows_every_font(app, theme_mod):
     lbl.deleteLater()
 
 
+def test_a_live_text_size_change_reaches_every_open_window(app, theme_mod):
+    """Josh (8 Nov): the text size changed the menus and tabs but not the panels he was looking at.
+    Measured on the widgets themselves this time, in a window already open when the size changes:
+    a plain label, a list given a size of its own in code (a point larger than the rest), and a
+    dock's title (drawn in the font the dock was made with, unless its font is its own) - and all
+    back to exactly their size at normal."""
+    import numpy as np
+    from PyQt6.QtCore import Qt
+    from PyQt6.QtGui import QFont, QImage
+    from PyQt6.QtWidgets import QDockWidget, QListWidget, QMainWindow, QVBoxLayout, QWidget
+    theme = theme_mod
+    theme.apply_appearance(app, text_scale=1.0)
+    win = QMainWindow()
+    body = QWidget()
+    lay = QVBoxLayout(body)
+    plain, steps = QLabel("Extraction 15.008 kV"), QListWidget()
+    bigger = QFont(steps.font())
+    bigger.setPointSizeF(bigger.pointSizeF() + 1)
+    steps.setFont(bigger)
+    lay.addWidget(plain)
+    lay.addWidget(steps)
+    dock = QDockWidget("Vacuum System", win)
+    dock.setWidget(body)
+    win.addDockWidget(Qt.DockWidgetArea.LeftDockWidgetArea, dock)
+    win.resize(500, 400)
+    win.show()
+    app.processEvents()
+
+    def title_width():
+        img = dock.grab().toImage().convertToFormat(QImage.Format.Format_RGB888)
+        bits = img.constBits()
+        bits.setsize(img.sizeInBytes())
+        a = np.frombuffer(bits, np.uint8).reshape(img.height(), img.bytesPerLine())[:, :img.width() * 3]
+        ink = np.abs(a[:20].reshape(20, img.width(), 3).astype(int) - a[2, 3:6].astype(int)).sum(axis=2) > 120
+        cols = np.nonzero(ink[:, :300].any(axis=0))[0]
+        return int(cols.max() - cols.min()) if len(cols) else 0
+
+    sizes = plain.font().pointSizeF(), steps.font().pointSizeF()
+    width = title_width()
+    theme.apply_appearance(app, text_scale=1.3)
+    app.processEvents()
+    assert plain.font().pointSizeF() == pytest.approx(sizes[0] * 1.3, abs=0.02)
+    assert steps.font().pointSizeF() == pytest.approx(sizes[1] * 1.3, abs=0.02)
+    assert title_width() > width * 1.2
+    theme.apply_appearance(app, text_scale=1.0)
+    app.processEvents()
+    assert (plain.font().pointSizeF(), steps.font().pointSizeF()) == pytest.approx(sizes)
+    assert title_width() == width
+    win.close()
+    win.deleteLater()
+
+
 def test_plot_legends_follow_the_text_size(app, theme_mod):
     import pyqtgraph as pg
     theme = theme_mod

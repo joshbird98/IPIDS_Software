@@ -38,7 +38,7 @@ import zlib
 from PyQt6 import sip
 from PyQt6.QtCore import QObject, QTimer, pyqtSignal
 from PyQt6.QtGui import QColor, QFont, QFontDatabase, QPalette
-from PyQt6.QtWidgets import QApplication
+from PyQt6.QtWidgets import QApplication, QDockWidget
 
 log = logging.getLogger("theme")
 
@@ -763,6 +763,7 @@ def apply_appearance(app: QApplication, mode: str = None, text_scale: float = No
     """Restyle everything now for any of: the theme ('dark' / 'light'), the text size (a scale
     from TEXT_SIZES) and the palette ('standard' / 'colour-blind'); what isn't given stays.
     persist: also save the choice (shared with the other program, which follows within a second)."""
+    old_scale = _state["text_scale"]
     if mode is not None:
         _state["mode"] = mode if mode in MODES else DEFAULT_MODE
     if text_scale is not None:
@@ -770,9 +771,14 @@ def apply_appearance(app: QApplication, mode: str = None, text_scale: float = No
     if palette is not None:
         _state["palette"] = palette if palette in PALETTE_NAMES else DEFAULT_PALETTE
     mode = _state["mode"]
+    resized = _fonts_now() if _state["text_scale"] != old_scale else None
     _apply_font(app)
+    if resized is not None:
+        _follow_text_size(resized, _state["text_scale"] / old_scale)
     app.setPalette(build_palette(mode))
     app.setStyleSheet(build_stylesheet(mode))
+    if resized is not None:         # (again: restyling gives a widget its parent's font where it has none)
+        _follow_text_size(resized, _state["text_scale"] / old_scale)
     try:
         import pyqtgraph as pg
         pg.setConfigOption("background", tokens(mode)["plot_bg"])
@@ -796,6 +802,36 @@ def _valid_scale(value) -> float:
     except (TypeError, ValueError):
         return DEFAULT_TEXT_SCALE
     return min((scale for _name, scale in TEXT_SIZES), key=lambda s: abs(s - value))
+
+
+def _fonts_now() -> list:
+    return [(w, QFont(w.font())) for w in QApplication.allWidgets()]
+
+
+def _follow_text_size(before: list, ratio: float):
+    """The text of every window already open, to the new size. A new application font reaches only
+    the widgets whose size isn't their own: one given a size in code (a list a point larger than
+    the rest, say) keeps it, and a dock draws its title in the font it was made with. So each widget
+    goes from the size it had, by the same ratio; and each dock gets a font of its own - the same,
+    with its letters spaced 100 % (no change) - which its title is then drawn in."""
+    for widget, font in before:
+        try:
+            now = widget.font()
+        except RuntimeError:                    # (deleted meanwhile)
+            continue
+        new = QFont(now)
+        if font.pointSizeF() > 0:
+            size = round(font.pointSizeF() * ratio, 2)
+            if abs(now.pointSizeF() - size) > 0.01:
+                new.setPointSizeF(size)
+        elif font.pixelSize() > 0:
+            size = max(1, round(font.pixelSize() * ratio))
+            if now.pixelSize() != size:
+                new.setPixelSize(size)
+        if isinstance(widget, QDockWidget):
+            new.setLetterSpacing(QFont.SpacingType.PercentageSpacing, 100)
+        if new != now:
+            widget.setFont(new)
 
 
 def _apply_font(app: QApplication):
