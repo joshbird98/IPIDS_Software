@@ -70,7 +70,7 @@ def supply_plate(panel, key: str, ctrl: dict, title: str, subtitle: str, link_to
     fp = Faceplate(panel, key, title, subtitle)
     supply_rows(fp, ctrl)
     fp.note("Switching it on takes two clicks, as on its panel.")
-    fp.link(link_text, lambda: panel.show_panel(link_to))
+    panel.link(fp, link_to, link_text)
     return fp
 
 
@@ -82,7 +82,7 @@ def gv2_plate(panel, key: str, vac) -> Faceplate:
     fp.wide(MirrorButton(vac.btn_gv_open), MirrorButton(vac.btn_gv_close))
     fp.note("The PLC opens it only with VG1 and VG2 read, healthy and below their set points, and closes it by "
             "hand only with the source cold. Hover over a button for why it can't be pressed.")
-    fp.link("Vacuum System panel →", lambda: panel.show_panel("vacuum"))
+    panel.link(fp, "vacuum", "Vacuum System panel →")
     return fp
 
 

@@ -4,6 +4,8 @@ The **TESS Ion Source Control** panel runs SINDIE's ion source, the TESS (Thermi
 
 ![The TESS Ion Source Control panel with the source running](../images/panel-ion-source.png)
 
+**Diagram**, at the panel's top right, shows the source drawn as its schematic instead: each electrode in its supply's colour, live, with the same controls. **List** brings this list back. See [Machine diagrams](machine-diagrams.md#tess-ion-source-control-the-source).
+
 ## What it shows
 
 The **Source power supplies** group has a row for each supply, and one for the source body temperature, under the headings **Supply**, **Readback**, **Setpoint**, **Mode** and **Output**. The readback has a large first line and a smaller second one:

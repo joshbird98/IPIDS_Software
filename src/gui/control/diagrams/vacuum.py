@@ -1,6 +1,7 @@
-"""The Vacuum Diagram: the vacuum system laid out as in the thesis' drawing of it (arch_vacuum) - the
-source column with the target loadlock and the argon line at the top, the 90 degree magnet, the
-beamline and the angled end-station with its sample loadlock - with every pump, gate valve and gauge.
+"""The Vacuum System panel's diagram: the vacuum system laid out as in the thesis' drawing of it
+(arch_vacuum) - the source column with the target loadlock and the argon line at the top, the 90
+degree magnet, the beamline and the angled end-station with its sample loadlock - with every pump,
+gate valve and gauge.
 
 What the software reads is live: the six gauges, the source turbo pump, the source gate valve (GV2)
 and the loadlock turbo's faults. Their colours, values and faceplates are the Vacuum System panel's
@@ -78,6 +79,7 @@ TURBO_TIP = "The source turbo pump. It is started from here or its panel, and st
 
 
 class VacuumDiagram(DiagramPanel):
+    HOME = "vacuum"                 # (List | Diagram: this is the other view of that panel)
     ORIGIN = QPointF(-70, 0)
     SIZE = QSizeF(1790, 1340)
     DESIGN_SCALE = 0.55
@@ -307,7 +309,7 @@ class VacuumDiagram(DiagramPanel):
             fp.row("Pressure", MirrorLabel(g["val"], role="readout"))
             fp.row("State", MirrorLabel(g["status"]))
             fp.note("The gauges' set points and trips are in vac_gauges_config.json (Config).")
-            fp.link("Vacuum System panel →", lambda: self.show_panel("vacuum"))
+            self.link(fp, "vacuum", "Vacuum System panel →")
             return fp
         if key == "turbo_source":
             fp = Faceplate(self, key, "Source turbo pump", "350 L/s, on the source chamber")
@@ -318,7 +320,7 @@ class VacuumDiagram(DiagramPanel):
             fp.wide(MirrorLabel(vac.lbl_turbo_guard))
             fp.wide(MirrorButton(vac.btn_turbo_start))
             fp.note("It is stopped only by hand, at the pump, by trained staff: never from the software.")
-            fp.link("Vacuum System panel →", lambda: self.show_panel("vacuum"))
+            self.link(fp, "vacuum", "Vacuum System panel →")
             return fp
         if key == "GV2":
             return gv2_plate(self, key, vac)

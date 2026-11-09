@@ -32,11 +32,10 @@ PANEL_PAGES = {
     "CommandLogDock": "panels/command-log.md",
     "ServicesDock": "panels/service-manager.md",
     "AutomationBar": "panels/automation-bar.md",
-    "VacuumDiagramDock": "panels/machine-diagrams.md",
-    "BeamDiagramDock": "panels/machine-diagrams.md",
-    "SafetyDiagramDock": "panels/machine-diagrams.md",
-    "SourceDiagramDock": "panels/machine-diagrams.md",
 }
+# ... and, for a panel shown as its diagram (List | Diagram), the diagrams' page: a widget with a
+# help_page property (the diagram's scroll area) names its page itself
+DIAGRAMS = "panels/machine-diagrams.md"
 
 
 def path_of(page: str) -> str:

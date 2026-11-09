@@ -666,8 +666,10 @@ def context_page(window, default: str = pages.HOME, widget=None) -> str:
         if widget is None or widget.window() is not window:
             widget = QApplication.focusWidget()
     while widget is not None:
-        page = pages.PANEL_PAGES.get(widget.objectName())
-        if page and (isinstance(widget, QDockWidget) or widget.objectName() == "AutomationBar"):
+        page = widget.property("help_page")                 # (a panel's diagram view: pages.DIAGRAMS)
+        if not page and (isinstance(widget, QDockWidget) or widget.objectName() == "AutomationBar"):
+            page = pages.PANEL_PAGES.get(widget.objectName())
+        if page:
             return page
         widget = widget.parentWidget()
     return default

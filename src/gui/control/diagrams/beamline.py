@@ -1,8 +1,9 @@
-"""The Beam Path Diagram: the optics along the beam as the thesis' drawing lays them out (arch_general) -
-down the source column from TESS through the source Einzel lens, GV2, the steerers, the object slits
-and the aperture ladder, round the 90 degree magnet (or straight on, to the straight-through cup),
-and along the beamline through the mass-resolving slits, the implant stage, the drop-in Faraday cup,
-the beamline Einzel lens, GV3 and the neutral trap to the end-station.
+"""The Beamline Optics panel's diagram, the beam path: the optics along the beam as the thesis'
+drawing lays them out (arch_general) - down the source column from TESS through the source Einzel
+lens, GV2, the steerers, the object slits and the aperture ladder, round the 90 degree magnet (or
+straight on, to the straight-through cup), and along the beamline through the mass-resolving slits,
+the implant stage, the drop-in Faraday cup, the beamline Einzel lens, GV3 and the neutral trap to
+the end-station.
 
 Each element shows what its panel shows (Beamline Optics, TESS Ion Source, Vacuum System, Faraday Cup
 & SMU, Current Monitoring) and its faceplate has that panel's controls (mirror.py). The beam's path
@@ -39,6 +40,24 @@ NAME_DX = 80.0                          # names left of the column, values right
 NAME_DY, VALUE_DY = 60.0, 62.0          # names under the beamline, values over it
 
 TONES = {"on": "on", "off": "off", "unknown": "unknown"}
+STEERING = ("ion_beam.beamline.steering", "ion_beam.beamline.steerer_magnet")
+MAGNET, CUP = ("ion_beam.beamline.magnet",), ("ion_beam.beamline.diagnostics",)
+
+
+def _held(data: dict, subsystems) -> str:
+    """What sequence holds one of these subsystems (its purpose), or '': the services' leases, as the
+    source panel reads them for its SEQUENCE badge (and the Automation bar for its list). The optics
+    and Faraday panels show a held control only greyed out, with the reason in its tooltip."""
+    for sub in subsystems:
+        holder = data.get(sub + ".lease_holder")
+        if holder:
+            return data.get(sub + ".lease_purpose") or str(holder)
+    return ""
+
+
+def seq_chip(held: str) -> str:
+    """A held part's second chip (beside its state): as the source panel's badge says it."""
+    return "SEQUENCE" if held else ""
 
 
 def _cup_state(btn) -> object:
@@ -52,6 +71,7 @@ def _cup_state(btn) -> object:
 
 
 class BeamPathDiagram(DiagramPanel):
+    HOME = "optics"                 # (List | Diagram: this is the other view of that panel)
     ORIGIN = QPointF(-40, 0)
     SIZE = QSizeF(1950, 1235)
     DESIGN_SCALE = 0.55
@@ -120,6 +140,8 @@ class BeamPathDiagram(DiagramPanel):
             "obj": (mon[0]["val"], mon[1]["val"]), "straight": mon[2]["val"], "img": (mon[3]["val"], mon[4]["val"]),
             "aperture": mon[5]["val"],
         }
+        st["steer_held"], st["magnet_held"], st["cup_held"] = (_held(data, STEERING), _held(data, MAGNET),
+                                                               _held(data, CUP))
         st["source_on"] = plain_tone(src["Extraction"]["btn_enable"]) == "on"
         st["gv2_open"] = vac.lbl_gv_status.text() == "OPEN"
         st["energy"] = self._energy(data)
@@ -151,7 +173,8 @@ class BeamPathDiagram(DiagramPanel):
         st = self.state
         if not st:
             return
-        sym.magnet_sector(v, MAG_C, BEND_R - 45, BEND_R + 45, 180, 90, sym.soft(st["magnet"]))
+        sym.magnet_sector(v, MAG_C, BEND_R - 45, BEND_R + 45, 180, 90,
+                          sym.soft("seq" if st["magnet_held"] else st["magnet"]))
         v.ring("magnet", self._box['magnet'], radius=12)
         bend = self._bend()
         bend.lineTo(QPointF(STATION[0][0], BY))
@@ -223,8 +246,9 @@ class BeamPathDiagram(DiagramPanel):
         v.ring("einzel_src", self._box['einzel_src'])
         sym.valve(v, QPointF(CX, GV2_Y), 62, st["gv2"][0], vertical=True, gate=True)
         v.ring("GV2", self._box['GV2'])
-        sym.deflector(v, QPointF(CX, Y_STEER_Y), True, st["steer"])
-        sym.coils(v, QPointF(CX, X_STEER_Y), True, st["steer"])
+        steer = "seq" if st["steer_held"] else st["steer"]
+        sym.deflector(v, QPointF(CX, Y_STEER_Y), True, steer)
+        sym.coils(v, QPointF(CX, X_STEER_Y), True, steer)
         v.ring("steerers", self._box['steerers'])
         sym.jaws(v, QPointF(CX, OBJ_Y), True, "off", wall=TUBE * 0.5 + 18)
         v.ring("object_slits", self._box['object_slits'])
@@ -236,8 +260,8 @@ class BeamPathDiagram(DiagramPanel):
         v.ring("image_slits", self._box['image_slits'])
         sym.aperture(v, QPointF(STAGE_X, BY), False, "off", wall=TUBE * 0.5 + 12)
         v.ring("stage", self._box['stage'])
-        sym.drop_in_cup(v, QPointF(FC_X, BY), "info" if st["cup"] is True else
-                        "off" if st["cup"] is False else st["cup_tone"], st["cup"])
+        sym.drop_in_cup(v, QPointF(FC_X, BY), "seq" if st["cup_held"] and st["cup"] is not None else
+                        "info" if st["cup"] is True else "off" if st["cup"] is False else st["cup_tone"], st["cup"])
         v.ring("fc", self._box['fc'])
         sym.einzel(v, QPointF(EINZEL_BL_X, BY), False, supply_tone(self.optics.psu_controls["Beamline Einzel"]))
         v.ring("einzel_bl", self._box['einzel_bl'])
@@ -291,7 +315,8 @@ class BeamPathDiagram(DiagramPanel):
         y_rb, x_rb = opt.lbl_y_rb.text().replace("RB: ", ""), opt.lbl_x_rb.text().replace("RB: ", "")
         steer_chip = {"on": "ON", "off": "OFF", "unknown": "NO DATA"}.get(st["steer"], opt.btn_steer_en.text())
         v.block(value_x, mid, [[("note", "Y"), ("value", y_rb)], [("note", "X"), ("value", x_rb.split(" | ")[0])],
-                               [("chip", steer_chip, st["steer"])]], L | VC)
+                               [("chip", steer_chip, st["steer"]), ("chip", seq_chip(st["steer_held"]), "seq")]],
+                L | VC)
         v.text(name_x, OBJ_Y, "Object slits", "name-b", R | VC)
         left, right = st["obj"]
         v.block(value_x, OBJ_Y, [[("note", "L"), self._value(v, left)], [("note", "R"), self._value(v, right)]], L | VC)
@@ -306,6 +331,7 @@ class BeamPathDiagram(DiagramPanel):
         cool_chip = "" if plain_tone(cooling) in ("ok", "on") else cooling.text().replace("MAG COOLING: ", "COOLING ")
         v.block(MAG_C.x() - 45, MAG_C.y() + 40, [[("name-b", "90° magnet")], [("value-b", amps)], [("note", mass)],
                                                  [("chip", mag_chip, st["magnet"])],
+                                                 [("chip", seq_chip(st["magnet_held"]), "seq")],
                                                  [("chip", cool_chip, plain_tone(cooling))]], HC | VC)
         # The beamline: names under it, what they read over it
         under, over = BY + NAME_DY, BY - VALUE_DY
@@ -317,8 +343,8 @@ class BeamPathDiagram(DiagramPanel):
         v.block(FC_X, under, [[("name-b", "Faraday")], [("name-b", "cup")]], HC | T)
         cup_text = self.smu.btn_fc.text().replace("FARADAY CUP: ", "")
         cup_tone = "info" if st["cup"] is True else "off" if st["cup"] is False else st["cup_tone"]
-        v.block(FC_X, BY - 128, [[self._value(v, self.smu.lbl_digital_current)], [("chip", cup_text, cup_tone)]],
-                HC | B)
+        v.block(FC_X, BY - 128, [[self._value(v, self.smu.lbl_digital_current)],
+                                 [("chip", cup_text, cup_tone)], [("chip", seq_chip(st["cup_held"]), "seq")]], HC | B)
         bl = opt.psu_controls["Beamline Einzel"]
         v.block(EINZEL_BL_X, under, [[("name-b", "Beamline")], [("name-b", "Einzel lens")]], HC | T)
         text, tone = supply_chip(bl)
@@ -334,7 +360,7 @@ class BeamPathDiagram(DiagramPanel):
 
     # --- faceplates ---------------------------------------------------------------------------
     def _link(self, fp, name, text):
-        fp.link(text, lambda: self.show_panel(name))
+        self.link(fp, name, text)
 
     def _slits_plate(self, key, title, left, right, box_l, box_r, where):
         fp = Faceplate(self, key, title, where)
@@ -353,9 +379,9 @@ class BeamPathDiagram(DiagramPanel):
                    MirrorLabel(src["Extraction"]["lbl_rb2"]))
             fp.row("Target", MirrorLabel(src["Target"]["lbl_rb"], role="readout"),
                    MirrorLabel(src["Target"]["lbl_rb2"]))
-            fp.note("The source's supplies, oven and filament are on the TESS Source Diagram and the TESS Ion Source "
-                    "panel.")
-            self._link(fp, "source_diagram", "TESS Source Diagram →")
+            fp.note("The source's supplies, oven and filament are on the TESS Ion Source panel, as a list or as its "
+                    "diagram.")
+            self._link(fp, "source_diagram", "TESS Ion Source diagram →")
             self._link(fp, "source", "TESS Ion Source panel →")
             return fp
         if key == "einzel_src":

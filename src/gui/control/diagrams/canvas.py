@@ -19,8 +19,8 @@ import math
 from dataclasses import dataclass
 
 from PyQt6.QtCore import QBuffer, QByteArray, QIODevice, QPointF, QRectF, QSize, QSizeF, Qt, pyqtSignal
-from PyQt6.QtGui import (QBrush, QColor, QFont, QFontMetricsF, QImage, QPainter, QPainterPath, QPainterPathStroker,
-                         QPen, QPicture, QPixmap, QRegion, QTransform)
+from PyQt6.QtGui import (QBrush, QColor, QFont, QFontMetricsF, QImage, QPaintEngine, QPainter, QPainterPath,
+                         QPainterPathStroker, QPen, QPicture, QPixmap, QRegion, QTransform)
 from PyQt6.QtWidgets import QSizePolicy, QToolTip, QWidget
 
 from src.gui import theme
@@ -595,7 +595,14 @@ class DiagramCanvas(QWidget):
             self._layer = (key, signature[0], pixmap)
         region = event.region()
         p = QPainter(self)
-        p.drawPixmap(0, 0, self._layer[2])
+        if _on_screen(p, state[2]):
+            p.drawPixmap(0, 0, self._layer[2])
+        else:
+            # Painted for a figure at another resolution (View > Capture GUI figure, the thesis'
+            # screenshots: figure_capture.render_widget), or to a PDF or SVG: the drawing itself, as
+            # sharp as the text over it, not the screen's picture of it enlarged
+            p.fillRect(self.rect(), theme.color("panel"))
+            p.drawPicture(0, 0, picture)
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
         p.setRenderHint(QPainter.RenderHint.TextAntialiasing)
         for ring in view.rings:
@@ -685,6 +692,16 @@ def _circle_hits(rect: QRectF, centre: QPointF, r: float) -> bool:
     nx = min(max(centre.x(), rect.left()), rect.right())
     ny = min(max(centre.y(), rect.top()), rect.bottom())
     return math.hypot(nx - centre.x(), ny - centre.y()) < r
+
+
+def _on_screen(p: QPainter, dpr: float) -> bool:
+    """Whether p paints the widget at the resolution its picture is kept at (dpr): the screen, not a
+    figure re-painted at print resolution, nor a vector file."""
+    engine = p.paintEngine()
+    if engine is None or engine.type() != QPaintEngine.Type.Raster:
+        return False
+    t = p.deviceTransform()
+    return abs(t.m11() - dpr) < 0.01 and abs(t.m22() - dpr) < 0.01 and abs(t.m12()) < 1e-6
 
 
 def layout_problems(canvas: DiagramCanvas, size: QSize, slack_px: float = 1.0) -> list:

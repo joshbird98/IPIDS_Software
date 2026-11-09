@@ -3,9 +3,11 @@ nothing of their own. A faceplate's controls are its panel's controls, with its 
 gate valve opens only when the Vacuum System panel's OPEN could be pressed, the source turbo can only
 be started, switching a supply on takes two clicks, and a value typed goes out on the panel's tag."""
 import pytest
-from PyQt6.QtCore import QSize
+from PyQt6.QtCore import QSize, Qt
+from PyQt6.QtGui import QImage, QPainter
 from PyQt6.QtWidgets import QApplication, QPushButton
 
+from src.gui.control.setpoint_box import SetpointBox
 from src.gui.style import set_ink, set_tone
 
 # Each diagram's READABLE size, smaller (as parts of it: the drawing shrinks to fit), and larger
@@ -115,6 +117,19 @@ def live(on: bool = True) -> dict:
     return d
 
 
+def held(data: dict) -> dict:
+    """A recipe holding the source Einzel lens, the magnet, the cup and the steering (its leases), with
+    the cup in: the labels a sequence adds."""
+    data = dict(data)
+    for sub in ("ion_beam.source.einzel", "ion_beam.beamline.magnet", "ion_beam.beamline.diagnostics",
+                "ion_beam.beamline.steering", "ion_beam.beamline.steerer_magnet"):
+        data[sub + ".lease_holder"] = "sequencer"
+        data[sub + ".lease_purpose"] = "recipe 'Silicon implant'"
+    data.update({"ion_beam.beamline.diagnostics.stat_fc_inserted": 1.0,
+                 "ion_beam.beamline.diagnostics.stat_fc_retracted": 0.0})
+    return data
+
+
 def busy(panels):
     """The longest text each label a diagram copies can show."""
     for ui in panels["currents"].ui_elements:
@@ -182,7 +197,7 @@ def test_no_label_overlaps_another_a_part_a_pipe_or_the_edge(app, panels, kind, 
     feed(panels, d, live(True))
     if texts == "longest":
         busy(panels)
-        d.update_telemetry(live(True))
+        d.update_telemetry(held(live(True)))
     for size in SIZES:
         size = d.READABLE if size == "readable" else d.READABLE * size if isinstance(size, float) else size
         assert layout_problems(d.canvas, size) == [], (kind, size)
@@ -202,7 +217,7 @@ def test_larger_text_keeps_the_labels_clear(app, panels, kind, texts, tmp_path, 
     feed(panels, d, live(True))
     if texts == "longest":
         busy(panels)
-        d.update_telemetry(live(True))
+        d.update_telemetry(held(live(True)))
     normal = d.canvas.sizeHint()
     d.canvas.resize(QSize(2400, 1500))
     normal_text = d.canvas.text_scale()
@@ -611,6 +626,34 @@ def test_a_faceplate_taller_than_its_panel_scrolls_inside_it(app, panels):
     d.deleteLater()
 
 
+def drawn_texts(d) -> list:
+    image = QImage(d.canvas.size(), QImage.Format.Format_ARGB32)
+    p = QPainter(image)
+    texts = [t for _r, t in d.canvas.paint_on(p).placed]
+    p.end()
+    return texts
+
+
+def test_the_beam_path_shows_what_a_sequence_holds(app, panels):
+    """A recipe holding the magnet, the cup and the steerers (the Automation bar lists them): drawn
+    violet, with a SEQUENCE chip under their own, as the source panel badges a supply a sequence holds.
+    (The optics and Faraday panels show it only by greying out their controls.) Their state still
+    decides the beam's path."""
+    from src.gui.control.diagrams.canvas import layout_problems
+    d = make("beam", panels)
+    feed(panels, d, live(True))
+    layout_problems(d.canvas, d.READABLE)
+    assert not (d.state["magnet_held"] or d.state["cup_held"] or d.state["steer_held"])
+    plain = drawn_texts(d)
+    feed(panels, d, held(live(True)))
+    assert d.state["magnet_held"] == d.state["cup_held"] == "recipe 'Silicon implant'"
+    assert d.route()[-1] == "bend-to-cup"                       # (round the magnet, to the cup: as before)
+    assert layout_problems(d.canvas, d.READABLE) == []
+    # the source Einzel lens (its panel's badge), and the magnet, the cup and the steerers (their leases)
+    assert drawn_texts(d).count("SEQUENCE") == plain.count("SEQUENCE") + 4
+    d.deleteLater()
+
+
 def test_a_faceplates_link_brings_its_panel(app, panels):
     shown = []
     d = make("beam", panels, shown)
@@ -631,61 +674,182 @@ def hmi(app):
     from src.gui.control.control_main import ControlMainWindow
     w = ControlMainWindow()
     w.watchdog_timer.stop()
+    all_lists(w)                    # (whatever view an earlier test left saved)
     w.show()
     app.processEvents()
     yield w
+    all_lists(w)                    # (and none left saved for the windows of the tests after,
+    w._arrange_default()            # nor an odd layout: the window saves its layout as it closes)
+    app.processEvents()
     w.close()
     w.deleteLater()
     app.processEvents()
 
 
-def test_each_diagram_is_a_tab_beside_its_panel(hmi):
-    pairs = {hmi.vac_diagram_dock: hmi.vac_dock, hmi.beam_diagram_dock: hmi.optics_dock,
-             hmi.safety_diagram_dock: hmi.interlocks_dock, hmi.source_diagram_dock: hmi.src_dock}
+PAIRS = (("vac_dock", "vac_diagram", "vac_widget"), ("optics_dock", "beam_diagram", "optics_widget"),
+         ("interlocks_dock", "safety_diagram", "interlocks_widget"), ("src_dock", "source_diagram", "src_widget"))
+
+
+def all_lists(hmi):
+    for dock in hmi._views:
+        hmi._views[dock].show_view("list")
+
+
+def test_each_diagram_is_the_other_view_of_its_panel(hmi, app):
+    """One dock, and one entry in View > Panels, for a panel and its diagram (Josh, 9 November 2026:
+    "so many panels in the dropdown"): a List | Diagram switch at its top."""
+    all_lists(hmi)
     hmi._arrange_default()
-    for diagram_dock, twin in pairs.items():
-        assert diagram_dock in hmi.tabifiedDockWidgets(twin), diagram_dock.objectName()
-    assert hmi.on_screen(hmi.vac_dock) and not hmi.on_screen(hmi.vac_diagram_dock)  # the panels stay in front
+    app.processEvents()
+    for dock_name, diagram_name, widget_name in PAIRS:
+        dock, diagram, widget = getattr(hmi, dock_name), getattr(hmi, diagram_name), getattr(hmi, widget_name)
+        views = hmi._views[dock]
+        assert views.view() == "list" and hmi.shown_in(dock) is widget
+        assert views.page("list").widget() is widget and views.page("diagram").widget() is diagram
+        assert views.buttons["list"].isChecked() and not views.buttons["diagram"].isChecked()
+        views.buttons["diagram"].click()
+        app.processEvents()
+        assert views.view() == "diagram" and hmi.shown_in(dock) is diagram and views.buttons["diagram"].isChecked()
+        assert hmi._dock_of[diagram] is dock
+        views.buttons["list"].click()
+    titles = [a.text() for a in hmi.view_menu.actions()[0].menu().actions()]
+    assert len(titles) == len(hmi._docks) == 14
+    assert not any("Diagram" in t for t in titles)
+    assert all(b.focusPolicy() == Qt.FocusPolicy.NoFocus for v in hmi._views.values() for b in v.buttons.values())
 
 
 def test_a_diagram_in_view_keeps_the_panels_it_draws_from_up_to_date(hmi, app, monkeypatch):
+    all_lists(hmi)
     hmi._arrange_default()
+    hmi.optics_dock.raise_()
+    hmi._views[hmi.optics_dock].show_view("diagram")
     app.processEvents()
-    hmi.beam_diagram_dock.raise_()
-    app.processEvents()
-    assert hmi.on_screen(hmi.beam_diagram_dock) and not hmi.on_screen(hmi.optics_dock)
+    assert hmi.on_screen(hmi.optics_dock) and hmi.in_view(hmi.beam_diagram) and not hmi.in_view(hmi.optics_widget)
     refreshed = []
-    for w in (hmi.optics_widget, hmi.smu_widget, hmi.beam_diagram, hmi.mass_scan_widget):
+    for w in (hmi.optics_widget, hmi.smu_widget, hmi.beam_diagram, hmi.mass_scan_widget, hmi.vac_diagram):
         monkeypatch.setattr(w, "update_telemetry", lambda data, w=w: refreshed.append(w))
     monkeypatch.setattr(hmi.telemetry, "view", lambda: live(True))
     hmi._ui_update_loop()
-    assert hmi.optics_widget in refreshed and hmi.smu_widget in refreshed       # their docks hidden behind it
+    assert hmi.optics_widget in refreshed and hmi.smu_widget in refreshed       # their lists not shown
     assert refreshed.index(hmi.optics_widget) < refreshed.index(hmi.beam_diagram)
     assert hmi.mass_scan_widget in refreshed                                    # (always refreshed anyway)
+    assert hmi.vac_diagram not in refreshed             # (its panel shows its list: nobody sees the diagram)
 
 
-def test_show_panel_brings_the_panel_forward(hmi, app):
+def test_a_view_comes_up_to_date_as_it_is_shown_and_lets_go_of_an_unsent_entry(hmi, app, monkeypatch):
+    all_lists(hmi)
     hmi._arrange_default()
     app.processEvents()
-    hmi.beam_diagram_dock.raise_()
+    assert hmi.on_screen(hmi.src_dock)
+    hmi.master_telemetry_cache.update(live(True))
+    refreshed = []
+    for w in (hmi.src_widget, hmi.interlocks_widget, hmi.source_diagram):
+        monkeypatch.setattr(w, "update_telemetry", lambda data, w=w: refreshed.append(w))
+    box = hmi.src_widget.findChildren(SetpointBox)[0]          # a value typed, Enter not pressed
+    dropped = []
+    monkeypatch.setattr(box, "drop_edit", lambda why: dropped.append(why))
+    monkeypatch.setattr(SetpointBox, "editing", property(lambda self: self is box))
+    hmi._views[hmi.src_dock].buttons["diagram"].click()
     app.processEvents()
-    hmi.show_panel("optics")
+    assert refreshed[-1] is hmi.source_diagram                                  # brought up to date at once,
+    assert hmi.src_widget in refreshed and hmi.interlocks_widget in refreshed   # its panels first
+    assert dropped == ["its panel was switched to its diagram before you pressed Enter"]
+    all_lists(hmi)
+
+
+def test_the_view_is_remembered_and_saved_with_a_named_layout(hmi, app):
+    from src.gui.control.control_main import ControlMainWindow
+    all_lists(hmi)
+    hmi._views[hmi.src_dock].buttons["diagram"].click()
     app.processEvents()
-    assert hmi.on_screen(hmi.optics_dock)
+    assert hmi.settings.value("views/SourceDock") == "diagram"
+    again = ControlMainWindow()                         # (the next start)
+    again.watchdog_timer.stop()
+    try:
+        assert again.views()["SourceDock"] == "diagram" and again.views()["VacuumDock"] == "list"
+    finally:
+        again.close()
+        again.deleteLater()
+    # A named layout keeps the views it was saved with
+    hmi.settings.setValue("layouts/Tuning", hmi.saveState(hmi.LAYOUT_VERSION))
+    hmi.settings.setValue("layout_views/Tuning", '{"OpticsDock": "diagram", "SourceDock": "list"}')
+    hmi._load_layout("Tuning")
+    assert hmi.views()["OpticsDock"] == "diagram" and hmi.views()["SourceDock"] == "list"
+    hmi.settings.setValue("layouts/Old", hmi.saveState(hmi.LAYOUT_VERSION))   # (saved before the views)
+    hmi._load_layout("Old")
+    assert hmi.views()["OpticsDock"] == "diagram"                               # left as they were
+    hmi._delete_layout("Tuning")
+    assert hmi.settings.value("layout_views/Tuning") is None
+    all_lists(hmi)
+
+
+def test_show_panel_brings_the_panel_forward_as_asked(hmi, app):
+    all_lists(hmi)
+    hmi._arrange_default()
+    app.processEvents()
+    hmi._views[hmi.optics_dock].show_view("diagram")
+    hmi.smu_dock.raise_()
+    app.processEvents()
+    hmi.show_panel("optics")                            # (a faceplate's "List view")
+    app.processEvents()
+    assert hmi.on_screen(hmi.optics_dock) and hmi._views[hmi.optics_dock].view() == "list"
     hmi.interlocks_dock.close()
     hmi.show_panel("interlocks")
     app.processEvents()
     assert hmi.on_screen(hmi.interlocks_dock)
-
-
-def test_a_saved_layout_from_before_the_diagrams_puts_them_beside_their_panels(hmi, app):
-    hmi._arrange_default()
+    hmi.show_panel("source_diagram")                    # (the beam path's TESS faceplate)
     app.processEvents()
-    for dock in (hmi.vac_diagram_dock, hmi.beam_diagram_dock, hmi.safety_diagram_dock, hmi.source_diagram_dock):
-        hmi.removeDockWidget(dock)
+    assert hmi.on_screen(hmi.src_dock) and hmi._views[hmi.src_dock].view() == "diagram"
+    all_lists(hmi)
+
+
+def test_a_faceplates_link_to_its_own_panel_says_list_view(app, panels):
+    shown = []
+    d = make("vacuum", panels, shown)
+    feed(panels, d, live(True))
+    for key in ("GV2", "turbo_source", "VG1"):
+        d.open_faceplate(key)
+        links = [b.text() for b in d.faceplate.findChildren(QPushButton) if b.property("role") == "link"]
+        assert links == ["List view →"], key
+        links = [b for b in d.faceplate.findChildren(QPushButton) if b.property("role") == "link"]
+        links[0].click()
+    assert shown == ["vacuum"] * 3
+    beam = make("beam", panels, shown)                  # (in another panel's diagram: that panel by name)
+    feed(panels, beam, live(True))
+    beam.open_faceplate("fc")
+    assert [b.text() for b in beam.faceplate.findChildren(QPushButton) if b.property("role") == "link"] \
+        == ["Faraday Cup & SMU panel →"]
+    d.deleteLater()
+    beam.deleteLater()
+
+
+def test_a_layout_saved_with_the_diagrams_own_panels_is_restored(hmi, app):
+    """A layout saved before November 2026, with the four diagrams as panels of their own (a tab beside
+    their panels, or in front of them), restores: the panels where they were, the diagrams left out."""
+    from PyQt6.QtWidgets import QDockWidget, QLabel, QMainWindow
+    old = QMainWindow()
+    docks = {}
+    for name in ("VacuumDock", "VacuumDiagramDock", "HealthDock", "SourceDock", "SourceDiagramDock", "AlarmDock"):
+        docks[name] = QDockWidget(name, old)
+        docks[name].setObjectName(name)
+        docks[name].setWidget(QLabel(name))
+    L, R = Qt.DockWidgetArea.LeftDockWidgetArea, Qt.DockWidgetArea.RightDockWidgetArea
+    old.addDockWidget(L, docks["VacuumDock"])
+    old.addDockWidget(L, docks["HealthDock"])
+    old.splitDockWidget(docks["VacuumDock"], docks["HealthDock"], Qt.Orientation.Vertical)
+    old.tabifyDockWidget(docks["VacuumDock"], docks["VacuumDiagramDock"])
+    old.addDockWidget(R, docks["SourceDock"])
+    old.addDockWidget(R, docks["AlarmDock"])
+    old.tabifyDockWidget(docks["SourceDock"], docks["SourceDiagramDock"])
+    old.show()
+    docks["VacuumDiagramDock"].raise_()
+    app.processEvents()
+    state = old.saveState(hmi.LAYOUT_VERSION)
+    old.close()
+    old.deleteLater()
+    assert hmi.restoreState(state, hmi.LAYOUT_VERSION)
     hmi._place_new_panels()
     app.processEvents()
-    assert hmi.vac_diagram_dock in hmi.tabifiedDockWidgets(hmi.vac_dock)
-    assert hmi.source_diagram_dock in hmi.tabifiedDockWidgets(hmi.src_dock)
-    assert hmi.safety_diagram_dock in hmi.tabifiedDockWidgets(hmi.interlocks_dock)
-    assert hmi.on_screen(hmi.vac_dock) and not hmi.on_screen(hmi.vac_diagram_dock)
+    assert hmi.dockWidgetArea(hmi.vac_dock) == L and hmi.dockWidgetArea(hmi.src_dock) == R
+    assert hmi.on_screen(hmi.vac_dock) and hmi.on_screen(hmi.health_dock)
+    assert all(hmi.dockWidgetArea(d) != Qt.DockWidgetArea.NoDockWidgetArea or d.isFloating() for d in hmi._docks)

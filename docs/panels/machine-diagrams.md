@@ -1,8 +1,17 @@
 # Machine diagrams (test)
 
-Four panels draw the machine as it is laid out, live: the **Vacuum Diagram**, the **Beam Path Diagram**, the **Safety Chain Diagram** and the **TESS Source Diagram**. They are a test of a more visual way to run SINDIE. Each one shows what the text panels show, from the same telemetry, and adds nothing of its own; its controls are the panels' own controls.
+Four panels can also be shown as a diagram of their part of the machine, drawn as it is laid out, live: **Vacuum System**, **Beamline Optics** (the beam path), **Interlocks** (the safety chain) and **TESS Ion Source Control**. Displays like these are known as mimic diagrams. They are a test of a more visual way to run SINDIE. Each diagram shows what its panel's list shows, from the same telemetry, and adds nothing of its own; its controls are the panels' own controls.
 
-In the default layout each diagram is a tab beside the panel it draws most from: the Vacuum Diagram beside **Vacuum System**, the Beam Path Diagram beside **Beamline Optics**, the Safety Chain Diagram beside **Interlocks** and the TESS Source Diagram beside **TESS Ion Source Control**. **View > Panels** opens one that has been closed.
+## Showing a panel as its diagram
+
+Each of the four panels has a **List | Diagram** switch at its top right. Click **Diagram** to show the diagram in place of the list, in the same panel; click **List** to bring the list back. The panel stays where it is and keeps its single entry in **View > Panels**.
+
+![The Vacuum System panel shown as its diagram, with the List | Diagram switch at its top right](../images/diagram-vacuum.png)
+
+- Each panel remembers its choice, also the next time the HMI starts. Until you choose, a panel shows its list.
+- A layout saved with **View > Layouts > Save layout as...** keeps the choice of each panel, and choosing the layout brings the choices back with it. A layout saved before November 2026 leaves them as they are.
+- A value typed in a setpoint box but not yet sent with **Enter** is dropped when you switch the panel, as when you close it, and a message says so.
+- **F1** over a diagram opens this page; over a list, the panel's own page.
 
 ## Reading a diagram
 
@@ -34,9 +43,9 @@ Clicking a part opens a card beside it with what the part reads and the controls
 - A value you type is sent when you press **Enter**, and checked as from the panel.
 - The source turbo pump can be started, never stopped: it is stopped by hand, at the pump.
 
-Close a faceplate with **✕**, **Esc**, a click on an empty part of the diagram, or a click on another part. The link at the bottom of the card opens the full panel.
+Close a faceplate with **✕**, **Esc**, a click on an empty part of the diagram, or a click on another part. The links at the bottom of the card go to the full panels: **List view** switches this panel to its list, and a link named after another panel, such as **Faraday Cup & SMU panel**, brings that panel forward.
 
-## The Vacuum Diagram
+## Vacuum System
 
 The vacuum system as the thesis' drawing of it lays it out: the source column with the target loadlock and the argon line at the top, the 90° magnet chamber, the beamline, and the end-station with its sample loadlock.
 
@@ -47,7 +56,9 @@ The vacuum system as the thesis' drawing of it lays it out: the source column wi
 
 VG6 isn't on the thesis' drawing: its place on the diagram is a guess.
 
-## The Beam Path Diagram
+## Beamline Optics: the beam path
+
+![The Beamline Optics panel shown as its diagram of the beam path, with the magnet set for mass 28 and the Faraday cup out of the beam](../images/diagram-beam-path.png)
 
 The optics along the beam: down the source column from TESS through the source Einzel lens, GV2, the steerers, the object slits and the aperture ladder; round the magnet (or straight on to the straight-through cup); and along the beamline through the mass-resolving slits, the implant stage, the drop-in Faraday cup, the beamline Einzel lens, GV3 and the neutral trap to the end-station. Each element shows its readback, and the slits their jaws' currents.
 
@@ -59,9 +70,13 @@ The green band is the beam's path, worked out from the panels rather than measur
 - it stops at the Faraday cup while the cup is in;
 - past GV3, which the software can't read, it is dotted.
 
+A part that a sequence holds (a recipe, a scan or the optimiser), as the Automation bar lists it, is drawn violet with **SEQUENCE** under its own chip: the steerers, the magnet and the Faraday cup, as the source Einzel lens has its panel's **SEQUENCE** badge. Their controls are greyed out on their panels and faceplates until the sequence ends or you take control.
+
 The magnet's **≈ amu** is the mass it passes now, from its current, the beam's energy and the Mass Scan panel's calibration (as **CALCULATE & SET AMPS** uses it, the other way round). To set a mass, use the Beamline Optics panel.
 
-## The Safety Chain Diagram
+## Interlocks: the safety chain
+
+![The Interlocks panel shown as its diagram of the safety chain, with the safety relay closed](../images/diagram-safety-chain.png)
 
 What the safety relay's closing depends on, laid out as the thesis' drawing of it, with every state as the [Interlocks](interlocks.md) panel works it out:
 
@@ -74,7 +89,9 @@ A wire is green where its switches are made. The relay's output and the contacto
 
 The relay's faceplate has System Health's own buttons: **ENABLE SAFETY RELAY** with its countdown to press **START**, **RESET FAULTS**, **INITIATE SHUTDOWN** and **ABORT SHUTDOWN**.
 
-## The TESS Source Diagram
+## TESS Ion Source Control: the source
+
+![The TESS Ion Source Control panel shown as its diagram of the source, running: every supply on and the caesium oven heating](../images/diagram-tess-source.png)
 
 The source as the thesis' schematic draws it: the water-cooled cathode with the target at its end, the ioniser heated by electron bombardment, the tungsten filament behind it, the caesium oven, the extraction electrode, and the source Einzel lens downstream. Each electrode is drawn in its supply's colour, with its readback and mode beside it:
 

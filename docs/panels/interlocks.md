@@ -6,6 +6,8 @@ In the default layout it is a tab behind **System Health**. **View > Panels > In
 
 ![The Interlocks panel with the source running: the safety relay live, the PLC holding it on while the source is hot](../images/panel-interlocks.png)
 
+**Diagram**, at the panel's top right, shows the safety chain instead: what the safety relay's closing depends on, drawn where it is on the machine. **List** brings this list back. See [Machine diagrams](machine-diagrams.md#interlocks-the-safety-chain).
+
 ## Reading a card
 
 Each card is one permissive: the conditions the PLC (or the PC) needs, one under another, and at the bottom what they allow, such as the safety relay closing. All of them must hold, as in a rung of ladder logic. The line down the left of the card is solid as far as the conditions hold and dashed after the first one that doesn't, so your eye goes straight to what is holding it.

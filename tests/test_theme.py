@@ -438,11 +438,14 @@ def test_the_window_fits_a_laptop_screen(hmi):
 
 
 def test_a_panel_can_be_made_smaller_than_its_contents(hmi, app):
-    """Each panel scrolls: dropped in a narrow column it doesn't push the window wider."""
+    """Each panel scrolls: dropped in a narrow column it doesn't push the window wider - shown as
+    its list or as its diagram (List | Diagram)."""
     for dock in hmi._docks:
-        scroll = dock.widget()
-        assert scroll.objectName() == "PanelScroll"
-        assert scroll.minimumSizeHint().width() < 300, dock.objectName()
+        views = hmi._views.get(dock)
+        for scroll in (views.page("list"), views.page("diagram")) if views else (dock.widget(),):
+            assert scroll.objectName() == "PanelScroll"
+            assert scroll.minimumSizeHint().width() < 300, dock.objectName()
+        assert dock.widget().minimumSizeHint().width() < 300, dock.objectName()
 
 
 def test_default_layout_and_reset_without_restart(hmi, app):
@@ -504,3 +507,23 @@ def test_theme_switch_reaches_the_hmi_without_a_restart(hmi, app):
     chip = hmi.health_widget.lbl_comms
     assert chip.property("tone")                       # drawn by the stylesheet, so restyled with it
     theme.apply_theme(app, "dark")
+
+
+@pytest.mark.parametrize("scale", [1.0, 1.15, 1.3, 1.5])           # (theme.TEXT_SIZES)
+def test_a_radio_button_stays_round_at_every_text_size(app, scale, monkeypatch):
+    """Found in the thesis' screenshots (at 130 %): a radio button's corner radius came out a pixel more
+    than half its size, which Qt draws as a square. Checked or not, its outside size is the same and
+    its radius exactly half of it."""
+    import re
+    from src.gui import theme
+    assert scale in [s for _name, s in theme.TEXT_SIZES]
+    monkeypatch.setitem(theme._state, "text_scale", scale)
+    sheet = theme.build_stylesheet("light")
+    plain = re.search(r"QRadioButton::indicator \{ width: (\d+)px; height: (\d+)px; border: 1px[^;]*;\s*"
+                      r"border-radius: (\d+)px;", sheet)
+    checked = re.search(r"QRadioButton::indicator:checked \{ border: 4px[^;]*; background: [^;]*; width: (\d+)px;\s*"
+                        r"height: (\d+)px;", sheet)
+    assert plain and checked
+    outside = int(plain.group(1)) + 2
+    assert int(checked.group(1)) + 8 == outside == int(checked.group(2)) + 8
+    assert int(plain.group(3)) * 2 == outside

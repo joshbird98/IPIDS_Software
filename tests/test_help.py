@@ -328,6 +328,9 @@ def test_every_panel_has_a_page_and_f1_finds_it(hmi):
         assert page and os.path.exists(pages.path_of(page)), dock.objectName()
         assert context_page(hmi, widget=dock.widget()) == page
     assert context_page(hmi, widget=hmi.vac_widget) == "panels/vacuum.md"            # anything inside a panel
+    # A panel shown as its diagram (List | Diagram): the diagrams' page, from anywhere in the drawing
+    assert context_page(hmi, widget=hmi.vac_diagram.canvas) == pages.DIAGRAMS == "panels/machine-diagrams.md"
+    assert context_page(hmi, widget=hmi._views[hmi.vac_dock].bar) == "panels/vacuum.md"     # (the switch)
     assert context_page(hmi, widget=hmi.automation_bar) == "panels/automation-bar.md"
     assert context_page(hmi, widget=hmi.menuBar()) == pages.HOME
 

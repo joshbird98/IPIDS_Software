@@ -19,6 +19,7 @@ from src.gui.control.diagrams.canvas import DiagramCanvas
 from src.gui.control.diagrams.mirror import MirrorSetpoint
 
 log = logging.getLogger("hmi.diagrams")
+LIST_LINK = "List view →"           # a faceplate's link to the list of the panel the diagram is a view of
 
 
 class DiagramPanel(QWidget):
@@ -27,6 +28,7 @@ class DiagramPanel(QWidget):
     SIZE = QSizeF(1000, 700)        # ... and its size
     DESIGN_SCALE = 0.55             # screen px per unit the labels were placed for
     READABLE = QSize(640, 460)      # below this, the drawing shrinks to fit
+    HOME = ""                       # the panel (show_panel's name) this diagram is the other view of
 
     def __init__(self, panels: dict, show_panel=None):
         """panels: the HMI's panels this diagram pictures, by name. show_panel(name): bring that
@@ -57,6 +59,11 @@ class DiagramPanel(QWidget):
 
     def faceplate_for(self, key: str):
         return None
+
+    def link(self, fp, name: str, text: str):
+        """fp's link to the panel `name` (show_panel). To the panel this diagram is a view of, it
+        says so: it switches that panel to its list (List | Diagram, panel_views.py)."""
+        fp.link(LIST_LINK if name == self.HOME else text, lambda: self.show_panel(name))
 
     @property
     def watched(self) -> list:

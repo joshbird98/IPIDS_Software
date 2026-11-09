@@ -1,3 +1,4 @@
+import json
 import logging
 import os
 import time
@@ -50,6 +51,8 @@ from src.gui.control.diagrams.vacuum import VacuumDiagram
 from src.gui.control.diagrams.beamline import BeamPathDiagram
 from src.gui.control.diagrams.safety import SafetyChainDiagram
 from src.gui.control.diagrams.source import TessSourceDiagram
+from src.gui.control.panel_views import DIAGRAM, LIST, VIEWS, DEFAULT_VIEW, PanelViews
+from src.gui.help import pages as help_pages
 
 
 def _takes_typing(widget) -> bool:
@@ -195,20 +198,21 @@ class ControlMainWindow(QMainWindow):
                                   "the box, then type the value and press Enter.")
         super().keyPressEvent(event)
 
-    def _panel_gone(self, dock):
+    def _panel_gone(self, dock, why: str = "its panel was closed or switched away before you pressed Enter"):
         """A dock closed or switched away (Qt keeps a switched-away tab's widgets, and their focus,
-        off-screen): an unsent entry in it is dropped, and the keyboard comes back to the window."""
+        off-screen), or one view of a panel switched to the other (then `dock` is that view's page):
+        an unsent entry in it is dropped, and the keyboard comes back to the window."""
         for box in dock.findChildren(SetpointBox):
             if box.editing:
-                box.drop_edit("its panel was closed or switched away before you pressed Enter")
+                box.drop_edit(why)
         focused = QApplication.focusWidget()
         if focused is not None and dock.isAncestorOf(focused):
             self._park_focus()
 
     def _panel_shown(self, dock):
-        """A panel came into view (opened, or its tab chosen): bring it up to date at once - hidden
-        panels aren't refreshed (see _ui_update_loop)."""
-        widget = self._panel_widgets.get(dock)
+        """A panel came into view (opened, its tab chosen, or switched to its other view): bring
+        what it shows up to date at once - hidden panels aren't refreshed (see _ui_update_loop)."""
+        widget = self.shown_in(dock)
         if not self.master_telemetry_cache:
             return              # no telemetry yet: nothing to bring it up to (the next refresh does)
         if widget is not None and widget not in self._always_refresh:
@@ -311,8 +315,6 @@ class ControlMainWindow(QMainWindow):
         for dock in (self.recipe_dock, self.log_dock, self.cmd_log_dock, self.service_dock):
             self.tabifyDockWidget(previous, dock)
             previous = dock
-        for diagram_dock, twin in self._twin_of.items():
-            self.tabifyDockWidget(twin, diagram_dock)
         for dock in self._docks:
             dock.show()
         self.vac_dock.raise_()
@@ -343,14 +345,12 @@ class ControlMainWindow(QMainWindow):
 
     def _place_new_panels(self):
         """A panel added since the layout was saved (the saved layout doesn't place it): a tab behind
-        System Health, where it can be found, rather than nowhere - a diagram, behind the panel it
-        draws from."""
+        System Health, where it can be found, rather than nowhere. (The diagrams' own panels of
+        before November 2026, in a layout saved then, are left out: each is now a view of its
+        panel.)"""
         for dock in self._docks:
             if self.dockWidgetArea(dock) == Qt.DockWidgetArea.NoDockWidgetArea and not dock.isFloating():
                 anchor = self.health_dock if dock is not self.health_dock else self.vac_dock
-                twin = self._twin_of.get(dock)
-                if twin is not None and self.dockWidgetArea(twin) != Qt.DockWidgetArea.NoDockWidgetArea:
-                    anchor = twin
                 if self.dockWidgetArea(anchor) == Qt.DockWidgetArea.NoDockWidgetArea:
                     self.addDockWidget(Qt.DockWidgetArea.LeftDockWidgetArea, dock)
                 else:
@@ -409,6 +409,7 @@ class ControlMainWindow(QMainWindow):
         if not ok or not name:
             return
         self.settings.setValue(f"layouts/{name}", self.saveState(self.LAYOUT_VERSION))
+        self.settings.setValue(f"layout_views/{name}", json.dumps(self.views()))
         self._rebuild_layouts_menu()
 
     def _load_layout(self, name: str):
@@ -418,10 +419,12 @@ class ControlMainWindow(QMainWindow):
                                                 f"(saved by an older version?).")
         else:
             self._place_new_panels()
+            self._show_views(self.settings.value(f"layout_views/{name}"))   # (none in a layout saved before them)
         self._fit_to_screen()
 
     def _delete_layout(self, name: str):
         self.settings.remove(f"layouts/{name}")
+        self.settings.remove(f"layout_views/{name}")
         self._rebuild_layouts_menu()
 
     def _show_config_editor(self):
@@ -435,9 +438,9 @@ class ControlMainWindow(QMainWindow):
         elif ok:
             QMessageBox.warning(self, "Access Denied", "Incorrect password.")
 
-    def _panel(self, title: str, object_name: str, widget):
-        """A dockable panel. Its contents scroll when the panel is made smaller than they are, so a
-        panel fits wherever it is dropped and the window fits a laptop screen."""
+    def _scroll(self, widget):
+        """widget in a scroll area: a panel's contents scroll when the panel is made smaller than
+        they are, so a panel fits wherever it is dropped and the window fits a laptop screen."""
         scroll = QScrollArea()
         scroll.setObjectName("PanelScroll")
         scroll.setWidgetResizable(True)
@@ -447,9 +450,25 @@ class ControlMainWindow(QMainWindow):
         # to another control" and is sent. Empty space must leave the focus where it is.
         scroll.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         scroll.setWidget(widget)
+        return scroll
+
+    def _panel(self, title: str, object_name: str, widget, diagram=None):
+        """A dockable panel. With a diagram, the panel can be shown either way, as its list or as
+        the diagram, with a List | Diagram switch at its top (panel_views.py): one dock, and one
+        entry in View > Panels."""
         dock = QDockWidget(title, self)
         dock.setObjectName(object_name)
-        dock.setWidget(scroll)
+        if diagram is None:
+            dock.setWidget(self._scroll(widget))
+        else:
+            diagram_page = self._scroll(diagram)
+            diagram_page.setProperty("help_page", help_pages.DIAGRAMS)       # (F1 there: the diagrams' page)
+            views = PanelViews(self._scroll(widget), diagram_page)
+            views.show_view(self._saved_view(object_name))
+            views.switched.connect(lambda view, d=dock: self._view_switched(d, view))
+            dock.setWidget(views)
+            self._views[dock] = views
+            self._diagram_of[dock] = diagram
         self._docks.append(dock)
         self._panel_widgets[dock] = widget
         return dock
@@ -457,87 +476,74 @@ class ControlMainWindow(QMainWindow):
     def _init_docks(self):
         self._docks = []
         self._panel_widgets = {}
+        self._views = {}            # dock -> PanelViews, for a panel that can also be shown as a diagram
+        self._diagram_of = {}       # ... and its diagram
 
+        # The panels
         self.vac_widget = VacuumControlWidget(self.cmd_thread, self.fault_engine)
-        self.vac_dock = self._panel("Vacuum System", "VacuumDock", self.vac_widget)
         self.subsystems["vacuum"] = self.vac_widget
-
         self.log_widget = ExperimentLoggerWidget(self.event_helper)
-        self.log_dock = self._panel("Experiment Logging", "LogDock", self.log_widget)
         self.subsystems["logging"] = self.log_widget
-
         self.recipe_widget = RecipeExecutionWidget(self.cmd_thread)
-        self.recipe_dock = self._panel("Recipe Execution", "RecipeDock", self.recipe_widget)
         self.subsystems["recipe"] = self.recipe_widget
-
         self.optimiser_widget = ParameterOptimizerWidget(self.cmd_thread, self.event_helper)
-        self.optimiser_dock = self._panel("Optimiser", "OptimiserDock", self.optimiser_widget)
         self.subsystems["optimiser"] = self.optimiser_widget
-
         self.src_widget = IonSourceWidget(self.cmd_thread, self.fault_engine)
-        self.src_dock = self._panel("TESS Ion Source Control", "SourceDock", self.src_widget)
         self.subsystems["source"] = self.src_widget
-
         self.optics_widget = BeamlineOpticsWidget(self.cmd_thread, self.event_helper)
-        self.optics_dock = self._panel("Beamline Optics", "OpticsDock", self.optics_widget)
         self.subsystems["optics"] = self.optics_widget
-
         self.smu_widget = FaradaySMUWidget(self.cmd_thread)
-        self.smu_dock = self._panel("Faraday Cup && SMU", "FaradaySmuDock", self.smu_widget)
         self.subsystems["faraday_smu"] = self.smu_widget
-
         self.current_mon_widget = AdamMonitorWidget(self.cmd_thread)
-        self.current_mon_dock = self._panel("Current Monitoring", "CurrentMonDock", self.current_mon_widget)
         self.subsystems["current_mon"] = self.current_mon_widget
-
         self.mass_scan_widget = PrecisionMassScannerWidget(self.cmd_thread, self.event_helper)
         # "Calculate & set amps" in the optics panel uses the mass scan's calibration
         self.optics_widget.mass_calibration = self.mass_scan_widget.current_calibration
-        self.mass_scan_dock = self._panel("Mass Scan", "MassScanDock", self.mass_scan_widget)
         self.subsystems["mass_scan"] = self.mass_scan_widget
-
         self.health_widget = SystemHealthWidget(self.cmd_thread, self.fault_engine)
-        self.health_dock = self._panel("System Health", "HealthDock", self.health_widget)
         self.subsystems["health"] = self.health_widget
-
         # Every interlock and what is holding it now (read only)
         self.interlocks_widget = InterlocksWidget(self.fault_engine)
-        self.interlocks_dock = self._panel("Interlocks", "InterlocksDock", self.interlocks_widget)
         self.subsystems["interlocks"] = self.interlocks_widget
-
         self.service_widget = ServicesWidget(self.cmd_thread)
-        self.service_dock = self._panel("Service Manager", "ServicesDock", self.service_widget)
         self.subsystems["services"] = self.service_widget
-
         # Alarms (service_alarms): list, acknowledge / shelve, and the horn
         self.alarm_widget = AlarmPanel(self.cmd_thread)
-        self.alarm_dock = self._panel("Alarms", "AlarmDock", self.alarm_widget)
         self.subsystems["alarms"] = self.alarm_widget
-
         self.cmd_log_widget = CommandLogWidget()
-        self.cmd_log_dock = self._panel("Command Log", "CommandLogDock", self.cmd_log_widget)
 
         # The machine diagrams (a test, November 2026): the machine drawn as it is laid out, live, from
-        # the panels above - a part's faceplate has its panel's own controls (src/gui/control/diagrams)
+        # the panels above - a part's faceplate has its panel's own controls (src/gui/control/diagrams).
+        # Each is the other view of the panel it draws most from (List | Diagram, panel_views.py).
         self.vac_diagram = VacuumDiagram({"vacuum": self.vac_widget}, self.show_panel)
-        self.vac_diagram_dock = self._panel("Vacuum Diagram", "VacuumDiagramDock", self.vac_diagram)
         self.beam_diagram = BeamPathDiagram(
             {"source": self.src_widget, "optics": self.optics_widget, "vacuum": self.vac_widget,
              "faraday": self.smu_widget, "currents": self.current_mon_widget}, self.show_panel)
-        self.beam_diagram_dock = self._panel("Beam Path Diagram", "BeamDiagramDock", self.beam_diagram)
         self.safety_diagram = SafetyChainDiagram(
             {"health": self.health_widget, "interlocks": self.interlocks_widget, "vacuum": self.vac_widget},
             self.show_panel)
-        self.safety_diagram_dock = self._panel("Safety Chain Diagram", "SafetyDiagramDock", self.safety_diagram)
         self.source_diagram = TessSourceDiagram({"source": self.src_widget, "interlocks": self.interlocks_widget},
                                                 self.show_panel)
-        self.source_diagram_dock = self._panel("TESS Source Diagram", "SourceDiagramDock", self.source_diagram)
         self.diagrams = [self.vac_diagram, self.beam_diagram, self.safety_diagram, self.source_diagram]
         for diagram in self.diagrams:
             diagram.notice.connect(self._show_notice)       # (a faceplate's setpoint entry not sent)
-        # Each diagram is a tab beside the panel it draws most from
-        self._twin_of = {self.vac_diagram_dock: self.vac_dock, self.beam_diagram_dock: self.optics_dock,
-                         self.safety_diagram_dock: self.interlocks_dock, self.source_diagram_dock: self.src_dock}
+
+        # Their docks
+        self.vac_dock = self._panel("Vacuum System", "VacuumDock", self.vac_widget, self.vac_diagram)
+        self.log_dock = self._panel("Experiment Logging", "LogDock", self.log_widget)
+        self.recipe_dock = self._panel("Recipe Execution", "RecipeDock", self.recipe_widget)
+        self.optimiser_dock = self._panel("Optimiser", "OptimiserDock", self.optimiser_widget)
+        self.src_dock = self._panel("TESS Ion Source Control", "SourceDock", self.src_widget, self.source_diagram)
+        self.optics_dock = self._panel("Beamline Optics", "OpticsDock", self.optics_widget, self.beam_diagram)
+        self.smu_dock = self._panel("Faraday Cup && SMU", "FaradaySmuDock", self.smu_widget)
+        self.current_mon_dock = self._panel("Current Monitoring", "CurrentMonDock", self.current_mon_widget)
+        self.mass_scan_dock = self._panel("Mass Scan", "MassScanDock", self.mass_scan_widget)
+        self.health_dock = self._panel("System Health", "HealthDock", self.health_widget)
+        self.interlocks_dock = self._panel("Interlocks", "InterlocksDock", self.interlocks_widget,
+                                           self.safety_diagram)
+        self.service_dock = self._panel("Service Manager", "ServicesDock", self.service_widget)
+        self.alarm_dock = self._panel("Alarms", "AlarmDock", self.alarm_widget)
+        self.cmd_log_dock = self._panel("Command Log", "CommandLogDock", self.cmd_log_widget)
 
         # Refreshed even while hidden: the alarm horn, the automation bar, and the panels that
         # follow a running sequence (operator prompts, scan points fetched as they come)
@@ -548,6 +554,7 @@ class ControlMainWindow(QMainWindow):
                            self.optimiser_widget, self.mass_scan_widget, self.recipe_widget,
                            self.automation_bar, self.alarm_widget] + self.diagrams     # (after their panels)
         self._dock_of = {w: d for d, w in self._panel_widgets.items()}
+        self._dock_of.update({diagram: d for d, diagram in self._diagram_of.items()})
 
     def _route_telemetry(self, topic: str, fresh_data: dict):
         self.telemetry.ingest(topic, fresh_data)
@@ -585,15 +592,14 @@ class ControlMainWindow(QMainWindow):
         self.master_telemetry_cache.update(view)
 
         minimised = self.isMinimized()
-        # The panels a diagram in view draws from are kept up to date, their own docks hidden or not
-        drawn_from = set() if minimised else {w for d in self.diagrams if self.on_screen(self._dock_of[d])
-                                               for w in d.watched}
+        # The panels a diagram in view draws from are kept up to date, their own lists hidden or not
+        drawn_from = set() if minimised else {w for d in self.diagrams if self.in_view(d) for w in d.watched}
         for widget in self._refreshed:
             if widget not in self._always_refresh and widget not in drawn_from:
-                # A closed panel, or one behind another tab, isn't redrawn 10 times a second for
-                # nobody: it catches up the moment it is shown (_panel_shown)
-                dock = self._dock_of.get(widget)
-                if minimised or (dock is not None and not self.on_screen(dock)):
+                # A closed panel, one behind another tab, or the view of a panel not shown, isn't
+                # redrawn 10 times a second for nobody: it catches up the moment it is shown
+                # (_panel_shown)
+                if minimised or not self.in_view(widget):
                     continue
             try:
                 widget.update_telemetry(self.master_telemetry_cache)
@@ -602,13 +608,61 @@ class ControlMainWindow(QMainWindow):
 
 
     def show_panel(self, name: str):
-        """A panel to the front, opened if it was closed (a diagram's faceplate links to its panel)."""
+        """A panel to the front, opened if it was closed (a diagram's faceplate links to its panel):
+        as its list, or as its diagram for "<name>_diagram" ("source_diagram")."""
+        name, view = (name[:-len("_diagram")], DIAGRAM) if name.endswith("_diagram") else (name, LIST)
         dock = {"vacuum": self.vac_dock, "source": self.src_dock, "optics": self.optics_dock,
                 "faraday": self.smu_dock, "currents": self.current_mon_dock, "health": self.health_dock,
-                "interlocks": self.interlocks_dock, "source_diagram": self.source_diagram_dock}.get(name)
+                "interlocks": self.interlocks_dock}.get(name)
         if dock is not None:
+            if dock in self._views:
+                self._views[dock].show_view(view)
             dock.show()
             dock.raise_()
+
+    # --- A panel's two views: List | Diagram (panel_views.py) ---------------------------------------
+    def _saved_view(self, object_name: str) -> str:
+        view = self.settings.value(f"views/{object_name}", DEFAULT_VIEW)
+        return view if view in VIEWS else DEFAULT_VIEW
+
+    def views(self) -> dict:
+        """{dock name: the view it shows} for the panels with two."""
+        return {dock.objectName(): v.view() for dock, v in self._views.items()}
+
+    def _show_views(self, saved):
+        """The views of a named layout ({dock name: view}, as JSON)."""
+        try:
+            wanted = json.loads(saved) if isinstance(saved, str) else {}
+        except ValueError:
+            wanted = {}
+        for dock, v in self._views.items():
+            if isinstance(wanted, dict) and wanted.get(dock.objectName()) in VIEWS:
+                v.show_view(wanted[dock.objectName()])
+
+    def _view_switched(self, dock, view: str):
+        """The operator chose a panel's other view: remembered for the next start; the view switched
+        away from lets go of an unsent entry and the keyboard; the one shown is brought up to date."""
+        self.settings.setValue(f"views/{dock.objectName()}", view)
+        other = LIST if view == DIAGRAM else DIAGRAM
+        self._panel_gone(self._views[dock].page(other),
+                         f"its panel was switched to its {'diagram' if view == DIAGRAM else 'list'} "
+                         f"before you pressed Enter")
+        if self.on_screen(dock):
+            self._panel_shown(dock)
+
+    def shown_in(self, dock):
+        """What a dock shows: its panel's widget, or the diagram when that view is chosen."""
+        views = self._views.get(dock)
+        if views is not None and views.view() == DIAGRAM:
+            return self._diagram_of[dock]
+        return self._panel_widgets.get(dock)
+
+    def in_view(self, widget) -> bool:
+        """Whether a panel's widget, or a diagram, can be seen: its dock on screen and showing it."""
+        dock = self._dock_of.get(widget)
+        if dock is None:
+            return True
+        return self.on_screen(dock) and self.shown_in(dock) is widget
 
     @staticmethod
     def on_screen(dock) -> bool:

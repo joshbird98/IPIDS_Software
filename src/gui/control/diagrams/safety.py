@@ -1,10 +1,10 @@
-"""The Safety Chain Diagram: what the safety relay's closing depends on, laid out as the thesis' drawing
-of it (arch_safety). The PLC reads the coolant, air and gate valve switches where they are on the
-machine, and gives its enable over the fibre once they all hold and you have asked (ENABLE SAFETY
-RELAY, from the PC). The enable is one contact in the relay's hardwired loop, with the vacuum
-controller's relay, the high-voltage enclosure's two doors and its ESO, and the operator desk's key,
-START and ESO. With the loop made, the relay closes and its contactor switches the mains to every
-high-voltage supply.
+"""The Interlocks panel's diagram, the safety chain: what the safety relay's closing depends on,
+laid out as the thesis' drawing of it (arch_safety). The PLC reads the coolant, air and gate valve
+switches where they are on the machine, and gives its enable over the fibre once they all hold and
+you have asked (ENABLE SAFETY RELAY, from the PC). The enable is one contact in the relay's
+hardwired loop, with the vacuum controller's relay, the high-voltage enclosure's two doors and its
+ESO, and the operator desk's key, START and ESO. With the loop made, the relay closes and its
+contactor switches the mains to every high-voltage supply.
 
 Every state is the Interlocks panel's (src/core/interlocks.py: its 'Safety relay' chain). The doors,
 the ESOs, the key and START are wired in series where no software can see them: they are drawn
@@ -71,6 +71,7 @@ HIDDEN_NOTE = ("In the relay's hardwired loop, in series with the other doors, E
 
 
 class SafetyChainDiagram(DiagramPanel):
+    HOME = "interlocks"             # (List | Diagram: this is the other view of that panel)
     ORIGIN = QPointF(-60, 0)
     SIZE = QSizeF(1600, 1265)
     DESIGN_SCALE = 0.55
@@ -266,7 +267,7 @@ class SafetyChainDiagram(DiagramPanel):
         sym.wire(v, [(790, 694), (912, 694)], "dead", 2.0)
         sym.wire(v, [(948, 694), (1080, 694), (1080, 872), (CABINET.left() + 196, 872)], hv, 2.2)
         sym.wire(v, [(CABINET.left() + 30, 935), (CABINET.left() + 140, 935)], "dead", 2.0)
-        sym.wire(v, [(CABINET.left() + 184, 935), (CABINET.left() + 300, 935)], hv, 2.4)
+        sym.wire(v, [(CABINET.left() + 184, 935), (CABINET.right() + 6, 935)], hv, 2.4)    # (out of the cabinet)
 
     def _switches(self, v):
         closed = self.relay_closed()
@@ -388,8 +389,8 @@ class SafetyChainDiagram(DiagramPanel):
         # The power cabinet
         v.text(CABINET.center().x(), CABINET.bottom() + 8, "Power cabinet B", "name", HC | T)
         v.text(CABINET.left() + 19, 935, "L1", "note", R | VC)        # (clear of the contactor, at +20)
-        v.block(CABINET.left() + 310, 935, [[("name-b", "Every high-voltage supply")],
-                                            [("note", "switched mains")]], L | VC)
+        v.block(CABINET.right() + 16, 935, [[("name-b", "Every high-voltage supply")],   # (outside: no edge
+                                            [("note", "switched mains")]], L | VC)          # through it)
 
     # --- faceplates ---------------------------------------------------------------------------
     def _conditions_plate(self, fp: Faceplate, labels):
@@ -423,21 +424,21 @@ class SafetyChainDiagram(DiagramPanel):
             fp.wide(MirrorButton(h.btn_reset_faults))
             fp.wide(MirrorButton(h.btn_shutdown), MirrorButton(h.btn_cancel_shutdown))
             fp.note("After ENABLE SAFETY RELAY, press START on the operator desk before the countdown ends.")
-            fp.link("System Health panel →", lambda: self.show_panel("health"))
-            fp.link("Interlocks panel →", lambda: self.show_panel("interlocks"))
+            self.link(fp, "health", "System Health panel →")
+            self.link(fp, "interlocks", "Interlocks panel →")
             return fp
         if key == "plc":
             fp = Faceplate(self, key, "The PLC's enable", "Given over the fibre when all of these hold and you ask")
             self._conditions_plate(fp, PLC_CONDITIONS + ("ENABLE SAFETY RELAY",))
             fp.wide(MirrorLabel(h.lbl_comms))
-            fp.link("Interlocks panel →", lambda: self.show_panel("interlocks"))
+            self.link(fp, "interlocks", "Interlocks panel →")
             return fp
         if key == "pc":
             fp = Faceplate(self, key, "ENABLE SAFETY RELAY", "Your request to the PLC")
             self._conditions_plate(fp, ("ENABLE SAFETY RELAY",))
             fp.wide(MirrorButton(h.btn_enable_safety))
             fp.note("Then press START on the operator desk before the countdown ends.")
-            fp.link("System Health panel →", lambda: self.show_panel("health"))
+            self.link(fp, "health", "System Health panel →")
             return fp
         if key == "gv2":
             return gv2_plate(self, key, self.vac)
@@ -450,8 +451,8 @@ class SafetyChainDiagram(DiagramPanel):
                 fp.note("The temperature and flow switches are wired in series to one PLC input, so the software "
                         "can't tell which of them is open.")
             if key == "vacuum":
-                fp.link("Vacuum System panel →", lambda: self.show_panel("vacuum"))
-            fp.link("Interlocks panel →", lambda: self.show_panel("interlocks"))
+                self.link(fp, "vacuum", "Vacuum System panel →")
+            self.link(fp, "interlocks", "Interlocks panel →")
             return fp
         if key == "fibre":
             fp = Faceplate(self, key, "The PLC's enable", "Its contact in the relay's loop, worked by the fibre")

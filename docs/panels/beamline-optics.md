@@ -4,6 +4,8 @@ The **Beamline Optics** panel sets the beam steerers, the analyser magnet and th
 
 ![The Beamline Optics panel with the analyser magnet on, set for mass 28](../images/panel-beamline-optics.png)
 
+**Diagram**, at the panel's top right, shows the beam path instead: the optics along the beam from TESS to the end-station, live, with the same controls. **List** brings this list back. See [Machine diagrams](machine-diagrams.md#beamline-optics-the-beam-path).
+
 ## What it shows
 
 The panel follows the beam in four groups:

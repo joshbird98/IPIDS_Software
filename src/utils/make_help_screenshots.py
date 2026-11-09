@@ -8,8 +8,9 @@ It starts the simulated services on their own ports and in a temporary data fold
 on the lab PC next to the running system), opens the HMI and the data viewer offscreen on a
 1536 x 864 screen, and brings the simulated machine up as an operator would: gate valve, safety
 relay, extraction, target, einzel, caesium oven, filament and thermionic, the magnet on Si-28 and
-the beam on the Faraday cup. It runs a mass scan, then saves each panel, the whole HMI and the data
-viewer (both with numbered markers that the screen-tour pages explain), and some dialogs.
+the beam on the Faraday cup. It runs a mass scan, then saves each panel, the four that can be shown
+as a diagram also as their diagram, the whole HMI and the data viewer (both with numbered markers
+that the screen-tour pages explain), and some dialogs.
 
 Re-run it after changing what a panel looks like, then check the pages that show it.
 """
@@ -29,12 +30,13 @@ SCREEN = {"synchronousWindowSystemEvents": False, "windowFrameMargins": False,
                        "logicalDpi": 96, "logicalBaseDpi": 96, "dpr": 1}]}
 
 # The size each panel is saved at (floating, as if pulled out of the window): wide enough for its
-# contents without scrolling. object name -> (file name, width, height)
+# contents without scrolling, and at most this tall (as tall as they need). object name -> (file name,
+# width, height)
 PANELS = {
-    "VacuumDock": ("panel-vacuum", 680, 450),
+    "VacuumDock": ("panel-vacuum", 680, 490),
     "HealthDock": ("panel-system-health", 680, 470),
     "InterlocksDock": ("panel-interlocks", 1240, 1100),
-    "SourceDock": ("panel-ion-source", 780, 480),
+    "SourceDock": ("panel-ion-source", 780, 540),
     "OpticsDock": ("panel-beamline-optics", 780, 700),
     "FaradaySmuDock": ("panel-faraday-cup-smu", 700, 560),
     "CurrentMonDock": ("panel-current-monitoring", 800, 330),
@@ -45,6 +47,15 @@ PANELS = {
     "LogDock": ("panel-experiment-logging", 700, 330),
     "CommandLogDock": ("panel-command-log", 900, 340),
     "ServicesDock": ("panel-service-manager", 600, 560),
+}
+# The panels that can also be shown as a diagram (List | Diagram), as their diagram: object name ->
+# (file name, width, height, the part whose faceplate is open, or None). A little larger than each
+# drawing's READABLE size, so its text is at its normal size.
+DIAGRAMS = {
+    "VacuumDock": ("diagram-vacuum", 1040, 800, "turbo_source"),
+    "OpticsDock": ("diagram-beam-path", 1120, 740, None),
+    "InterlocksDock": ("diagram-safety-chain", 1060, 860, None),
+    "SourceDock": ("diagram-tess-source", 1040, 620, None),
 }
 MARKER_FILL = "#D6336C"         # the numbered markers on the overview pictures
 
@@ -242,6 +253,48 @@ class Shooter:
                         w.clearFocus()
             self.app.processEvents()
 
+    @staticmethod
+    def panel_scroll(hmi, dock):
+        """The scroll area a panel's contents are in: for a panel with List | Diagram, the view shown."""
+        views = hmi._views.get(dock)
+        return views.page() if views is not None else dock.widget()
+
+    def fit_height(self, dock, width, height, extra=6):
+        """The panel as tall as its contents need at `width` (up to `height`), no empty space below."""
+        scroll = self.panel_scroll(self.hmi, dock)
+        content = scroll.widget() if hasattr(scroll, "widget") else None
+        if content is not None and content.layout() is not None:
+            content.layout().activate()
+            need = content.layout().totalHeightForWidth(content.width()) \
+                if content.layout().hasHeightForWidth() else content.sizeHint().height()
+            dock.resize(width, max(160, min(height, need + (dock.height() - scroll.height()) + extra)))
+            self.spin(0.5)
+
+    def card_below_labels(self, diagram, part):
+        """For the pictures (on the screen, the card stays where it opens): the open faceplate moved
+        down if it cuts through a label above its part (beside the source turbo, it would hide VG1's
+        pressure), its top just under the lowest such label; then nearer its part, into the gap
+        between them, if it covers the edge of the key."""
+        plate, canvas = diagram.faceplate, diagram.canvas
+        if plate is None or canvas._last is None:
+            return
+        at = canvas.pos()
+        anchor = canvas.box_on_screen(part).translated(at.x(), at.y())
+        card = plate.geometry()
+        labels = [r.translated(at.x(), at.y()) for r, _text in canvas._last[2].placed]
+        above = [r.bottom() for r in labels if r.bottom() <= anchor.top() and r.intersects(card.toRectF())]
+        x, y = card.x(), card.y()
+        if above:
+            y = max(y, round(max(above)) + 6)
+        key = canvas.legend_box.translated(at.x(), at.y())
+        moved = card.translated(x - card.x(), y - card.y()).toRectF()
+        if not key.isEmpty() and moved.intersects(key) and x > anchor.right():
+            x = max(round(anchor.right()) + 3, int(key.left()) - 3 - card.width())
+        if (x, y) != (card.x(), card.y()):
+            plate.move(x, y)
+            canvas.update()                     # (its shadow, under it)
+            self.spin(0.3)
+
     def save(self, image, name):
         path = os.path.join(self.out, name + ".png")
         image.save(path, "PNG", 0)
@@ -303,6 +356,7 @@ class Shooter:
         self.shoot_overview()
         self.shoot_viewer()
         self.shoot_panels()
+        self.shoot_diagrams()
         self.shoot_dialogs()
         self.shoot_launcher()
         self.shoot_alarm()
@@ -397,6 +451,9 @@ class Shooter:
                 marks.append(self._at(tabs, r.right() + 20, r.center().y(), hmi))
         dock = hmi.vac_dock
         marks.append(self._at(dock, dock.width() - 58, 13, hmi))
+        bar = hmi._views[dock].bar                  # (List | Diagram)
+        left = hmi._views[dock].buttons["list"].geometry().left()
+        marks.append(self._at(bar, left - 20, bar.height() // 2, hmi))
         self.save(self._mark(image, marks), "hmi-overview")
 
     def _tab_bar_with(self, title):
@@ -483,20 +540,45 @@ class Shooter:
             dock.show()
             dock.raise_()
             self.unfocus()
+            if dock in hmi._views:
+                hmi._views[dock].show_view("list")
             widget = hmi._panel_widgets.get(dock)
             if widget is not None:                  # (a panel that was behind a tab: up to date first)
                 widget.update_telemetry(hmi.master_telemetry_cache)
             self.spin(0.8)
-            # as tall as the contents need at that width (up to the size above), no empty space below
-            content = dock.widget().widget() if hasattr(dock.widget(), "widget") else None
-            if content is not None and content.layout() is not None:
-                content.layout().activate()
-                need = content.layout().totalHeightForWidth(content.width()) \
-                    if content.layout().hasHeightForWidth() else content.sizeHint().height()
-                dock.resize(width, max(160, min(height, need + (dock.height() - dock.widget().height()) + 6)))
-                self.spin(0.5)
+            self.fit_height(dock, width, height)
             self.unfocus(dock)
             self.save(dock.grab(), name)
+        hmi._reset_layout()
+        self.spin(1.0)
+
+    def shoot_diagrams(self):
+        """The four panels that can also be shown as a diagram, as their diagram (the switch at the
+        top right), each pulled out at a size its drawing is readable in."""
+        hmi = self.hmi
+        for dock in hmi._docks:
+            name, width, height, part = DIAGRAMS.get(dock.objectName(), (None, 0, 0, None))
+            if not name:
+                continue
+            views, diagram = hmi._views[dock], hmi._diagram_of[dock]
+            dock.setFloating(True)
+            dock.resize(width, height)
+            dock.show()
+            dock.raise_()
+            views.show_view("diagram")
+            self.unfocus()
+            for w in diagram.watched + [diagram]:   # (up to date at once: its panels first)
+                w.update_telemetry(hmi.master_telemetry_cache)
+            self.spin(1.0)
+            if part:
+                diagram.open_faceplate(part)
+                self.spin(0.8)
+                self.card_below_labels(diagram, part)
+            self.unfocus(dock)
+            self.save(dock.grab(), name)
+            if part:
+                diagram.open_faceplate("")
+            views.show_view("list")
         hmi._reset_layout()
         self.spin(1.0)
 

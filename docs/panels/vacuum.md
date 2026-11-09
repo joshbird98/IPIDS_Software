@@ -4,6 +4,8 @@ The **Vacuum System** panel shows the six vacuum gauges and the source turbo pum
 
 ![The Vacuum System panel: the six gauges, the source turbo pump at speed and the source gate valve, open](../images/panel-vacuum.png)
 
+**Diagram**, at the panel's top right, shows the vacuum system drawn as it is laid out instead: every pump, valve and gauge on the vessels, live, with the same controls. **List** brings this list back. See [Machine diagrams](machine-diagrams.md#vacuum-system).
+
 ## Vacuum gauges
 
 The **Vacuum gauges** group has a card for each gauge on the two GRAPHIX gauge controllers: **Source (VG1)**, **Beamline pre-magnet (VG2)**, **Beamline (VG3)**, **Endstation 1 (VG4)**, **Loadlock (VG5)** and **Endstation 2 (VG6)**. Each card shows the pressure in mbar and a status chip.

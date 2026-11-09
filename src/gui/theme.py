@@ -388,6 +388,9 @@ def build_stylesheet(mode: str = None) -> str:
 
     def px(pixels):                   # a box that holds a tick or a dot, grown with the text
         return f"{round(pixels * scale)}px"
+    # A radio button's outside size, its border in: the same checked or not, and even, so that its
+    # corner radius is exactly half of it (a radius over half, as 1px too many at 130 %, draws a square)
+    radio = 2 * round((14 * scale + 2) / 2)
     close_icon = _icon_path("close", t["text_muted"])
     float_icon = _icon_path("float", t["text_muted"])
     up_icon, down_icon = _icon_path("up", t["text_muted"]), _icon_path("down", t["text_muted"])
@@ -452,6 +455,7 @@ QDockWidget::close-button:hover, QDockWidget::float-button:hover {{ background-c
 QScrollArea#PanelScroll {{ background-color: {t['panel']}; border: none; }}
 QScrollArea#PanelScroll > QWidget {{ background-color: {t['panel']}; }}
 QWidget#PanelBody {{ background-color: {t['panel']}; }}
+QWidget#PanelViews, QWidget#PanelViewBar {{ background-color: {t['panel']}; }}
 
 /* Tabs (panels stacked as tabs, and tab widgets) */
 QTabBar {{ qproperty-drawBase: 0; }}
@@ -546,6 +550,14 @@ QPushButton[role="flat"] {{ background: transparent; border: none; text-align: l
 QPushButton[role="toggle"]:checked {{ background-color: {t['accent']}; color: {t['on_accent']};
     border-color: {t['accent']}; font-weight: 600; }}
 QPushButton[role="toggle"]:checked:hover {{ background-color: {t['accent_hover']}; }}
+/* A panel's List | Diagram switch (panel_views.py): two buttons side by side, the one shown filled */
+QPushButton[role="segment"] {{ background-color: {t['raised']}; color: {t['text_muted']};
+    border: 1px solid {t['border']}; border-radius: 0px; padding: 2px 12px; min-height: 16px; }}
+QPushButton[role="segment"][side="left"] {{ border-top-left-radius: 4px; border-bottom-left-radius: 4px; }}
+QPushButton[role="segment"][side="right"] {{ border-top-right-radius: 4px; border-bottom-right-radius: 4px; }}
+QPushButton[role="segment"]:hover {{ background-color: {t['raised_hover']}; color: {t['text']}; }}
+QPushButton[role="segment"]:checked {{ background-color: {t['accent_soft']}; color: {t['text']};
+    border-color: {t['accent']}; font-weight: 600; }}
 QPushButton[role="star"] {{ background: transparent; border: none; padding: 0; font-size: {size(13)};
     color: {t['text_faint']}; }}
 QPushButton[role="star"][on="true"] {{ color: {t['warn_fill']}; }}
@@ -638,11 +650,11 @@ QCheckBox::indicator:checked, QGroupBox::indicator:checked {{ background: {t['ac
     image: url({check_on}); }}
 QCheckBox::indicator:disabled {{ background: {t['panel']}; border-color: {t['border_soft']}; }}
 QCheckBox::indicator:checked:disabled {{ background: {t['border']}; }}
-QRadioButton::indicator {{ width: {px(14)}; height: {px(14)}; border: 1px solid {t['border_strong']}; border-radius: {px(8)};
-    background: {t['input']}; }}
+QRadioButton::indicator {{ width: {radio - 2}px; height: {radio - 2}px; border: 1px solid {t['border_strong']};
+    border-radius: {radio // 2}px; background: {t['input']}; }}
 QRadioButton::indicator:hover {{ border-color: {t['accent']}; }}
-QRadioButton::indicator:checked {{ border: 4px solid {t['accent']}; background: {t['on_accent']}; width: {px(8)};
-    height: {px(8)}; }}
+QRadioButton::indicator:checked {{ border: 4px solid {t['accent']}; background: {t['on_accent']}; width: {radio - 8}px;
+    height: {radio - 8}px; }}
 QMenu::indicator {{ width: {px(14)}; height: {px(14)}; left: 4px; }}
 QMenu::indicator:checked {{ image: url({check_menu}); }}
 """

@@ -1,7 +1,7 @@
-"""The TESS Source Diagram: the source as the thesis' schematic of it draws it (tess_schematic) - the
-water-cooled cathode with the target at its end, the ioniser heated by electron bombardment from the
-tungsten filament behind it, the caesium oven feeding vapour into the body, and the extraction
-electrode the negative ions leave through, on to the source Einzel lens.
+"""The TESS Ion Source Control panel's diagram: the source as the thesis' schematic of it draws it
+(tess_schematic) - the water-cooled cathode with the target at its end, the ioniser heated by
+electron bombardment from the tungsten filament behind it, the caesium oven feeding vapour into the
+body, and the extraction electrode the negative ions leave through, on to the source Einzel lens.
 
 Each electrode is drawn in its supply's colour on the TESS Ion Source panel (green on, grey off, blue
 driven automatically, violet held by a sequence, amber and red what needs attention) with that
@@ -58,6 +58,7 @@ def _arc_band(r: float, half_width: float) -> QPainterPath:
 
 
 class TessSourceDiagram(DiagramPanel):
+    HOME = "source"                 # (List | Diagram: this is the other view of that panel)
     ORIGIN = QPointF(0, 0)
     SIZE = QSizeF(1760, 880)
     DESIGN_SCALE = 0.55
@@ -304,7 +305,7 @@ class TessSourceDiagram(DiagramPanel):
         supply_rows(fp, self.src.psu_controls[name])
         if note:
             fp.note(note)
-        fp.link(PANEL_LINK, lambda: self.show_panel("source"))
+        self.link(fp, "source", PANEL_LINK)
         return fp
 
     def faceplate_for(self, key: str):
@@ -338,6 +339,6 @@ class TessSourceDiagram(DiagramPanel):
                 set_tone(c, self._cond_tone(cond))
                 d.setText(cond.detail if cond is not None else "No data from the PLC.")
             fp.every_refresh(show)
-            fp.link("Interlocks panel →", lambda: self.show_panel("interlocks"))
+            self.link(fp, "interlocks", "Interlocks panel →")
             return fp
         return None

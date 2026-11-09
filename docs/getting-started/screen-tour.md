@@ -16,6 +16,7 @@ What is where on the HMI's screen, how to arrange its panels, and the keyboard s
 5. **The machine panels**, as tabs: [TESS Ion Source Control](../panels/ion-source.md), [Beamline Optics](../panels/beamline-optics.md), [Faraday Cup & SMU](../panels/faraday-cup-smu.md), [Mass Scan](../panels/mass-scan.md), [Optimiser](../panels/optimiser.md) and [Current Monitoring](../panels/current-monitoring.md). Click a tab to bring its panel forward.
 6. **The record-keeping panels**, as tabs: [Alarms](../panels/alarms.md), [Recipe Execution](../panels/recipes.md), [Experiment Logging](../panels/experiment-logging.md), [Command Log](../panels/command-log.md) and [Service Manager](../panels/service-manager.md).
 7. **A panel's own buttons:** pull the panel out into a window of its own, or close it.
+8. **List | Diagram:** four panels (Vacuum System, TESS Ion Source Control, Beamline Optics and Interlocks) can also be shown as a diagram of their part of the machine. See [Machine diagrams](../panels/machine-diagrams.md).
 
 Press **F1** with the mouse pointer over any panel to open its page in this help.
 
@@ -28,6 +29,7 @@ Every panel can go anywhere in the window, beside or on top of the others, or in
 - **Pull a panel out:** double-click its title bar, or use its pull-out button. Double-click the title bar again to put it back.
 - **Close a panel:** its close button. Reopen it from **View > Panels**.
 - **Make a panel narrower than its contents:** it scrolls rather than pushing the window wider, and its cards (gauges, current monitors, buttons) fold into fewer columns.
+- **Show a panel as its diagram:** **Diagram** at the top right of Vacuum System, TESS Ion Source Control, Beamline Optics or Interlocks; **List** to go back. Each panel remembers its choice, and a saved layout keeps them.
 
 The arrangement is saved when the HMI closes and comes back the next time. To keep several, arrange the panels and use **View > Layouts > Save layout as...**; choose a saved name from **View > Layouts** to bring it back. **View > Reset layout** puts back the default: **Vacuum System** over **System Health** (with **Interlocks** as a tab behind it) on the left, the machine panels over the record-keeping panels on the right, sized for the screen.
 
