@@ -7,9 +7,10 @@ ESO, and the operator desk's key, START and ESO. With the loop made, the relay c
 contactor switches the mains to every high-voltage supply.
 
 Every state is the Interlocks panel's (src/core/interlocks.py: its 'Safety relay' chain). The doors,
-the ESOs, the key and START are wired in series where no software can see them: they are drawn
-dotted, and drawn made only when the relay is closed (so all of them must be). The relay's faceplate
-has the System Health panel's own buttons (mirror.py).
+the ESOs, the key and START are wired in series where no software can see them: they are drawn made
+(green) while the relay is closed, as all of them must be then; otherwise dotted, as not seen, or
+amber when the chain suspects one of them is open. The relay's faceplate has the System Health
+panel's own buttons (mirror.py).
 """
 from PyQt6.QtCore import QPointF, QRectF, QSize, QSizeF, Qt
 from PyQt6.QtGui import QColor, QPainterPath

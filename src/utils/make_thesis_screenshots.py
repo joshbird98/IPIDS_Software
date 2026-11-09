@@ -36,7 +36,7 @@ and each panel laid out narrow enough on the (offscreen) screen that its text pr
 TARGET_PT (the thesis' smallest text is 6.5 pt): a panel that needs more room than that is laid out
 at the width it needs, and prints smaller; so do the windows of SCREEN_PX. The diagrams are laid
 out at the smallest size their labels fit in at that text size, which prints their labels at about
-6 pt. The whole window (hmi_overview) is at the normal text size, for its layout: its panels are in
+5 to 6 pt. The whole window (hmi_overview) is at the normal text size, for its layout: its panels are in
 the pictures of their own. Plot lines are drawn as thick, for the size of the picture, as they are
 on the screen. The light theme prints best on a white page; --theme dark for the other. The pictures
 show the export folder as the lab PC has it (LAB_PROJECT), wherever this runs.

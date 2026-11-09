@@ -8,9 +8,11 @@ Four panels can also be shown as a diagram that pictures the machine as the thes
     safety.py     Interlocks: what the safety relay's enable and loop are made of (the safety chain)
     source.py     TESS Ion Source Control: the source's electrodes, filament and caesium oven
 
-Each draws what the text panels show and nothing of its own: a diagram reads its panels (refreshed
-while it is in view), and a part clicked opens a faceplate (faceplate.py) whose controls mirror the
-panel's (mirror.py) - same rules, same two-click confirmation, same commands. What the software can't
+Each draws what the text panels show, with no commands or control logic of its own: a diagram reads
+its panels (refreshed while it is in view) and the same telemetry, and works out only what the
+drawing needs (the beam's path, the mass the magnet passes); a part clicked opens a faceplate
+(faceplate.py) whose controls mirror the panel's (mirror.py) - same rules, same two-click
+confirmation, same commands. What the software can't
 read is drawn dotted. The colours are the panels' (src/gui/theme.py): grey is normal, green on,
 blue automatic, violet held by a sequence, amber and red what needs attention.
 

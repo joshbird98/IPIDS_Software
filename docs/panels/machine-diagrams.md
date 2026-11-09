@@ -1,6 +1,6 @@
 # Machine diagrams (test)
 
-Four panels can also be shown as a diagram of their part of the machine, drawn as it is laid out, live: **Vacuum System**, **Beamline Optics** (the beam path), **Interlocks** (the safety chain) and **TESS Ion Source Control**. Displays like these are known as mimic diagrams. They are a test of a more visual way to run SINDIE. Each diagram shows what its panel's list shows, from the same telemetry, and adds nothing of its own; its controls are the panels' own controls.
+Four panels can also be shown as a diagram of their part of the machine, drawn as it is laid out, live: **Vacuum System**, **Beamline Optics** (the beam path), **Interlocks** (the safety chain) and **TESS Ion Source Control**. Displays like these are known as mimic diagrams. They are a test of a more visual way to run SINDIE. Each diagram shows what its panel's list shows, from the same telemetry, working out only what the drawing needs (such as the beam's path); its controls are the panels' own controls, and it has none of its own.
 
 ## Showing a panel as its diagram
 
@@ -30,7 +30,7 @@ The outline says how much the software knows:
 
 - **Solid**: read live.
 - **Dashed**: no live reading now (a service isn't sending data, or a device isn't answering).
-- **Dotted**: the software can't read this part at all, such as most of the pumps, GV1, GV3, GV4, the hand valves, the doors and the ESOs. The diagram shows no state for it, so check it at the machine.
+- **Dotted**: the software can't read this part at all, such as most of the pumps, GV1, GV3, GV4 and the hand valves. The diagram shows no state for it, so check it at the machine. (The safety chain's doors, ESOs, key and **START** are a case of their own: see below.)
 
 Point at a part to see its name, and click it to open its faceplate. The key in the corner explains the symbols; click its title to fold it away, and again to open it. A diagram always fits its panel. As the panel is made smaller its text shrinks only a little, down to the size each diagram is drawn readable at; smaller than that, the whole drawing shrinks together, like a picture zoomed out, so nothing is cut off. To read it at full size, make the panel larger or drag it out as a floating panel. Only a very small panel scrolls. With larger text (**View > Text size**) a diagram keeps its labels at that size: it shrinks only down to the size that needs, and a smaller panel scrolls. The card a part opens is at the larger size too.
 
@@ -85,7 +85,7 @@ What the safety relay's closing depends on, laid out as the thesis' drawing of i
 - the relay's hardwired loop: the PLC's enable, the vacuum controller's relay, the high-voltage enclosure's doors and ESO, and the operator desk's key, **START** and ESO;
 - the relay, and the contactor in power cabinet B that switches the mains to every high-voltage supply.
 
-A wire is green where its switches are made. The relay's output and the contactor are amber while the relay is closed, as **SAFETY: LIVE** on System Health. A switch holding the relay off is amber when you have asked for the relay, red for a latched PLC fault, and plain otherwise. The doors, the ESOs, the key and **START** are wired where no software can see them: they are dotted, and drawn made only while the relay is closed (so all of them must be).
+A wire is green where its switches are made. The relay's output and the contactor are amber while the relay is closed, as **SAFETY: LIVE** on System Health. A switch holding the relay off is amber when you have asked for the relay, red for a latched PLC fault, and plain otherwise. The doors, the ESOs, the key and **START** are wired where no software can see them: they are drawn made (green) while the relay is closed, as all of them must be then; otherwise they are dotted, as not seen, or amber when the Interlocks panel suspects that one of them is open (it can't tell which).
 
 The relay's faceplate has System Health's own buttons: **ENABLE SAFETY RELAY** with its countdown to press **START**, **RESET FAULTS**, **INITIATE SHUTDOWN** and **ABORT SHUTDOWN**.
 
