@@ -6,7 +6,7 @@ Four panels can also be shown as a diagram of their part of the machine, drawn a
 
 Each of the four panels has a **List | Diagram** switch at its top right. Click **Diagram** to show the diagram in place of the list, in the same panel; click **List** to bring the list back. The panel stays where it is and keeps its single entry in **View > Panels**.
 
-![The Vacuum System panel shown as its diagram, with the List | Diagram switch at its top right](../images/diagram-vacuum.png)
+![The Vacuum System panel shown as its diagram, with the List | Diagram switch at its top right and the source turbo pump's faceplate open](../images/diagram-vacuum.png)
 
 - Each panel remembers its choice, also the next time the HMI starts. Until you choose, a panel shows its list.
 - A layout saved with **View > Layouts > Save layout as...** keeps the choice of each panel, and choosing the layout brings the choices back with it. A layout saved before November 2026 leaves them as they are.
